@@ -21,6 +21,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.agent import _init, _response, _run, _storage, _tools
 from agno.agent.agent import Agent
+from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -510,5 +511,147 @@ class TestAsyncEmptyBodyResume:
 
         assert isinstance(result, RunOutput)
         assert result.status == RunStatus.error
-        # The validation error message should be carried through
         assert "unresolved HITL requirements" in (result.content or "")
+
+
+class TestInputAppend:
+    """The ``input`` body field appends a new user-message to the run before resume.
+    Supports the COMPLETED-plus-new-message variant and adds context to any resume."""
+
+    def test_input_appends_user_message(self, monkeypatch: pytest.MonkeyPatch):
+        """``input="follow up question"`` appends a user-role message to
+        run_response.messages before _continue_run sees it."""
+        completed_run = RunOutput(
+            run_id="run-done",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            requirements=None,
+            messages=[
+                Message(role="user", content="original question"),
+                Message(role="assistant", content="original answer"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[completed_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["run_response_messages"] = list(run_response.messages or [])
+            captured["run_messages"] = run_messages.messages
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-done",
+            session_id="session-1",
+            input="follow up question",
+            stream=False,
+        )
+
+        # The appended message is on run_response.messages
+        appended = captured["run_response_messages"]
+        assert len(appended) == 3, "Original 2 messages + 1 appended user message"
+        assert appended[-1].role == "user"
+        assert appended[-1].content == "follow up question"
+
+    def test_input_none_leaves_messages_unchanged(self, monkeypatch: pytest.MonkeyPatch):
+        """Default ``input=None`` does not modify the run's messages."""
+        completed_run = RunOutput(
+            run_id="run-done",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            requirements=None,
+            messages=[Message(role="user", content="original")],
+        )
+        agent = _make_agent(monkeypatch, runs=[completed_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["count"] = len(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-done",
+            session_id="session-1",
+            input=None,
+            stream=False,
+        )
+
+        assert captured["count"] == 1, "No append when input is None"
+
+    def test_input_empty_string_leaves_messages_unchanged(self, monkeypatch: pytest.MonkeyPatch):
+        """An empty string is treated like None — no append. Matches HTML form
+        semantics where unset fields come through as ''."""
+        completed_run = RunOutput(
+            run_id="run-done",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            requirements=None,
+            messages=[Message(role="user", content="original")],
+        )
+        agent = _make_agent(monkeypatch, runs=[completed_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["count"] = len(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-done",
+            session_id="session-1",
+            input="",
+            stream=False,
+        )
+
+        assert captured["count"] == 1
+
+    def test_input_works_alongside_resume_from_interrupted(self, monkeypatch: pytest.MonkeyPatch):
+        """Common case: user has an INTERRUPTED run and wants to add new context
+        on resume. Both 'resume on empty body' and 'append input' compose."""
+        interrupted_run = RunOutput(
+            run_id="run-int",
+            session_id="session-1",
+            status=RunStatus.running,
+            tools=[ToolExecution(tool_call_id="t1", tool_name="x", tool_args={}, result="r1")],
+            requirements=None,
+            messages=[
+                Message(role="user", content="please research foo"),
+                Message(role="assistant", content="searching..."),
+                Message(role="tool", content="r1", tool_call_id="t1"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[interrupted_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-int",
+            session_id="session-1",
+            input="also include bar",
+            stream=False,
+        )
+
+        msgs = captured["messages"]
+        assert len(msgs) == 4
+        assert msgs[-1].role == "user"
+        assert msgs[-1].content == "also include bar"

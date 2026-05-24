@@ -207,6 +207,7 @@ async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent, AgentProtocol],
     run_id: str,
     updated_tools: Optional[List] = None,
+    input: Optional[str] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -226,6 +227,7 @@ async def agent_continue_response_streamer(
         continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
             updated_tools=updated_tools,
+            input=input,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -262,6 +264,7 @@ async def agent_resumable_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
     updated_tools: Optional[List] = None,
+    input: Optional[str] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -291,6 +294,7 @@ async def agent_resumable_continue_response_streamer(
         async for sse_data in agent.acontinue_run(
             run_id=run_id,
             updated_tools=updated_tools,
+            input=input,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -951,6 +955,14 @@ def get_agent_router(
         tools: str = Form(
             "", description="JSON string of tool call results to continue the paused run"
         ),  # optional when admin approval resolved
+        input: Optional[str] = Form(
+            None,
+            description=(
+                "Optional new user-message text to append to the run before resuming. "
+                "Use for continuing a COMPLETED run with a follow-up, or adding context "
+                "to an INTERRUPTED/ERROR resume."
+            ),
+        ),
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
@@ -1067,6 +1079,7 @@ def get_agent_router(
                     agent,  # type: ignore[arg-type]
                     run_id=run_id,
                     updated_tools=updated_tools,
+                    input=input,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1081,6 +1094,7 @@ def get_agent_router(
                     agent,
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,
+                    input=input,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1101,6 +1115,7 @@ def get_agent_router(
                     await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
                         updated_tools=updated_tools,
+                        input=input,
                         session_id=session_id,
                         user_id=user_id,
                         stream=False,

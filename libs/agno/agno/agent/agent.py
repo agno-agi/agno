@@ -1549,6 +1549,7 @@ class Agent:
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
+        input: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         user_id: Optional[str] = None,
@@ -1567,6 +1568,7 @@ class Agent:
             run_id=run_id,
             updated_tools=updated_tools,
             requirements=requirements,
+            input=input,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,
@@ -1625,6 +1627,7 @@ class Agent:
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
+        input: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1644,6 +1647,7 @@ class Agent:
             run_id=run_id,
             updated_tools=updated_tools,
             requirements=requirements,
+            input=input,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,

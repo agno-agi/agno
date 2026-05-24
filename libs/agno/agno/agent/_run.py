@@ -2830,6 +2830,25 @@ def arun_dispatch(  # type: ignore
         )
 
 
+def _maybe_append_input_message(run_response: RunOutput, new_input: Optional[str], agent: Agent) -> None:
+    """If ``new_input`` is a non-empty string, append it as a new user-role message
+    to ``run_response.messages``.
+
+    Used by the unified /continue dispatch (ADR-003) when the caller wants to
+    extend a persisted run with an additional turn — e.g. continuing a COMPLETED
+    run with a follow-up question, or providing context after an INTERRUPTED
+    resume. Mutates ``run_response.messages`` in place; the appended message
+    flows through ``get_continue_run_messages`` into the model loop.
+    """
+    if not new_input:
+        return
+    new_message = Message(role=agent.user_message_role, content=new_input)
+    if run_response.messages is None:
+        run_response.messages = [new_message]
+    else:
+        run_response.messages.append(new_message)
+
+
 def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[Any]) -> None:
     """Sync requirements to reference the new tool objects so is_resolved()
     checks operate on the same instances that handle_tool_call_updates modifies.
@@ -2849,6 +2868,7 @@ def continue_run_dispatch(
     run_id: Optional[str] = None,  # type: ignore
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
+    input: Optional[str] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = False,
     user_id: Optional[str] = None,
@@ -2867,6 +2887,9 @@ def continue_run_dispatch(
         run_response: The run response to continue.
         run_id: The run id to continue. Alternative to passing run_response.
         requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
+        input: Optional new user-message text to append before resuming. Use for
+            continuing a COMPLETED run with a follow-up, or adding context to an
+            INTERRUPTED/ERROR resume.
         stream: Whether to stream the response.
         stream_events: Whether to stream all events.
         user_id: The user id to continue the run for.
@@ -2952,7 +2975,7 @@ def continue_run_dispatch(
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
         # The run is continued from a provided run_response. This contains the updated tools.
-        input = run_response.messages or []
+        input_messages = run_response.messages or []
     elif run_id is not None:
         # The run is continued from a run_id.
         runs = agent_session.runs or []
@@ -2960,7 +2983,7 @@ def continue_run_dispatch(
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
 
-        input = run_response.messages or []
+        input_messages = run_response.messages or []
 
         # If we have updated_tools, set them in the run_response
         if updated_tools is not None:
@@ -3006,6 +3029,13 @@ def continue_run_dispatch(
     else:
         raise ValueError("Either run_response or run_id must be provided.")
 
+    # If the caller supplied a new user-message string (unified /continue body
+    # field ``input``), append it to run_response.messages before building
+    # run_messages. The new message flows through into the model loop.
+    if input:
+        _maybe_append_input_message(run_response, input, agent)
+        input_messages = run_response.messages or []
+
     # Prepare arguments for the model
     set_default_model(agent)
     response_format = get_response_format(agent, run_context=run_context)
@@ -3034,7 +3064,7 @@ def continue_run_dispatch(
     # Prepare run messages
     run_messages = get_continue_run_messages(
         agent,
-        input=input,
+        input=input_messages,
         session=agent_session,
         add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
@@ -3591,6 +3621,7 @@ def acontinue_run_dispatch(  # type: ignore
     run_id: Optional[str] = None,  # type: ignore
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
+    input: Optional[str] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     user_id: Optional[str] = None,
@@ -3611,6 +3642,9 @@ def acontinue_run_dispatch(  # type: ignore
         run_id: The run id to continue. Alternative to passing run_response.
 
         requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
+        input: Optional new user-message text to append before resuming. Use for
+            continuing a COMPLETED run with a follow-up, or adding context to an
+            INTERRUPTED/ERROR resume.
         stream: Whether to stream the response.
         stream_events: Whether to stream all events.
         user_id: The user id to continue the run for.
@@ -3713,6 +3747,7 @@ def acontinue_run_dispatch(  # type: ignore
                 run_context=run_context,
                 updated_tools=updated_tools,
                 requirements=requirements,
+                input=input,
                 run_id=run_id,
                 user_id=user_id,
                 session_id=session_id,
@@ -3731,6 +3766,7 @@ def acontinue_run_dispatch(  # type: ignore
             run_context=run_context,
             updated_tools=updated_tools,
             requirements=requirements,
+            input=input,
             run_id=run_id,
             user_id=user_id,
             session_id=session_id,
@@ -3749,6 +3785,7 @@ def acontinue_run_dispatch(  # type: ignore
             run_context=run_context,
             updated_tools=updated_tools,
             requirements=requirements,
+            input=input,
             run_id=run_id,
             user_id=user_id,
             response_format=response_format,
@@ -3765,6 +3802,7 @@ async def _acontinue_run_background_stream(
     run_response: Optional[RunOutput] = None,
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
+    input: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3819,6 +3857,7 @@ async def _acontinue_run_background_stream(
                 run_context=run_context,
                 updated_tools=updated_tools,
                 requirements=requirements,
+                input=input,
                 run_id=run_id,
                 user_id=user_id,
                 session_id=session_id,
@@ -3906,6 +3945,7 @@ async def _acontinue_run(
     run_response: Optional[RunOutput] = None,
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
+    input: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3982,7 +4022,7 @@ async def _acontinue_run(
                 # 4. Prepare run response
                 if run_response is not None:
                     # The run is continued from a provided run_response. This contains the updated tools.
-                    input = run_response.messages or []
+                    input_messages = run_response.messages or []
                 elif run_id is not None:
                     # The run is continued from a run_id.
                     runs = agent_session.runs or []
@@ -3990,7 +4030,7 @@ async def _acontinue_run(
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
 
-                    input = run_response.messages or []
+                    input_messages = run_response.messages or []
 
                     # If we have updated_tools, set them in the run_response
                     if updated_tools is not None:
@@ -4035,6 +4075,13 @@ async def _acontinue_run(
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
 
+                # If the caller supplied a new user-message string (unified /continue
+                # body field ``input``), append it to run_response.messages before
+                # building run_messages.
+                if input:
+                    _maybe_append_input_message(run_response, input, agent)
+                    input_messages = run_response.messages or []
+
                 run_response = cast(RunOutput, run_response)
 
                 # 5. Determine tools for model
@@ -4059,7 +4106,7 @@ async def _acontinue_run(
                 # 6. Prepare run messages
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
-                    input=input,
+                    input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
                 )
@@ -4295,6 +4342,7 @@ async def _acontinue_run_stream(
     run_response: Optional[RunOutput] = None,
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
+    input: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -4367,7 +4415,7 @@ async def _acontinue_run_stream(
                 # 4. Prepare run response
                 if run_response is not None:
                     # The run is continued from a provided run_response. This contains the updated tools.
-                    input = run_response.messages or []
+                    input_messages = run_response.messages or []
 
                 elif run_id is not None:
                     # The run is continued from a run_id.
@@ -4376,7 +4424,7 @@ async def _acontinue_run_stream(
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
 
-                    input = run_response.messages or []
+                    input_messages = run_response.messages or []
 
                     # If we have updated_tools, set them in the run_response
                     if updated_tools is not None:
@@ -4421,6 +4469,13 @@ async def _acontinue_run_stream(
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
 
+                # If the caller supplied a new user-message string (unified /continue
+                # body field ``input``), append it to run_response.messages before
+                # building run_messages.
+                if input:
+                    _maybe_append_input_message(run_response, input, agent)
+                    input_messages = run_response.messages or []
+
                 run_response = cast(RunOutput, run_response)
 
                 # 5. Determine tools for model
@@ -4445,7 +4500,7 @@ async def _acontinue_run_stream(
                 # 6. Prepare run messages
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
-                    input=input,
+                    input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
                 )
