@@ -2982,22 +2982,27 @@ def continue_run_dispatch(
             else:
                 run_response.tools = updated_tools
 
-        # If no tools/requirements provided, check for resolved admin approval
-        elif run_response.tools:
-            from agno.run.approval import check_and_apply_approval_resolution
-
-            try:
-                # This will apply resolution_data to tools if approval is resolved
-                check_and_apply_approval_resolution(agent.db, run_id, run_response)
-            except RuntimeError:
-                # No resolved approval found - fall back to requiring tools/requirements
-                raise ValueError(
-                    "To continue a run from a given run_id, the requirements parameter must be provided "
-                    "(or resolve an admin approval first)."
-                )
         else:
-            # No tools on the run_response either
-            raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
+            # No tools / requirements in the body. Two cases:
+            # 1. The run has unresolved HITL requirements → try admin-approval
+            #    resolution; if none, the caller must provide tools/requirements.
+            # 2. The run has no unresolved requirements → just resume from current
+            #    state (INTERRUPTED resume, ERROR retry, time-travel, etc.). This
+            #    is the unified /continue path (ADR-003, ADR-004).
+            has_unresolved_requirements = any(not req.is_resolved() for req in (run_response.requirements or []))
+            if has_unresolved_requirements:
+                from agno.run.approval import check_and_apply_approval_resolution
+
+                try:
+                    # This will apply resolution_data to tools if approval is resolved
+                    check_and_apply_approval_resolution(agent.db, run_id, run_response)
+                except RuntimeError:
+                    # No resolved approval found — caller must provide requirements/tools
+                    raise ValueError(
+                        "Run has unresolved HITL requirements. Provide the `requirements` "
+                        "parameter (or resolve an admin approval first)."
+                    )
+            # else: nothing to resolve — fall through to resume from current state
     else:
         raise ValueError("Either run_response or run_id must be provided.")
 
@@ -4004,24 +4009,29 @@ async def _acontinue_run(
                         else:
                             run_response.tools = updated_tools
 
-                    # If no tools/requirements provided, check for resolved admin approval
-                    elif run_response.tools:
-                        from agno.run.approval import acheck_and_apply_approval_resolution
-
-                        try:
-                            # This will apply resolution_data to tools if approval is resolved
-                            await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
-                        except RuntimeError:
-                            # No resolved approval found - fall back to requiring tools/requirements
-                            raise ValueError(
-                                "To continue a run from a given run_id, the requirements parameter must be provided "
-                                "(or resolve an admin approval first)."
-                            )
                     else:
-                        # No tools on the run_response either
-                        raise ValueError(
-                            "To continue a run from a given run_id, the requirements parameter must be provided."
+                        # No tools / requirements in the body. Two cases:
+                        # 1. The run has unresolved HITL requirements → try admin-approval
+                        #    resolution; if none, the caller must provide tools/requirements.
+                        # 2. The run has no unresolved requirements → just resume from current
+                        #    state (INTERRUPTED resume, ERROR retry, time-travel, etc.). This
+                        #    is the unified /continue path (ADR-003, ADR-004).
+                        has_unresolved_requirements = any(
+                            not req.is_resolved() for req in (run_response.requirements or [])
                         )
+                        if has_unresolved_requirements:
+                            from agno.run.approval import acheck_and_apply_approval_resolution
+
+                            try:
+                                # This will apply resolution_data to tools if approval is resolved
+                                await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
+                            except RuntimeError:
+                                # No resolved approval found — caller must provide requirements/tools
+                                raise ValueError(
+                                    "Run has unresolved HITL requirements. Provide the `requirements` "
+                                    "parameter (or resolve an admin approval first)."
+                                )
+                        # else: nothing to resolve — fall through to resume from current state
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
 
@@ -4385,24 +4395,29 @@ async def _acontinue_run_stream(
                         else:
                             run_response.tools = updated_tools
 
-                    # If no tools/requirements provided, check for resolved admin approval
-                    elif run_response.tools:
-                        from agno.run.approval import acheck_and_apply_approval_resolution
-
-                        try:
-                            # This will apply resolution_data to tools if approval is resolved
-                            await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
-                        except RuntimeError:
-                            # No resolved approval found - fall back to requiring tools/requirements
-                            raise ValueError(
-                                "To continue a run from a given run_id, the requirements parameter must be provided "
-                                "(or resolve an admin approval first)."
-                            )
                     else:
-                        # No tools on the run_response either
-                        raise ValueError(
-                            "To continue a run from a given run_id, the requirements parameter must be provided."
+                        # No tools / requirements in the body. Two cases:
+                        # 1. The run has unresolved HITL requirements → try admin-approval
+                        #    resolution; if none, the caller must provide tools/requirements.
+                        # 2. The run has no unresolved requirements → just resume from current
+                        #    state (INTERRUPTED resume, ERROR retry, time-travel, etc.). This
+                        #    is the unified /continue path (ADR-003, ADR-004).
+                        has_unresolved_requirements = any(
+                            not req.is_resolved() for req in (run_response.requirements or [])
                         )
+                        if has_unresolved_requirements:
+                            from agno.run.approval import acheck_and_apply_approval_resolution
+
+                            try:
+                                # This will apply resolution_data to tools if approval is resolved
+                                await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
+                            except RuntimeError:
+                                # No resolved approval found — caller must provide requirements/tools
+                                raise ValueError(
+                                    "Run has unresolved HITL requirements. Provide the `requirements` "
+                                    "parameter (or resolve an admin approval first)."
+                                )
+                        # else: nothing to resolve — fall through to resume from current state
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
 

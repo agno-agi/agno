@@ -912,14 +912,18 @@ def get_agent_router(
         response_model_exclude_none=True,
         summary="Continue Agent Run",
         description=(
-            "Continue a paused or incomplete agent run with updated tool results.\n\n"
-            "**Use Cases:**\n"
-            "- Resume execution after tool approval/rejection\n"
-            "- Provide manual tool execution results\n"
-            "- Resume after admin approval (tools can be empty; resolution fetched from DB)\n\n"
+            "Advance a persisted agent run from its current state. Dispatches on the body "
+            "shape and the persisted run state (see ADR-003 in "
+            "specs/agno/features/checkpointing/decisions.md).\n\n"
+            "**Variants:**\n"
+            "- PAUSED + tools provided → apply HITL tool results, resume\n"
+            "- PAUSED + resolved admin approval (empty tools) → apply resolution, resume\n"
+            "- INTERRUPTED / ERROR / RUNNING (no unresolved HITL requirements) → resume from "
+            "last persisted state\n"
+            "- COMPLETED + new tools → continue with appended messages\n\n"
             "**Tools Parameter:**\n"
-            "JSON string containing array of tool execution objects with results.\n"
-            "Can be empty when an admin-required approval has been resolved."
+            "JSON string containing array of tool execution objects with results. Optional — "
+            "only required when the persisted run has unresolved HITL requirements."
         ),
         responses={
             200: {
@@ -933,9 +937,6 @@ def get_agent_router(
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Agent not found", "model": NotFoundResponse},
-            409: {
-                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
-            },
         },
         dependencies=[
             Depends(require_resource_access("agents", "run", "agent_id")),
@@ -1028,7 +1029,11 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
-        # Fetch existing run once for validation and potential approval resolution
+        # Fetch existing run for potential approval resolution. We no longer gate on
+        # RunStatus — /continue dispatches on body shape + persisted state (ADR-003 /
+        # ADR-004). HITL approvals still require resolved approvals, but that's
+        # enforced inside the dispatch logic in continue_run_dispatch rather than as
+        # a route-level 409.
         existing_run = None
         if session_id and not isinstance(agent, RemoteAgent):
             if hasattr(agent, "aget_run_output"):
@@ -1036,27 +1041,6 @@ def get_agent_router(
                     run_id=run_id,
                     session_id=session_id,
                     user_id=scoped_user_id or user_id,
-                )
-
-        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
-        if existing_run is not None:
-            is_paused = getattr(existing_run, "is_paused", False)
-            if not is_paused:
-                status = getattr(existing_run, "status", None)
-                _status_to_detail = {
-                    RunStatus.running: "run is already running",
-                    RunStatus.completed: "run is already continued",
-                    RunStatus.error: "run is already errored",
-                    RunStatus.cancelled: "run is already cancelled",
-                    RunStatus.pending: "run is already pending",
-                }
-                detail = _status_to_detail.get(
-                    status,  # type: ignore[arg-type]
-                    f"run is not paused (status={getattr(status, 'value', status)})",
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=detail,
                 )
 
         # Convert tools dict to ToolExecution objects if provided
