@@ -441,3 +441,73 @@ class TestAsyncGetUserMemories:
         mm = MemoryManager()
         result = await mm.aget_user_memories()
         assert result == []
+
+
+# =============================================================================
+# Tests for _get_last_n_memories ordering
+# =============================================================================
+
+
+class TestGetLastNMemories:
+    """_get_last_n_memories must return the most-recent N memories in newest-first order.
+
+    Previously the helper sorted ascending and sliced with ``[-limit:]``, which
+    selected the correct N memories but returned them in oldest-first order — the
+    opposite of what the docstring promises.
+    """
+
+    def _make_manager_with_memories(self, memories: list, user_id: str = "u1") -> MemoryManager:
+        db = MagicMock()
+        db.get_user_memories = MagicMock(return_value=memories)
+        mm = MemoryManager(db=db)
+        return mm
+
+    def _memories_for(self, user_id: str, timestamps: list) -> list:
+        return [
+            UserMemory(
+                memory_id=f"mem-{ts}",
+                user_id=user_id,
+                memory=f"memory at {ts}",
+                updated_at=ts,
+            )
+            for ts in timestamps
+        ]
+
+    def test_returns_newest_first_without_limit(self):
+        """Without a limit, all memories are returned newest-first."""
+        mems = self._memories_for("u1", [100, 300, 200])
+        mm = self._make_manager_with_memories(mems)
+        result = mm._get_last_n_memories(user_id="u1")
+        assert [m.updated_at for m in result] == [300, 200, 100]
+
+    def test_returns_n_most_recent_in_newest_first_order(self):
+        """With limit=2, the two newest memories come back newest-first.
+
+        This is the regression test: before the fix the same two memories were
+        returned but in oldest-first order (ascending sort + tail slice).
+        """
+        mems = self._memories_for("u1", [100, 200, 300, 400])
+        mm = self._make_manager_with_memories(mems)
+        result = mm._get_last_n_memories(user_id="u1", limit=2)
+        assert len(result) == 2
+        assert result[0].updated_at == 400, "newest memory must be first"
+        assert result[1].updated_at == 300, "second-newest must be second"
+
+    def test_none_timestamps_sorted_last(self):
+        """Memories with updated_at=None are treated as oldest (sorted to the end)."""
+        mems = [
+            UserMemory(memory_id="a", user_id="u1", memory="no ts", updated_at=None),
+            UserMemory(memory_id="b", user_id="u1", memory="newer", updated_at=500),
+            UserMemory(memory_id="c", user_id="u1", memory="older", updated_at=100),
+        ]
+        mm = self._make_manager_with_memories(mems)
+        result = mm._get_last_n_memories(user_id="u1")
+        assert result[0].updated_at == 500
+        assert result[1].updated_at == 100
+        assert result[2].updated_at is None
+
+    def test_empty_list_returns_empty(self):
+        db = MagicMock()
+        db.get_user_memories = MagicMock(return_value=[])
+        mm = MemoryManager(db=db)
+        assert mm._get_last_n_memories(user_id="u1") == []

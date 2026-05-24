@@ -754,17 +754,19 @@ class MemoryManager:
 
         # Sort memories by updated_at timestamp if available
         if memories_list:
-            # Sort memories by updated_at timestamp (newest first)
-            # If updated_at is None, place at the beginning of the list
+            # Sort memories by updated_at timestamp (newest first).
+            # If updated_at is None, treat as 0 (oldest) so those entries sort last
+            # when the list is reversed.
             sorted_memories_list = sorted(
                 memories_list,
                 key=lambda m: m.updated_at if m.updated_at is not None else 0,
+                reverse=True,
             )
         else:
             sorted_memories_list = []
 
         if limit is not None and limit > 0:
-            sorted_memories_list = sorted_memories_list[-limit:]
+            sorted_memories_list = sorted_memories_list[:limit]
 
         return sorted_memories_list
 
