@@ -1,6 +1,6 @@
 # Test Log - _04_text_span_labeling
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
+Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
 
 ### basic.py
 

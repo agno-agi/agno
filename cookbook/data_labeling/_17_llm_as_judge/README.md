@@ -26,4 +26,4 @@ python cookbook/data_labeling/_17_llm_as_judge/single_rubric.py
 python cookbook/data_labeling/_17_llm_as_judge/with_rationale.py
 ```
 
-Requires `OPENAI_API_KEY`.
+Requires `GOOGLE_API_KEY`.

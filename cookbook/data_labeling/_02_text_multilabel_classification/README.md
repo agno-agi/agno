@@ -26,4 +26,4 @@ python cookbook/data_labeling/_02_text_multilabel_classification/with_confidence
 python cookbook/data_labeling/_02_text_multilabel_classification/hierarchical.py
 ```
 
-Requires `OPENAI_API_KEY`.
+Requires `GOOGLE_API_KEY`.

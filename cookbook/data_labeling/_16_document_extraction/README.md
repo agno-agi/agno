@@ -35,4 +35,4 @@ python cookbook/data_labeling/_16_document_extraction/with_line_items.py
 python cookbook/data_labeling/_16_document_extraction/with_confidence.py
 ```
 
-Requires `OPENAI_API_KEY`.
+Requires `GOOGLE_API_KEY`.

@@ -34,4 +34,4 @@ python cookbook/data_labeling/_01_text_classification/with_confidence.py
 python cookbook/data_labeling/_01_text_classification/with_rationale.py
 ```
 
-Requires `OPENAI_API_KEY`.
+Requires `GOOGLE_API_KEY`.
