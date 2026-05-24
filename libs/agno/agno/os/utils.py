@@ -542,14 +542,24 @@ VIDEO_MIME_TYPES = {
     "video/3gpp",
 }
 
+# NOTE: Keep this in sync with `File.valid_mime_types()` in agno.media. Every type here must
+# be valid there, or the upload returns 200 but the file is silently dropped during FileMedia
+# construction. Office binary/OOXML formats (.doc, .docx, .ppt, .pptx, .xls, .xlsx) are accepted
+# at upload, but not all model providers support them as raw input - Anthropic and Gemini, for
+# example, 400 on PowerPoint. Those uploads succeed here and fail later with a provider error.
 DOCUMENT_MIME_TYPES = {
     "application/pdf",
     "application/json",
     "application/x-javascript",
+    # Office Open XML (modern Office formats)
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
-    # NOTE: not all models might accept ppt or md files, like Gemini and Claude don't accept .pptx
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
-    "application/vnd.ms-outlook",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+    # Legacy binary Office formats
+    "application/msword",  # .doc
+    "application/vnd.ms-powerpoint",  # .ppt
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.ms-outlook",  # .msg
     "text/javascript",
     "application/x-python",
     "text/x-python",
@@ -571,7 +581,11 @@ EXTENSION_CATEGORY: Dict[str, str] = {
     "json": "document",
     "js": "document",
     "docx": "document",
+    "doc": "document",
     "pptx": "document",
+    "ppt": "document",
+    "xlsx": "document",
+    "xls": "document",
     "msg": "document",
     "py": "document",
     "txt": "document",
@@ -671,7 +685,11 @@ _DOCUMENT_EXTENSION_MIME: Dict[str, str] = {
     "json": "application/json",
     "js": "text/javascript",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "ppt": "application/vnd.ms-powerpoint",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
     "msg": "application/vnd.ms-outlook",
     "py": "text/x-python",
     "txt": "text/plain",
@@ -702,19 +720,18 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
 
 
 def process_document(file: UploadFile) -> Optional[FileMedia]:
-    try:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        return FileMedia(
-            content=content,
-            filename=file.filename,
-            format=extract_format(file),
-            mime_type=_resolve_document_mime_type(file),
-        )
-    except Exception:
-        logger.exception(f"Error processing document {file.filename}")
-        return None
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+    # FileMedia construction validates the mime_type against File.valid_mime_types(). Every
+    # type in DOCUMENT_MIME_TYPES must also be valid there, otherwise the file is silently
+    # dropped here (the upload still returns 200). The unit tests assert the two stay in sync.
+    return FileMedia(
+        content=content,
+        filename=file.filename,
+        format=extract_format(file),
+        mime_type=_resolve_document_mime_type(file),
+    )
 
 
 def extract_format(file: UploadFile) -> Optional[str]:
