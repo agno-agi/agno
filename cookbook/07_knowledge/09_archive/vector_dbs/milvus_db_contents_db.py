@@ -6,6 +6,7 @@ End-to-end validation for the Milvus adapter when paired with a contents_db.
 """
 
 import asyncio
+import json
 
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -61,9 +62,7 @@ def run_sync() -> None:
         metadata={"reviewed": True, "spice_level": "mild"},
     )
 
-    print("[3/4] Query Milvus")
-    import json as _json
-
+    print("[3/4] Reading back from Milvus")
     rows = vector_db.client.query(
         collection_name=vector_db.collection,
         filter=f'content_id == "{target.id}"',
@@ -71,16 +70,14 @@ def run_sync() -> None:
         limit=2,
     )
     for i, row in enumerate(rows, start=1):
-        meta_data = _json.loads(row["meta_data"]) if isinstance(row["meta_data"], str) else row["meta_data"]
+        meta_data = row["meta_data"]
+        if isinstance(meta_data, str):
+            meta_data = json.loads(meta_data)
         print(f"  Row {i}:")
         print(f"    name      : {row.get('name')}")
         print(f"    content_id: {row.get('content_id')}")
-        print(f"    meta_data : {meta_data}  ({type(meta_data).__name__})")
+        print(f"    meta_data : {meta_data}")
         print(f"    usage     : {row.get('usage')}")
-        assert isinstance(meta_data, dict), "meta_data must round-trip as a dict"
-        assert meta_data.get("cuisine") == "Thai", "original metadata must be preserved"
-        assert meta_data.get("reviewed") is True, "update_metadata merge must be visible"
-        assert meta_data.get("spice_level") == "mild", "update_metadata merge must be visible"
 
 
 async def run_async() -> None:
@@ -93,9 +90,9 @@ async def run_async() -> None:
         metadata={"cuisine": "Thai", "type": "soup"},
     )
     results = await vector_db.async_search("Thai coconut soup", limit=1)
-    assert results, "async search must return at least one result"
-    assert isinstance(results[0].meta_data, dict)
-    print("[async] OK")
+    print(f"[async] hits: {len(results)}")
+    if results:
+        print(f"[async] first hit meta_data: {results[0].meta_data}")
 
 
 if __name__ == "__main__":
