@@ -90,6 +90,7 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+from agno.utils.message import build_continuation_user_message
 
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
@@ -4432,6 +4433,9 @@ def _get_continue_run_messages(
     for msg in input:
         if msg is not system_message:
             run_messages.messages.append(msg)
+
+    if run_messages.messages and run_messages.messages[-1].role == "assistant":
+        run_messages.messages.append(build_continuation_user_message(run_messages.messages[-1]))
 
     # Set messages on run_context so tool hooks can access the current message history
     if run_context is not None:

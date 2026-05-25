@@ -7,6 +7,28 @@ from agno.models.message import Message
 from agno.utils.log import log_debug
 
 
+def ensure_terminal_user_message(messages: List[Message], user_message: Message) -> List[Message]:
+    """Return messages with a terminal user turn appended."""
+    return [*messages, user_message]
+
+
+def build_continuation_user_message(last_assistant_message: Message) -> Message:
+    """Build user continuation prompt for assistant-ended conversations.
+
+    Anthropic migration guide recommends turning continuations into a real user turn.
+    """
+    previous_response = get_text_from_message(last_assistant_message.content)
+    if not previous_response:
+        previous_response = str(last_assistant_message.content or "")
+    return Message(
+        role="user",
+        content=(
+            "Your previous response was interrupted and ended with "
+            f"`{previous_response}`. Continue from where you left off."
+        ),
+    )
+
+
 def normalize_tool_messages(messages: List[Message]) -> List[Message]:
     """
     Split combined tool result messages into individual canonical messages.

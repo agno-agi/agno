@@ -44,6 +44,7 @@ from agno.utils.log import (
     use_agent_logger,
     use_team_logger,
 )
+from agno.utils.message import ensure_terminal_user_message
 from agno.utils.merge_dict import merge_dictionaries, merge_parallel_session_states
 from agno.utils.response import check_if_run_cancelled
 from agno.utils.team import (
@@ -301,10 +302,19 @@ def _get_task_management_tools(
         history = None
         if hasattr(member_agent, "add_history_to_context") and member_agent.add_history_to_context:
             history = _get_history_for_member_agent(team, session, member_agent)
-            if history and isinstance(member_agent_task, str):
+            if history:
                 from agno.models.message import Message
 
-                history.append(Message(role="user", content=member_agent_task))
+                handoff_user_message = (
+                    Message(role="user", content=member_agent_task)
+                    if isinstance(member_agent_task, str)
+                    else (
+                        member_agent_task
+                        if isinstance(member_agent_task, Message)
+                        else Message(role="user", content=str(member_agent_task))
+                    )
+                )
+                history = ensure_terminal_user_message(history, handoff_user_message)
 
         return member_agent_task, history
 

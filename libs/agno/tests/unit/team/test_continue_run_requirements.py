@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
@@ -949,6 +950,26 @@ class TestContinueRunApprovalResolution:
             mock_apply.assert_called_once_with(team.db, "run-1", run_response)
 
         asyncio.run(_exercise())
+
+
+def test_get_continue_run_messages_appends_user_continuation_for_assistant_tail():
+    from agno.team._run import _get_continue_run_messages
+    from agno.team.team import Team
+
+    team = Team(name="test-team", members=[])
+
+    run_messages = _get_continue_run_messages(
+        team,
+        input=[Message(role="assistant", content="Partial team answer")],
+        session=None,
+        add_history_to_context=False,
+    )
+
+    assert len(run_messages.messages) == 2
+    assert run_messages.messages[-1].role == "user"
+    assert "Your previous response was interrupted and ended with `Partial team answer`." in str(
+        run_messages.messages[-1].content
+    )
 
     def test_acontinue_run_stream_uses_run_id_for_empty_requirements(self):
         from agno.team._run import _acontinue_run_stream

@@ -36,7 +36,7 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict
 from agno.utils.log import log_debug, log_warning
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import build_continuation_user_message, filter_tool_calls, get_text_from_message
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
@@ -1651,6 +1651,9 @@ def get_continue_run_messages(
     for msg in input:
         if msg is not system_message:
             run_messages.messages.append(msg)
+
+    if run_messages.messages and run_messages.messages[-1].role == "assistant":
+        run_messages.messages.append(build_continuation_user_message(run_messages.messages[-1]))
 
     # Set messages on run_context so tool hooks can access the current message history
     if run_context is not None:
