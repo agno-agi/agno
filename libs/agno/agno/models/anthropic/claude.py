@@ -779,7 +779,10 @@ class Claude(Model):
 
         Raises:
             ModelProviderError: If called on a non-Anthropic provider.
+            ValueError: If ``messages`` is empty or ``None``.
         """
+        if not messages:
+            raise ValueError("Claude.prewarm() requires a non-empty list of messages")
         if self.provider != "Anthropic":
             raise ModelProviderError(
                 message="prewarm() is only supported on the direct Anthropic API",
@@ -834,7 +837,10 @@ class Claude(Model):
 
         Raises:
             ModelProviderError: If called on a non-Anthropic provider.
+            ValueError: If ``messages`` is empty or ``None``.
         """
+        if not messages:
+            raise ValueError("Claude.aprewarm() requires a non-empty list of messages")
         if self.provider != "Anthropic":
             raise ModelProviderError(
                 message="aprewarm() is only supported on the direct Anthropic API",

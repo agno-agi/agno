@@ -144,6 +144,15 @@ def test_prewarm_raises_on_non_anthropic_provider():
         model.prewarm(_messages())
 
 
+def test_prewarm_rejects_invalid_messages():
+    """prewarm() raises ValueError for None or empty messages."""
+    model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
+    with pytest.raises(ValueError):
+        model.prewarm(None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        model.prewarm([])
+
+
 def test_prewarm_sends_max_tokens_zero_and_warmup(monkeypatch):
     model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
     client = _mock_client()
@@ -232,6 +241,16 @@ async def test_aprewarm_raises_on_non_anthropic_provider():
     model.provider = "VertexAI"
     with pytest.raises(ModelProviderError):
         await model.aprewarm(_messages())
+
+
+@pytest.mark.asyncio
+async def test_aprewarm_rejects_invalid_messages():
+    """aprewarm() raises ValueError for None or empty messages."""
+    model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
+    with pytest.raises(ValueError):
+        await model.aprewarm(None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        await model.aprewarm([])
 
 
 @pytest.mark.asyncio
