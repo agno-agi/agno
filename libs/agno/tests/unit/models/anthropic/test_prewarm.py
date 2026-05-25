@@ -101,6 +101,39 @@ def test_build_prewarm_kwargs_caches_tools():
     assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
 
 
+def test_build_prewarm_kwargs_strips_all_max_tokens_zero_incompatibles(monkeypatch):
+    """Every field incompatible with max_tokens=0 is stripped from prewarm kwargs."""
+    model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
+    full_kwargs = {
+        "model": "claude-sonnet-4-5",
+        "thinking": {"type": "enabled"},
+        "output_format": {"type": "json"},
+        "output_config": {"format": "pdf"},
+        "context_management": {"sliding_window": 1024},
+        "mcp_servers": [{"name": "server1"}],
+        "container": {"skill": "code-exec"},
+        "stream": True,
+        "tool_choice": {"type": "any"},
+        "betas": ["structured-outputs-2025-11-13", "other-beta"],
+        "system": [{"text": "sys", "cache_control": {"type": "ephemeral"}}],
+    }
+    monkeypatch.setattr(model, "_prepare_request_kwargs", lambda *a, **k: dict(full_kwargs))
+    kwargs = model._build_prewarm_kwargs(_messages())
+    assert kwargs is not None
+    for field in (
+        "thinking",
+        "output_format",
+        "output_config",
+        "context_management",
+        "mcp_servers",
+        "container",
+        "stream",
+        "tool_choice",
+    ):
+        assert field not in kwargs, f"{field} should be stripped from prewarm kwargs"
+    assert kwargs.get("betas") == ["other-beta"]
+
+
 # --- prewarm ---------------------------------------------------------------
 
 

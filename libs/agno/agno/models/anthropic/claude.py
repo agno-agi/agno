@@ -732,9 +732,21 @@ class Claude(Model):
         )
         # get_request_params drops max_tokens when falsy, so set it explicitly.
         kwargs["max_tokens"] = 0
-        # max_tokens=0 is rejected by the API with extended thinking or structured outputs.
+        # max_tokens=0 is rejected by the API with several features (extended thinking,
+        # structured outputs, sliding-window context, MCP, code-exec containers).
+        # Also strip stream/tool_choice defensively in case they leak via request_params.
         kwargs.pop("thinking", None)
         kwargs.pop("output_format", None)
+        kwargs.pop("output_config", None)
+        kwargs.pop("context_management", None)
+        kwargs.pop("mcp_servers", None)
+        kwargs.pop("container", None)
+        kwargs.pop("stream", None)
+        kwargs.pop("tool_choice", None)
+        if "betas" in kwargs:
+            kwargs["betas"] = [b for b in kwargs["betas"] if b != "structured-outputs-2025-11-13"]
+            if not kwargs["betas"]:
+                kwargs.pop("betas")
         blocks = (kwargs.get("system") or []) + (kwargs.get("tools") or [])
         if not any(isinstance(b, dict) and b.get("cache_control") for b in blocks):
             log_warning(
