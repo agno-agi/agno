@@ -1,6 +1,6 @@
-import json
 """Tests for FileGenerationTools security and edge-case handling."""
 
+import json
 import os
 import tempfile
 from pathlib import Path
