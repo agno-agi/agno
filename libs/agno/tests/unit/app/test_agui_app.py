@@ -8,6 +8,7 @@ from agno.os.interfaces.agui.utils import (
     _agui_tools_to_external_functions,
     EventBuffer,
     async_stream_agno_response_as_agui_events,
+    extract_agui_tool_messages,
     extract_agui_user_input,
 )
 from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
@@ -1505,8 +1506,8 @@ def test_extract_agui_user_input_multimodal_content():
     assert result == "describe this image"
 
 
-def test_extract_agui_user_input_tool_message_when_no_user_message():
-    """Test extraction falls back to latest tool message content when no user message exists."""
+def test_extract_agui_user_input_tool_message_ignored_returns_empty():
+    """Tool messages are no longer extracted as user input — returns empty string."""
     messages = [
         AssistantMessage(id="a1", content="Working on that"),
         ToolMessage(id="t1", content="tool result", tool_call_id="call_1"),
@@ -1514,11 +1515,11 @@ def test_extract_agui_user_input_tool_message_when_no_user_message():
 
     result = extract_agui_user_input(messages)
 
-    assert result == "tool result"
+    assert result == ""
 
 
-def test_extract_agui_user_input_prefers_newer_tool_message_over_older_user_message():
-    """Test reverse scan returns the latest relevant message, including tool messages."""
+def test_extract_agui_user_input_trailing_tool_messages_returns_prior_user_message():
+    """When trailing ToolMessages follow a user message, the user message is returned."""
     messages = [
         UserMessage(id="u1", content="original user request"),
         AssistantMessage(id="a1", content="Calling tool"),
@@ -1527,18 +1528,368 @@ def test_extract_agui_user_input_prefers_newer_tool_message_over_older_user_mess
 
     result = extract_agui_user_input(messages)
 
-    assert result == "latest tool result"
+    assert result == "original user request"
 
 
-def test_extract_agui_user_input_empty_tool_message_returns_follow_up_prompt():
-    """Test empty tool content returns the special follow-up prompt."""
+def test_extract_agui_user_input_only_tool_messages_returns_empty():
+    """Only ToolMessages with no preceding user message → empty string (no magic prompt)."""
     messages = [
         ToolMessage(id="t1", content="", tool_call_id="call_1"),
     ]
 
     result = extract_agui_user_input(messages)
 
-    assert result == "Ask user how else you can help them"
+    assert result == ""
+
+
+def test_extract_agui_tool_messages_returns_trailing_tool_messages():
+    """Trailing ToolMessages are collected for resume detection."""
+    from agno.os.interfaces.agui.utils import extract_agui_tool_messages
+
+    messages = [
+        UserMessage(id="u1", content="run the tool"),
+        AssistantMessage(id="a1", content=None),
+        ToolMessage(id="t1", content="result1", tool_call_id="call_1"),
+        ToolMessage(id="t2", content="result2", tool_call_id="call_2"),
+    ]
+
+    result = extract_agui_tool_messages(messages)
+
+    assert len(result) == 2
+    assert result[0].tool_call_id == "call_1"
+    assert result[1].tool_call_id == "call_2"
+
+
+def test_extract_agui_tool_messages_returns_empty_when_last_is_user():
+    """A trailing user message means a fresh request — no tool messages returned."""
+    from agno.os.interfaces.agui.utils import extract_agui_tool_messages
+
+    messages = [
+        UserMessage(id="u1", content="hello"),
+    ]
+
+    result = extract_agui_tool_messages(messages)
+
+    assert result == []
+
+
+def test_extract_agui_tool_messages_empty_list():
+    """Empty message list returns empty list."""
+    from agno.os.interfaces.agui.utils import extract_agui_tool_messages
+
+    assert extract_agui_tool_messages([]) == []
+
+
+def test_extract_agui_tool_messages_mixed_ends_with_assistant():
+    """Non-tool trailing message stops collection."""
+    from agno.os.interfaces.agui.utils import extract_agui_tool_messages
+
+    messages = [
+        ToolMessage(id="t1", content="result", tool_call_id="call_1"),
+        AssistantMessage(id="a1", content="Done"),
+    ]
+
+    result = extract_agui_tool_messages(messages)
+
+    assert result == []
+
+
+def test_collect_tool_names_function():
+    """Function objects contribute their .name."""
+    from agno.os.interfaces.agui.router import _collect_tool_names
+    from agno.tools.function import Function
+
+    fn = Function(name="my_tool", description="test")
+    assert _collect_tool_names([fn]) == {"my_tool"}
+
+
+def test_collect_tool_names_toolkit():
+    """Toolkit contributes its registered function names, not the toolkit's own name."""
+    from agno.os.interfaces.agui.router import _collect_tool_names
+    from agno.tools import Toolkit
+    from agno.tools.function import Function
+
+    tk = Toolkit(name="my_toolkit")
+    tk.functions = {
+        "func_a": Function(name="func_a", description="a"),
+        "func_b": Function(name="func_b", description="b"),
+    }
+
+    names = _collect_tool_names([tk])
+
+    assert "func_a" in names
+    assert "func_b" in names
+    assert "my_toolkit" not in names
+
+
+def test_collect_tool_names_callable():
+    """Bare callables contribute their __name__."""
+    from agno.os.interfaces.agui.router import _collect_tool_names
+
+    def my_func():
+        pass
+
+    assert _collect_tool_names([my_func]) == {"my_func"}
+
+
+def test_collect_tool_names_dict():
+    """Dict-form tools contribute the value at key 'name'."""
+    from agno.os.interfaces.agui.router import _collect_tool_names
+
+    assert _collect_tool_names([{"name": "dict_tool"}]) == {"dict_tool"}
+
+
+def test_collect_tool_names_mixed():
+    """All forms work together with no duplicates."""
+    from agno.os.interfaces.agui.router import _collect_tool_names
+    from agno.tools.function import Function
+
+    fn = Function(name="tool_a", description="a")
+
+    def tool_b():
+        pass
+
+    names = _collect_tool_names([fn, tool_b, {"name": "tool_c"}])
+    assert names == {"tool_a", "tool_b", "tool_c"}
+
+
+@pytest.mark.asyncio
+async def test_run_agent_uses_arun_for_fresh_user_message():
+    """Fresh user message (no trailing ToolMessages) routes to agent.arun."""
+    from ag_ui.core import RunAgentInput
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+
+    async def _fake_stream():
+        return
+        yield  # make it an async generator
+
+    agent.arun = MagicMock(return_value=_fake_stream())
+
+    run_input = RunAgentInput(
+        thread_id="thread-1",
+        run_id="run-1",
+        state=None,
+        messages=[UserMessage(id="u1", content="hello")],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+    )
+
+    events = [e async for e in run_agent(agent, run_input)]
+
+    agent.arun.assert_called_once()
+    assert not hasattr(agent, "acontinue_run") or not agent.acontinue_run.called
+
+
+@pytest.mark.asyncio
+async def test_run_agent_uses_acontinue_run_for_tool_resume():
+    """Trailing ToolMessages route to agent.acontinue_run with correct requirements."""
+    from ag_ui.core import RunAgentInput
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+
+    async def _fake_stream():
+        return
+        yield
+
+    agent.acontinue_run = MagicMock(return_value=_fake_stream())
+
+    run_input = RunAgentInput(
+        thread_id="thread-1",
+        run_id="run-1",
+        state=None,
+        messages=[
+            UserMessage(id="u1", content="run tool"),
+            AssistantMessage(id="a1", content=None),
+            ToolMessage(id="t1", content="42", tool_call_id="call_1"),
+        ],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+    )
+
+    events = [e async for e in run_agent(agent, run_input)]
+
+    agent.acontinue_run.assert_called_once()
+    call_kwargs = agent.acontinue_run.call_args.kwargs
+    assert call_kwargs["run_id"] == "run-1"
+    assert call_kwargs["session_id"] == "thread-1"
+    requirements = call_kwargs["requirements"]
+    assert len(requirements) == 1
+    assert requirements[0].tool_execution.tool_call_id == "call_1"
+    assert requirements[0].tool_execution.result == "42"
+    assert requirements[0].tool_execution.external_execution_required is True
+
+
+@pytest.mark.asyncio
+async def test_run_agent_resume_without_run_id_emits_error():
+    """Tool-resume with missing run_id (simulated via mock) emits RunErrorEvent."""
+    from ag_ui.core import EventType
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+
+    # RunAgentInput.run_id is str (non-optional) in the ag_ui schema, so we use a
+    # mock to simulate the guard branch that checks for a missing run_id at resume time.
+    run_input = MagicMock()
+    run_input.run_id = None
+    run_input.thread_id = "thread-1"
+    run_input.state = None
+    run_input.forwarded_props = None
+    run_input.tools = []
+    run_input.messages = [
+        ToolMessage(id="t1", content="result", tool_call_id="call_1"),
+    ]
+
+    events = [e async for e in run_agent(agent, run_input)]
+
+    event_types = [e.type for e in events]
+    assert EventType.RUN_STARTED in event_types
+    assert EventType.RUN_ERROR in event_types
+
+
+@pytest.mark.asyncio
+async def test_run_agent_remote_agent_skips_tool_injection():
+    """RemoteAgent (not Agent) — merged_tools stays None, run_context.tools is None."""
+    from ag_ui.core import RunAgentInput
+    from agno.agent.remote import RemoteAgent
+    from agno.os.interfaces.agui.router import run_agent
+
+    remote = MagicMock(spec=RemoteAgent)
+
+    async def _fake_stream():
+        return
+        yield
+
+    remote.arun = MagicMock(return_value=_fake_stream())
+
+    run_input = RunAgentInput(
+        thread_id="thread-1",
+        run_id="run-1",
+        state=None,
+        messages=[UserMessage(id="u1", content="hello")],
+        tools=[Tool(name="fe_tool", description="desc", parameters={})],
+        context=[],
+        forwarded_props=None,
+    )
+
+    events = [e async for e in run_agent(remote, run_input)]
+
+    remote.arun.assert_called_once()
+    run_context = remote.arun.call_args.kwargs["run_context"]
+    assert run_context.tools is None
+
+
+@pytest.mark.asyncio
+async def test_run_agent_callable_factory_skips_tool_injection():
+    """When agent.tools is a callable factory, tool injection is skipped."""
+    from ag_ui.core import RunAgentInput
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = lambda: []  # callable factory
+
+    async def _fake_stream():
+        return
+        yield
+
+    agent.arun = MagicMock(return_value=_fake_stream())
+
+    run_input = RunAgentInput(
+        thread_id="thread-1",
+        run_id="run-1",
+        state=None,
+        messages=[UserMessage(id="u1", content="hello")],
+        tools=[Tool(name="fe_tool", description="desc", parameters={})],
+        context=[],
+        forwarded_props=None,
+    )
+
+    events = [e async for e in run_agent(agent, run_input)]
+
+    run_context = agent.arun.call_args.kwargs["run_context"]
+    assert run_context.tools is None
+
+
+@pytest.mark.asyncio
+async def test_run_agent_agent_tools_not_mutated():
+    """agent.tools list is not mutated — frontend tools go into run_context.tools only."""
+    from ag_ui.core import RunAgentInput
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+    from agno.tools.function import Function
+
+    existing_fn = Function(name="server_tool", description="on server")
+    agent = MagicMock(spec=Agent)
+    original_tools = [existing_fn]
+    agent.tools = original_tools
+
+    async def _fake_stream():
+        return
+        yield
+
+    agent.arun = MagicMock(return_value=_fake_stream())
+
+    run_input = RunAgentInput(
+        thread_id="thread-1",
+        run_id="run-1",
+        state=None,
+        messages=[UserMessage(id="u1", content="hello")],
+        tools=[Tool(name="fe_tool", description="desc", parameters={})],
+        context=[],
+        forwarded_props=None,
+    )
+
+    [e async for e in run_agent(agent, run_input)]
+
+    assert agent.tools is original_tools
+    assert agent.tools == [existing_fn]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_dedup_collision_skips_frontend_tool():
+    """Frontend tool whose name matches an existing agent tool is skipped with a warning."""
+    import logging
+    from ag_ui.core import RunAgentInput
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+    from agno.tools.function import Function
+
+    existing_fn = Function(name="shared_tool", description="server version")
+    agent = MagicMock(spec=Agent)
+    agent.tools = [existing_fn]
+
+    async def _fake_stream():
+        return
+        yield
+
+    agent.arun = MagicMock(return_value=_fake_stream())
+
+    run_input = RunAgentInput(
+        thread_id="thread-1",
+        run_id="run-1",
+        state=None,
+        messages=[UserMessage(id="u1", content="hello")],
+        tools=[Tool(name="shared_tool", description="frontend version", parameters={})],
+        context=[],
+        forwarded_props=None,
+    )
+
+    events = [e async for e in run_agent(agent, run_input)]
+
+    run_context = agent.arun.call_args.kwargs["run_context"]
+    tool_names = [t.name for t in run_context.tools]
+    assert tool_names.count("shared_tool") == 1
 
 
 def test_agui_tools_to_external_functions_empty_input():

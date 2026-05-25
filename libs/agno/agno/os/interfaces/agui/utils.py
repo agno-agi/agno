@@ -4,7 +4,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from ag_ui.core import (
     BaseEvent,
@@ -16,6 +16,7 @@ from ag_ui.core import (
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
     RunFinishedEvent,
+    StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -174,8 +175,6 @@ def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
     AG-UI frontends send the full conversation history on every request.
     The agent manages its own history via session DB, so we only need the
     latest user message as input — matching the REST API pattern.
-    The last sent message could also be a tool role message in which 
-    case the agent would respond appropriately
     """
     for msg in reversed(messages):
         if msg.role == "user" and msg.content is not None:
@@ -190,20 +189,24 @@ def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
                         text_parts.append(part.text)
                 if text_parts:
                     return "\n".join(text_parts)
-        if msg.role == "tool" and msg.content is not None:
-            # If we have a tool message with content, this likely means the tool call was made in the user turn (e.g. via REASONING_TOOL), so we should also consider this as part of the user input for tool calls in particular
-            if isinstance(msg.content, str):
-                if(msg.content == ''):
-                    return 'Ask user how else you can help them' 
-                return msg.content
-            if isinstance(msg.content, list):
-                text_parts = []
-                for part in msg.content:
-                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
-                        text_parts.append(part.text)
-                if text_parts:
-                    return "\n".join(text_parts)
     return ""
+
+
+def extract_agui_tool_messages(messages: List[AGUIMessage]) -> List[AGUIMessage]:
+    """Return trailing ToolMessages from the message list, indicating a tool-resume request.
+
+    When AG-UI frontends resume a paused run (external_execution tools), they append
+    ToolMessages at the end of the history. If the tail of the list is entirely
+    tool-role messages, this is a resume — not a fresh user turn. Returns an empty
+    list when the last message is a user message (fresh request).
+    """
+    tool_msgs: List[AGUIMessage] = []
+    for msg in reversed(messages):
+        if msg.role == "tool":
+            tool_msgs.append(msg)
+        else:
+            break
+    return list(reversed(tool_msgs))
 
 
 def extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
@@ -655,8 +658,18 @@ async def async_stream_agno_response_as_agui_events(
     response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]],
     thread_id: str,
     run_id: str,
+    on_paused: Optional[Callable[[str, List[str]], None]] = None,
+    get_pause_snapshot: Optional[Callable[[Any], Optional[Dict[str, Any]]]] = None,
 ) -> AsyncIterator[BaseEvent]:
-    """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
+    """Map the Agno response stream to AG-UI format, handling event ordering constraints.
+
+    on_paused: optional callback invoked when the run pauses for external tool execution.
+    Called with (paused_run_id, [tool_call_id, ...]).
+
+    get_pause_snapshot: optional callback invoked when the run pauses. If it returns a
+    dict, a StateSnapshotEvent is emitted before RUN_FINISHED so the client can send the
+    state back on resume (AG-UI State Embedding — no DB required).
+    """
     message_id = ""  # Will be set by EventBuffer when text message starts
     message_started = False
     event_buffer = EventBuffer()
@@ -669,6 +682,7 @@ async def async_stream_agno_response_as_agui_events(
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
+            or chunk.event == TeamRunEvent.run_paused
         ):
             # Store completion chunk but don't process it yet
             completion_chunk = chunk
@@ -683,6 +697,30 @@ async def async_stream_agno_response_as_agui_events(
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
                     yield emit_event
+
+    is_paused = completion_chunk is not None and (
+        getattr(completion_chunk, "event", None) in (RunEvent.run_paused, TeamRunEvent.run_paused)
+    )
+
+    if is_paused:
+        # Notify caller so it can update any in-memory mappings.
+        if on_paused:
+            paused_run_id = getattr(completion_chunk, "run_id", None)
+            tools = getattr(completion_chunk, "tools", None) or []
+            tool_call_ids = [
+                t.tool_call_id
+                for t in tools
+                if getattr(t, "external_execution_required", False) and t.tool_call_id
+            ]
+            if paused_run_id and tool_call_ids:
+                on_paused(paused_run_id, tool_call_ids)
+
+        # Embed serialized RunOutput into the AG-UI state so the client can return it
+        # on the resume request, making server-side resume stateless (no DB required).
+        if get_pause_snapshot:
+            snapshot = get_pause_snapshot(completion_chunk)
+            if snapshot is not None:
+                yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=snapshot)
 
     # Process ONLY completion cleanup events, not content from completion chunk
     if completion_chunk:
