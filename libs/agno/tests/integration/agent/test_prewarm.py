@@ -1,4 +1,4 @@
-"""Integration tests for Agent.prewarm() / aprewarm() (live API).
+"""Integration tests for Agent.get_prewarm_payload() (live API).
 
 These tests make real Anthropic API calls and need ANTHROPIC_API_KEY set.
 They are lenient: caching can silently no-op (prompt below the model's
@@ -35,21 +35,27 @@ def _agent() -> Agent:
     )
 
 
-def test_agent_prewarm_writes_cache():
-    """agent.prewarm() should write the prompt cache on a cold call."""
-    metrics = _agent().prewarm()
+def test_agent_get_prewarm_payload_writes_cache():
+    """agent.get_prewarm_payload() + model.prewarm() should write the prompt cache."""
+    agent = _agent()
+    payload = agent.get_prewarm_payload()
+    assert payload is not None
+    system_message, tools = payload
+    metrics = agent.model.prewarm(messages=[system_message], tools=tools)
     assert metrics is not None
-    print(f"agent.prewarm metrics: write={metrics.cache_write_tokens} read={metrics.cache_read_tokens}")
+    print(f"agent prewarm metrics: write={metrics.cache_write_tokens} read={metrics.cache_read_tokens}")
     if metrics.cache_write_tokens == 0 and metrics.cache_read_tokens == 0:
         pytest.skip("No cache activity — prompt below threshold or already cached")
     assert metrics.cache_write_tokens > 0 or metrics.cache_read_tokens > 0
 
 
 def test_agent_prewarm_then_run_hits_cache():
-    """After agent.prewarm(), the first real run should read from the warm cache."""
+    """After prewarming with the helper's payload, the first real run reads from the warm cache."""
     agent = _agent()
-    prewarm_metrics = agent.prewarm()
-    assert prewarm_metrics is not None
+    payload = agent.get_prewarm_payload()
+    assert payload is not None
+    system_message, tools = payload
+    agent.model.prewarm(messages=[system_message], tools=tools)
 
     response = agent.run("Explain the key principles of microservices architecture")
     if response.metrics is None:
@@ -61,9 +67,13 @@ def test_agent_prewarm_then_run_hits_cache():
 
 
 @pytest.mark.asyncio
-async def test_agent_aprewarm_writes_cache():
-    """agent.aprewarm() should write the prompt cache on a cold call."""
-    metrics = await _agent().aprewarm()
+async def test_agent_aget_prewarm_payload_writes_cache():
+    """Async variant: agent.aget_prewarm_payload() + model.aprewarm()."""
+    agent = _agent()
+    payload = await agent.aget_prewarm_payload()
+    assert payload is not None
+    system_message, tools = payload
+    metrics = await agent.model.aprewarm(messages=[system_message], tools=tools)
     assert metrics is not None
     if metrics.cache_write_tokens == 0 and metrics.cache_read_tokens == 0:
         pytest.skip("No cache activity — prompt below threshold or already cached")

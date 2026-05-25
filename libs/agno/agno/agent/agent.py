@@ -48,7 +48,6 @@ from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ToolExecution
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -843,36 +842,47 @@ class Agent:
             add_session_state_to_context=add_session_state_to_context,
         )
 
-    def prewarm(
+    def get_prewarm_payload(
         self,
+        *,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> Optional[MessageMetrics]:
-        """Pre-warm the model's prompt cache with this agent's system prompt and tools.
+    ) -> Optional[tuple[Message, List[Union[Function, Dict[str, Any]]]]]:
+        """Return the (system_message, tools) pair this agent would send at runtime.
 
-        Derives the system message and tools exactly as a real run would, then
-        delegates to the model's ``prewarm()``. Only the Anthropic ``Claude``
-        model supports pre-warming; for other models this logs a warning and
-        returns ``None``.
+        Builds the system message and tool list exactly as a real run would, without
+        making an API call. Pass the result to your model's ``prewarm()`` method to
+        pre-load the prompt cache::
+
+            payload = agent.get_prewarm_payload()
+            if payload is not None:
+                system_message, tools = payload
+                agent.model.prewarm(messages=[system_message], tools=tools)
+
+        For structured-output agents, also pass ``response_format`` so the warmed
+        prefix matches the first real run::
+
+            agent.model.prewarm(
+                messages=[system_message],
+                tools=tools,
+                response_format=agent.output_schema,
+            )
+
+        Agents whose system prompt is dynamic per-run (callable ``system_message`` /
+        ``instructions``, ``{var}`` placeholders, or any ``add_*_to_context`` flag)
+        will produce a payload that may not match the first real run — the caller
+        is responsible for matching the warming context to the run context.
 
         Args:
             session_id: Optional session id for the synthetic context.
             user_id: Optional user id for the synthetic context.
 
         Returns:
-            Cache metrics from the model, or ``None`` when the model does not
-            support pre-warming or the agent has no system message.
+            A ``(system_message, tools)`` tuple, or ``None`` when the agent has no
+            model or no system message to warm.
         """
-        if self.model is None or not hasattr(self.model, "prewarm"):
-            log_warning("Agent.prewarm(): the agent's model does not support pre-warming; skipping.")
+        if self.model is None:
             return None
-        if (
-            callable(self.system_message)
-            or callable(self.instructions)
-            or self.add_datetime_to_context
-            or self.add_session_state_to_context
-        ):
-            log_warning("Agent.prewarm(): this agent builds a dynamic system prompt; the warmed cache may not be hit.")
         sid = session_id or str(uuid4())
         rid = str(uuid4())
         session = AgentSession(session_id=sid, agent_id=self.id, user_id=user_id)
@@ -889,26 +899,18 @@ class Agent:
             add_session_state_to_context=self.add_session_state_to_context,
         )
         if system_message is None:
-            log_warning("Agent.prewarm(): the agent has no system message to warm; skipping.")
             return None
-        return self.model.prewarm(messages=[system_message], tools=tools)  # type: ignore[attr-defined]
+        return (system_message, tools)
 
-    async def aprewarm(
+    async def aget_prewarm_payload(
         self,
+        *,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-    ) -> Optional[MessageMetrics]:
-        """Async variant of prewarm()."""
-        if self.model is None or not hasattr(self.model, "aprewarm"):
-            log_warning("Agent.aprewarm(): the agent's model does not support pre-warming; skipping.")
+    ) -> Optional[tuple[Message, List[Union[Function, Dict[str, Any]]]]]:
+        """Async variant of ``get_prewarm_payload()``."""
+        if self.model is None:
             return None
-        if (
-            callable(self.system_message)
-            or callable(self.instructions)
-            or self.add_datetime_to_context
-            or self.add_session_state_to_context
-        ):
-            log_warning("Agent.aprewarm(): this agent builds a dynamic system prompt; the warmed cache may not be hit.")
         sid = session_id or str(uuid4())
         rid = str(uuid4())
         session = AgentSession(session_id=sid, agent_id=self.id, user_id=user_id)
@@ -927,9 +929,8 @@ class Agent:
             add_session_state_to_context=self.add_session_state_to_context,
         )
         if system_message is None:
-            log_warning("Agent.aprewarm(): the agent has no system message to warm; skipping.")
             return None
-        return await self.model.aprewarm(messages=[system_message], tools=tools)  # type: ignore[attr-defined]
+        return (system_message, tools)
 
     def get_relevant_docs_from_knowledge(
         self,
