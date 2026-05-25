@@ -13,6 +13,8 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
+    from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
+
     from agno.agent import Agent
     from agno.run import RunContext
     from agno.team.team import Team
@@ -25,6 +27,8 @@ try:
     from mcp.client.streamable_http import streamablehttp_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+
+_HTTP_TRANSPORTS: frozenset[str] = frozenset({"sse", "streamable-http"})
 
 
 class MCPTools(Toolkit):
@@ -146,7 +150,7 @@ class MCPTools(Toolkit):
 
         self.header_provider = None
         if header_provider is not None:
-            if self.transport not in ["sse", "streamable-http"]:
+            if self.transport not in _HTTP_TRANSPORTS:
                 raise ValueError(
                     f"header_provider is not supported with '{self.transport}' transport. "
                     "Use 'sse' or 'streamable-http' transport instead."
@@ -154,20 +158,16 @@ class MCPTools(Toolkit):
             log_debug("Dynamic header support enabled for MCP tools")
             self.header_provider = header_provider
 
-        self._oauth_provider: Optional[Any] = None
+        self._oauth_provider: Optional["ClientCredentialsOAuthProvider"] = None
         if oauth is not None:
-            if self.transport not in ["sse", "streamable-http"]:
+            if self.transport not in _HTTP_TRANSPORTS:
                 raise ValueError(
                     f"oauth is not supported with '{self.transport}' transport. "
                     "Use 'sse' or 'streamable-http' transport instead."
                 )
             if session is not None:
                 log_warning("oauth is ignored when a pre-built session is provided")
-                self._oauth_config = None
-            else:
-                self._oauth_config = oauth
-        else:
-            self._oauth_config = None
+                oauth = None
 
         self.timeout_seconds = timeout_seconds
         self.session: Optional[ClientSession] = session
@@ -175,6 +175,13 @@ class MCPTools(Toolkit):
             server_params
         )
         self.url = url
+
+        if oauth is not None:
+            _server_url = url or (server_params.url if server_params is not None else None)
+            if _server_url:
+                from agno.tools.mcp.oauth import create_oauth_provider
+
+                self._oauth_provider = create_oauth_provider(oauth, _server_url)
 
         # Merge provided env with system env
         if env is not None:
@@ -185,7 +192,7 @@ class MCPTools(Toolkit):
         else:
             env = get_default_environment()
 
-        if command is not None and transport not in ["sse", "streamable-http"]:
+        if command is not None and transport not in _HTTP_TRANSPORTS:
             parts = prepare_command(command)
             cmd = parts[0]
             arguments = parts[1:] if len(parts) > 1 else []
@@ -507,17 +514,7 @@ class MCPTools(Toolkit):
         if self.header_provider:
             init_headers = self._call_header_provider()
 
-        # Create OAuth provider if configured
-        if self._oauth_config is not None:
-            from agno.tools.mcp.oauth import create_oauth_provider
-
-            server_url = self.url or (
-                self.server_params.url if self.server_params is not None else None  # type: ignore
-            )
-            if server_url:
-                self._oauth_provider = create_oauth_provider(self._oauth_config, server_url)
-
-        # Create a new studio session
+        # Create a new server session
         if self.transport == "sse":
             sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
             if "url" not in sse_params:
