@@ -54,3 +54,20 @@ async def test_aget_prewarm_payload_returns_system_and_tools():
     assert isinstance(system_message, Message)
     assert system_message.role == "system"
     assert "test assistant" in str(system_message.content)
+
+
+def test_get_prewarm_payload_warns_on_dynamic_prompt(monkeypatch):
+    """Warn when add_*_to_context flags would make the warmed prefix unstable."""
+    calls: list = []
+    monkeypatch.setattr("agno.agent.agent.log_warning", lambda *a, **k: calls.append(a))
+    agent = _agent(add_datetime_to_context=True)
+    agent.get_prewarm_payload()
+    assert any("dynamic system prompt" in str(args) for args in calls)
+
+
+def test_get_prewarm_payload_does_not_warn_for_static_prompt(monkeypatch):
+    """No spurious warning when the prompt is static."""
+    calls: list = []
+    monkeypatch.setattr("agno.agent.agent.log_warning", lambda *a, **k: calls.append(a))
+    _agent().get_prewarm_payload()
+    assert not any("dynamic system prompt" in str(args) for args in calls)

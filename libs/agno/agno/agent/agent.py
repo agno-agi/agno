@@ -842,6 +842,27 @@ class Agent:
             add_session_state_to_context=add_session_state_to_context,
         )
 
+    def _has_dynamic_system_prompt(self) -> bool:
+        """True if this agent's system prompt varies per run.
+
+        Used to warn that a warmed cache prefix may not match the first real run.
+        """
+        if callable(self.system_message) or callable(self.instructions):
+            return True
+        return bool(
+            self.add_datetime_to_context
+            or self.add_location_to_context
+            or self.add_session_state_to_context
+            or self.add_history_to_context
+            or self.add_dependencies_to_context
+            or self.add_knowledge_to_context
+            or self.add_name_to_context
+            or self.add_memories_to_context
+            or self.add_session_summary_to_context
+            or self.add_culture_to_context
+            or (self.add_learnings_to_context and getattr(self, "_learning", None) is not None)
+        )
+
     def get_prewarm_payload(
         self,
         *,
@@ -883,6 +904,11 @@ class Agent:
         """
         if self.model is None:
             return None
+        if self._has_dynamic_system_prompt():
+            log_warning(
+                "Agent.get_prewarm_payload(): this agent builds a dynamic system prompt; "
+                "the warmed cache may not match the first real run."
+            )
         sid = session_id or str(uuid4())
         rid = str(uuid4())
         session = AgentSession(session_id=sid, agent_id=self.id, user_id=user_id)
@@ -911,6 +937,11 @@ class Agent:
         """Async variant of ``get_prewarm_payload()``."""
         if self.model is None:
             return None
+        if self._has_dynamic_system_prompt():
+            log_warning(
+                "Agent.aget_prewarm_payload(): this agent builds a dynamic system prompt; "
+                "the warmed cache may not match the first real run."
+            )
         sid = session_id or str(uuid4())
         rid = str(uuid4())
         session = AgentSession(session_id=sid, agent_id=self.id, user_id=user_id)
