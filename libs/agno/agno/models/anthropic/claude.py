@@ -786,13 +786,13 @@ class Claude(Model):
             else client.messages.create
         )
         try:
-            response = create(model=self.id, messages=warmup, **kwargs)
+            response = create(model=self.id, messages=warmup, **kwargs)  # type: ignore[arg-type]
         except APIStatusError as e:
             if e.status_code != 400 or "max_tokens" not in str(e):
                 self._handle_api_error(e)
             kwargs["max_tokens"] = 1  # older models may reject max_tokens=0
             try:
-                response = create(model=self.id, messages=warmup, **kwargs)
+                response = create(model=self.id, messages=warmup, **kwargs)  # type: ignore[arg-type]
             except Exception as retry_error:
                 self._handle_api_error(retry_error)
         except Exception as e:
@@ -837,13 +837,13 @@ class Claude(Model):
             else client.messages.create
         )
         try:
-            response = await create(model=self.id, messages=warmup, **kwargs)
+            response = await create(model=self.id, messages=warmup, **kwargs)  # type: ignore[arg-type]
         except APIStatusError as e:
             if e.status_code != 400 or "max_tokens" not in str(e):
                 self._handle_api_error(e)
             kwargs["max_tokens"] = 1  # older models may reject max_tokens=0
             try:
-                response = await create(model=self.id, messages=warmup, **kwargs)
+                response = await create(model=self.id, messages=warmup, **kwargs)  # type: ignore[arg-type]
             except Exception as retry_error:
                 self._handle_api_error(retry_error)
         except Exception as e:
