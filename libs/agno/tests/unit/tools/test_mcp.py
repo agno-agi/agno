@@ -769,3 +769,269 @@ async def test_parallel_calls_no_deadlock_with_timeout():
 
             assert len(results) == 3
             assert all(s is results[0] for s in results)
+
+
+# =============================================================================
+# Lifecycle lock tests (parallel connect/close race — issue #8013, related #7347)
+# =============================================================================
+
+
+def _make_concurrency_tool() -> MCPTools:
+    """MCPTools instance configured for the lifecycle-lock concurrency tests.
+
+    Uses streamable-http with explicit server_params so construction succeeds
+    without hitting any real network — every test below stubs ``_connect`` /
+    ``_close_locked`` so we exercise lock semantics in isolation.
+    """
+    from datetime import timedelta
+
+    return MCPTools(
+        url="http://example.test/mcp",
+        transport="streamable-http",
+        server_params=StreamableHTTPClientParams(
+            url="http://example.test/mcp",
+            headers=None,
+            timeout=timedelta(seconds=300),
+        ),
+        timeout_seconds=300,
+    )
+
+
+@pytest.mark.asyncio
+async def test_parallel_connect_runs_underlying_connect_exactly_once(monkeypatch):
+    """Five concurrent ``connect()`` callers must share a single underlying
+    ``_connect()`` invocation. Without the lifecycle lock all five would race
+    past the ``not _initialized`` check and each open its own MCP session,
+    leaving four orphans whose backing tasks tear down their anyio streams
+    when GC'd — the ``BrokenResourceError`` the lock is here to prevent.
+    """
+    import asyncio
+
+    tool = _make_concurrency_tool()
+
+    call_count = 0
+    inflight = 0
+    max_inflight = 0
+
+    async def fake_connect(self):
+        nonlocal call_count, inflight, max_inflight
+        call_count += 1
+        inflight += 1
+        max_inflight = max(max_inflight, inflight)
+        try:
+            # Yield to the loop so any racing caller has a real chance to
+            # observe overlap if the lock were missing.
+            await asyncio.sleep(0.01)
+            self._initialized = True
+        finally:
+            inflight -= 1
+
+    monkeypatch.setattr(MCPTools, "_connect", fake_connect)
+
+    await asyncio.gather(*(tool.connect() for _ in range(5)))
+
+    assert call_count == 1, (
+        f"_connect() ran {call_count} times under parallel callers; "
+        "the lifecycle lock + double-check should serialize them to one."
+    )
+    assert max_inflight == 1, (
+        "two _connect() calls were in flight simultaneously — the lifecycle lock is not actually serializing them."
+    )
+    assert tool.initialized is True
+
+
+@pytest.mark.asyncio
+async def test_connect_fast_path_skips_lock_when_already_initialized(monkeypatch):
+    """Once initialized, ``connect()`` must not even acquire the lock — the
+    hot agent-run path calls ``connect()`` on every run and must not pay a
+    serialization cost when there is nothing to do.
+    """
+    import asyncio
+
+    tool = _make_concurrency_tool()
+
+    async def fake_connect(self):
+        self._initialized = True
+
+    monkeypatch.setattr(MCPTools, "_connect", fake_connect)
+
+    await tool.connect()
+    assert tool.initialized is True
+
+    # Hold the lifecycle lock externally to prove that the second connect()
+    # call takes the lock-free fast path. If it tries to acquire the lock,
+    # the wait_for() below times out and the test fails loudly.
+    lock = tool._lifecycle_lock  # noqa: SLF001 — white-box concurrency probe
+    assert not lock.locked()
+
+    await lock.acquire()
+    try:
+        # If the fast path is broken, this hangs until the timeout — guard
+        # with a short timeout so the test fails loudly instead of stalling.
+        await asyncio.wait_for(tool.connect(), timeout=0.1)
+    finally:
+        lock.release()
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_inflight_connect(monkeypatch):
+    """A ``close()`` racing an in-flight ``connect()`` must wait for the
+    connect to finish before tearing down. Otherwise close can strand a
+    session another caller is in the middle of bringing up.
+    """
+    import asyncio
+
+    tool = _make_concurrency_tool()
+
+    connect_started = asyncio.Event()
+    release_connect = asyncio.Event()
+    close_ran_at: list[float] = []
+
+    async def fake_connect(self):
+        connect_started.set()
+        await release_connect.wait()
+        self._initialized = True
+
+    async def fake_close_locked(self):
+        # Record observation order; assert below that this only ran after
+        # connect completed.
+        close_ran_at.append(asyncio.get_event_loop().time())
+        self._initialized = False
+
+    monkeypatch.setattr(MCPTools, "_connect", fake_connect)
+    monkeypatch.setattr(MCPTools, "_close_locked", fake_close_locked)
+
+    connect_task = asyncio.create_task(tool.connect())
+    await connect_started.wait()
+
+    close_task = asyncio.create_task(tool.close())
+
+    # Give the close task a chance to wake up and try to acquire the lock.
+    await asyncio.sleep(0.02)
+    assert not close_task.done(), (
+        "close() returned before connect() released the lock — lifecycle lock is not serializing them."
+    )
+    assert close_ran_at == [], "close body ran while connect was in flight"
+
+    # Now release connect; close should proceed.
+    release_connect.set()
+    await asyncio.wait_for(connect_task, timeout=1.0)
+    await asyncio.wait_for(close_task, timeout=1.0)
+
+    assert len(close_ran_at) == 1
+    assert tool.initialized is False
+
+
+@pytest.mark.asyncio
+async def test_connect_force_true_does_not_deadlock(monkeypatch):
+    """``connect(force=True)`` tears down the existing session before
+    reconnecting. It does so from *inside* ``_lifecycle_lock`` by calling
+    ``_close_locked()`` directly — calling the public ``close()`` here would
+    re-acquire the same lock and deadlock. This test guards against the
+    refactor regressing to the wrong call.
+    """
+    import asyncio
+
+    tool = _make_concurrency_tool()
+
+    connect_calls = 0
+    close_calls = 0
+
+    async def fake_connect(self):
+        nonlocal connect_calls
+        connect_calls += 1
+        self._initialized = True
+
+    async def fake_close_locked(self):
+        nonlocal close_calls
+        close_calls += 1
+        self._initialized = False
+
+    monkeypatch.setattr(MCPTools, "_connect", fake_connect)
+    monkeypatch.setattr(MCPTools, "_close_locked", fake_close_locked)
+
+    await tool.connect()
+    assert connect_calls == 1
+    assert close_calls == 0
+
+    # Short timeout so a self-deadlock fails loudly rather than hanging CI.
+    await asyncio.wait_for(tool.connect(force=True), timeout=1.0)
+
+    assert close_calls == 1, "force=True did not tear down the prior session"
+    assert connect_calls == 2, "force=True did not reconnect after close"
+    assert tool.initialized is True
+
+
+@pytest.mark.asyncio
+async def test_aenter_propagates_connect_failure(monkeypatch):
+    """``async with MCPTools(...) as tool:`` must raise when the underlying
+    ``_connect()`` fails (network down, 401 from MCP middleware, handshake
+    error). Going through the public ``connect()`` — whose ``try/except``
+    intentionally swallows for the ``pre_run_hook`` path — would leave the
+    caller with an uninitialized ``tool`` and a confusing ``NoneType`` error
+    on the next call instead of a clean failure at the ``async with``
+    boundary. This guards the ``__aenter__`` → ``_connect()`` (direct) wiring
+    against accidentally being refactored back to ``__aenter__`` →
+    ``connect()``.
+    """
+
+    tool = _make_concurrency_tool()
+
+    class BoomError(RuntimeError):
+        pass
+
+    async def fake_connect(self):
+        raise BoomError("simulated MCP handshake failure")
+
+    monkeypatch.setattr(MCPTools, "_connect", fake_connect)
+
+    with pytest.raises(BoomError, match="simulated MCP handshake failure"):
+        async with tool:
+            pytest.fail("entered async-with body despite _connect() failure")
+
+    assert tool.initialized is False
+    # Lock must be released even after the failure so retries / close()
+    # don't deadlock.
+    assert not tool._lifecycle_lock.locked()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_connect_method_still_swallows_failures(monkeypatch):
+    """Companion guard for the test above: the public ``connect()`` must
+    keep its log-and-continue contract so ``pre_run_hook`` can iterate
+    every MCP tool on an agent and let unrelated tools continue working
+    even if one server is down. If this regresses to re-raising,
+    ``pre_run_hook`` would abort the whole agent run on the first bad MCP.
+    """
+
+    tool = _make_concurrency_tool()
+
+    async def fake_connect(self):
+        raise RuntimeError("simulated handshake failure")
+
+    monkeypatch.setattr(MCPTools, "_connect", fake_connect)
+
+    await tool.connect()
+
+    assert tool.initialized is False
+    assert not tool._lifecycle_lock.locked()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_lock_is_lazy_and_stable():
+    """The lifecycle lock must be lazily constructed on first access and
+    return the same instance thereafter. Lazy because constructing it in
+    ``__init__`` would bind it to whichever event loop happened to be
+    running at construction time, which is often not the one running the
+    agent.
+    """
+    import asyncio
+
+    tool = _make_concurrency_tool()
+
+    assert tool._lifecycle_lock_inst is None  # noqa: SLF001
+
+    lock = tool._lifecycle_lock  # noqa: SLF001
+    assert isinstance(lock, asyncio.Lock)
+    # Subsequent access returns the same lock instance.
+    assert tool._lifecycle_lock is lock  # noqa: SLF001
