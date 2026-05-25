@@ -38,7 +38,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=Cloudflare(id="@cf/qwen/qwen3-30b-a3b-fp8"),
+    model=Cloudflare(id="@cf/google/gemma-4-26b-a4b-it"),
     description="You write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,
@@ -46,7 +46,7 @@ json_mode_agent = Agent(
 
 # Agent that uses structured outputs
 structured_output_agent = Agent(
-    model=Cloudflare(id="@cf/qwen/qwen3-30b-a3b-fp8"),
+    model=Cloudflare(id="@cf/google/gemma-4-26b-a4b-it"),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )

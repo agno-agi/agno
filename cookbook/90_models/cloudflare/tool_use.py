@@ -28,7 +28,7 @@ agent = Agent(
     model=Cloudflare(id="@cf/zai-org/glm-4.7-flash"),
     tools=[WebSearchTools()],
     markdown=True,
-    add_datetime_to_context=True
+    add_datetime_to_context=True,
 )
 
 if __name__ == "__main__":

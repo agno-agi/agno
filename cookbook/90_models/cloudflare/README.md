@@ -4,7 +4,7 @@ Cloudflare AI Gateway exposes an [OpenAI-compatible unified API](https://develop
 
 This cookbook uses **Workers AI** by default: you only need a Cloudflare API token and account id (no OpenAI or other vendor keys). Other vendors (`openai/...`, `anthropic/...`, etc.) need **BYOK** keys configured in the Cloudflare dashboard.
 
-## 1. Create and activate a virtual environment
+### 1. Create and activate a virtual environment
 
 See the repository [Development setup](https://github.com/agno-agi/agno/blob/main/CONTRIBUTING.md#development-setup).
 
