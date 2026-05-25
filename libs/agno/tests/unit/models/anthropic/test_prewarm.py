@@ -199,6 +199,19 @@ def test_prewarm_retries_with_max_tokens_one_on_400(monkeypatch):
     assert create.call_args_list[1].kwargs["max_tokens"] == 1
 
 
+def test_prewarm_logs_warning_when_retrying_with_max_tokens_one(monkeypatch):
+    """Retry to max_tokens=1 is billed; users see it via log_warning."""
+    model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
+    create = Mock(side_effect=[_status_error_400("max_tokens must be >= 1"), SimpleNamespace(usage=_usage())])
+    client = Mock()
+    client.messages.create = create
+    monkeypatch.setattr(model, "get_client", lambda: client)
+    warn_mock = Mock()
+    monkeypatch.setattr("agno.models.anthropic.claude.log_warning", warn_mock)
+    model.prewarm(_messages())
+    assert any("retrying with max_tokens=1" in str(call) for call in warn_mock.call_args_list)
+
+
 def test_prewarm_wraps_retry_failure_in_model_provider_error(monkeypatch):
     model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
     create = Mock(side_effect=[_status_error_400("max_tokens must be >= 1"), _status_error_400("retry failed")])
@@ -255,3 +268,17 @@ async def test_aprewarm_retries_with_max_tokens_one_on_400(monkeypatch):
     await model.aprewarm(_messages())
     assert create.await_count == 2
     assert create.await_args_list[1].kwargs["max_tokens"] == 1
+
+
+@pytest.mark.asyncio
+async def test_aprewarm_logs_warning_when_retrying_with_max_tokens_one(monkeypatch):
+    """Async variant: retry to max_tokens=1 logs a warning."""
+    model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
+    create = AsyncMock(side_effect=[_status_error_400("max_tokens must be >= 1"), SimpleNamespace(usage=_usage())])
+    client = Mock()
+    client.messages.create = create
+    monkeypatch.setattr(model, "get_async_client", lambda: client)
+    warn_mock = Mock()
+    monkeypatch.setattr("agno.models.anthropic.claude.log_warning", warn_mock)
+    await model.aprewarm(_messages())
+    assert any("retrying with max_tokens=1" in str(call) for call in warn_mock.call_args_list)
