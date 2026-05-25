@@ -118,18 +118,14 @@ class Skills:
                 "`get_skill_reference(skill_name, reference_path)` - Access specific documentation"
             )
         if has_scripts:
-            tool_descriptions.append(
-                "`get_skill_script(skill_name, script_path, execute=False)` - Read or run scripts"
-            )
+            tool_descriptions.append("`get_skill_script(skill_name, script_path, execute=False)` - Read or run scripts")
 
         workflow_steps = [
             "**Browse**: Review the skill summaries below to understand what's available",
             "**Load**: When a task matches a skill, call `get_skill_instructions(skill_name)` first",
         ]
         if has_references:
-            workflow_steps.append(
-                "**Reference**: Use `get_skill_reference` to access specific documentation as needed"
-            )
+            workflow_steps.append("**Reference**: Use `get_skill_reference` to access specific documentation as needed")
         if has_scripts:
             workflow_steps.append("**Scripts**: Use `get_skill_script` to read or execute scripts from a skill")
 
@@ -144,14 +140,15 @@ class Skills:
             lines.append("- **Scripts**: Executable code templates you can use or adapt")
         if has_references:
             lines.append("- **References**: Supporting documentation (guides, cheatsheets, examples)")
-        lines.extend([
-            "",
-            "## IMPORTANT: How to Use Skills",
-            "**Skill names are NOT callable functions.** You cannot call a skill directly by its name.",
-            "Instead, you MUST use the provided skill access tools:",
-            ""
-        ])
-        lines.append("")
+        lines.extend(
+            [
+                "",
+                "## IMPORTANT: How to Use Skills",
+                "**Skill names are NOT callable functions.** You cannot call a skill directly by its name.",
+                "Instead, you MUST use the provided skill access tools:",
+                "",
+            ]
+        )
         for i, desc in enumerate(tool_descriptions, start=1):
             lines.append(f"{i}. {desc}")
         lines.append("")
