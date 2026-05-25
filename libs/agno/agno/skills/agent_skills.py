@@ -162,17 +162,27 @@ class Skills:
         lines.append("")
         lines.append("This approach ensures you only load detailed instructions when actually needed.")
 
-        if has_references:
+        if has_references and has_scripts:
             lines.append("")
             lines.append(
-                "**IMPORTANT**: References are documentation files (NOT executable). Only use `get_skill_script` when `<scripts>` lists actual script files. If `<scripts>none</scripts>`, do NOT call `get_skill_script`."
+                "**IMPORTANT**: References are documentation files (NOT executable). "
+                "Only use `get_skill_script` when `<scripts>` lists actual script files. "
+                "If `<scripts>none</scripts>`, do NOT call `get_skill_script`."
             )
-        if has_scripts:
-            lines.append("Only use `get_skill_script` when `<scripts>` lists actual script files. If `<scripts>none</scripts>`, do NOT call `get_skill_script`.")
-        elif not has_references:
+        elif has_references:
+            lines.append("")
+            lines.append("**IMPORTANT**: References are documentation files (NOT executable).")
+        elif has_scripts:
             lines.append("")
             lines.append(
-                "**IMPORTANT**: Loaded skills do not currently expose any references or scripts. Only use `get_skill_instructions` unless the available skills metadata shows additional files."
+                "**IMPORTANT**: Only use `get_skill_script` when `<scripts>` lists actual script files. "
+                "If `<scripts>none</scripts>`, do NOT call `get_skill_script`."
+            )
+        elif not has_scripts and not has_references:
+            lines.append("")
+            lines.append(
+                "**IMPORTANT**: Loaded skills do not currently expose any references or scripts. "
+                "Only use `get_skill_instructions` unless the available skills metadata shows additional files."
             )
 
         lines.append("")
