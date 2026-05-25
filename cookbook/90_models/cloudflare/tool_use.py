@@ -5,7 +5,7 @@ Cloudflare AI Gateway — tool use
 Runs a Workers AI chat model through Cloudflare AI Gateway's OpenAI-compatible
 ``/compat`` endpoint with a tool. The OpenAI ``tools`` / ``tool_calls`` schema
 is forwarded as-is by the gateway; the upstream Workers AI model must support
-function calling. ``@cf/meta/llama-3.3-70b-instruct-fp8-fast`` does.
+function calling. ``@cf/zai-org/glm-4.7-flash`` does.
 
 Requires:
 - CLOUDFLARE_API_TOKEN
