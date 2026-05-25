@@ -432,6 +432,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
     try:
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
+<<<<<<< (fix)/agui-interface-tool-issues
         # Detect tool-resume scenario: AG-UI sends ToolMessages when resuming a paused run.
         # Use acontinue_run so the framework's HITL resume path handles tool results correctly,
         # rather than re-injecting results as a new user turn (which causes infinite loops).
@@ -514,6 +515,26 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
                 ),
                 captured,
             )
+=======
+        # Look for user_id in input.forwarded_props
+        user_id = None
+        if input.forwarded_props and isinstance(input.forwarded_props, dict):
+            user_id = input.forwarded_props.get("user_id")
+
+        # Validating the session state is of the expected type (dict)
+        session_state = validate_agui_state(input.state, input.thread_id)
+
+        # Request streaming response from team
+        response_stream = team.arun(  # type: ignore
+            input=user_input,
+            session_id=input.thread_id,
+            stream=True,
+            stream_events=True,
+            user_id=user_id,
+            session_state=session_state,
+            run_id=run_id,
+        )
+>>>>>>> main
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(

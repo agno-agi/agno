@@ -37,7 +37,7 @@ You are a news analyst. Summarize the latest developments clearly and concisely.
 news_agent = Agent(
     name="News Agent",
     # search=True enables Gemini's native Google Search, no extra tools needed
-    model=Gemini(id="gemini-3-flash-preview", search=True),
+    model=Gemini(id="gemini-3.5-flash", search=True),
     instructions=instructions,
     add_datetime_to_context=True,
     markdown=True,
@@ -59,7 +59,7 @@ if __name__ == "__main__":
 Native search vs tool-based search:
 
 1. Native search (this example)
-   model=Gemini(id="gemini-3-flash-preview", search=True)
+   model=Gemini(id="gemini-3.5-flash", search=True)
    - Seamless: model decides when to search
    - Less controllable: you can't see individual search calls
    - No extra packages needed
