@@ -13,19 +13,13 @@ import pytest
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.message import Message
-from agno.utils.media import download_file
 
 MODEL_ID = "claude-sonnet-4-5-20250929"
 
 
 def _large_system_prompt() -> str:
     """Load an example large system message from S3."""
-    txt_path = Path(__file__).parent.joinpath("system_prompt.txt")
-    download_file(
-        "https://agno-public.s3.amazonaws.com/prompts/system_promt.txt",
-        str(txt_path),
-    )
-    return txt_path.read_text()
+    return Path(__file__).parent.joinpath("system_prompt.txt").read_text()
 
 
 def _messages(system_prompt: str) -> list[Message]:
