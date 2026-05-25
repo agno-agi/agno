@@ -104,6 +104,8 @@ class ModelProviderError(AgnoError):
         "content_too_large",
         "request too large",
         "input too long",
+        "prompt is too long",
+        "prompt too long",
         "exceeds the model",
     ]
 
@@ -260,3 +262,12 @@ class RemoteServerUnavailableError(AgnoError):
         self.original_error = original_error
         self.type = "remote_server_unavailable_error"
         self.error_id = "remote_server_unavailable_error"
+
+
+class PathSecurityError(AgnoError):
+    """Exception raised when path validation rejects user-supplied input."""
+
+    def __init__(self, message: str = "Path security violation"):
+        super().__init__(message, status_code=400)
+        self.type = "path_security_error"
+        self.error_id = "path_security_error"

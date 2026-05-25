@@ -89,6 +89,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Gemini(id=model_id)
 
+    elif model_provider == "google-interactions":
+        from agno.models.google import GeminiInteractions
+
+        return GeminiInteractions(id=model_id)
+
     elif model_provider == "groq":
         from agno.models.groq import Groq
 
@@ -154,6 +159,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return MoonShot(id=model_id)
 
+    elif model_provider == "n1n":
+        from agno.models.n1n import N1N
+
+        return N1N(id=model_id)
+
     elif model_provider == "nebius":
         from agno.models.nebius import Nebius
 
@@ -180,6 +190,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
         return Ollama(id=model_id)
 
     elif model_provider == "openai":
+        from agno.models.openai import OpenAIResponses
+
+        return OpenAIResponses(id=model_id)
+
+    elif model_provider == "openai-chat":
         from agno.models.openai import OpenAIChat
 
         return OpenAIChat(id=model_id)

@@ -1,14 +1,22 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
 from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
-from agno.agent import Agent, RemoteAgent
+from agno.agent import Agent, AgentFactory, RemoteAgent
+from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.factory import (
+    FactoryContextRequired,
+    FactoryError,
+    FactoryPermissionError,
+    FactoryValidationError,
+    RequestContext,
+)
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -19,10 +27,10 @@ from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
-from agno.team import RemoteTeam, Team
+from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
 def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Optional[datetime]:
@@ -195,6 +203,42 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
 
         return f"event: {event_type}\ndata: {clean_json}\n\n"
     except json.JSONDecodeError:
+        clean_json = event.to_json(separators=(",", ":"), indent=None)
+        return f"event: message\ndata: {clean_json}\n\n"
+
+
+def format_sse_event_with_index(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    event_index: Optional[int] = None,
+    run_id: Optional[str] = None,
+) -> str:
+    """Format an event as SSE with injected event_index and run_id.
+
+    Used by the agent/team response streamers to include reconnection metadata
+    in SSE payloads without modifying the core event dataclasses.
+
+    Args:
+        event: The event object to serialize.
+        event_index: Buffer index for reconnection tracking.
+        run_id: Run ID to inject if not already present on the event.
+
+    Returns:
+        SSE-formatted string with event_index in the data payload.
+    """
+    from agno.utils.serialize import json_serializer
+
+    try:
+        event_type = event.event or "message"
+        event_dict = event.to_dict()
+
+        if event_index is not None:
+            event_dict["event_index"] = event_index
+        if run_id and "run_id" not in event_dict:
+            event_dict["run_id"] = run_id
+
+        clean_json = json.dumps(event_dict, separators=(",", ":"), default=json_serializer, ensure_ascii=False)
+        return f"event: {event_type}\ndata: {clean_json}\n\n"
+    except Exception:
         clean_json = event.to_json(separators=(",", ":"), indent=None)
         return f"event: message\ndata: {clean_json}\n\n"
 
@@ -456,6 +500,163 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     return input_media
 
 
+# Supported MIME types per media category, used to route uploaded files to the
+# correct processor. Keep these aligned with `File.valid_mime_types()` in agno.media
+# for document types.
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/tif",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+}
+
+AUDIO_MIME_TYPES = {
+    "audio/wav",
+    "audio/wave",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/mp4",
+    "audio/m4a",
+    "audio/aac",
+    "audio/flac",
+}
+
+VIDEO_MIME_TYPES = {
+    "video/x-flv",
+    "video/quicktime",
+    "video/mpeg",
+    "video/mpegs",
+    "video/mpgs",
+    "video/mpg",
+    "video/mp4",
+    "video/webm",
+    "video/wmv",
+    "video/3gpp",
+}
+
+# NOTE: Keep this in sync with `File.valid_mime_types()` in agno.media. Every type here must
+# be valid there, or the upload returns 200 but the file is silently dropped during FileMedia
+# construction. Office binary/OOXML formats (.doc, .docx, .ppt, .pptx, .xls, .xlsx) are accepted
+# at upload, but not all model providers support them as raw input - Anthropic and Gemini, for
+# example, 400 on PowerPoint. Those uploads succeed here and fail later with a provider error.
+DOCUMENT_MIME_TYPES = {
+    "application/pdf",
+    "application/json",
+    "application/x-javascript",
+    # Office Open XML (modern Office formats)
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+    # Legacy binary Office formats
+    "application/msword",  # .doc
+    "application/vnd.ms-powerpoint",  # .ppt
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.ms-outlook",  # .msg
+    "text/javascript",
+    "application/x-python",
+    "text/x-python",
+    "text/plain",
+    "text/html",
+    "text/css",
+    "text/markdown",
+    "text/csv",
+    "text/xml",
+    "text/rtf",
+}
+
+# Fallback mapping from file extension to media category. Used when the browser sends a
+# missing or ambiguous content type (e.g. `application/octet-stream` or empty for `.md`
+# and `.pptx`, which are not in every OS MIME registry).
+EXTENSION_CATEGORY: Dict[str, str] = {
+    # documents
+    "pdf": "document",
+    "json": "document",
+    "js": "document",
+    "docx": "document",
+    "doc": "document",
+    "pptx": "document",
+    "ppt": "document",
+    "xlsx": "document",
+    "xls": "document",
+    "msg": "document",
+    "py": "document",
+    "txt": "document",
+    "html": "document",
+    "htm": "document",
+    "css": "document",
+    "md": "document",
+    "markdown": "document",
+    "csv": "document",
+    "xml": "document",
+    "rtf": "document",
+    # images
+    "png": "image",
+    "jpg": "image",
+    "jpeg": "image",
+    "gif": "image",
+    "webp": "image",
+    "bmp": "image",
+    "tiff": "image",
+    "tif": "image",
+    "avif": "image",
+    "heic": "image",
+    "heif": "image",
+    # audio
+    "wav": "audio",
+    "mp3": "audio",
+    "ogg": "audio",
+    "m4a": "audio",
+    "aac": "audio",
+    "flac": "audio",
+    # video
+    "flv": "video",
+    "mov": "video",
+    "mpeg": "video",
+    "mpg": "video",
+    "mp4": "video",
+    "webm": "video",
+    "wmv": "video",
+    "3gp": "video",
+}
+
+# Content types that are too generic to classify on their own; fall back to the
+# file extension for these.
+_AMBIGUOUS_CONTENT_TYPES = {None, "", "application/octet-stream"}
+
+
+def classify_upload_file(file: UploadFile) -> Optional[str]:
+    """Classify an uploaded file into one of: image, audio, video, document.
+
+    Routes primarily by `content_type`. When the content type is missing or too generic
+    to be useful (common for `.md` and `.pptx` uploaded from browsers), falls back to the
+    filename extension. Returns None if the file type is not supported.
+    """
+    content_type = file.content_type
+    if content_type in IMAGE_MIME_TYPES:
+        return "image"
+    if content_type in AUDIO_MIME_TYPES:
+        return "audio"
+    if content_type in VIDEO_MIME_TYPES:
+        return "video"
+    if content_type in DOCUMENT_MIME_TYPES:
+        return "document"
+
+    # Fall back to the file extension for ambiguous/missing content types.
+    if content_type in _AMBIGUOUS_CONTENT_TYPES and file.filename and "." in file.filename:
+        extension = file.filename.rsplit(".", 1)[-1].lower()
+        return EXTENSION_CATEGORY.get(extension)
+
+    return None
+
+
 def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
@@ -477,17 +678,60 @@ def process_video(file: UploadFile) -> Video:
     return Video(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
+# Map document file extensions to their canonical MIME type, used to recover a valid
+# mime_type when the browser sends a missing or generic content type (e.g. `.md`).
+_DOCUMENT_EXTENSION_MIME: Dict[str, str] = {
+    "pdf": "application/pdf",
+    "json": "application/json",
+    "js": "text/javascript",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "ppt": "application/vnd.ms-powerpoint",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "msg": "application/vnd.ms-outlook",
+    "py": "text/x-python",
+    "txt": "text/plain",
+    "html": "text/html",
+    "htm": "text/html",
+    "css": "text/css",
+    "md": "text/markdown",
+    "markdown": "text/markdown",
+    "csv": "text/csv",
+    "xml": "text/xml",
+    "rtf": "text/rtf",
+}
+
+
+def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
+    """Resolve a valid document MIME type for an upload.
+
+    Prefers a usable `content_type`; otherwise derives it from the file extension so
+    documents with ambiguous content types (e.g. `.md` sent as octet-stream) still get a
+    mime_type accepted by `FileMedia`.
+    """
+    if file.content_type and file.content_type in DOCUMENT_MIME_TYPES:
+        return file.content_type
+    if file.filename and "." in file.filename:
+        extension = file.filename.rsplit(".", 1)[-1].lower()
+        return _DOCUMENT_EXTENSION_MIME.get(extension)
+    return file.content_type
+
+
 def process_document(file: UploadFile) -> Optional[FileMedia]:
-    try:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        return FileMedia(
-            content=content, filename=file.filename, format=extract_format(file), mime_type=file.content_type
-        )
-    except Exception:
-        logger.exception(f"Error processing document {file.filename}")
-        return None
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+    # FileMedia construction validates the mime_type against File.valid_mime_types(). Every
+    # type in DOCUMENT_MIME_TYPES must also be valid there, otherwise the file is silently
+    # dropped here (the upload still returns 200). The unit tests assert the two stay in sync.
+    return FileMedia(
+        content=content,
+        filename=file.filename,
+        format=extract_format(file),
+        mime_type=_resolve_document_mime_type(file),
+    )
 
 
 def extract_format(file: UploadFile) -> Optional[str]:
@@ -503,24 +747,86 @@ def extract_format(file: UploadFile) -> Optional[str]:
     return None
 
 
+def build_request_context(
+    request: Request,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[str] = None,
+) -> RequestContext:
+    """Build a RequestContext from a FastAPI request and form fields.
+
+    Parses factory_input JSON and populates trusted context from request.state
+    (set by auth middleware).
+    """
+    from agno.factory import TrustedContext
+
+    # Parse factory_input JSON string
+    parsed_input: Any = None
+    if factory_input is not None:
+        try:
+            parsed_input = json.loads(factory_input)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"factory_input must be valid JSON: {e}")
+        if not isinstance(parsed_input, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"factory_input must be a JSON object, got {type(parsed_input).__name__}",
+            )
+
+    # Build trusted context from middleware-populated request.state
+    claims = getattr(request.state, "claims", None) or {}
+    scopes = getattr(request.state, "scopes", None) or frozenset()
+    if isinstance(scopes, (list, set)):
+        scopes = frozenset(scopes)
+    trusted = TrustedContext(claims=claims, scopes=scopes)
+
+    return RequestContext(
+        user_id=user_id,
+        session_id=session_id,
+        request=request,
+        input=parsed_input,
+        trusted=trusted,
+    )
+
+
+def find_factory_by_id(
+    component_id: str,
+    components: Optional[Sequence[Any]],
+) -> Optional[Any]:
+    """Find a factory entry by ID from a list of components."""
+    if not components:
+        return None
+    from agno.factory.base import BaseFactory
+
+    for component in components:
+        if isinstance(component, BaseFactory) and component.id == component_id:
+            return component
+    return None
+
+
 def get_agent_by_id(
     agent_id: str,
-    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
     version: Optional[int] = None,
     create_fresh: bool = False,
-) -> Optional[Union[Agent, RemoteAgent]]:
+    ctx: Optional[RequestContext] = None,
+) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new agent instance using deep_copy() to prevent
     state contamination between concurrent requests. The new instance shares heavy
     resources (db, model, MCP tools) but has isolated mutable state.
 
+    If the matched entry is an AgentFactory, invokes the factory with the provided
+    RequestContext to produce a fresh Agent.
+
     Args:
         agent_id: The agent ID to look up
-        agents: List of agents to search
+        agents: List of agents (and/or AgentFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
+        ctx: RequestContext for factory invocation (required if a factory is matched)
 
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
@@ -532,12 +838,20 @@ def get_agent_by_id(
     if agents:
         for agent in agents:
             if agent.id == agent_id:
-                if create_fresh and isinstance(agent, Agent):
-                    fresh_agent = agent.deep_copy()
-                    # Clear team/workflow context — this is a standalone agent copy
-                    fresh_agent.team_id = None
-                    fresh_agent.workflow_id = None
-                    return fresh_agent
+                # Base Agent — most common path, early exit
+                if isinstance(agent, Agent):
+                    if create_fresh:
+                        fresh_agent = agent.deep_copy()
+                        fresh_agent.team_id = None
+                        fresh_agent.workflow_id = None
+                        return fresh_agent
+                    return agent
+                # Factory path
+                if isinstance(agent, AgentFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(f"Agent '{agent_id}' is a factory and requires a RequestContext.")
+                    return agent.resolve(ctx, expected_type=Agent)
+                # RemoteAgent or other
                 return agent
 
     # Try to get the agent from the database
@@ -554,23 +868,74 @@ def get_agent_by_id(
     return None
 
 
+async def get_agent_by_id_async(
+    agent_id: str,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
+    create_fresh: bool = False,
+    ctx: Optional[RequestContext] = None,
+) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
+    """Async variant of get_agent_by_id that supports async factories."""
+    if agent_id is None:
+        return None
+
+    if agents:
+        for agent in agents:
+            if agent.id == agent_id:
+                # Base Agent — most common path, early exit
+                if isinstance(agent, Agent):
+                    if create_fresh:
+                        fresh_agent = agent.deep_copy()
+                        fresh_agent.team_id = None
+                        fresh_agent.workflow_id = None
+                        return fresh_agent
+                    return agent
+                # Factory path
+                if isinstance(agent, AgentFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(f"Agent '{agent_id}' is a factory and requires a RequestContext.")
+                    result = await agent.resolve_async(ctx, expected_type=Agent)
+                    return result
+                # RemoteAgent or other
+                return agent
+
+    if db and isinstance(db, BaseDb):
+        from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
+
+        try:
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            return db_agent
+        except Exception:
+            logger.exception(f"Error getting agent {agent_id} from database")
+            return None
+
+    return None
+
+
 def get_team_by_id(
     team_id: str,
-    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    teams: Optional[Sequence[Union[Team, RemoteTeam, TeamFactory]]] = None,
     create_fresh: bool = False,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
+    ctx: Optional[RequestContext] = None,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new team instance using deep_copy() to prevent
     state contamination between concurrent requests. Member agents are also deep copied.
 
+    If the matched entry is a TeamFactory, invokes the factory with the provided
+    RequestContext to produce a fresh Team.
+
     Args:
         team_id: The team ID to look up
-        teams: List of teams to search
+        teams: List of teams (and/or TeamFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
+        ctx: RequestContext for factory invocation (required if a factory is matched)
 
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
@@ -581,8 +946,55 @@ def get_team_by_id(
     if teams:
         for team in teams:
             if team.id == team_id:
-                if create_fresh and isinstance(team, Team):
-                    return team.deep_copy()
+                if isinstance(team, Team):
+                    if create_fresh:
+                        return team.deep_copy()
+                    return team
+                if isinstance(team, TeamFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
+                    result = team.resolve(ctx, expected_type=Team)
+                    return result
+                return team
+
+    if db and isinstance(db, BaseDb):
+        from agno.team.team import get_team_by_id as get_team_by_id_db
+
+        try:
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            return db_team
+        except Exception:
+            logger.exception(f"Error getting team {team_id} from database")
+            return None
+
+    return None
+
+
+async def get_team_by_id_async(
+    team_id: str,
+    teams: Optional[Sequence[Union[Team, RemoteTeam, TeamFactory]]] = None,
+    create_fresh: bool = False,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
+    registry: Optional[Registry] = None,
+    ctx: Optional[RequestContext] = None,
+) -> Optional[Union[Team, RemoteTeam]]:
+    """Async variant of get_team_by_id that supports async factories."""
+    if team_id is None:
+        return None
+
+    if teams:
+        for team in teams:
+            if team.id == team_id:
+                if isinstance(team, Team):
+                    if create_fresh:
+                        return team.deep_copy()
+                    return team
+                if isinstance(team, TeamFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
+                    result = await team.resolve_async(ctx, expected_type=Team)
+                    return result
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -600,24 +1012,29 @@ def get_team_by_id(
 
 def get_workflow_by_id(
     workflow_id: str,
-    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
     create_fresh: bool = False,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
+    ctx: Optional[RequestContext] = None,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
     state contamination between concurrent requests. Steps containing agents/teams are also deep copied.
 
+    If the matched entry is a WorkflowFactory, invokes the factory with the provided
+    RequestContext to produce a fresh Workflow.
+
     Args:
         workflow_id: The workflow ID to look up
-        workflows: List of workflows to search
+        workflows: List of workflows (and/or WorkflowFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
         db: Optional database interface
         version: Workflow version, if needed
         registry: Optional Registry instance
+        ctx: RequestContext for factory invocation (required if a factory is matched)
 
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
@@ -628,8 +1045,59 @@ def get_workflow_by_id(
     if workflows:
         for workflow in workflows:
             if workflow.id == workflow_id:
-                if create_fresh and isinstance(workflow, Workflow):
-                    return workflow.deep_copy()
+                if isinstance(workflow, Workflow):
+                    if create_fresh:
+                        return workflow.deep_copy()
+                    return workflow
+                if isinstance(workflow, WorkflowFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(
+                            f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
+                        )
+                    result = workflow.resolve(ctx, expected_type=Workflow)
+                    return result
+                return workflow
+
+    if db and isinstance(db, BaseDb):
+        from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
+
+        try:
+            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            return db_workflow
+        except Exception:
+            logger.exception(f"Error getting workflow {workflow_id} from database")
+            return None
+
+    return None
+
+
+async def get_workflow_by_id_async(
+    workflow_id: str,
+    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
+    create_fresh: bool = False,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
+    registry: Optional[Registry] = None,
+    ctx: Optional[RequestContext] = None,
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
+    """Async variant of get_workflow_by_id that supports async factories."""
+    if workflow_id is None:
+        return None
+
+    if workflows:
+        for workflow in workflows:
+            if workflow.id == workflow_id:
+                if isinstance(workflow, Workflow):
+                    if create_fresh:
+                        return workflow.deep_copy()
+                    return workflow
+                if isinstance(workflow, WorkflowFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(
+                            f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
+                        )
+                    result = await workflow.resolve_async(ctx, expected_type=Workflow)
+                    return result
                 return workflow
 
     if db and isinstance(db, BaseDb):
@@ -668,6 +1136,110 @@ def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: O
         "https://os-stg.agno.com",
         "https://os.agno.com",
     ]
+
+
+def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
+    """Resolve JWT auth config for the WebSocket entrypoint.
+
+    AgentOS (authorization=True) eagerly populates ``app.state.jwt_validator``,
+    ``app.state.jwt_verify_audience``, ``app.state.jwt_audience``, and
+    ``app.state.admin_scope`` from the authorization config.
+
+    For the manual ``app.add_middleware(JWTMiddleware, ...)`` path those
+    attributes are only populated lazily by ``JWTMiddleware.dispatch`` on the
+    FIRST HTTP request. WebSocket connections do not run that dispatch, so a
+    WebSocket connection that arrives before any HTTP request would otherwise
+    see no validator and silently fall through to ``requires_auth=False``.
+
+    This helper bridges that gap by walking ``app.user_middleware`` to find a
+    ``JWTMiddleware`` entry, building a validator from its kwargs the same way
+    the middleware does, and caching the result on ``app.state``.
+    """
+    blank: Dict[str, Any] = {
+        "validator": None,
+        "verify_audience": False,
+        "audience": None,
+        "admin_scope": None,
+        "user_isolation": False,
+        "auth_required": False,
+    }
+
+    state = getattr(app, "state", None)
+    if state is None:
+        return blank
+
+    validator = getattr(state, "jwt_validator", None)
+    if validator is not None:
+        return {
+            "validator": validator,
+            "verify_audience": getattr(state, "jwt_verify_audience", False),
+            "audience": getattr(state, "jwt_audience", None),
+            "admin_scope": getattr(state, "admin_scope", None),
+            "user_isolation": bool(getattr(state, "user_isolation_enabled", False)),
+            "auth_required": True,
+        }
+
+    # Lazy resolution for manual setup: locate JWTMiddleware in user_middleware
+    # and build its validator from kwargs. Avoid importing JWTMiddleware at
+    # module import time to keep WebSocket-less imports light.
+    user_middleware = getattr(app, "user_middleware", None)
+    if not user_middleware:
+        return blank
+
+    from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+
+    for entry in user_middleware:
+        if getattr(entry, "cls", None) is JWTMiddleware:
+            kwargs = getattr(entry, "kwargs", {}) or {}
+            # Mirror JWTMiddleware.__init__ deprecated secret_key handling:
+            # append to verification_keys so manual setups using secret_key
+            # still get a working WebSocket validator.
+            verification_keys = list(kwargs.get("verification_keys") or [])
+            legacy_secret = kwargs.get("secret_key")
+            if legacy_secret and legacy_secret not in verification_keys:
+                verification_keys.append(legacy_secret)
+            try:
+                lazy_validator = JWTValidator(
+                    verification_keys=verification_keys or None,
+                    jwks_file=kwargs.get("jwks_file"),
+                    algorithm=kwargs.get("algorithm", "RS256"),
+                    validate=kwargs.get("validate", True),
+                    scopes_claim=kwargs.get("scopes_claim", "scopes"),
+                    user_id_claim=kwargs.get("user_id_claim", "sub"),
+                    session_id_claim=kwargs.get("session_id_claim", "session_id"),
+                    audience_claim=kwargs.get("audience_claim", "aud"),
+                )
+            except Exception as e:
+                log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")
+                # JWTMiddleware IS configured, so auth was intended. Return
+                # auth_required=True so the WS endpoint rejects connections
+                # instead of silently falling through to unauthenticated mode.
+                return {**blank, "auth_required": True}
+
+            verify_audience = bool(kwargs.get("verify_audience", False))
+            audience = kwargs.get("audience")
+            admin_scope = kwargs.get("admin_scope")
+            user_isolation = bool(kwargs.get("user_isolation", False))
+
+            # Cache on app.state so subsequent WebSocket connections and the
+            # HTTP middleware see the same validator instance.
+            state.jwt_validator = lazy_validator
+            state.jwt_verify_audience = verify_audience
+            state.jwt_audience = audience
+            if admin_scope:
+                state.admin_scope = admin_scope
+            state.user_isolation_enabled = user_isolation
+
+            return {
+                "validator": lazy_validator,
+                "verify_audience": verify_audience,
+                "audience": audience,
+                "admin_scope": admin_scope,
+                "user_isolation": user_isolation,
+                "auth_required": True,
+            }
+
+    return blank
 
 
 def update_cors_middleware(app: FastAPI, new_origins: list):
@@ -1094,3 +1666,145 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
         return str(input_content)
     else:
         return str(input_content)
+
+
+# ---------------------------------------------------------------------------
+# High-level resolvers with error handling for routers
+# ---------------------------------------------------------------------------
+
+
+async def resolve_agent(
+    agent_id: str,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]],
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
+    request: Optional[Request] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[str] = None,
+) -> Union[Agent, RemoteAgent, AgentProtocol]:
+    """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
+
+    For factory agents: builds RequestContext, invokes factory, handles factory-specific errors.
+    For non-factory agents: resolves via deep_copy or DB lookup.
+
+    Raises HTTPException on all error paths.
+    """
+    is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
+    if is_factory:
+        if request is None:
+            raise HTTPException(status_code=400, detail="Request context is required for factory agents")
+        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
+        try:
+            agent = await get_agent_by_id_async(
+                agent_id, agents, db, registry, version=version, create_fresh=True, ctx=ctx
+            )
+        except FactoryValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FactoryPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FactoryError as e:
+            logger.error(f"Factory error for agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail="Agent factory error")
+        except Exception as e:
+            logger.error(f"Error in agent factory '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
+    else:
+        try:
+            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True)
+        except Exception as e:
+            logger.error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
+
+
+async def resolve_team(
+    team_id: str,
+    teams: Optional[Sequence[Union[Team, RemoteTeam, TeamFactory]]],
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
+    request: Optional[Request] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[str] = None,
+) -> Union[Team, RemoteTeam]:
+    """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
+    is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
+    if is_factory:
+        if request is None:
+            raise HTTPException(status_code=400, detail="Request context is required for factory teams")
+        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
+        try:
+            team = await get_team_by_id_async(
+                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+            )
+        except FactoryValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FactoryPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FactoryError as e:
+            logger.error(f"Factory error for team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail="Team factory error")
+        except Exception as e:
+            logger.error(f"Error in team factory '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error in team factory: {e}")
+    else:
+        try:
+            team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
+        except Exception as e:
+            logger.error(f"Error resolving team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return team
+
+
+async def resolve_workflow(
+    workflow_id: str,
+    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]],
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
+    request: Optional[Request] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[str] = None,
+) -> Union[Workflow, RemoteWorkflow]:
+    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
+    is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
+    if is_factory:
+        if request is None:
+            raise HTTPException(status_code=400, detail="Request context is required for factory workflows")
+        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
+        try:
+            workflow = await get_workflow_by_id_async(
+                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+            )
+        except FactoryValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FactoryPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FactoryError as e:
+            logger.error(f"Factory error for workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail="Workflow factory error")
+        except Exception as e:
+            logger.error(f"Error in workflow factory '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error in workflow factory: {e}")
+    else:
+        try:
+            workflow = get_workflow_by_id(
+                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True
+            )
+        except Exception as e:
+            logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return workflow
