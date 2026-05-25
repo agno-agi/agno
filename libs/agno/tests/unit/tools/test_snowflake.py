@@ -421,9 +421,7 @@ class TestDDLMethods:
     def test_alter_table_add_column(self, sf_tools, mock_sf_connector):
         _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
         result = json.loads(
-            sf_tools.alter_table(
-                table="T", operation="add_column", column="phone", column_type="VARCHAR(20)"
-            )
+            sf_tools.alter_table(table="T", operation="add_column", column="phone", column_type="VARCHAR(20)")
         )
         assert result["status"] == "success"
         executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
@@ -437,9 +435,7 @@ class TestDDLMethods:
 
     def test_alter_table_rename_column(self, sf_tools, mock_sf_connector):
         _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
-        sf_tools.alter_table(
-            table="T", operation="rename_column", column="old", new_name="new"
-        )
+        sf_tools.alter_table(table="T", operation="rename_column", column="old", new_name="new")
         executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
         assert executed_sql == "ALTER TABLE T RENAME COLUMN old TO new"
 
@@ -454,11 +450,7 @@ class TestDDLMethods:
         assert "Invalid column_type" in result["error"]
 
     def test_alter_table_rename_column_invalid_new_name(self, sf_tools):
-        result = json.loads(
-            sf_tools.alter_table(
-                table="T", operation="rename_column", column="c", new_name="x; DROP"
-            )
-        )
+        result = json.loads(sf_tools.alter_table(table="T", operation="rename_column", column="c", new_name="x; DROP"))
         assert "error" in result
         assert "Invalid new_name" in result["error"]
 

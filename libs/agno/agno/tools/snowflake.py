@@ -494,9 +494,7 @@ class SnowflakeTools(Toolkit):
 
         op = operation.lower().strip()
         if op not in _ALTER_OPS:
-            return json.dumps(
-                {"error": f"Unsupported operation: {operation}. Use one of: {sorted(_ALTER_OPS)}"}
-            )
+            return json.dumps({"error": f"Unsupported operation: {operation}. Use one of: {sorted(_ALTER_OPS)}"})
 
         if op == "add_column":
             if not column_type or not _VALID_TYPE.match(column_type.strip()):
@@ -511,9 +509,7 @@ class SnowflakeTools(Toolkit):
 
         try:
             results = self._execute(sql)
-            return json.dumps(
-                {"status": "success", "table": table, "operation": op, "result": results}, default=str
-            )
+            return json.dumps({"status": "success", "table": table, "operation": op, "result": results}, default=str)
         except Exception as e:
             logger.exception(f"Error altering table {table}")
             return json.dumps({"error": str(e)})
