@@ -365,13 +365,11 @@ class FileGenerationTools(Toolkit):
         try:
             log_debug(f"Generating DOCX file with content length: {len(content)}")
 
-            # Create DOCX content in memory
             document = Document()
 
             if title:
                 document.add_paragraph(title)
 
-            # Split content into paragraphs and add to document
             paragraphs = content.split("\n\n")
             for para in paragraphs:
                 if para.strip():
@@ -382,34 +380,13 @@ class FileGenerationTools(Toolkit):
             docx_content = buffer.getvalue()
             buffer.close()
 
-            # Generate filename if not provided
-            if not filename:
-                filename = f"generated_file_{str(uuid4())[:8]}.docx"
-            elif not filename.endswith(".docx"):
-                filename += ".docx"
-
-            # Save file to disk (if output_directory is set)
-            file_path = self._save_file_to_disk(docx_content, filename)
-
-            # Create FileArtifact
-            file_artifact = File(
-                id=str(uuid4()),
-                content=docx_content,
-                mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            return self._create_file_artifact(
+                docx_content,
+                filename,
                 file_type="docx",
-                filename=filename,
-                size=len(docx_content),
-                filepath=file_path if file_path else None,
+                mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                display_name="DOCX",
             )
-
-            log_debug("DOCX file generated successfully")
-            success_msg = f"DOCX file '{filename}' has been generated successfully with {len(docx_content)} bytes."
-            if file_path:
-                success_msg += f" File saved to: {file_path}"
-            else:
-                success_msg += " File is available in response."
-
-            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.exception("Failed to generate DOCX file")

@@ -114,4 +114,4 @@ if __name__ == "__main__":
     print("File Generation Tool Cookbook Example")
     print("=" * 50)
 
-    example_docx_generation()
+    example_pdf_generation()

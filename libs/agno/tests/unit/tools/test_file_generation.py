@@ -154,7 +154,6 @@ def test_generate_docx_file_success():
         assert file_artifact.file_type == "docx"
         assert file_artifact.content[:2] == b"PK"
         assert Path(file_artifact.filepath).exists()
-from agno.tools.file_generation import FileGenerationTools
 
 
 def test_relative_traversal_blocked():
