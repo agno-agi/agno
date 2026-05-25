@@ -414,9 +414,19 @@ class File(BaseModel):
     @field_validator("mime_type")
     @classmethod
     def validate_mime_type(cls, v):
-        """Validate that the mime_type is one of the allowed types."""
+        """Validate that the mime_type is one of the known types.
+
+        If the MIME type is not in the known list, a warning is logged but
+        the value is accepted.  Model providers perform their own validation
+        at inference time, so a strict framework-level rejection would
+        prevent valid use cases that the known list does not cover (e.g.
+        vendor-specific types or types added by newer providers).
+        """
         if v is not None and v not in cls.valid_mime_types():
-            raise ValueError(f"Invalid MIME type: {v}. Must be one of: {cls.valid_mime_types()}")
+            log_error(
+                f"Unrecognized MIME type '{v}' - expected one of: {cls.valid_mime_types()}. "
+                "Model providers may reject this file at inference time."
+            )
         return v
 
     @classmethod
