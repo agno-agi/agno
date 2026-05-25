@@ -60,6 +60,8 @@ def test_get_model_parses_cloudflare_workers_ai_catalog_binding():
     model = get_model("cloudflare:@cf/google/gemma-4-26b-a4b-it")
     assert isinstance(model, Cloudflare)
     assert model.id == "workers-ai/@cf/google/gemma-4-26b-a4b-it"
+
+
 def test_get_model_parses_n1n_string():
     """Test get_model() parses N1N model string."""
     model = get_model("n1n:gpt-4o")

@@ -65,7 +65,7 @@ class Cloudflare(OpenAILike):
             Reads ``CLOUDFLARE_AI_GATEWAY_ID`` when unset.
         base_url (Optional[str]): Full OpenAI client base URL (``.../compat``). When set, ``account_id`` and
             ``gateway_id`` are not used to build the URL.
-        max_tokens (int): Maximum tokens for completions. Defaults to 4096.
+        max_tokens (Optional[int]): Maximum tokens for completions. Defaults to None (omitted from request).
     """
 
     id: str = DEFAULT_GATEWAY_MODEL
@@ -76,7 +76,7 @@ class Cloudflare(OpenAILike):
     account_id: Optional[str] = None
     gateway_id: Optional[str] = None
     base_url: Optional[str] = None
-    max_tokens: int = 4096
+    max_tokens: Optional[int] = None
     models: Optional[List[str]] = None
 
     _models_field_warned: bool = field(default=False, repr=False, compare=False)

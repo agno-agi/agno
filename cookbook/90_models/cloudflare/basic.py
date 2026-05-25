@@ -34,7 +34,7 @@ from agno.models.cloudflare import Cloudflare
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Cloudflare(),
+    model=Cloudflare("@cf/meta/llama-3.3-70b-instruct-fp8-fast"),
     markdown=True,
 )
 
