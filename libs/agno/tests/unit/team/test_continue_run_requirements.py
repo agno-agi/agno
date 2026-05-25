@@ -927,6 +927,7 @@ class TestContinueRunApprovalResolution:
                 patch("agno.team._init._disconnect_connectable_tools"),
                 patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
                 patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._aget_learning_tools", new=AsyncMock(return_value=[])),
                 patch("agno.team._tools._determine_tools_for_model", return_value=[]),
                 patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])),
                 patch("agno.team._run._ahandle_team_tool_call_updates", new=AsyncMock()),
