@@ -104,21 +104,21 @@ def get_mcp_server(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
-        return await agent.arun(message)  # type: ignore[misc]
+        return await agent.arun(message, stream=False)  # type: ignore[misc]
 
     @mcp.tool(name="run_team", description="Run a team with a message", tags={"core"})  # type: ignore
     async def run_team(team_id: str, message: str) -> TeamRunOutput:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
-        return await team.arun(message)  # type: ignore[misc]
+        return await team.arun(message, stream=False)  # type: ignore[misc]
 
     @mcp.tool(name="run_workflow", description="Run a workflow with a message", tags={"core"})  # type: ignore
     async def run_workflow(workflow_id: str, message: str) -> WorkflowRunOutput:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
-        return await workflow.arun(message)
+        return await workflow.arun(message, stream=False)
 
     # ==================== Session Management Tools ====================
 
