@@ -37,55 +37,10 @@ from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
-    CompressionCompletedEvent as AgentCompressionCompletedEvent,
-)
-from agno.run.agent import (
-    CompressionStartedEvent as AgentCompressionStartedEvent,
-)
-from agno.run.agent import (
-    ModelRequestCompletedEvent as AgentModelRequestCompletedEvent,
-)
-from agno.run.agent import (
-    ModelRequestStartedEvent as AgentModelRequestStartedEvent,
-)
-from agno.run.agent import (
-    OutputModelResponseCompletedEvent as AgentOutputModelResponseCompletedEvent,
-)
-from agno.run.agent import (
-    OutputModelResponseStartedEvent as AgentOutputModelResponseStartedEvent,
-)
-from agno.run.agent import (
-    ParserModelResponseCompletedEvent as AgentParserModelResponseCompletedEvent,
-)
-from agno.run.agent import (
-    ParserModelResponseStartedEvent as AgentParserModelResponseStartedEvent,
-)
-from agno.run.agent import (
-    PostHookCompletedEvent as AgentPostHookCompletedEvent,
-)
-from agno.run.agent import (
-    PostHookStartedEvent as AgentPostHookStartedEvent,
-)
-from agno.run.agent import (
-    PreHookCompletedEvent as AgentPreHookCompletedEvent,
-)
-from agno.run.agent import (
-    PreHookStartedEvent as AgentPreHookStartedEvent,
-)
-from agno.run.agent import (
-    ReasoningCompletedEvent as AgentReasoningCompletedEvent,
-)
-from agno.run.agent import (
-    ReasoningStartedEvent as AgentReasoningStartedEvent,
-)
-from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
 from agno.run.agent import (
     RunCompletedEvent as AgentRunCompletedEvent,
-)
-from agno.run.agent import (
-    RunContentCompletedEvent as AgentRunContentCompletedEvent,
 )
 from agno.run.agent import (
     RunContentEvent,
@@ -94,12 +49,6 @@ from agno.run.agent import (
 )
 from agno.run.agent import (
     RunErrorEvent as AgentRunErrorEvent,
-)
-from agno.run.agent import (
-    ToolCallCompletedEvent as AgentToolCallCompletedEvent,
-)
-from agno.run.agent import (
-    ToolCallStartedEvent as AgentToolCallStartedEvent,
 )
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
@@ -120,67 +69,16 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.team import (
-    CompressionCompletedEvent as TeamCompressionCompletedEvent,
-)
-from agno.run.team import (
-    CompressionStartedEvent as TeamCompressionStartedEvent,
-)
-from agno.run.team import (
-    ModelRequestCompletedEvent as TeamModelRequestCompletedEvent,
-)
-from agno.run.team import (
-    ModelRequestStartedEvent as TeamModelRequestStartedEvent,
-)
-from agno.run.team import (
-    OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent,
-)
-from agno.run.team import (
-    OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent,
-)
-from agno.run.team import (
-    ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent,
-)
-from agno.run.team import (
-    ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent,
-)
-from agno.run.team import (
-    PostHookCompletedEvent as TeamPostHookCompletedEvent,
-)
-from agno.run.team import (
-    PostHookStartedEvent as TeamPostHookStartedEvent,
-)
-from agno.run.team import (
-    PreHookCompletedEvent as TeamPreHookCompletedEvent,
-)
-from agno.run.team import (
-    PreHookStartedEvent as TeamPreHookStartedEvent,
-)
-from agno.run.team import (
-    ReasoningCompletedEvent as TeamReasoningCompletedEvent,
-)
-from agno.run.team import (
-    ReasoningStartedEvent as TeamReasoningStartedEvent,
-)
-from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
-)
-from agno.run.team import (
-    RunContentCompletedEvent as TeamRunContentCompletedEvent,
 )
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import (
     RunErrorEvent as TeamRunErrorEvent,
 )
 from agno.run.team import TeamRunEvent
-from agno.run.team import (
-    ToolCallCompletedEvent as TeamToolCallCompletedEvent,
-)
-from agno.run.team import (
-    ToolCallStartedEvent as TeamToolCallStartedEvent,
-)
 from agno.run.workflow import (
     StepContinuedEvent,
     StepErrorEvent,
@@ -261,51 +159,16 @@ STEP_TYPE_MAPPING = {
     Router: StepType.ROUTER,
 }
 
-# Paired *Started/*Completed events from a step's executor (agent or team)
-# bypass raise_if_cancelled so cancel doesn't orphan an executor event on the
-# wire. Cancel still fires on RunContent chunks between iterations. RunError
-# is included so an error that lands on the same tick as cancel isn't dropped.
+# Cancel raises immediately on every event. Only terminal events bypass so the
+# executor's own cancel handler can yield them to the stream. RunError is
+# included so an error that lands on the same tick as cancel isn't dropped.
 _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES = (
     AgentRunCancelledEvent,
     AgentRunCompletedEvent,
     AgentRunErrorEvent,
-    AgentModelRequestStartedEvent,
-    AgentModelRequestCompletedEvent,
-    AgentRunContentCompletedEvent,
-    AgentToolCallStartedEvent,
-    AgentToolCallCompletedEvent,
-    AgentReasoningStartedEvent,
-    AgentReasoningCompletedEvent,
-    AgentCompressionStartedEvent,
-    AgentCompressionCompletedEvent,
-    AgentParserModelResponseStartedEvent,
-    AgentParserModelResponseCompletedEvent,
-    AgentOutputModelResponseStartedEvent,
-    AgentOutputModelResponseCompletedEvent,
-    AgentPreHookStartedEvent,
-    AgentPreHookCompletedEvent,
-    AgentPostHookStartedEvent,
-    AgentPostHookCompletedEvent,
     TeamRunCancelledEvent,
     TeamRunCompletedEvent,
     TeamRunErrorEvent,
-    TeamModelRequestStartedEvent,
-    TeamModelRequestCompletedEvent,
-    TeamRunContentCompletedEvent,
-    TeamToolCallStartedEvent,
-    TeamToolCallCompletedEvent,
-    TeamReasoningStartedEvent,
-    TeamReasoningCompletedEvent,
-    TeamCompressionStartedEvent,
-    TeamCompressionCompletedEvent,
-    TeamParserModelResponseStartedEvent,
-    TeamParserModelResponseCompletedEvent,
-    TeamOutputModelResponseStartedEvent,
-    TeamOutputModelResponseCompletedEvent,
-    TeamPreHookStartedEvent,
-    TeamPreHookCompletedEvent,
-    TeamPostHookStartedEvent,
-    TeamPostHookCompletedEvent,
 )
 
 
@@ -3479,7 +3342,7 @@ class Workflow:
                                 except RunCancelledException:
                                     # Drain the executor generator so its own RunCancelled/RunCompleted
                                     # terminal events (which are in the bypass tuple) can still surface
-                                    # on the wire. Cancellation is re-raised after the loop exits.
+                                    # in the stream. Cancellation is re-raised after the loop exits.
                                     draining_after_cancel = True
                                     if isinstance(event, StepOutput):
                                         cancelled_step_output = event
@@ -6938,7 +6801,7 @@ class Workflow:
                             except RunCancelledException:
                                 # Drain the executor generator so its own RunCancelled/RunCompleted
                                 # terminal events (which are in the bypass tuple) can still surface
-                                # on the wire. Cancellation is re-raised after the loop exits.
+                                # in the stream. Cancellation is re-raised after the loop exits.
                                 draining_after_cancel = True
                                 continue
                         if draining_after_cancel and not is_bypass:
@@ -8584,7 +8447,7 @@ class Workflow:
                             except RunCancelledException:
                                 # Drain the executor generator so its own RunCancelled/RunCompleted
                                 # terminal events (which are in the bypass tuple) can still surface
-                                # on the wire. Cancellation is re-raised after the loop exits.
+                                # in the stream. Cancellation is re-raised after the loop exits.
                                 draining_after_cancel = True
                                 continue
                         if draining_after_cancel and not is_bypass:

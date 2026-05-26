@@ -44,26 +44,11 @@ from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
-    CompressionCompletedEvent,
-    CompressionStartedEvent,
-    ModelRequestCompletedEvent,
-    ModelRequestStartedEvent,
-    OutputModelResponseCompletedEvent,
-    OutputModelResponseStartedEvent,
-    ParserModelResponseCompletedEvent,
-    ParserModelResponseStartedEvent,
-    PreHookCompletedEvent,
-    PreHookStartedEvent,
-    ReasoningCompletedEvent,
-    ReasoningStartedEvent,
     RunCancelledEvent,
     RunCompletedEvent,
-    RunContentCompletedEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
-    ToolCallCompletedEvent,
-    ToolCallStartedEvent,
 )
 from agno.run.approval import (
     acreate_approval_from_pause,
@@ -129,25 +114,9 @@ from agno.utils.response import get_paused_content
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
 
-# Paired *Started/*Completed events bypass raise_if_cancelled so cancel doesn't
-# orphan a Started without its Completed (or vice-versa) on the wire. Cancel
-# still fires on RunContentEvent chunks between iterations.
+# Cancel raises immediately on every event. Only terminal events bypass so the
+# run's own cancel handler can yield them to the stream.
 _CANCEL_BYPASS_EVENT_TYPES = (
-    ModelRequestStartedEvent,
-    ModelRequestCompletedEvent,
-    RunContentCompletedEvent,
-    ToolCallStartedEvent,
-    ToolCallCompletedEvent,
-    ReasoningStartedEvent,
-    ReasoningCompletedEvent,
-    CompressionStartedEvent,
-    CompressionCompletedEvent,
-    ParserModelResponseStartedEvent,
-    ParserModelResponseCompletedEvent,
-    OutputModelResponseStartedEvent,
-    OutputModelResponseCompletedEvent,
-    PreHookStartedEvent,
-    PreHookCompletedEvent,
     RunCancelledEvent,
     RunCompletedEvent,
 )

@@ -37,65 +37,14 @@ from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
-    CompressionCompletedEvent as AgentCompressionCompletedEvent,
-)
-from agno.run.agent import (
-    CompressionStartedEvent as AgentCompressionStartedEvent,
-)
-from agno.run.agent import (
-    ModelRequestCompletedEvent as AgentModelRequestCompletedEvent,
-)
-from agno.run.agent import (
-    ModelRequestStartedEvent as AgentModelRequestStartedEvent,
-)
-from agno.run.agent import (
-    OutputModelResponseCompletedEvent as AgentOutputModelResponseCompletedEvent,
-)
-from agno.run.agent import (
-    OutputModelResponseStartedEvent as AgentOutputModelResponseStartedEvent,
-)
-from agno.run.agent import (
-    ParserModelResponseCompletedEvent as AgentParserModelResponseCompletedEvent,
-)
-from agno.run.agent import (
-    ParserModelResponseStartedEvent as AgentParserModelResponseStartedEvent,
-)
-from agno.run.agent import (
-    PostHookCompletedEvent as AgentPostHookCompletedEvent,
-)
-from agno.run.agent import (
-    PostHookStartedEvent as AgentPostHookStartedEvent,
-)
-from agno.run.agent import (
-    PreHookCompletedEvent as AgentPreHookCompletedEvent,
-)
-from agno.run.agent import (
-    PreHookStartedEvent as AgentPreHookStartedEvent,
-)
-from agno.run.agent import (
-    ReasoningCompletedEvent as AgentReasoningCompletedEvent,
-)
-from agno.run.agent import (
-    ReasoningStartedEvent as AgentReasoningStartedEvent,
-)
-from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
 from agno.run.agent import (
     RunCompletedEvent as AgentRunCompletedEvent,
 )
 from agno.run.agent import (
-    RunContentCompletedEvent as AgentRunContentCompletedEvent,
-)
-from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
-)
-from agno.run.agent import (
-    ToolCallCompletedEvent as AgentToolCallCompletedEvent,
-)
-from agno.run.agent import (
-    ToolCallStartedEvent as AgentToolCallStartedEvent,
 )
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
@@ -103,6 +52,7 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     acleanup_member_runs,
     acleanup_run,
+    adrain_member_tasks,
     aget_member_run_ids,
     araise_if_cancelled,
     aregister_member_run,
@@ -119,67 +69,16 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
-    CompressionCompletedEvent as TeamCompressionCompletedEvent,
-)
-from agno.run.team import (
-    CompressionStartedEvent as TeamCompressionStartedEvent,
-)
-from agno.run.team import (
-    ModelRequestCompletedEvent as TeamModelRequestCompletedEvent,
-)
-from agno.run.team import (
-    ModelRequestStartedEvent as TeamModelRequestStartedEvent,
-)
-from agno.run.team import (
-    OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent,
-)
-from agno.run.team import (
-    OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent,
-)
-from agno.run.team import (
-    ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent,
-)
-from agno.run.team import (
-    ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent,
-)
-from agno.run.team import (
-    PostHookCompletedEvent as TeamPostHookCompletedEvent,
-)
-from agno.run.team import (
-    PostHookStartedEvent as TeamPostHookStartedEvent,
-)
-from agno.run.team import (
-    PreHookCompletedEvent as TeamPreHookCompletedEvent,
-)
-from agno.run.team import (
-    PreHookStartedEvent as TeamPreHookStartedEvent,
-)
-from agno.run.team import (
-    ReasoningCompletedEvent as TeamReasoningCompletedEvent,
-)
-from agno.run.team import (
-    ReasoningStartedEvent as TeamReasoningStartedEvent,
-)
-from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
 )
 from agno.run.team import (
-    RunContentCompletedEvent as TeamRunContentCompletedEvent,
-)
-from agno.run.team import (
     TaskData,
     TeamRunInput,
     TeamRunOutput,
     TeamRunOutputEvent,
-)
-from agno.run.team import (
-    ToolCallCompletedEvent as TeamToolCallCompletedEvent,
-)
-from agno.run.team import (
-    ToolCallStartedEvent as TeamToolCallStartedEvent,
 )
 from agno.session import TeamSession
 from agno.tools.function import Function
@@ -219,48 +118,14 @@ from agno.utils.log import (
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
 
-# Paired *Started/*Completed events bypass raise_if_cancelled so cancel doesn't
-# orphan a member event on the wire. Terminals let the member finish its own
-# cancellation. RunError is excluded — in a cancel race the team's cancel wins.
+# Cancel raises immediately on every event. Only terminal events bypass so the
+# member's own cancel handler can yield them to the stream. RunError is excluded —
+# in a cancel race the team's cancel wins.
 _MEMBER_CANCEL_BYPASS_EVENT_TYPES = (
     AgentRunCancelledEvent,
     AgentRunCompletedEvent,
-    AgentModelRequestStartedEvent,
-    AgentModelRequestCompletedEvent,
-    AgentRunContentCompletedEvent,
-    AgentToolCallStartedEvent,
-    AgentToolCallCompletedEvent,
-    AgentReasoningStartedEvent,
-    AgentReasoningCompletedEvent,
-    AgentCompressionStartedEvent,
-    AgentCompressionCompletedEvent,
-    AgentParserModelResponseStartedEvent,
-    AgentParserModelResponseCompletedEvent,
-    AgentOutputModelResponseStartedEvent,
-    AgentOutputModelResponseCompletedEvent,
-    AgentPreHookStartedEvent,
-    AgentPreHookCompletedEvent,
-    AgentPostHookStartedEvent,
-    AgentPostHookCompletedEvent,
     TeamRunCancelledEvent,
     TeamRunCompletedEvent,
-    TeamModelRequestStartedEvent,
-    TeamModelRequestCompletedEvent,
-    TeamRunContentCompletedEvent,
-    TeamToolCallStartedEvent,
-    TeamToolCallCompletedEvent,
-    TeamReasoningStartedEvent,
-    TeamReasoningCompletedEvent,
-    TeamCompressionStartedEvent,
-    TeamCompressionCompletedEvent,
-    TeamParserModelResponseStartedEvent,
-    TeamParserModelResponseCompletedEvent,
-    TeamOutputModelResponseStartedEvent,
-    TeamOutputModelResponseCompletedEvent,
-    TeamPreHookStartedEvent,
-    TeamPreHookCompletedEvent,
-    TeamPostHookStartedEvent,
-    TeamPostHookCompletedEvent,
 )
 
 if TYPE_CHECKING:
@@ -269,11 +134,15 @@ if TYPE_CHECKING:
 
 
 def cancel_run(run_id: str) -> bool:
-    """Cancel a team run and cascade to its in-flight member runs.
+    """Cancel a running team execution.
 
-    Member mappings are *not* cleaned up here — the team's own
-    ``_cleanup_and_store`` path owns that cleanup. Removing them mid-cascade
-    would break recursive bookkeeping for nested team hierarchies.
+    Also cancels any in-flight member runs spawned by this team run.
+
+    Args:
+        run_id (str): The run_id to cancel.
+
+    Returns:
+        bool: True if the run was found and marked for cancellation, False otherwise.
     """
     result = cancel_run_global(run_id)
     for member_run_id in get_member_run_ids(run_id):
@@ -282,7 +151,16 @@ def cancel_run(run_id: str) -> bool:
 
 
 async def acancel_run(run_id: str) -> bool:
-    """Async variant of :func:`cancel_run`."""
+    """Cancel a running team execution (async version).
+
+    Also cancels any in-flight member runs spawned by this team run.
+
+    Args:
+        run_id (str): The run_id to cancel.
+
+    Returns:
+        bool: True if the run was found and marked for cancellation, False otherwise.
+    """
     result = await acancel_run_global(run_id)
     for member_run_id in await aget_member_run_ids(run_id):
         await acancel_run(member_run_id)
@@ -2435,6 +2313,8 @@ async def _arun_tasks(
 
     except RunCancelledException as e:
         run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+        if run_response.run_id:
+            await adrain_member_tasks(run_response.run_id)
         if team_session is not None:
             await _acleanup_and_store(team, run_response=run_response, session=team_session)
         return run_response
@@ -2936,6 +2816,8 @@ async def _arun_tasks_stream(
             error=e,
             run_context=run_context,
         )
+        if run_response.run_id:
+            await adrain_member_tasks(run_response.run_id)
         try:
             if team_session is not None:
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -3322,6 +3204,8 @@ async def _arun(
 
             except RunCancelledException as e:
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+                if run_response.run_id:
+                    await adrain_member_tasks(run_response.run_id)
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
 
@@ -4019,6 +3903,8 @@ async def _arun_stream(
                     error=e,
                     run_context=run_context,
                 )
+                if run_response.run_id:
+                    await adrain_member_tasks(run_response.run_id)
                 try:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
@@ -7154,6 +7040,8 @@ async def _acontinue_run(
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+                if run_response.run_id:
+                    await adrain_member_tasks(run_response.run_id)
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -7695,6 +7583,8 @@ async def _acontinue_run_stream(
                     error=e,
                     run_context=run_context,
                 )
+                if run_response.run_id:
+                    await adrain_member_tasks(run_response.run_id)
                 try:
                     if team_session is not None:
                         await _acleanup_and_store(team, run_response=run_response, session=team_session)

@@ -484,7 +484,9 @@ def test_member_run_in_team_run_output_on_cancellation_sync(shared_db):
 
     Verifies:
     - Team run status is cancelled
-    - Content is preserved (not overwritten)
+    - Team content is preserved (not overwritten)
+    - member_responses includes the in-flight member with cancelled status
+      and its partial content
     """
     researcher = Agent(
         name="Researcher",
@@ -498,6 +500,7 @@ def test_member_run_in_team_run_output_on_cancellation_sync(shared_db):
         db=shared_db,
         store_tool_messages=True,
         store_history_messages=True,
+        store_member_responses=True,
     )
 
     session_id = "test_member_persist_on_cancel_sync"
@@ -527,8 +530,16 @@ def test_member_run_in_team_run_output_on_cancellation_sync(shared_db):
     assert session.runs is not None and len(session.runs) > 0
 
     last_run = session.runs[-1]
+    assert isinstance(last_run, TeamRunOutput)
     assert last_run.status == RunStatus.cancelled
     assert last_run.content is not None
+
+    # Member run that was in-flight at cancel time must be captured as cancelled
+    # with whatever partial content it had produced.
+    assert last_run.member_responses, "expected member_responses to be populated"
+    cancelled_member_runs = [m for m in last_run.member_responses if m.status == RunStatus.cancelled]
+    assert cancelled_member_runs, "expected at least one cancelled member run in member_responses"
+    assert any(m.content for m in cancelled_member_runs), "expected cancelled member run to preserve partial content"
 
 
 @pytest.mark.asyncio
@@ -546,6 +557,7 @@ async def test_member_run_in_team_run_output_on_cancellation_async(shared_db):
         db=shared_db,
         store_tool_messages=True,
         store_history_messages=True,
+        store_member_responses=True,
     )
 
     session_id = "test_member_persist_on_cancel_async"
@@ -574,8 +586,14 @@ async def test_member_run_in_team_run_output_on_cancellation_async(shared_db):
     assert session.runs is not None and len(session.runs) > 0
 
     last_run = session.runs[-1]
+    assert isinstance(last_run, TeamRunOutput)
     assert last_run.status == RunStatus.cancelled
     assert last_run.content is not None
+
+    assert last_run.member_responses, "expected member_responses to be populated"
+    cancelled_member_runs = [m for m in last_run.member_responses if m.status == RunStatus.cancelled]
+    assert cancelled_member_runs, "expected at least one cancelled member run in member_responses"
+    assert any(m.content for m in cancelled_member_runs), "expected cancelled member run to preserve partial content"
 
 
 # ============================================================================

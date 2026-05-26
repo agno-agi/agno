@@ -1,5 +1,6 @@
 """Run cancellation management."""
 
+import asyncio
 from typing import Dict, Set
 
 from agno.run.cancellation_management.base import BaseRunCancellationManager
@@ -8,6 +9,11 @@ from agno.utils.log import logger
 
 # Global cancellation manager instance
 _cancellation_manager: BaseRunCancellationManager = InMemoryRunCancellationManager()
+
+# Per team run_id, the async delegate tasks the model spawned. The team's cancel
+# handler awaits these before persisting so each member's post-cancel
+# add_member_run lands on run_response in time.
+_member_drain_tasks: Dict[str, Set[asyncio.Task]] = {}
 
 
 def set_cancellation_manager(manager: BaseRunCancellationManager) -> None:
@@ -115,10 +121,29 @@ async def aget_member_run_ids(team_run_id: str) -> Set[str]:
 
 
 def cleanup_member_runs(team_run_id: str) -> None:
-    """Drop a team run's member mapping when the team run finishes."""
+    """Drop a team run's member tracking when the team run finishes."""
     _cancellation_manager.cleanup_member_runs(team_run_id)
+    _member_drain_tasks.pop(team_run_id, None)
 
 
 async def acleanup_member_runs(team_run_id: str) -> None:
-    """Drop a team run's member mapping when the team run finishes (async version)."""
+    """Drop a team run's member tracking when the team run finishes (async version)."""
     await _cancellation_manager.acleanup_member_runs(team_run_id)
+    _member_drain_tasks.pop(team_run_id, None)
+
+
+def register_member_drain_task(team_run_id: str, task: asyncio.Task) -> None:
+    """Track an async delegate task so its post-cancel cleanup can be awaited."""
+    _member_drain_tasks.setdefault(team_run_id, set()).add(task)
+    task.add_done_callback(lambda t: _member_drain_tasks.get(team_run_id, set()).discard(t))
+
+
+async def adrain_member_tasks(team_run_id: str, timeout: float = 5.0) -> None:
+    """Await all in-flight delegate tasks for a team run, bounded by timeout."""
+    tasks = {t for t in _member_drain_tasks.get(team_run_id, set()) if not t.done()}
+    if not tasks:
+        return
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning(f"Timed out draining {len(tasks)} member task(s) for run {team_run_id}")
