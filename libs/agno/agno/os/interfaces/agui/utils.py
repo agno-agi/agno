@@ -1,31 +1,36 @@
 """Logic used by the AG-UI router."""
 
 import json
+import re
 import uuid
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tuple, Union
 
-from ag_ui.core import (
-    BaseEvent,
-    CustomEvent,
-    EventType,
-    ReasoningEndEvent,
-    ReasoningMessageContentEvent,
-    ReasoningMessageEndEvent,
-    ReasoningMessageStartEvent,
-    ReasoningStartEvent,
-    RunFinishedEvent,
-    StateSnapshotEvent,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    TextMessageStartEvent,
-    ToolCallArgsEvent,
-    ToolCallEndEvent,
-    ToolCallResultEvent,
-    ToolCallStartEvent,
-)
-from ag_ui.core.types import Message as AGUIMessage
+try:
+    from ag_ui.core import (
+        BaseEvent,
+        CustomEvent,
+        EventType,
+        ReasoningEndEvent,
+        ReasoningMessageContentEvent,
+        ReasoningMessageEndEvent,
+        ReasoningMessageStartEvent,
+        ReasoningStartEvent,
+        RunFinishedEvent,
+        StateSnapshotEvent,
+        TextMessageContentEvent,
+        TextMessageEndEvent,
+        TextMessageStartEvent,
+        ToolCallArgsEvent,
+        ToolCallEndEvent,
+        ToolCallResultEvent,
+        ToolCallStartEvent,
+    )
+    from ag_ui.core.types import Message as AGUIMessage
+except ImportError as e:
+    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
+
 from pydantic import BaseModel
 
 from agno.reasoning.step import ReasoningStep
@@ -40,9 +45,9 @@ from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
+from agno.tools.function import Function
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
-from agno.tools.function import Function
 
 
 def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
@@ -76,18 +81,56 @@ def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
     log_warning(f"AGUI state must be a dict, got {type(state).__name__}. State will be ignored. Thread: {thread_id}")
     return None
 
+
+# ── H3 hardening: validate frontend tool definitions ───────────────────────────
+# Matches OpenAI/Anthropic function-name constraints. Anything outside this
+# alphabet (e.g. dots, spaces, unicode) is rejected so we never relay a tool
+# name that the underlying model would refuse.
+_FUNCTION_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# Hard upper bound on description length forwarded to the model. Keeps prompt
+# overhead bounded and prevents description-based prompt injection bloat.
+_MAX_TOOL_DESCRIPTION_LENGTH = 1024
+
+
 def _agui_tools_to_external_functions(agui_tools):
+    """Convert AG-UI ``Tool`` definitions to external-execution ``Function`` objects.
+
+    Hardening (H3): a frontend tool is skipped (with a ``log_warning``) when:
+      * ``tool.name`` does not match ``_FUNCTION_NAME_RE`` (OpenAI-compatible).
+      * ``tool.description`` exceeds ``_MAX_TOOL_DESCRIPTION_LENGTH`` chars.
+
+    Args:
+        agui_tools: Iterable of AG-UI ``Tool`` definitions (may be ``None``).
+
+    Returns:
+        List of validated ``Function`` instances; invalid entries are dropped.
+    """
     if not agui_tools:
         return []
-    out = []
+    out: List[Function] = []
     for tool in agui_tools:
-        out.append(Function(
-            name=tool.name,
-            description=tool.description,
-            parameters=tool.parameters or {"type": "object", "properties": {}},
-            external_execution=True,
-            external_execution_silent=True,
-        ))
+        name = getattr(tool, "name", None)
+        if not isinstance(name, str) or not _FUNCTION_NAME_RE.fullmatch(name):
+            log_warning(
+                f"Skipping AG-UI frontend tool with invalid name: {name!r} (must match {_FUNCTION_NAME_RE.pattern})."
+            )
+            continue
+        description = getattr(tool, "description", "") or ""
+        if len(description) > _MAX_TOOL_DESCRIPTION_LENGTH:
+            log_warning(
+                f"Skipping AG-UI frontend tool {name!r}: description exceeds "
+                f"{_MAX_TOOL_DESCRIPTION_LENGTH} chars (got {len(description)})."
+            )
+            continue
+        out.append(
+            Function(
+                name=name,
+                description=description,
+                parameters=tool.parameters or {"type": "object", "properties": {}},
+                external_execution=True,
+                external_execution_silent=True,
+            )
+        )
     return out
 
 
@@ -708,9 +751,7 @@ async def async_stream_agno_response_as_agui_events(
             paused_run_id = getattr(completion_chunk, "run_id", None)
             tools = getattr(completion_chunk, "tools", None) or []
             tool_call_ids = [
-                t.tool_call_id
-                for t in tools
-                if getattr(t, "external_execution_required", False) and t.tool_call_id
+                t.tool_call_id for t in tools if getattr(t, "external_execution_required", False) and t.tool_call_id
             ]
             if paused_run_id and tool_call_ids:
                 on_paused(paused_run_id, tool_call_ids)
