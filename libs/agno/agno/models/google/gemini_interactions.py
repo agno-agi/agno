@@ -12,7 +12,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
+from typing import Any, ClassVar, Dict, Iterator, List, Literal, Optional, Tuple, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -23,38 +23,106 @@ from agno.models.base import Model
 from agno.models.google.utils import media_to_content_item
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RunOutput
 from agno.utils.gemini import inject_agno_client_header
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
     from google import genai
     from google.genai import Client as GeminiClient
-    from google.genai._interactions import types as interaction_types
-    from google.genai._interactions.types.function_call_step import FunctionCallStep
-    from google.genai._interactions.types.model_output_step import ModelOutputStep
-    from google.genai._interactions.types.step_delta import (
-        DeltaArgumentsDelta,
-        DeltaText,
-        DeltaThoughtSignature,
-        DeltaThoughtSummary,
+    from google.genai import interactions as interaction_types
+    from google.genai.interactions import (
+        AudioContent,
+        CodeExecutionCallStep,
+        CodeExecutionResultStep,
+        FileSearchCallStep,
+        FileSearchResultStep,
+        FunctionCallStep,
+        FunctionResultStep,
+        GoogleMapsCallStep,
+        GoogleMapsResultStep,
+        GoogleSearchCallStep,
+        GoogleSearchResultStep,
+        ImageContent,
+        MCPServerToolCallStep,
+        MCPServerToolResultStep,
+        ModelOutputStep,
+        TextContent,
+        ThoughtStep,
+        URLContextCallStep,
+        URLContextResultStep,
+        step_delta,
     )
-    from google.genai._interactions.types.text_content import TextContent
-    from google.genai._interactions.types.thought_step import ThoughtStep
+
+    # step_delta is exposed as a submodule attribute, not a sub-package, so
+    # the Delta* types need attribute access rather than a direct import.
+    DeltaArgumentsDelta = step_delta.DeltaArgumentsDelta
+    DeltaImage = step_delta.DeltaImage
+    DeltaText = step_delta.DeltaText
+    DeltaThoughtSignature = step_delta.DeltaThoughtSignature
+    DeltaThoughtSummary = step_delta.DeltaThoughtSummary
+    # Typed call deltas. Non-function call families stream their typed
+    # Arguments object here (DeltaArgumentsDelta only fires for functions).
+    DeltaCodeExecutionCall = step_delta.DeltaCodeExecutionCall
+    DeltaFileSearchCall = step_delta.DeltaFileSearchCall
+    DeltaGoogleMapsCall = step_delta.DeltaGoogleMapsCall
+    DeltaGoogleSearchCall = step_delta.DeltaGoogleSearchCall
+    DeltaMCPServerToolCall = step_delta.DeltaMCPServerToolCall
+    DeltaURLContextCall = step_delta.DeltaURLContextCall
+    # Result deltas. Every *ResultStep arrives empty at StepStart and its
+    # actual payload streams here (one or more deltas, then StepStop).
+    DeltaCodeExecutionResult = step_delta.DeltaCodeExecutionResult
+    DeltaFileSearchResult = step_delta.DeltaFileSearchResult
+    DeltaFunctionResult = step_delta.DeltaFunctionResult
+    DeltaGoogleMapsResult = step_delta.DeltaGoogleMapsResult
+    DeltaGoogleSearchResult = step_delta.DeltaGoogleSearchResult
+    DeltaMCPServerToolResult = step_delta.DeltaMCPServerToolResult
+    DeltaURLContextResult = step_delta.DeltaURLContextResult
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. "
         "Please install it using `pip install -U google-genai`"
     )
 
-# Lazy imports for content types used in output parsing
-try:
-    from google.genai._interactions.types.audio_content import AudioContent
-    from google.genai._interactions.types.image_content import ImageContent
-except ImportError:
-    AudioContent = None  # type: ignore[assignment, misc]
-    ImageContent = None  # type: ignore[assignment, misc]
+# Tuples used to detect call/result steps generically across all tool families.
+_CALL_STEP_TYPES = (
+    FunctionCallStep,
+    CodeExecutionCallStep,
+    URLContextCallStep,
+    MCPServerToolCallStep,
+    GoogleSearchCallStep,
+    FileSearchCallStep,
+    GoogleMapsCallStep,
+)
+_RESULT_STEP_TYPES = (
+    FunctionResultStep,
+    CodeExecutionResultStep,
+    URLContextResultStep,
+    MCPServerToolResultStep,
+    GoogleSearchResultStep,
+    FileSearchResultStep,
+    GoogleMapsResultStep,
+)
+# Typed call deltas (non-function). Function calls use DeltaArgumentsDelta
+# and are handled separately because they buffer args as a JSON string.
+_TYPED_CALL_DELTA_TYPES = (
+    DeltaCodeExecutionCall,
+    DeltaURLContextCall,
+    DeltaMCPServerToolCall,
+    DeltaGoogleSearchCall,
+    DeltaFileSearchCall,
+    DeltaGoogleMapsCall,
+)
+_RESULT_DELTA_TYPES = (
+    DeltaFunctionResult,
+    DeltaCodeExecutionResult,
+    DeltaURLContextResult,
+    DeltaMCPServerToolResult,
+    DeltaGoogleSearchResult,
+    DeltaFileSearchResult,
+    DeltaGoogleMapsResult,
+)
 
 
 @dataclass
@@ -120,6 +188,43 @@ class GeminiInteractions(Model):
     search: bool = False
     url_context: bool = False
     code_execution: bool = False
+    # Remote MCP servers. Supported on the model path and on Deep Research;
+    # NOT supported on Antigravity (the docs list it as out-of-scope).
+    # Each entry:
+    #   {"name": "...", "url": "https://...", "headers": {...}, "allowed_tools": [...]}
+    # `type` is added automatically; only `url` is strictly required.
+    mcp_servers: Optional[List[Dict[str, Any]]] = None
+    # File Search store names to ground responses on your own corpora, e.g.
+    # ["fileSearchStores/my-store-name"]. Supported on the model path and on
+    # Deep Research; NOT supported on Antigravity.
+    file_search_store_names: Optional[List[str]] = None
+
+    # Agent path (e.g. Deep Research, Antigravity). When `agent` is set, the
+    # request uses the agent + agent_config path instead of model +
+    # generation_config. The SDK enforces these are mutually exclusive.
+    # Examples:
+    #   agent="deep-research-preview-04-2026"
+    #   agent="antigravity-preview-05-2026"
+    agent: Optional[str] = None
+    # Deep Research agent_config knobs (only sent when `agent` is a deep-research id):
+    collaborative_planning: Optional[bool] = None  # turn 1 returns a plan; flip to False to execute
+    thinking_summaries: Optional[Literal["auto", "none"]] = None
+    visualization: Optional[Literal["off", "auto"]] = None
+    # Antigravity environment. One of:
+    #   - "remote"                  -> provision a fresh remote sandbox
+    #   - "env_<id>"                -> reuse an existing environment by id
+    #   - {...EnvironmentConfig}    -> custom sources / network rules
+    # Only forwarded on the agent path; ignored otherwise.
+    environment: Optional[Union[str, Dict[str, Any]]] = None
+    # Background polling cadence. Used for agents that run in background
+    # mode (Deep Research). Antigravity runs in the foreground and does
+    # not engage these knobs.
+    agent_poll_interval: float = 10.0  # seconds between status polls
+    agent_max_wait: float = 1800.0  # max seconds to wait for a terminal status (Deep Research can take minutes)
+    # Terminal statuses for a background agent interaction. "completed" /
+    # "failed" are documented; the rest are defensive. ClassVar so the
+    # dataclass does not treat it as an instance field.
+    _TERMINAL_STATUSES: ClassVar[Tuple[str, ...]] = ("completed", "failed", "cancelled", "incomplete")
 
     # Inference tier: "flex" (lower cost, higher latency), "standard", or "priority" (lowest latency)
     service_tier: Optional[Literal["flex", "standard", "priority"]] = None
@@ -196,6 +301,8 @@ class GeminiInteractions(Model):
                 "store": self.store,
                 "service_tier": self.service_tier,
                 "generation_config": self.generation_config,
+                "agent": self.agent,
+                "environment": self.environment,
             }
         )
         return {k: v for k, v in model_dict.items() if v is not None}
@@ -345,10 +452,19 @@ class GeminiInteractions(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
-        """Build keyword arguments for interactions.create()."""
-        kwargs: Dict[str, Any] = {
-            "model": self.id,
-        }
+        """Build keyword arguments for interactions.create().
+
+        Two mutually exclusive paths (enforced by the SDK):
+          - model path:  model + generation_config (default)
+          - agent path:  agent + agent_config (when self.agent is set, e.g.
+            a Deep Research agent id)
+        """
+        use_agent_path = self.agent is not None
+        kwargs: Dict[str, Any] = {}
+        if use_agent_path:
+            kwargs["agent"] = self.agent
+        else:
+            kwargs["model"] = self.id
 
         # System instruction from the last system message (consistent with gemini.py)
         system_message = None
@@ -356,15 +472,21 @@ class GeminiInteractions(Model):
             if msg.role == "system":
                 if isinstance(msg.content, str):
                     system_message = msg.content
-        if system_message:
+
+        if system_message and not use_agent_path:
+            # Agent path (Deep Research, etc.) rejects `system_instruction` and
+            # treats anything in `input` as the research request. Agno's
+            # auto-injected formatting boilerplate is not user research intent,
+            # so it is dropped on the agent path rather than folded in.
             kwargs["system_instruction"] = system_message
 
-        # When store=False, the user has opted out of server-side state - send
-        # the full message history and don't chain via previous_interaction_id.
-        # Otherwise, leverage server-side state: pass previous_interaction_id
-        # and send only the messages AFTER the prior assistant turn (the server
-        # already has everything up to that point).
-        if self.store is False:
+        # When store=False on the model path, the user has opted out of
+        # server-side state - send the full message history and don't chain
+        # via previous_interaction_id. Otherwise (including the agent path,
+        # which forces store=True), leverage server-side state: pass
+        # previous_interaction_id and send only the messages AFTER the prior
+        # assistant turn (the server already has everything up to that point).
+        if self.store is False and not use_agent_path:
             input_messages: List[Message] = messages
         else:
             previous_interaction_id, boundary_idx = self._find_previous_interaction(messages)
@@ -374,32 +496,49 @@ class GeminiInteractions(Model):
 
         kwargs["input"] = self._build_input(input_messages)
 
-        # Generation config (only params supported by the Interactions API SDK)
-        generation_config: Dict[str, Any] = {}
-        if self.temperature is not None:
-            generation_config["temperature"] = self.temperature
-        if self.top_p is not None:
-            generation_config["top_p"] = self.top_p
-        if self.max_output_tokens is not None:
-            generation_config["max_output_tokens"] = self.max_output_tokens
-        if self.stop_sequences is not None:
-            generation_config["stop_sequences"] = self.stop_sequences
-        if self.seed is not None:
-            generation_config["seed"] = self.seed
-        if self.thinking_level is not None:
-            generation_config["thinking_level"] = self.thinking_level
-        # Merge user-provided raw config last - their keys override field-derived values.
-        # If it's a Pydantic model (e.g. GenerateContentConfig), dump it with
-        # exclude_none so the request isn't flooded with unset fields.
-        if self.generation_config:
-            extra = (
-                self.generation_config.model_dump(exclude_none=True)
-                if isinstance(self.generation_config, BaseModel)
-                else self.generation_config
-            )
-            generation_config.update(extra)
-        if generation_config:
-            kwargs["generation_config"] = generation_config
+        if use_agent_path:
+            # agent_config is only valid with the agent path. For Deep Research
+            # agents, send the deep-research config knobs. The SDK rejects
+            # generation_config on this path.
+            agent_config: Dict[str, Any] = {}
+            if str(self.agent).startswith("deep-research"):
+                agent_config["type"] = "deep-research"
+                if self.collaborative_planning is not None:
+                    agent_config["collaborative_planning"] = self.collaborative_planning
+                if self.thinking_summaries is not None:
+                    agent_config["thinking_summaries"] = self.thinking_summaries
+                if self.visualization is not None:
+                    agent_config["visualization"] = self.visualization
+            # Only send agent_config if it carries a discriminating `type`.
+            if agent_config.get("type"):
+                kwargs["agent_config"] = agent_config
+        else:
+            # Generation config (only params supported by the Interactions API SDK)
+            generation_config: Dict[str, Any] = {}
+            if self.temperature is not None:
+                generation_config["temperature"] = self.temperature
+            if self.top_p is not None:
+                generation_config["top_p"] = self.top_p
+            if self.max_output_tokens is not None:
+                generation_config["max_output_tokens"] = self.max_output_tokens
+            if self.stop_sequences is not None:
+                generation_config["stop_sequences"] = self.stop_sequences
+            if self.seed is not None:
+                generation_config["seed"] = self.seed
+            if self.thinking_level is not None:
+                generation_config["thinking_level"] = self.thinking_level
+            # Merge user-provided raw config last - their keys override field-derived values.
+            # If it's a Pydantic model (e.g. GenerateContentConfig), dump it with
+            # exclude_none so the request isn't flooded with unset fields.
+            if self.generation_config:
+                extra = (
+                    self.generation_config.model_dump(exclude_none=True)
+                    if isinstance(self.generation_config, BaseModel)
+                    else self.generation_config
+                )
+                generation_config.update(extra)
+            if generation_config:
+                kwargs["generation_config"] = generation_config
 
         # Response modalities
         if self.response_modalities:
@@ -427,6 +566,13 @@ class GeminiInteractions(Model):
             all_tools.append({"type": "url_context"})
         if self.code_execution:
             all_tools.append({"type": "code_execution"})
+        if self.mcp_servers:
+            for server in self.mcp_servers:
+                # Discriminator goes last so a stray "type" in the user's
+                # server dict can't clobber it.
+                all_tools.append({**server, "type": "mcp_server"})
+        if self.file_search_store_names:
+            all_tools.append({"type": "file_search", "file_search_store_names": self.file_search_store_names})
         if all_tools:
             kwargs["tools"] = all_tools
 
@@ -437,6 +583,35 @@ class GeminiInteractions(Model):
         # Store
         if self.store is not None:
             kwargs["store"] = self.store
+
+        if use_agent_path:
+            # The agent path always requires server-side state.
+            kwargs["store"] = True
+
+            # Per-agent background semantics:
+            #   - Deep Research REQUIRES background=True (long-running, server
+            #     drives the autonomous loop).
+            #   - Antigravity does NOT support background=True (the SDK
+            #     rejects it; the agent runs in the foreground).
+            # Anything else: leave background unset and let the SDK default
+            # apply.
+            agent_id = str(self.agent)
+            if agent_id.startswith("deep-research"):
+                kwargs["background"] = True
+                log_debug(
+                    "Deep Research requires background execution; forcing background=True and store=True.",
+                    log_level=2,
+                )
+            else:
+                log_debug(
+                    "Agent path forcing store=True (server-side state is required).",
+                    log_level=2,
+                )
+
+            # Antigravity (and any future agent that takes one) reads its
+            # sandbox spec from `environment`. Forwarded as-is.
+            if self.environment is not None:
+                kwargs["environment"] = self.environment
 
         return kwargs
 
@@ -478,6 +653,129 @@ class GeminiInteractions(Model):
 
         return None
 
+    def _call_step_info(self, step: Any) -> Tuple[str, Dict[str, Any]]:
+        """Return (tool_name, tool_args) for any call step type.
+
+        Each tool family has its own *CallStep schema; this normalizes them
+        into a single (name, args) tuple suitable for ToolExecution.
+        """
+        if isinstance(step, FunctionCallStep):
+            return step.name or "", dict(step.arguments) if step.arguments else {}
+        if isinstance(step, CodeExecutionCallStep):
+            args = step.arguments.model_dump(exclude_none=True) if step.arguments else {}
+            return "code_execution", args
+        if isinstance(step, URLContextCallStep):
+            args = step.arguments.model_dump(exclude_none=True) if step.arguments else {}
+            return "url_context", args
+        if isinstance(step, MCPServerToolCallStep):
+            args = dict(step.arguments) if step.arguments else {}
+            if step.server_name:
+                args.setdefault("_server_name", step.server_name)
+            return step.name or "mcp_tool", args
+        if isinstance(step, GoogleSearchCallStep):
+            args = step.arguments.model_dump(exclude_none=True) if step.arguments else {}
+            if step.search_type:
+                args["search_type"] = step.search_type
+            return "google_search", args
+        if isinstance(step, FileSearchCallStep):
+            return "file_search", {}
+        if isinstance(step, GoogleMapsCallStep):
+            args = step.arguments.model_dump(exclude_none=True) if step.arguments else {}
+            return "google_maps", args
+        return "unknown", {}
+
+    def _extract_step_result(self, step: Any, model_response: ModelResponse) -> Tuple[Optional[str], Optional[bool]]:
+        """Flatten any *ResultStep's payload to (result_text, is_error).
+
+        Image content embedded in results is routed onto model_response.images
+        so downstream consumers can render it. Typed result objects (e.g.
+        URLContext.Result, GoogleSearch.Result) are JSON-serialized.
+        """
+        is_error = getattr(step, "is_error", None)
+        raw = getattr(step, "result", None)
+        if raw is None:
+            return None, is_error
+        if isinstance(raw, str):
+            return raw, is_error
+        if isinstance(raw, list):
+            text_parts: List[str] = []
+            for item in raw:
+                if isinstance(item, TextContent):
+                    if item.text:
+                        text_parts.append(item.text)
+                elif ImageContent is not None and isinstance(item, ImageContent):
+                    image = self._parse_image_content(item)
+                    if image:
+                        if model_response.images is None:
+                            model_response.images = []
+                        model_response.images.append(image)
+                elif hasattr(item, "model_dump"):
+                    text_parts.append(json.dumps(item.model_dump(exclude_none=True)))
+                else:
+                    text_parts.append(str(item))
+            return ("\n".join(text_parts) if text_parts else None), is_error
+        if hasattr(raw, "model_dump"):
+            return json.dumps(raw.model_dump(exclude_none=True)), is_error
+        try:
+            return json.dumps(raw), is_error
+        except (TypeError, ValueError):
+            return str(raw), is_error
+
+    def _delta_args_to_dict(self, delta: Any) -> Optional[Dict[str, Any]]:
+        """Extract the typed `arguments` from a *Call delta as a plain dict.
+
+        Non-function call families stream their complete typed Arguments
+        object on a single delta (e.g. DeltaGoogleSearchCall carries a
+        GoogleSearchCallArguments(queries=[...])); FunctionCallStep uses
+        DeltaArgumentsDelta with JSON fragments and is handled separately.
+        """
+        args = getattr(delta, "arguments", None)
+        if args is None:
+            return None
+        if isinstance(args, dict):
+            return dict(args)
+        if hasattr(args, "model_dump"):
+            return args.model_dump(exclude_none=True)
+        return None
+
+    def _append_result_delta(self, delta: Any, pending_result: Dict[str, Any], model_response: ModelResponse) -> None:
+        """Append one *Result delta's content into a pending_result accumulator.
+
+        Result steps arrive empty at StepStart; their actual payload streams
+        across one or more deltas before StepStop. Text accumulates into
+        text_parts; ImageContent routes to model_response.images; typed
+        result objects (URL/Search/Maps Result, etc.) are JSON-serialized.
+        """
+        is_error = getattr(delta, "is_error", None)
+        if is_error is not None:
+            pending_result["is_error"] = is_error
+        raw = getattr(delta, "result", None)
+        if raw is None:
+            return
+        if isinstance(raw, str):
+            pending_result["text_parts"].append(raw)
+            return
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, TextContent):
+                    if item.text:
+                        pending_result["text_parts"].append(item.text)
+                elif ImageContent is not None and isinstance(item, ImageContent):
+                    image = self._parse_image_content(item)
+                    if image:
+                        if model_response.images is None:
+                            model_response.images = []
+                        model_response.images.append(image)
+                elif hasattr(item, "model_dump"):
+                    pending_result["text_parts"].append(json.dumps(item.model_dump(exclude_none=True)))
+                else:
+                    pending_result["text_parts"].append(str(item))
+            return
+        if hasattr(raw, "model_dump"):
+            pending_result["text_parts"].append(json.dumps(raw.model_dump(exclude_none=True)))
+        else:
+            pending_result["text_parts"].append(str(raw))
+
     def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
         """Parse an Interaction response into a ModelResponse."""
         model_response = ModelResponse()
@@ -485,12 +783,35 @@ class GeminiInteractions(Model):
 
         interaction_id = getattr(response, "id", None)
 
+        # Surface any non-success terminal status as an error rather than
+        # returning a silently empty/partial response. "completed" is the
+        # only success state; "failed" carries an error reason, while
+        # "cancelled" / "incomplete" indicate the autonomous loop stopped
+        # before finishing the work.
+        status = getattr(response, "status", None)
+        if status in ("failed", "cancelled", "incomplete"):
+            error_detail = getattr(response, "error", None)
+            raise ModelProviderError(
+                message=f"Interaction ended with status '{status}': {error_detail or 'no error detail provided'}",
+                model_name=self.name,
+                model_id=self.id,
+            )
+
         steps = getattr(response, "steps", None)
         if not steps:
             if model_response.provider_data is None:
                 model_response.provider_data = {}
             model_response.provider_data["interaction_id"] = interaction_id
             return model_response
+
+        # Index every *ResultStep by call_id so each *CallStep can be paired
+        # with its result in a single forward pass. Used on the agent path
+        # where calls + results are returned together as a typed audit log.
+        results_by_call_id: Dict[str, Any] = {}
+        if self.agent is not None:
+            for step in steps:
+                if isinstance(step, _RESULT_STEP_TYPES):
+                    results_by_call_id[step.call_id] = step
 
         for step in steps:
             if isinstance(step, ModelOutputStep):
@@ -502,17 +823,21 @@ class GeminiInteractions(Model):
                                 model_response.content = text
                             else:
                                 model_response.content += text
-                            # Extract citations from annotations
+                            # Extract citations from annotations. Deep Research
+                            # also emits file_citation / place_citation in
+                            # addition to url_citation.
                             annotations = getattr(content_item, "annotations", None)
                             if annotations:
                                 for annotation in annotations:
                                     ann_type = getattr(annotation, "type", None)
+                                    if ann_type not in ("url_citation", "file_citation", "place_citation"):
+                                        continue
+                                    if model_response.citations is None:
+                                        model_response.citations = Citations(raw=[], urls=[])
+                                    if model_response.citations.raw is None:
+                                        model_response.citations.raw = []
+                                    model_response.citations.raw.append(annotation)
                                     if ann_type == "url_citation":
-                                        if model_response.citations is None:
-                                            model_response.citations = Citations(raw=[], urls=[])
-                                        if model_response.citations.raw is None:
-                                            model_response.citations.raw = []
-                                        model_response.citations.raw.append(annotation)
                                         if model_response.citations.urls is None:
                                             model_response.citations.urls = []
                                         model_response.citations.urls.append(
@@ -547,7 +872,42 @@ class GeminiInteractions(Model):
                         model_response.provider_data = {}
                     model_response.provider_data["thought_signature"] = step.signature
 
-            elif isinstance(step, FunctionCallStep):
+            elif isinstance(step, _CALL_STEP_TYPES) and self.agent is not None:
+                # Agent path: every call/result pair is already executed by the
+                # autonomous loop (Antigravity sandbox, Deep Research). Record
+                # each as a ToolExecution so the run_response/AgentOS UI shows
+                # the same tool history we'd see for client-executed tools,
+                # without sending function_result back (the API would 400).
+                #
+                # Exception: a FunctionCallStep with no matching FunctionResult
+                # is a client-declared tool the server is asking us to run -
+                # fall through to the client-dispatch branch below so the run
+                # loop can execute it and post the result back. The other six
+                # families are always server-built-in.
+                result_step = results_by_call_id.get(step.id)
+                if isinstance(step, FunctionCallStep) and result_step is None:
+                    pass  # handled by the next branch
+                else:
+                    tool_name, tool_args = self._call_step_info(step)
+                    if result_step is not None:
+                        result_text, is_error = self._extract_step_result(result_step, model_response)
+                    else:
+                        result_text, is_error = None, None
+                    if model_response.tool_executions is None:
+                        model_response.tool_executions = []
+                    model_response.tool_executions.append(
+                        ToolExecution(
+                            tool_call_id=step.id,
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            result=result_text,
+                            tool_call_error=bool(is_error) if is_error is not None else None,
+                        )
+                    )
+                    log_info(f"Server-side tool call: {tool_name}({json.dumps(tool_args) if tool_args else ''})")
+                    continue
+
+            if isinstance(step, FunctionCallStep):
                 args = step.arguments
                 if isinstance(args, dict):
                     args_str = json.dumps(args)
@@ -601,30 +961,131 @@ class GeminiInteractions(Model):
         """
         model_response = ModelResponse()
 
+        # Every event carries an event_id used to resume a dropped/ended stream
+        # (background interactions like Deep Research end the initial SSE early
+        # and continue server-side; we reconnect from last_event_id).
+        event_id = getattr(stream_event, "event_id", None)
+        if event_id:
+            stream_state["last_event_id"] = event_id
+
         if isinstance(stream_event, interaction_types.InteractionCreatedEvent):
             if stream_event.interaction and hasattr(stream_event.interaction, "id"):
-                model_response.provider_data = {"interaction_id": stream_event.interaction.id}
+                iid = stream_event.interaction.id
+                model_response.provider_data = {"interaction_id": iid}
+                stream_state["interaction_id"] = iid
             model_response.role = "assistant"
+
+        elif isinstance(stream_event, interaction_types.InteractionStatusUpdate):
+            # Progress ping for a background interaction. No user-visible
+            # content; just record the latest status for the reconnect loop.
+            status = getattr(stream_event, "status", None)
+            if status:
+                stream_state["status"] = status
+            iid = getattr(stream_event, "interaction_id", None)
+            if iid:
+                stream_state["interaction_id"] = iid
+
+        elif isinstance(stream_event, interaction_types.ErrorEvent):
+            stream_state["completed"] = True
+            detail = getattr(stream_event, "error", None) or getattr(stream_event, "message", None)
+            raise ModelProviderError(
+                message=f"Interaction stream error: {detail or 'no detail provided'}",
+                model_name=self.name,
+                model_id=self.id,
+            )
 
         elif isinstance(stream_event, interaction_types.StepDelta):
             delta = stream_event.delta
             if isinstance(delta, DeltaText):
                 model_response.content = delta.text or ""
+            elif isinstance(delta, DeltaImage):
+                # Streamed visualization charts (visualization="auto").
+                image = self._parse_image_content(delta)
+                if image:
+                    if model_response.images is None:
+                        model_response.images = []
+                    model_response.images.append(image)
             elif isinstance(delta, DeltaThoughtSummary):
                 summary_content = getattr(delta, "content", None)
                 if summary_content and isinstance(summary_content, TextContent):
-                    model_response.reasoning_content = summary_content.text or ""
+                    text = summary_content.text or ""
+                    model_response.reasoning_content = text
             elif isinstance(delta, DeltaThoughtSignature):
                 if delta.signature:
-                    model_response.provider_data = {"thought_signature": delta.signature}
+                    # Merge instead of overwrite so other provider_data keys
+                    # (e.g. interaction_id) on the same chunk survive.
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["thought_signature"] = delta.signature
             elif isinstance(delta, DeltaArgumentsDelta):
+                # Function calls stream args as JSON fragments here; the buffer
+                # is parsed on StepStop. Client tool_calls use stream index;
+                # agent-path calls use a separate idx->call_id lookup.
                 idx = stream_event.index
-                if delta.arguments and idx in stream_state["pending_calls"]:
-                    stream_state["pending_calls"][idx]["args_buffer"] += delta.arguments
+                if delta.arguments:
+                    if idx in stream_state["pending_calls"]:
+                        stream_state["pending_calls"][idx]["args_buffer"] += delta.arguments
+                    else:
+                        call_id = stream_state.setdefault("agent_idx_to_call_id", {}).get(idx)
+                        agent_pending = (
+                            stream_state.setdefault("pending_agent_calls", {}).get(call_id) if call_id else None
+                        )
+                        if agent_pending is not None:
+                            agent_pending["args_buffer"] += delta.arguments
+            elif isinstance(delta, _TYPED_CALL_DELTA_TYPES):
+                # Non-function call families stream their complete typed
+                # Arguments object on a single delta. Replace tool_args so
+                # google_search etc. surface their queries / code / urls.
+                idx = stream_event.index
+                call_id = stream_state.setdefault("agent_idx_to_call_id", {}).get(idx)
+                if call_id is not None:
+                    agent_pending = stream_state.setdefault("pending_agent_calls", {}).get(call_id)
+                    if agent_pending is not None:
+                        args_dict = self._delta_args_to_dict(delta)
+                        if args_dict:
+                            agent_pending["tool_args"] = args_dict
+            elif isinstance(delta, _RESULT_DELTA_TYPES):
+                # Result content streams here after the result step's StepStart.
+                # Accumulate into the pending_result for assembly on StepStop.
+                idx = stream_event.index
+                pending_result = stream_state.setdefault("pending_results", {}).get(idx)
+                if pending_result is not None:
+                    self._append_result_delta(delta, pending_result, model_response)
 
         elif isinstance(stream_event, interaction_types.StepStart):
             step = stream_event.step
-            if isinstance(step, FunctionCallStep):
+            # Agent path: register pending entries for both calls and results.
+            # Calls accumulate args via subsequent deltas; results accumulate
+            # content via subsequent deltas. The pair is joined and emitted
+            # as a ToolExecution on the result step's StepStop.
+            if isinstance(step, _CALL_STEP_TYPES) and self.agent is not None:
+                pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
+                agent_idx_to_call_id = stream_state.setdefault("agent_idx_to_call_id", {})
+                tool_name, tool_args = self._call_step_info(step)
+                pending_agent_calls[step.id] = {
+                    "tool_name": tool_name,
+                    "tool_args": tool_args,
+                    "args_buffer": "",
+                    "is_function_call": isinstance(step, FunctionCallStep),
+                    "signature": getattr(step, "signature", None),
+                }
+                agent_idx_to_call_id[stream_event.index] = step.id
+            elif isinstance(step, _RESULT_STEP_TYPES) and self.agent is not None:
+                # Register a pending_result keyed by stream index. The actual
+                # payload arrives on subsequent _RESULT_DELTA_TYPES deltas;
+                # we emit ToolExecution on this index's StepStop.
+                pending_results = stream_state.setdefault("pending_results", {})
+                pending = {
+                    "call_id": step.call_id,
+                    "text_parts": [],
+                    "is_error": getattr(step, "is_error", None),
+                }
+                # Defensive: if the SDK ever populates step.result at StepStart
+                # (current behavior is None), seed it now.
+                if getattr(step, "result", None) is not None:
+                    self._append_result_delta(step, pending, model_response)
+                pending_results[stream_event.index] = pending
+            elif isinstance(step, FunctionCallStep):
                 idx = stream_event.index
                 tool_call = {
                     "id": step.id or str(uuid4()),
@@ -642,12 +1103,82 @@ class GeminiInteractions(Model):
 
         elif isinstance(stream_event, interaction_types.StepStop):
             idx = stream_event.index
+            # Client tool_calls: finalize args buffer and emit.
             pending = stream_state["pending_calls"].pop(idx, None)
             if pending is not None:
                 pending["tool_call"]["function"]["arguments"] = pending["args_buffer"] or "{}"
                 model_response.tool_calls.append(pending["tool_call"])
+            # Agent path: finalize the streamed args buffer on the pending
+            # call (FunctionCallStep only - the others set tool_args directly
+            # from their typed delta). Merge over initial StepStart args so
+            # streamed keys win without clobbering anything already known.
+            agent_idx_to_call_id = stream_state.setdefault("agent_idx_to_call_id", {})
+            call_id_for_call = agent_idx_to_call_id.pop(idx, None)
+            if call_id_for_call is not None:
+                pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
+                agent_pending = pending_agent_calls.get(call_id_for_call)
+                if agent_pending is not None and agent_pending["args_buffer"]:
+                    try:
+                        parsed = json.loads(agent_pending["args_buffer"])
+                        if isinstance(parsed, dict):
+                            merged = dict(agent_pending["tool_args"] or {})
+                            merged.update(parsed)
+                            agent_pending["tool_args"] = merged
+                    except json.JSONDecodeError:
+                        pass
+            # Agent path: a pending_result at this index is now complete -
+            # assemble the text, look up its matching pending_agent_call by
+            # call_id, and emit the ToolExecution.
+            pending_results = stream_state.setdefault("pending_results", {})
+            pending_result = pending_results.pop(idx, None)
+            if pending_result is not None:
+                result_text = "\n".join(pending_result["text_parts"]) if pending_result["text_parts"] else None
+                is_error = pending_result["is_error"]
+                pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
+                pending_call = pending_agent_calls.pop(pending_result["call_id"], None)
+                if pending_call is not None:
+                    if model_response.tool_executions is None:
+                        model_response.tool_executions = []
+                    model_response.tool_executions.append(
+                        ToolExecution(
+                            tool_call_id=pending_result["call_id"],
+                            tool_name=pending_call["tool_name"],
+                            tool_args=pending_call["tool_args"],
+                            result=result_text,
+                            tool_call_error=bool(is_error) if is_error is not None else None,
+                        )
+                    )
+                    # Tag the event so the streaming consumer in
+                    # agent/_response.py routes tool_executions into
+                    # run_response.tools and emits the UI tool-call event.
+                    model_response.event = ModelResponseEvent.tool_call_completed.value
+                    args_repr = json.dumps(pending_call["tool_args"]) if pending_call["tool_args"] else ""
+                    log_info(f"Server-side tool call: {pending_call['tool_name']}({args_repr})")
 
         elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
+            stream_state["completed"] = True
+            # Flush any agent-path FunctionCallSteps that never got a matching
+            # FunctionResultStep - those are client-declared tools the
+            # autonomous loop is asking us to dispatch. Built-in step families
+            # (code_execution, url_context, etc.) have no client equivalent,
+            # so an unmatched one is dropped defensively.
+            pending_agent_calls = stream_state.get("pending_agent_calls", {})
+            for call_id, info in list(pending_agent_calls.items()):
+                if not info.get("is_function_call"):
+                    continue
+                args_str = json.dumps(info["tool_args"]) if info["tool_args"] else "{}"
+                tool_call = {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": info["tool_name"],
+                        "arguments": args_str,
+                    },
+                }
+                if info.get("signature"):
+                    tool_call["thought_signature"] = info["signature"]
+                model_response.tool_calls.append(tool_call)
+            pending_agent_calls.clear()
             if stream_event.interaction:
                 if hasattr(stream_event.interaction, "usage") and stream_event.interaction.usage:
                     usage = stream_event.interaction.usage
@@ -664,6 +1195,67 @@ class GeminiInteractions(Model):
                     model_response.provider_data["interaction_id"] = stream_event.interaction.id
 
         return model_response, stream_state
+
+    def _poll_until_terminal(self, interaction: Any) -> Any:
+        """Poll interactions.get() until the background interaction is terminal.
+
+        Used for the agent path (background=True), where create() returns an
+        in_progress interaction. Returns the final interaction.
+        """
+        import time
+
+        status = getattr(interaction, "status", None)
+        if status is None or status in self._TERMINAL_STATUSES:
+            return interaction
+
+        interaction_id = getattr(interaction, "id", None)
+        if not interaction_id:
+            return interaction
+
+        deadline = time.monotonic() + self.agent_max_wait
+        client = self.get_client()
+        while True:
+            if time.monotonic() > deadline:
+                raise ModelProviderError(
+                    message=f"Agent interaction did not complete within {self.agent_max_wait}s (last status: {status})",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+            time.sleep(self.agent_poll_interval)
+            interaction = client.interactions.get(interaction_id)
+            status = getattr(interaction, "status", None)
+            log_debug(f"Agent interaction {interaction_id} status: {status}", log_level=2)
+            if status is None or status in self._TERMINAL_STATUSES:
+                return interaction
+
+    async def _apoll_until_terminal(self, interaction: Any) -> Any:
+        """Async variant of _poll_until_terminal."""
+        import asyncio
+
+        status = getattr(interaction, "status", None)
+        if status is None or status in self._TERMINAL_STATUSES:
+            return interaction
+
+        interaction_id = getattr(interaction, "id", None)
+        if not interaction_id:
+            return interaction
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.agent_max_wait
+        client = self.get_client()
+        while True:
+            if loop.time() > deadline:
+                raise ModelProviderError(
+                    message=f"Agent interaction did not complete within {self.agent_max_wait}s (last status: {status})",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+            await asyncio.sleep(self.agent_poll_interval)
+            interaction = await client.aio.interactions.get(interaction_id)
+            status = getattr(interaction, "status", None)
+            log_debug(f"Agent interaction {interaction_id} status: {status}", log_level=2)
+            if status is None or status in self._TERMINAL_STATUSES:
+                return interaction
 
     def invoke(
         self,
@@ -683,6 +1275,9 @@ class GeminiInteractions(Model):
         try:
             assistant_message.metrics.start_timer()
             interaction = self.get_client().interactions.create(**request_kwargs)
+            # Agent path runs in the background; poll until the result is ready.
+            if request_kwargs.get("background"):
+                interaction = self._poll_until_terminal(interaction)
             assistant_message.metrics.stop_timer()
 
             return self._parse_provider_response(interaction)
@@ -707,9 +1302,14 @@ class GeminiInteractions(Model):
         request_kwargs["stream"] = True
         log_debug(f"Calling Gemini Interactions API (stream) with params: {list(request_kwargs.keys())}", log_level=2)
 
+        is_background = bool(request_kwargs.get("background"))
+
         try:
+            import time
+
             assistant_message.metrics.start_timer()
-            stream = self.get_client().interactions.create(**request_kwargs)
+            client = self.get_client()
+            stream = client.interactions.create(**request_kwargs)
             stream_state: Dict[str, Any] = {"pending_calls": {}}
 
             for event in stream:
@@ -717,6 +1317,41 @@ class GeminiInteractions(Model):
                     stream_event=event, assistant_message=assistant_message, stream_state=stream_state
                 )
                 yield model_response
+
+            # Background interactions (Deep Research) end the initial SSE early
+            # and continue server-side. Reconnect from last_event_id until the
+            # interaction reaches a terminal state, per the API guidance.
+            if is_background:
+                deadline = time.monotonic() + self.agent_max_wait
+                while not stream_state.get("completed"):
+                    interaction_id = stream_state.get("interaction_id")
+                    if not interaction_id:
+                        break
+                    if time.monotonic() > deadline:
+                        raise ModelProviderError(
+                            message=f"Streaming interaction did not complete within {self.agent_max_wait}s",
+                            model_name=self.name,
+                            model_id=self.id,
+                        )
+                    snapshot = client.interactions.get(interaction_id)
+                    status = getattr(snapshot, "status", None)
+                    if status != "in_progress":
+                        # Doc guidance: any non-in_progress status ends the loop.
+                        # Surface the final snapshot through the non-stream parser
+                        # so content + errors (failed) are handled.
+                        yield self._parse_provider_response(snapshot)
+                        break
+                    time.sleep(self.agent_poll_interval)
+                    resumed = client.interactions.get(
+                        id=interaction_id,
+                        stream=True,
+                        last_event_id=stream_state.get("last_event_id"),
+                    )
+                    for event in resumed:
+                        model_response, stream_state = self._parse_provider_response_delta(
+                            stream_event=event, assistant_message=assistant_message, stream_state=stream_state
+                        )
+                        yield model_response
 
             assistant_message.metrics.stop_timer()
 
@@ -742,6 +1377,9 @@ class GeminiInteractions(Model):
         try:
             assistant_message.metrics.start_timer()
             interaction = await self.get_client().aio.interactions.create(**request_kwargs)
+            # Agent path runs in the background; poll until the result is ready.
+            if request_kwargs.get("background"):
+                interaction = await self._apoll_until_terminal(interaction)
             assistant_message.metrics.stop_timer()
 
             return self._parse_provider_response(interaction)
@@ -768,9 +1406,14 @@ class GeminiInteractions(Model):
             f"Calling Gemini Interactions API (async stream) with params: {list(request_kwargs.keys())}", log_level=2
         )
 
+        is_background = bool(request_kwargs.get("background"))
+
         try:
+            import asyncio
+
             assistant_message.metrics.start_timer()
-            stream = await self.get_client().aio.interactions.create(**request_kwargs)
+            client = self.get_client()
+            stream = await client.aio.interactions.create(**request_kwargs)
             stream_state: Dict[str, Any] = {"pending_calls": {}}
 
             async for event in stream:
@@ -778,6 +1421,36 @@ class GeminiInteractions(Model):
                     stream_event=event, assistant_message=assistant_message, stream_state=stream_state
                 )
                 yield model_response
+
+            if is_background:
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + self.agent_max_wait
+                while not stream_state.get("completed"):
+                    interaction_id = stream_state.get("interaction_id")
+                    if not interaction_id:
+                        break
+                    if loop.time() > deadline:
+                        raise ModelProviderError(
+                            message=f"Streaming interaction did not complete within {self.agent_max_wait}s",
+                            model_name=self.name,
+                            model_id=self.id,
+                        )
+                    snapshot = await client.aio.interactions.get(interaction_id)
+                    status = getattr(snapshot, "status", None)
+                    if status != "in_progress":
+                        yield self._parse_provider_response(snapshot)
+                        break
+                    await asyncio.sleep(self.agent_poll_interval)
+                    resumed = await client.aio.interactions.get(
+                        id=interaction_id,
+                        stream=True,
+                        last_event_id=stream_state.get("last_event_id"),
+                    )
+                    async for event in resumed:
+                        model_response, stream_state = self._parse_provider_response_delta(
+                            stream_event=event, assistant_message=assistant_message, stream_state=stream_state
+                        )
+                        yield model_response
 
             assistant_message.metrics.stop_timer()
 
