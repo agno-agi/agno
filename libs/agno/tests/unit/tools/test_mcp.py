@@ -2,8 +2,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agno.tools.function import Function, FunctionCall
 from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
+from agno.utils.mcp import get_entrypoint_for_tool
 
 
 class _AsyncContextManager:
@@ -929,3 +931,96 @@ async def test_parallel_calls_no_deadlock_with_timeout():
 
             assert len(results) == 3
             assert all(s is results[0] for s in results)
+
+
+# =============================================================================
+# Tool-argument-name collision tests
+# =============================================================================
+
+
+def _make_mcp_tool_mock(name: str):
+    """Build a minimal mock that quacks like mcp.types.Tool."""
+    tool = MagicMock()
+    tool.name = name
+    return tool
+
+
+def _make_session_returning(content_text: str):
+    """Build a mock ClientSession whose call_tool returns a TextContent result."""
+    from mcp.types import TextContent
+
+    result = MagicMock()
+    result.isError = False
+    result.content = [TextContent(type="text", text=content_text)]
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(return_value=result)
+    return session
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_with_team_argument_does_not_collide():
+    """An MCP tool with a 'team' parameter must not collide with
+    the framework's auto-injected `team` kwarg."""
+    tool = _make_mcp_tool_mock("save_issue")
+    session = _make_session_returning("issue saved")
+
+    entrypoint = get_entrypoint_for_tool(tool, session)
+
+    fn = Function(name="save_issue", entrypoint=entrypoint)
+    fn._team = MagicMock(name="agno-team-instance")
+
+    fc = FunctionCall(function=fn, arguments={"title": "Bug", "team": "Engineering"})
+
+    result = await fc.aexecute()
+
+    assert result.status == "success", f"Expected success, got error: {result.error}"
+    session.call_tool.assert_awaited_once()
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "save_issue"
+    assert called_kwargs == {"title": "Bug", "team": "Engineering"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_with_agent_argument_does_not_collide():
+    """An MCP tool with an 'agent' parameter must not collide
+    with the framework's auto-injected `agent` kwarg."""
+    tool = _make_mcp_tool_mock("assign_task")
+    session = _make_session_returning("task assigned")
+
+    entrypoint = get_entrypoint_for_tool(tool, session)
+
+    fn = Function(name="assign_task", entrypoint=entrypoint)
+    fn._agent = MagicMock(name="agno-agent-instance")
+
+    fc = FunctionCall(function=fn, arguments={"task": "Fix bug", "agent": "alice"})
+
+    result = await fc.aexecute()
+
+    assert result.status == "success", f"Expected success, got error: {result.error}"
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "assign_task"
+    assert called_kwargs == {"task": "Fix bug", "agent": "alice"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_with_run_context_argument_does_not_collide():
+    """An MCP tool with a 'run_context' parameter must not collide
+    with the framework's auto-injected `run_context` kwarg."""
+    tool = _make_mcp_tool_mock("log_event")
+    session = _make_session_returning("logged")
+
+    entrypoint = get_entrypoint_for_tool(tool, session)
+
+    fn = Function(name="log_event", entrypoint=entrypoint)
+    fn._run_context = MagicMock(name="agno-run-context")
+
+    fc = FunctionCall(function=fn, arguments={"event": "click", "run_context": "from-llm"})
+
+    result = await fc.aexecute()
+
+    assert result.status == "success", f"Expected success, got error: {result.error}"
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "log_event"
+    assert called_kwargs == {"event": "click", "run_context": "from-llm"}
