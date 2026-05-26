@@ -478,12 +478,6 @@ def parse_tools(
             log_debug(f"Included builtin tool {tool}")
 
         elif isinstance(tool, Toolkit):
-            # Per-user isolation: clone toolkit when user_id is set so each
-            # run gets its own mutable state. Credentials/service are resolved
-            # per-call via contextvar, not stored on the clone.
-            if run_context and run_context.user_id is not None:
-                tool = tool._clone_for_run()
-
             # For each function in the toolkit and process entrypoint
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
