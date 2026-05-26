@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import _persist_google_token, get_current_service, get_token_db, save_token
@@ -27,7 +27,7 @@ class GoogleToolkit(Toolkit):
         api_name: str - Google API name (e.g., "gmail", "calendar")
         api_version: str - API version (e.g., "v1", "v3")
         google_service_name: str - Name for GoogleAuth registry (e.g., "gmail")
-        default_scopes: List[str] - Default OAuth scopes
+        default_scopes: List[str] | Dict[str, str] - Default scopes (list) or tiered scope levels (dict)
 
     Optional overrides:
         require_delegated_user_for_service_account: bool - If True, service account
@@ -37,7 +37,7 @@ class GoogleToolkit(Toolkit):
     api_name: str = ""
     api_version: str = ""
     google_service_name: str = ""
-    default_scopes: List[str] = []
+    default_scopes: Union[List[str], Dict[str, str]] = []
     require_delegated_user_for_service_account: bool = False
 
     def __init__(
@@ -55,7 +55,8 @@ class GoogleToolkit(Toolkit):
         **kwargs: Any,
     ):
         super().__init__(**kwargs)
-        self.scopes = scopes or self.default_scopes.copy()
+        # Cast is safe: dict-based toolkits (Drive, Sheets) always pass scopes explicitly
+        self.scopes = scopes if scopes is not None else cast(List[str], self.default_scopes).copy()
         self._explicit_creds = creds
         self.token_path = token_path
         self.credentials_path = credentials_path

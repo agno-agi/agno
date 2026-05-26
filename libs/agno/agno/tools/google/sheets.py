@@ -68,7 +68,7 @@ class GoogleSheetsTools(GoogleToolkit):
     api_version = "v4"
     google_service_name = "sheets"
 
-    scope_levels: Dict[str, str] = {
+    default_scopes: Dict[str, str] = {
         "read": "https://www.googleapis.com/auth/spreadsheets.readonly",
         "write": "https://www.googleapis.com/auth/spreadsheets",
     }
@@ -134,19 +134,19 @@ class GoogleSheetsTools(GoogleToolkit):
         if scopes is None:
             resolved_scopes: List[str] = []
             if _read_sheet:
-                resolved_scopes.append(self.scope_levels["read"])
+                resolved_scopes.append(self.default_scopes["read"])
             if _create_sheet or _update_sheet or _create_duplicate_sheet:
-                resolved_scopes.append(self.scope_levels["write"])
+                resolved_scopes.append(self.default_scopes["write"])
             scopes = list(dict.fromkeys(resolved_scopes))
         else:
             # Validate that required scopes are present for requested operations
-            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.scope_levels[
+            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.default_scopes[
                 "write"
             ] not in scopes:
-                raise ValueError(f"The scope {self.scope_levels['write']} is required for write operations")
-            if _read_sheet and self.scope_levels["read"] not in scopes and self.scope_levels["write"] not in scopes:
+                raise ValueError(f"The scope {self.default_scopes['write']} is required for write operations")
+            if _read_sheet and self.default_scopes["read"] not in scopes and self.default_scopes["write"] not in scopes:
                 raise ValueError(
-                    f"Either {self.scope_levels['read']} or {self.scope_levels['write']} is required for read operations"
+                    f"Either {self.default_scopes['read']} or {self.default_scopes['write']} is required for read operations"
                 )
 
         tools: List[Any] = []
