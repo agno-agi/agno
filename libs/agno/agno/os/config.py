@@ -1,6 +1,6 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Generic, List, Optional, TypeVar
+from typing import Generic, List, Optional, TypeVar, Union
 
 from pydantic import BaseModel, field_validator
 
@@ -128,19 +128,46 @@ class TracesConfig(TracesDomainConfig):
     dbs: Optional[List[DatabaseConfig[TracesDomainConfig]]] = None
 
 
+class QuickPromptsConfig(BaseModel):
+    """Quick prompts configuration for a single agent/team/workflow on the Chat page.
+
+    The ``description`` is AgentOS-only UI metadata shown alongside the quick prompts.
+    It is unrelated to ``Agent.description``, which is sent to the model.
+    """
+
+    description: Optional[str] = None
+    prompts: List[str]
+
+
 class ChatConfig(BaseModel):
     """Configuration for the Chat page of the AgentOS"""
 
-    quick_prompts: dict[str, list[str]]
+    quick_prompts: dict[str, QuickPromptsConfig]
 
-    # Limit the number of quick prompts to 3 (per agent/team/workflow)
-    @field_validator("quick_prompts")
+    # Accept legacy list[str] form and normalize to QuickPromptsConfig. Also enforce
+    # the max of 3 prompts per agent/team/workflow.
+    @field_validator("quick_prompts", mode="before")
     @classmethod
-    def limit_lists(cls, v):
-        for key, lst in v.items():
-            if len(lst) > 3:
+    def normalize_and_limit(cls, v):
+        if not isinstance(v, dict):
+            return v
+        normalized: dict[str, Union[QuickPromptsConfig, dict, list]] = {}
+        for key, value in v.items():
+            if isinstance(value, list):
+                entry = QuickPromptsConfig(prompts=value)
+            elif isinstance(value, QuickPromptsConfig):
+                entry = value
+            elif isinstance(value, dict):
+                entry = QuickPromptsConfig(**value)
+            else:
+                raise ValueError(
+                    f"Invalid quick_prompts value for '{key}': expected list of strings or "
+                    f"a mapping with 'prompts' (and optional 'description')"
+                )
+            if len(entry.prompts) > 3:
                 raise ValueError(f"Too many quick prompts for '{key}', maximum allowed is 3")
-        return v
+            normalized[key] = entry
+        return normalized
 
 
 class AgentOSConfig(BaseModel):

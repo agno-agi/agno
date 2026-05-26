@@ -15,6 +15,7 @@ from agno.os.config import (
     DatabaseConfig,
     MemoryConfig,
     MemoryDomainConfig,
+    QuickPromptsConfig,
 )
 from agno.team import Team
 from agno.workflow.step import Step
@@ -70,11 +71,14 @@ agent_os = AgentOS(
     config=AgentOSConfig(
         chat=ChatConfig(
             quick_prompts={
-                "marketing-agent": [
-                    "What can you do?",
-                    "How is our latest post working?",
-                    "Tell me about our active marketing campaigns",
-                ],
+                "marketing-agent": QuickPromptsConfig(
+                    description="Plans, runs and reports on marketing campaigns.",
+                    prompts=[
+                        "What can you do?",
+                        "How is our latest post working?",
+                        "Tell me about our active marketing campaigns",
+                    ],
+                ),
             },
         ),
         memory=MemoryConfig(
