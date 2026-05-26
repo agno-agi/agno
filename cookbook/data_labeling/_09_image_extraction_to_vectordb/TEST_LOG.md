@@ -1,6 +1,6 @@
 # Test Log - _09_image_extraction_to_vectordb
 
-Tested 2026-05-19 against `gemini-3.5-flash` (Gemini) + `gemini-embedding-001` (GeminiEmbedder), agno 2.6.8.
+Tested 2026-05-22 against `gemini-3.5-flash` + `gemini-embedding-001` (embedder), agno 2.6.9.
 
 ### basic.py
 
