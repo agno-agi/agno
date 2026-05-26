@@ -3076,7 +3076,7 @@ def continue_run_dispatch(
 
     # Prepare arguments for the model
     set_default_model(agent)
-    response_format = get_response_format(agent, run_context=run_context)
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
     agent.model = cast(Model, agent.model)
 
     processed_tools = agent.get_tools(
@@ -3778,7 +3778,7 @@ def acontinue_run_dispatch(  # type: ignore
         metadata_provided=metadata is not None,
     )
 
-    response_format = get_response_format(agent, run_context=run_context)
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
 
     if background:
         if not agent.db:
