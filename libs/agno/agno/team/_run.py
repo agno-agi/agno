@@ -957,8 +957,6 @@ def _run_tasks_stream(
             _cleanup_and_store(team, run_response=run_response, session=session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
-        for _pending in _build_team_pending_tool_completed_events(team, run_response):
-            yield _pending  # type: ignore
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -992,8 +990,6 @@ def _run_tasks_stream(
             _cleanup_and_store(team, run_response=run_response, session=session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
-        for _pending in _build_team_pending_tool_completed_events(team, run_response):
-            yield _pending  # type: ignore
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -1748,8 +1744,6 @@ def _run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
-                for _pending in _build_team_pending_tool_completed_events(team, run_response):
-                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -1786,8 +1780,6 @@ def _run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
-                for _pending in _build_team_pending_tool_completed_events(team, run_response):
-                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -2823,8 +2815,6 @@ async def _arun_tasks_stream(
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
-        for _pending in _build_team_pending_tool_completed_events(team, run_response):
-            yield _pending  # type: ignore
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -2860,8 +2850,6 @@ async def _arun_tasks_stream(
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
-        for _pending in _build_team_pending_tool_completed_events(team, run_response):
-            yield _pending  # type: ignore
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -3909,8 +3897,6 @@ async def _arun_stream(
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
-                for _pending in _build_team_pending_tool_completed_events(team, run_response):
-                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -3950,8 +3936,6 @@ async def _arun_stream(
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
-                for _pending in _build_team_pending_tool_completed_events(team, run_response):
-                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -4274,39 +4258,6 @@ def _handle_team_run_cancellation(
                 tool.requires_user_input = False
                 tool.external_execution_required = False
     return run_response
-
-
-def _build_team_pending_tool_completed_events(
-    team: "Team",
-    run_response: TeamRunOutput,
-) -> List[TeamRunOutputEvent]:
-    """Synthesize TeamToolCallCompleted for tools still in flight at cancel time."""
-    from agno.utils.events import create_team_tool_call_completed_event
-
-    if not run_response.tools:
-        return []
-
-    events: List[TeamRunOutputEvent] = []
-    for tool in run_response.tools:
-        # Skip completed, errored, and paused tools — they don't need a synthetic completion
-        if tool.result is not None or tool.tool_call_error or tool.is_paused:
-            continue
-        events.append(
-            cast(
-                TeamRunOutputEvent,
-                handle_event(
-                    create_team_tool_call_completed_event(
-                        from_run_response=run_response,
-                        tool=tool,
-                        content=None,
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                ),
-            )
-        )
-    return events
 
 
 def _build_team_cancel_terminal_events(
@@ -6025,8 +5976,6 @@ def _continue_run_dispatch_stream_with_member_events(
             _cleanup_and_store(team, run_response=run_response, session=team_session, run_context=run_context)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
-        for _pending in _build_team_pending_tool_completed_events(team, run_response):
-            yield _pending
         yield cancelled_event
         yield completed_event
         if opts.yield_run_output:
@@ -6041,8 +5990,6 @@ def _continue_run_dispatch_stream_with_member_events(
             _cleanup_and_store(team, run_response=run_response, session=team_session, run_context=run_context)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
-        for _pending in _build_team_pending_tool_completed_events(team, run_response):
-            yield _pending
         yield cancelled_event
         yield completed_event
         if opts.yield_run_output:
@@ -6576,8 +6523,6 @@ def _continue_run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
-                for _pending in _build_team_pending_tool_completed_events(team, run_response):
-                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -6613,8 +6558,6 @@ def _continue_run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
-                for _pending in _build_team_pending_tool_completed_events(team, run_response):
-                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -7590,8 +7533,6 @@ async def _acontinue_run_stream(
                         await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
-                for _pending in _build_team_pending_tool_completed_events(team, run_response):
-                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -7633,8 +7574,6 @@ async def _acontinue_run_stream(
                         await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
-                for _pending in _build_team_pending_tool_completed_events(team, run_response):
-                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
