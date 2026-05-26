@@ -22,14 +22,23 @@ class SessionMetrics:
         else:
             other_metrics = other
 
+        # Use getattr for V1/V2 compatibility - V2 MessageMetrics may not have all V1 attributes
+        other_input = getattr(other_metrics, 'input_tokens', 0) or 0
+        other_output = getattr(other_metrics, 'output_tokens', 0) or 0
+        other_total = getattr(other_metrics, 'total_tokens', 0) or 0
+        other_completion = getattr(other_metrics, 'completion_tokens', 0) or 0
+        other_prompt = getattr(other_metrics, 'prompt_tokens', 0) or 0
+        other_cache_creation = getattr(other_metrics, 'cache_creation_input_tokens', 0) or 0
+        other_cache_read = getattr(other_metrics, 'cache_read_input_tokens', 0) or 0
+
         return SessionMetrics(
-            input_tokens=self.input_tokens + other_metrics.input_tokens,
-            output_tokens=self.output_tokens + other_metrics.output_tokens,
-            total_tokens=self.total_tokens + other_metrics.total_tokens,
-            completion_tokens=self.completion_tokens + other_metrics.completion_tokens,
-            prompt_tokens=self.prompt_tokens + other_metrics.prompt_tokens,
-            cache_creation_input_tokens=self.cache_creation_input_tokens + other_metrics.cache_creation_input_tokens,
-            cache_read_input_tokens=self.cache_read_input_tokens + other_metrics.cache_read_input_tokens,
+            input_tokens=self.input_tokens + other_input,
+            output_tokens=self.output_tokens + other_output,
+            total_tokens=self.total_tokens + other_total,
+            completion_tokens=self.completion_tokens + other_completion,
+            prompt_tokens=self.prompt_tokens + other_prompt,
+            cache_creation_input_tokens=self.cache_creation_input_tokens + other_cache_creation,
+            cache_read_input_tokens=self.cache_read_input_tokens + other_cache_read,
         )
 
     def __iadd__(self, other):
