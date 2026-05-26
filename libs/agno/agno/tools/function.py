@@ -581,14 +581,14 @@ class Function(BaseModel):
             return func
 
         # Don't wrap functions with framework-injected parameters
-        # These parameters (agent, team) are
+        # These parameters (agent, team, run_context, images, videos, audios, files) are
         # injected by the framework at runtime and shouldn't be validated by Pydantic
         sig = signature(func)
-        framework_params = {"agent", "team"}
+        framework_params = {"agent", "team", "run_context", "images", "videos", "audios", "files"}
         if framework_params & set(sig.parameters.keys()):
             return func
 
-        # Also skip validation when parameter types include Agent or Team,
+        # Also skip validation when parameter types include Agent, Team, or RunContext,
         # even if the parameter name differs (e.g. my_agent: Agent).
         # validate_call uses get_type_hints() which fails to resolve types
         # from Agent/Team class hierarchies (like BaseDb) in the user's module globals.
@@ -597,7 +597,7 @@ class Function(BaseModel):
             from agno.agent.agent import Agent
             from agno.team.team import Team
 
-            framework_types = (Agent, Team)
+            framework_types = (Agent, Team, RunContext, Image, Video, Audio, File)
             for hint in hints.values():
                 if isinstance(hint, type) and issubclass(hint, framework_types):
                     return func
