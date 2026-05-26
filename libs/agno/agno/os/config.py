@@ -156,12 +156,18 @@ class ChatConfig(BaseModel):
     @classmethod
     def _lift_legacy_quick_prompts(cls, data):
         """Accept the legacy ``quick_prompts={id: [...]}`` shape by lifting it
-        into ``components[id].quick_prompts``. Explicit ``components`` entries win."""
+        into ``components[id].quick_prompts``. Explicit ``components`` entries win.
+
+        Legacy values are merged as raw dicts so pydantic re-runs field validation
+        (including the 3-prompt cap) when rebuilding the ``ChatComponentConfig``.
+        """
         if not isinstance(data, dict):
             return data
         legacy = data.pop("quick_prompts", None)
-        if not legacy:
+        if legacy is None:
             return data
+        if not isinstance(legacy, dict):
+            raise ValueError("chat.quick_prompts must be a mapping of component id to a list of prompts")
         components = dict(data.get("components") or {})
         for key, prompts in legacy.items():
             existing = components.get(key)
@@ -172,7 +178,9 @@ class ChatConfig(BaseModel):
                     components[key] = {**existing, "quick_prompts": prompts}
             elif isinstance(existing, ChatComponentConfig):
                 if existing.quick_prompts is None:
-                    existing.quick_prompts = prompts
+                    merged = existing.model_dump()
+                    merged["quick_prompts"] = prompts
+                    components[key] = merged
         data["components"] = components
         return data
 
