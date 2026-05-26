@@ -215,7 +215,7 @@ class GoogleDriveTools(GoogleToolkit):
     api_version = "v3"
     google_service_name = "drive"
 
-    SCOPE_LEVELS = {
+    default_scopes = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",
         "full": "https://www.googleapis.com/auth/drive",
@@ -318,16 +318,16 @@ class GoogleDriveTools(GoogleToolkit):
         if scopes is None:
             resolved_scopes: List[str] = []
             if read_tools_enabled:
-                resolved_scopes.append(self.SCOPE_LEVELS["read"])
+                resolved_scopes.append(self.default_scopes["read"])
             if upload_file:
-                resolved_scopes.append(self.SCOPE_LEVELS["write"])
+                resolved_scopes.append(self.default_scopes["write"])
             if not resolved_scopes:
-                resolved_scopes.append(self.SCOPE_LEVELS["read"])
+                resolved_scopes.append(self.default_scopes["read"])
             scopes = list(dict.fromkeys(resolved_scopes))
 
         # drive.file only covers app-created files — not sufficient for browsing all files
-        read_scopes = {self.SCOPE_LEVELS["read"], self.SCOPE_LEVELS["full"]}
-        write_scopes = {self.SCOPE_LEVELS["write"], self.SCOPE_LEVELS["full"]}
+        read_scopes = {self.default_scopes["read"], self.default_scopes["full"]}
+        write_scopes = {self.default_scopes["write"], self.default_scopes["full"]}
 
         if read_tools_enabled and not any(s in scopes for s in read_scopes):
             raise ValueError("A Google Drive read scope is required for enabled tools")
