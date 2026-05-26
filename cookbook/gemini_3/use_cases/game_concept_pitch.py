@@ -54,7 +54,7 @@ class GamePitch(BaseModel):
 art_agent = Agent(
     name="Concept Artist",
     model=Gemini(
-        id="gemini-3-flash-preview",
+        id="gemini-3.5-flash",
         response_modalities=["Text", "Image"],
     ),
 )
@@ -87,7 +87,7 @@ You are a game design consultant. Create compelling, structured game pitches.
 market_analyst = Agent(
     name="Market Analyst",
     role="Evaluate market viability and competitive landscape",
-    model=Gemini(id="gemini-3-flash-preview", search=True),
+    model=Gemini(id="gemini-3.5-flash", search=True),
     instructions="""\
 You analyze game market trends. Evaluate pitches for market viability.
 
@@ -111,7 +111,7 @@ You analyze game market trends. Evaluate pitches for market viability.
 creative_director = Agent(
     name="Creative Director",
     role="Evaluate creative vision and player experience",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions="""\
 You evaluate game concepts for creative quality and player appeal.
 
