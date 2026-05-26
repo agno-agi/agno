@@ -132,8 +132,6 @@ class GmailTools(GoogleToolkit):
         "https://www.googleapis.com/auth/gmail.modify",
         "https://www.googleapis.com/auth/gmail.compose",
     ]
-    # Keep alias for backward compatibility
-    DEFAULT_SCOPES = default_scopes
 
     def __init__(
         self,
@@ -204,7 +202,7 @@ class GmailTools(GoogleToolkit):
             token_path (Optional[str]): Path to token file. Defaults to None.
             service_account_path (Optional[str]): Path to a service account JSON key file. When provided (or GOOGLE_SERVICE_ACCOUNT_FILE env var is set), service account auth is used instead of OAuth. Requires delegated_user for Gmail.
             delegated_user (Optional[str]): Email of the user to impersonate via domain-wide delegation. Required when using service account auth. Can also be set via GOOGLE_DELEGATED_USER env var.
-            scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
+            scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses default_scopes.
             oauth_port (int): Local port for the OAuth consent loopback server. Defaults to 0 (OS picks free port).
             login_hint (Optional[str]): Email to pre-select in the OAuth consent screen. Defaults to None.
             include_html (bool): If True, return raw HTML body instead of stripping tags. Defaults to False.

@@ -46,7 +46,6 @@ class GoogleCalendarTools(GoogleToolkit):
         "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/calendar",
     ]
-    DEFAULT_SCOPES = default_scopes
 
     def __init__(
         self,
@@ -88,7 +87,7 @@ class GoogleCalendarTools(GoogleToolkit):
             token_path: Path to cached token file. Created on first auth.
             service_account_path: Path to service account JSON key. When set, OAuth is skipped.
             delegated_user: Email to impersonate via domain-wide delegation. Optional for Calendar.
-            scopes: Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
+            scopes: Custom OAuth scopes. If None, uses default_scopes.
             oauth_port: Port for OAuth local redirect server (default: 8080).
             login_hint: Email to pre-select in the OAuth consent screen.
             calendar_id: Calendar to operate on. Defaults to "primary".

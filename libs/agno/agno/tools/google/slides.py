@@ -84,7 +84,6 @@ class GoogleSlidesTools(GoogleToolkit):
         "https://www.googleapis.com/auth/presentations",
         "https://www.googleapis.com/auth/drive.file",
     ]
-    DEFAULT_SCOPES = default_scopes
 
     def __init__(
         self,

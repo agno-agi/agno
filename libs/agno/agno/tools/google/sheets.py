@@ -67,9 +67,8 @@ class GoogleSheetsTools(GoogleToolkit):
     api_name = "sheets"
     api_version = "v4"
     google_service_name = "sheets"
-    default_scopes: List[str] = []
 
-    DEFAULT_SCOPES = {
+    SCOPE_LEVELS = {
         "read": "https://www.googleapis.com/auth/spreadsheets.readonly",
         "write": "https://www.googleapis.com/auth/spreadsheets",
     }
@@ -135,19 +134,17 @@ class GoogleSheetsTools(GoogleToolkit):
         if scopes is None:
             resolved_scopes: List[str] = []
             if _read_sheet:
-                resolved_scopes.append(self.DEFAULT_SCOPES["read"])
+                resolved_scopes.append(self.SCOPE_LEVELS["read"])
             if _create_sheet or _update_sheet or _create_duplicate_sheet:
-                resolved_scopes.append(self.DEFAULT_SCOPES["write"])
+                resolved_scopes.append(self.SCOPE_LEVELS["write"])
             scopes = list(dict.fromkeys(resolved_scopes))
         else:
             # Validate that required scopes are present for requested operations
-            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.DEFAULT_SCOPES[
-                "write"
-            ] not in scopes:
-                raise ValueError(f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations")
-            if _read_sheet and self.DEFAULT_SCOPES["read"] not in scopes and self.DEFAULT_SCOPES["write"] not in scopes:
+            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.SCOPE_LEVELS["write"] not in scopes:
+                raise ValueError(f"The scope {self.SCOPE_LEVELS['write']} is required for write operations")
+            if _read_sheet and self.SCOPE_LEVELS["read"] not in scopes and self.SCOPE_LEVELS["write"] not in scopes:
                 raise ValueError(
-                    f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} is required for read operations"
+                    f"Either {self.SCOPE_LEVELS['read']} or {self.SCOPE_LEVELS['write']} is required for read operations"
                 )
 
         tools: List[Any] = []

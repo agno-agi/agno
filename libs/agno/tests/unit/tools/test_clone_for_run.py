@@ -206,3 +206,152 @@ class TestMultiUserIsolation:
         assert clone_a.slides_service == "alice_slides"
         assert clone_b.slides_service == "bob_slides"
         assert toolkit.slides_service is None
+
+
+class FakeContextvarToolkit(Toolkit):
+    """Simulates real Google toolkits where service is a @property reading from contextvar.
+
+    This is the ACTUAL pattern used by GoogleToolkit in v2.6+. The service attribute
+    is a property, not an instance attribute, so _clone_for_run() correctly skips it
+    (vars() doesn't include properties).
+    """
+
+    _service_value = None
+
+    def __init__(self):
+        self._explicit_creds = None
+        self.scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+        super().__init__(name="contextvar_toolkit", tools=[self.do_thing])
+
+    @property
+    def service(self):
+        return self._service_value
+
+    def do_thing(self, query: str) -> str:
+        return f"result: {query}"
+
+
+class FakeRuntimeMutationToolkit(Toolkit):
+    """Simulates toolkits like Zep/E2B that mutate instance state during execution.
+
+    These toolkits have real instance attributes that get set during tool method
+    execution, not in __init__. _clone_for_run() provides isolation for these.
+    """
+
+    def __init__(self):
+        self._initialized = False
+        self.session_id = None
+        self.user_id = None
+        self.client = None
+        super().__init__(name="runtime_mutation", tools=[self.initialize, self.do_work])
+
+    def initialize(self) -> str:
+        self._initialized = True
+        self.session_id = f"session_{id(self)}"
+        self.user_id = f"user_{id(self)}"
+        self.client = {"connected": True}
+        return f"initialized: {self.session_id}"
+
+    def do_work(self, task: str) -> str:
+        return f"work on {task} by {self.user_id}"
+
+
+class TestContextvarPatternToolkit:
+    """Tests for toolkits using @property + contextvar pattern (like real Google toolkits)."""
+
+    def test_clone_does_not_crash_on_property(self):
+        toolkit = FakeContextvarToolkit()
+        clone = toolkit._clone_for_run()
+        assert clone is not toolkit
+
+    def test_clone_skips_property_service(self):
+        toolkit = FakeContextvarToolkit()
+        FakeContextvarToolkit._service_value = "shared_service"
+
+        clone = toolkit._clone_for_run()
+        assert clone.service == "shared_service"
+        assert toolkit.service == "shared_service"
+
+    def test_service_not_in_vars(self):
+        toolkit = FakeContextvarToolkit()
+        assert "service" not in vars(toolkit)
+        clone = toolkit._clone_for_run()
+        assert "service" not in vars(clone)
+
+    def test_clone_shares_explicit_creds(self):
+        toolkit = FakeContextvarToolkit()
+        toolkit._explicit_creds = "preset_creds"
+
+        clone = toolkit._clone_for_run()
+        assert clone._explicit_creds == "preset_creds"
+
+
+class TestRuntimeMutationToolkit:
+    """Tests for toolkits with runtime state mutations (like Zep, E2B)."""
+
+    def test_clone_isolates_runtime_mutations(self):
+        toolkit = FakeRuntimeMutationToolkit()
+
+        clone = toolkit._clone_for_run()
+        clone.initialize()
+
+        assert clone._initialized is True
+        assert clone.session_id is not None
+        assert clone.client is not None
+        assert toolkit._initialized is False
+        assert toolkit.session_id is None
+        assert toolkit.client is None
+
+    def test_two_clones_get_different_sessions(self):
+        toolkit = FakeRuntimeMutationToolkit()
+
+        clone_alice = toolkit._clone_for_run()
+        clone_bob = toolkit._clone_for_run()
+
+        clone_alice.initialize()
+        clone_bob.initialize()
+
+        assert clone_alice.session_id != clone_bob.session_id
+        assert clone_alice.user_id != clone_bob.user_id
+        assert toolkit.session_id is None
+
+    def test_original_stays_clean_for_next_user(self):
+        toolkit = FakeRuntimeMutationToolkit()
+
+        for i in range(3):
+            clone = toolkit._clone_for_run()
+            clone.initialize()
+            assert clone._initialized is True
+
+        assert toolkit._initialized is False
+        assert toolkit.session_id is None
+
+
+class TestMixedToolkitScenario:
+    """Tests for mixed toolkit scenarios (Google + Zep + stateless)."""
+
+    def test_mixed_toolkits_all_clone_correctly(self):
+        contextvar_toolkit = FakeContextvarToolkit()
+        mutation_toolkit = FakeRuntimeMutationToolkit()
+        plain_toolkit = Toolkit(name="plain", tools=[])
+
+        cv_clone = contextvar_toolkit._clone_for_run()
+        mut_clone = mutation_toolkit._clone_for_run()
+        plain_clone = plain_toolkit._clone_for_run()
+
+        assert cv_clone is not contextvar_toolkit
+        assert mut_clone is not mutation_toolkit
+        assert plain_clone is not plain_toolkit
+
+    def test_mixed_isolation_patterns_coexist(self):
+        contextvar_toolkit = FakeContextvarToolkit()
+        mutation_toolkit = FakeRuntimeMutationToolkit()
+
+        cv_clone = contextvar_toolkit._clone_for_run()
+        mut_clone = mutation_toolkit._clone_for_run()
+
+        mut_clone.initialize()
+
+        assert mut_clone._initialized is True
+        assert mutation_toolkit._initialized is False
+        assert "service" not in vars(cv_clone)
