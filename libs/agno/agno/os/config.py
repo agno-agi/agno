@@ -2,7 +2,7 @@
 
 from typing import Generic, List, Optional, TypeVar
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class AuthorizationConfig(BaseModel):
@@ -128,19 +128,52 @@ class TracesConfig(TracesDomainConfig):
     dbs: Optional[List[DatabaseConfig[TracesDomainConfig]]] = None
 
 
+class AgentChatConfig(BaseModel):
+    """Per-agent (or team/workflow) UI metadata for the AgentOS Chat page.
+
+    These fields are UI-only metadata. ``description`` here is unrelated to
+    ``Agent.description``, which is sent to the model.
+    """
+
+    description: Optional[str] = None
+    quick_prompts: Optional[List[str]] = None
+
+    @field_validator("quick_prompts")
+    @classmethod
+    def _limit_quick_prompts(cls, v):
+        if v is not None and len(v) > 3:
+            raise ValueError("Too many quick prompts, maximum allowed is 3")
+        return v
+
+
 class ChatConfig(BaseModel):
     """Configuration for the Chat page of the AgentOS"""
 
-    quick_prompts: dict[str, list[str]]
+    agents: dict[str, AgentChatConfig] = Field(default_factory=dict)
 
-    # Limit the number of quick prompts to 3 (per agent/team/workflow)
-    @field_validator("quick_prompts")
+    @model_validator(mode="before")
     @classmethod
-    def limit_lists(cls, v):
-        for key, lst in v.items():
-            if len(lst) > 3:
-                raise ValueError(f"Too many quick prompts for '{key}', maximum allowed is 3")
-        return v
+    def _lift_legacy_quick_prompts(cls, data):
+        """Accept the legacy ``quick_prompts={id: [...]}`` shape by lifting it
+        into ``agents[id].quick_prompts``. Explicit ``agents`` entries win."""
+        if not isinstance(data, dict):
+            return data
+        legacy = data.pop("quick_prompts", None)
+        if not legacy:
+            return data
+        agents = dict(data.get("agents") or {})
+        for key, prompts in legacy.items():
+            existing = agents.get(key)
+            if existing is None:
+                agents[key] = {"quick_prompts": prompts}
+            elif isinstance(existing, dict):
+                if existing.get("quick_prompts") is None:
+                    agents[key] = {**existing, "quick_prompts": prompts}
+            elif isinstance(existing, AgentChatConfig):
+                if existing.quick_prompts is None:
+                    existing.quick_prompts = prompts
+        data["agents"] = agents
+        return data
 
 
 class AgentOSConfig(BaseModel):

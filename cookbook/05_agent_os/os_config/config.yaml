@@ -1,9 +1,11 @@
 chat:
-  quick_prompts:
+  agents:
     marketing-agent:
-      - "What can you do?"
-      - "How is our latest post working?"
-      - "Tell me about our active marketing campaigns"
+      description: "Plans, runs and reports on marketing campaigns."
+      quick_prompts:
+        - "What can you do?"
+        - "How is our latest post working?"
+        - "Tell me about our active marketing campaigns"
 memory:
   dbs:
     - db_id: db-0001
