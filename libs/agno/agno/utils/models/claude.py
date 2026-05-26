@@ -37,17 +37,30 @@ _PREFILL_SUPPORTED_ALIASES = {
     "claude-haiku-4",
 }
 
+# Claude families with GA native structured outputs on Amazon Bedrock's InvokeModel
+# path (per Anthropic docs + live verification). Support is NOT monotonic with version
+# (Opus 4.1 and 4.7 are unsupported here while 4.5/4.6 work), so this is an explicit
+# allowlist: unlisted ids fall back to prompt-injection rather than 400ing.
+_BEDROCK_STRUCTURED_OUTPUT_PREFIXES = (
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+)
 
-def supports_prefill(model_id: str) -> bool:
-    """Return True if the given model ID supports assistant message prefill.
+
+def base_claude_id(model_id: str) -> str:
+    """Strip provider decoration from a Claude model ID, returning the base Anthropic ID.
 
     Handles provider-specific ID formats:
       - Anthropic direct:  "claude-sonnet-4-5-20250929"
       - Bedrock:           "us.anthropic.claude-sonnet-4-6-v1:0"
+      - Bedrock ARN:       "arn:...:inference-profile/us.anthropic.claude-...-v1:0"
       - Vertex AI:         "claude-sonnet-4@20250514"
       - LiteLLM:           "anthropic/claude-sonnet-4-6"
     """
-    # Strip LiteLLM provider prefix (e.g. "anthropic/claude-sonnet-4-6")
+    # Strip LiteLLM provider prefix / Bedrock ARN path (e.g. "anthropic/claude-sonnet-4-6")
     core_id = model_id.split("/")[-1] if "/" in model_id else model_id
     # Strip Bedrock prefix (e.g. "us.anthropic.claude-sonnet-4-6-v1:0")
     core_id = core_id.split("anthropic.")[-1] if "anthropic." in core_id else core_id
@@ -57,10 +70,22 @@ def supports_prefill(model_id: str) -> bool:
     if ":0" in core_id:
         core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
 
+    return core_id
+
+
+def supports_prefill(model_id: str) -> bool:
+    """Return True if the given model ID supports assistant message prefill."""
+    core_id = base_claude_id(model_id)
+
     if not core_id.startswith("claude"):
         return True  # Non-Claude models are unaffected — don't inject trailing messages
 
     return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
+
+
+def supports_bedrock_structured_outputs(model_id: str) -> bool:
+    """Return True if the Bedrock-hosted Claude model supports native structured outputs."""
+    return base_claude_id(model_id).startswith(_BEDROCK_STRUCTURED_OUTPUT_PREFIXES)
 
 
 @dataclass
