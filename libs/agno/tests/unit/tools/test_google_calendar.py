@@ -174,7 +174,7 @@ class TestBackwardCompat:
 class TestScopeValidation:
     def test_default_scopes(self):
         tools = GoogleCalendarTools()
-        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
+        assert tools.scopes == GoogleCalendarTools.default_scopes
 
     def test_read_only_tools_get_default_scopes(self):
         tools = GoogleCalendarTools(
@@ -182,7 +182,7 @@ class TestScopeValidation:
             update_event=False,
             delete_event=False,
         )
-        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
+        assert tools.scopes == GoogleCalendarTools.default_scopes
 
     def test_custom_scopes_write_validated(self):
         with pytest.raises(ValueError, match="required for write operations"):

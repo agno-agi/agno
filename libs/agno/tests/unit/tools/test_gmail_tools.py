@@ -79,7 +79,7 @@ def create_mock_message(msg_id: str, subject: str, sender: str, date: str, body:
 def test_init_with_default_scopes():
     """Test initialization with default scopes."""
     tools = GmailTools()
-    assert tools.scopes == GmailTools.DEFAULT_SCOPES
+    assert tools.scopes == GmailTools.default_scopes
     assert "https://www.googleapis.com/auth/gmail.readonly" in tools.scopes
     assert "https://www.googleapis.com/auth/gmail.compose" in tools.scopes
 
