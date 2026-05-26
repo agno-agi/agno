@@ -1034,3 +1034,23 @@ class TeamRunOutput:
             if self.files is None:
                 self.files = []
             self.files.extend(run_response.files)
+
+
+# V1 compatibility aliases
+TeamRunResponse = TeamRunOutput
+TeamRunResponseEvent = Union[
+    RunStartedEvent,
+    RunContentEvent,
+    RunCompletedEvent,
+    RunErrorEvent,
+    RunCancelledEvent,
+    RunPausedEvent,
+    RunContinuedEvent,
+    MemoryUpdateStartedEvent,
+    MemoryUpdateCompletedEvent,
+    ReasoningStartedEvent,
+    ReasoningStepEvent,
+    ReasoningCompletedEvent,
+    ToolCallStartedEvent,
+    ToolCallCompletedEvent,
+]

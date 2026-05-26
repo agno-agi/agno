@@ -28,14 +28,14 @@ class PostgresStorage(Storage):
         """Create a storage entry."""
         pass
 
-    def read(self, storage_id: str) -> Optional[Dict[str, Any]]:
-        """Read a storage entry."""
+    def read(self, storage_id: str = None, session_id: str = None, **kwargs) -> Optional[Dict[str, Any]]:
+        """Read a storage entry. Accepts storage_id or session_id."""
         return None
 
-    def update(self, storage_id: str, **kwargs) -> None:
+    def update(self, storage_id: str = None, session_id: str = None, **kwargs) -> None:
         """Update a storage entry."""
         pass
 
-    def delete(self, storage_id: str) -> None:
+    def delete(self, storage_id: str = None, session_id: str = None, **kwargs) -> None:
         """Delete a storage entry."""
         pass

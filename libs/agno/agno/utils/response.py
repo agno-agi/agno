@@ -159,3 +159,26 @@ def get_paused_content(run_output: RunOutput) -> str:
         elif external_execution_required:
             paused_content = "I have tools to execute, but it needs external execution."
     return paused_content
+
+
+# V1 compatibility alias
+create_paused_run_response_panel = create_paused_run_output_panel
+
+
+def update_run_response_with_reasoning(run_response, reasoning_steps=None, reasoning_agent_messages=None):
+    """Update run response with reasoning steps - V1 compatibility stub"""
+    if reasoning_steps:
+        if not hasattr(run_response, 'reasoning_steps'):
+            run_response.reasoning_steps = []
+        if isinstance(reasoning_steps, list):
+            run_response.reasoning_steps.extend(reasoning_steps)
+        else:
+            run_response.reasoning_steps.append(reasoning_steps)
+
+    if reasoning_agent_messages:
+        if not hasattr(run_response, 'reasoning_agent_messages'):
+            run_response.reasoning_agent_messages = []
+        if isinstance(reasoning_agent_messages, list):
+            run_response.reasoning_agent_messages.extend(reasoning_agent_messages)
+        else:
+            run_response.reasoning_agent_messages.append(reasoning_agent_messages)
