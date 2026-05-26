@@ -2714,17 +2714,26 @@ class Workflow:
                     )
                     collected_step_outputs.append(partial_step_output)
 
+                # Stop the timer for the Run duration before aggregation preserves it
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
                 # Preserve all progress (completed steps + partial step) before cancellation
                 if collected_step_outputs:
                     workflow_run_response.step_results = collected_step_outputs
-                    # Stop the timer for the Run duration
-                    if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()
-
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
                         workflow_run_response.metrics,  # type: ignore[arg-type]
                     )
+
+                try:
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                cleanup_run(workflow_run_response.run_id)  # type: ignore
+                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
                 cancelled_event = WorkflowCancelledEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -2734,6 +2743,7 @@ class Workflow:
                     reason=str(e),
                 )
                 yield self._handle_event(cancelled_event, workflow_run_response)
+                return
             except Exception as e:
                 logger.exception("Workflow execution failed")
 
@@ -3664,17 +3674,29 @@ class Workflow:
                     )
                     collected_step_outputs.append(partial_step_output)
 
+                # Stop the timer for the Run duration before aggregation preserves it
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
                 # Preserve all progress (completed steps + partial step) before cancellation
                 if collected_step_outputs:
                     workflow_run_response.step_results = collected_step_outputs
-                    # Stop the timer for the Run duration
-                    if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()
-
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
                         workflow_run_response.metrics,  # type: ignore[arg-type]
                     )
+
+                try:
+                    self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+                    workflow_session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
+                    else:
+                        self.save_session(session=workflow_session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                await acleanup_run(workflow_run_response.run_id)  # type: ignore
+                await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
                 cancelled_event = WorkflowCancelledEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -3688,6 +3710,7 @@ class Workflow:
                     workflow_run_response,
                     websocket_handler=websocket_handler,
                 )
+                return
             except Exception as e:
                 logger.exception("Workflow execution failed")
 
