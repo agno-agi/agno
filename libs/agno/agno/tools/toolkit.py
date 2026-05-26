@@ -333,16 +333,16 @@ class Toolkit:
         return self._requires_connect
 
     def connect(self) -> None:
-        """Establish any required connections for the toolkit.
-
+        """
+        Establish any required connections for the toolkit.
         Override this method in subclasses that require connection management.
         Called automatically by the Agent when _requires_connect is True.
         """
         pass
 
     def close(self) -> None:
-        """Close any open connections for the toolkit.
-
+        """
+        Close any open connections for the toolkit.
         Override this method in subclasses that require connection management.
         Called automatically by the Agent when _requires_connect is True.
         """
