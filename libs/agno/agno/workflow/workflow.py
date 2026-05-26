@@ -2743,6 +2743,34 @@ class Workflow:
                     reason=str(e),
                 )
                 yield self._handle_event(cancelled_event, workflow_run_response)
+
+                # Emit terminal completed event so clients have a single stream-end sentinel
+                # (mirrors agent/team _build_cancel_terminal_events pattern).
+                workflow_completed_event = WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    step_results=workflow_run_response.step_results,  # type: ignore
+                    metadata=workflow_run_response.metadata,
+                    run_output=workflow_run_response,
+                )
+                yield self._handle_event(workflow_completed_event, workflow_run_response)
+
+                # Mark run as cancelled in event buffer so /resume and GC see the terminal state
+                try:
+                    from agno.os.managers import event_buffer
+
+                    event_buffer.set_run_completed(
+                        workflow_run_response.run_id,  # type: ignore
+                        workflow_run_response.status or RunStatus.cancelled,
+                    )
+                except Exception as e:
+                    log_debug(f"Failed to mark run as completed in buffer: {e}")
+
+                if self.telemetry:
+                    self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
@@ -3710,6 +3738,38 @@ class Workflow:
                     workflow_run_response,
                     websocket_handler=websocket_handler,
                 )
+
+                # Emit terminal completed event so clients have a single stream-end sentinel
+                # (mirrors agent/team _build_cancel_terminal_events pattern).
+                workflow_completed_event = WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
+                    metadata=workflow_run_response.metadata,
+                    run_output=workflow_run_response,
+                )
+                yield self._handle_event(
+                    workflow_completed_event,
+                    workflow_run_response,
+                    websocket_handler=websocket_handler,
+                )
+
+                # Mark run as cancelled in event buffer so /resume and GC see the terminal state
+                try:
+                    from agno.os.managers import event_buffer
+
+                    event_buffer.set_run_completed(
+                        workflow_run_response.run_id,  # type: ignore
+                        workflow_run_response.status or RunStatus.cancelled,
+                    )
+                except Exception as e:
+                    log_debug(f"Failed to mark run as completed in buffer: {e}")
+
+                if self.telemetry:
+                    await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
