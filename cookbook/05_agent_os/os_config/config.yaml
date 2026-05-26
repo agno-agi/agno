@@ -1,5 +1,5 @@
 chat:
-  agents:
+  components:
     marketing-agent:
       description: "Plans, runs and reports on marketing campaigns."
       quick_prompts:

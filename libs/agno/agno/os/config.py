@@ -128,11 +128,12 @@ class TracesConfig(TracesDomainConfig):
     dbs: Optional[List[DatabaseConfig[TracesDomainConfig]]] = None
 
 
-class AgentChatConfig(BaseModel):
-    """Per-agent (or team/workflow) UI metadata for the AgentOS Chat page.
+class ChatComponentConfig(BaseModel):
+    """Per-component (agent, team, or workflow) UI metadata for the AgentOS Chat page.
 
     These fields are UI-only metadata. ``description`` here is unrelated to
-    ``Agent.description``, which is sent to the model.
+    ``Agent.description`` / ``Team.description`` / ``Workflow.description``,
+    which are sent to the model.
     """
 
     description: Optional[str] = None
@@ -149,30 +150,30 @@ class AgentChatConfig(BaseModel):
 class ChatConfig(BaseModel):
     """Configuration for the Chat page of the AgentOS"""
 
-    agents: dict[str, AgentChatConfig] = Field(default_factory=dict)
+    components: dict[str, ChatComponentConfig] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
     def _lift_legacy_quick_prompts(cls, data):
         """Accept the legacy ``quick_prompts={id: [...]}`` shape by lifting it
-        into ``agents[id].quick_prompts``. Explicit ``agents`` entries win."""
+        into ``components[id].quick_prompts``. Explicit ``components`` entries win."""
         if not isinstance(data, dict):
             return data
         legacy = data.pop("quick_prompts", None)
         if not legacy:
             return data
-        agents = dict(data.get("agents") or {})
+        components = dict(data.get("components") or {})
         for key, prompts in legacy.items():
-            existing = agents.get(key)
+            existing = components.get(key)
             if existing is None:
-                agents[key] = {"quick_prompts": prompts}
+                components[key] = {"quick_prompts": prompts}
             elif isinstance(existing, dict):
                 if existing.get("quick_prompts") is None:
-                    agents[key] = {**existing, "quick_prompts": prompts}
-            elif isinstance(existing, AgentChatConfig):
+                    components[key] = {**existing, "quick_prompts": prompts}
+            elif isinstance(existing, ChatComponentConfig):
                 if existing.quick_prompts is None:
                     existing.quick_prompts = prompts
-        data["agents"] = agents
+        data["components"] = components
         return data
 
 

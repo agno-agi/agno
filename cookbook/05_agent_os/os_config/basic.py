@@ -10,8 +10,8 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import (
-    AgentChatConfig,
     AgentOSConfig,
+    ChatComponentConfig,
     ChatConfig,
     DatabaseConfig,
     MemoryConfig,
@@ -70,8 +70,8 @@ agent_os = AgentOS(
     # Configuration for the AgentOS
     config=AgentOSConfig(
         chat=ChatConfig(
-            agents={
-                "marketing-agent": AgentChatConfig(
+            components={
+                "marketing-agent": ChatComponentConfig(
                     description="Plans, runs and reports on marketing campaigns.",
                     quick_prompts=[
                         "What can you do?",
