@@ -450,6 +450,29 @@ class MCPTools(Toolkit):
         except (RuntimeError, BaseException):
             return False
 
+    async def _safe_cleanup(self) -> None:
+        """Close any partially-entered MCP contexts"""
+        if self._session_context is not None:
+            try:
+                await self._session_context.__aexit__(None, None, None)
+            except BaseException:
+                pass
+            self._session_context = None
+            self.session = None
+
+        if self._context is not None:
+            try:
+                await self._context.aclose()  # type: ignore[attr-defined]
+            except BaseException:
+                try:
+                    await self._context.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+            self._context = None
+
+        self._active_contexts = []
+        self._initialized = False
+
     async def connect(self, force: bool = False):
         """Initialize a MCPTools instance and connect to the contextual MCP server"""
 
@@ -466,9 +489,11 @@ class MCPTools(Toolkit):
             return
 
         try:
-            await self._connect()
-        except (RuntimeError, BaseException):
-            log_error(f"Failed to connect to {str(self)}")
+            # Shield the connection to prevent cancel scope errors from propagating
+            await asyncio.shield(self._connect())
+        except (RuntimeError, BaseException, asyncio.CancelledError) as e:
+            log_error(f"Failed to connect to {str(self)}: {e}")
+            await self._safe_cleanup()
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
@@ -518,12 +543,40 @@ class MCPTools(Toolkit):
             self._context = stdio_client(self.server_params)  # type: ignore
             client_timeout = self.timeout_seconds
 
-        session_params = await self._context.__aenter__()  # type: ignore
+        try:
+            session_params = await self._context.__aenter__()  # type: ignore
+        except BaseException:
+            # Close the partially-entered transport
+            if self._context is not None:
+                try:
+                    await self._context.aclose()  # type: ignore[attr-defined]
+                except BaseException:
+                    try:
+                        await self._context.__aexit__(None, None, None)
+                    except BaseException:
+                        pass
+                self._context = None
+            raise
         self._active_contexts.append(self._context)
         read, write = session_params[0:2]
 
         self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-        self.session = await self._session_context.__aenter__()  # type: ignore
+        try:
+            self.session = await self._session_context.__aenter__()  # type: ignore
+        except BaseException:
+            if self._session_context is not None:
+                try:
+                    await self._session_context.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+                self._session_context = None
+            if self._context is not None:
+                try:
+                    await self._context.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+                self._context = None
+            raise
         self._active_contexts.append(self._session_context)
 
         # Initialize with the new session
