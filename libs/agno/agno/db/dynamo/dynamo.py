@@ -786,8 +786,8 @@ class DynamoDb(BaseDb):
 
             scan_kwargs: Dict[str, Any] = {"TableName": table_name}
             if user_id is not None:
-                scan_kwargs["FilterExpression"] = "user_id = :uid"
-                scan_kwargs["ExpressionAttributeValues"] = {":uid": {"S": user_id}}
+                scan_kwargs["FilterExpression"] = "user_id = :user_id"
+                scan_kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
 
             # Scan the table to get memories
             response = self.client.scan(**scan_kwargs)
