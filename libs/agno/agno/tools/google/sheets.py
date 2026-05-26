@@ -45,7 +45,7 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import json
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from agno.tools.google.auth import get_current_creds, google_authenticate
 from agno.tools.google.base import GoogleToolkit
@@ -68,7 +68,7 @@ class GoogleSheetsTools(GoogleToolkit):
     api_version = "v4"
     google_service_name = "sheets"
 
-    default_scopes = {
+    scope_levels: Dict[str, str] = {
         "read": "https://www.googleapis.com/auth/spreadsheets.readonly",
         "write": "https://www.googleapis.com/auth/spreadsheets",
     }
@@ -134,17 +134,19 @@ class GoogleSheetsTools(GoogleToolkit):
         if scopes is None:
             resolved_scopes: List[str] = []
             if _read_sheet:
-                resolved_scopes.append(self.default_scopes["read"])
+                resolved_scopes.append(self.scope_levels["read"])
             if _create_sheet or _update_sheet or _create_duplicate_sheet:
-                resolved_scopes.append(self.default_scopes["write"])
+                resolved_scopes.append(self.scope_levels["write"])
             scopes = list(dict.fromkeys(resolved_scopes))
         else:
             # Validate that required scopes are present for requested operations
-            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.default_scopes["write"] not in scopes:
-                raise ValueError(f"The scope {self.default_scopes['write']} is required for write operations")
-            if _read_sheet and self.default_scopes["read"] not in scopes and self.default_scopes["write"] not in scopes:
+            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.scope_levels[
+                "write"
+            ] not in scopes:
+                raise ValueError(f"The scope {self.scope_levels['write']} is required for write operations")
+            if _read_sheet and self.scope_levels["read"] not in scopes and self.scope_levels["write"] not in scopes:
                 raise ValueError(
-                    f"Either {self.default_scopes['read']} or {self.default_scopes['write']} is required for read operations"
+                    f"Either {self.scope_levels['read']} or {self.scope_levels['write']} is required for read operations"
                 )
 
         tools: List[Any] = []

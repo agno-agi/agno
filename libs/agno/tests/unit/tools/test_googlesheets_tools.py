@@ -50,16 +50,16 @@ def test_init_with_default_scopes():
     """Test initialization with default scopes."""
     # Test read-only initialization
     read_tools = GoogleSheetsTools(enable_read_sheet=True, enable_create_sheet=False, enable_update_sheet=False)
-    assert read_tools.scopes == [GoogleSheetsTools.default_scopes["read"]]
+    assert read_tools.scopes == [GoogleSheetsTools.scope_levels["read"]]
 
     # Test write operations initialization
     write_tools = GoogleSheetsTools(enable_read_sheet=False, enable_create_sheet=True, enable_update_sheet=True)
-    assert GoogleSheetsTools.default_scopes["write"] in write_tools.scopes
+    assert GoogleSheetsTools.scope_levels["write"] in write_tools.scopes
 
 
 def test_init_with_custom_scopes():
     """Test initialization with custom scopes."""
-    custom_scopes = [GoogleSheetsTools.default_scopes["read"]]
+    custom_scopes = [GoogleSheetsTools.scope_levels["read"]]
     tools = GoogleSheetsTools(
         scopes=custom_scopes, enable_read_sheet=True, enable_create_sheet=False, enable_update_sheet=False
     )
@@ -68,7 +68,7 @@ def test_init_with_custom_scopes():
 
 def test_init_with_invalid_scopes():
     """Test initialization with invalid scopes for requested operations."""
-    read_only_scope = [GoogleSheetsTools.default_scopes["read"]]
+    read_only_scope = [GoogleSheetsTools.scope_levels["read"]]
     with pytest.raises(ValueError, match="required for write operations"):
         GoogleSheetsTools(
             scopes=read_only_scope,

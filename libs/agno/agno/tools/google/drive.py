@@ -40,7 +40,7 @@ import json
 import mimetypes
 import textwrap
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
@@ -215,7 +215,7 @@ class GoogleDriveTools(GoogleToolkit):
     api_version = "v3"
     google_service_name = "drive"
 
-    default_scopes = {
+    scope_levels: Dict[str, str] = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",
         "full": "https://www.googleapis.com/auth/drive",
@@ -318,16 +318,16 @@ class GoogleDriveTools(GoogleToolkit):
         if scopes is None:
             resolved_scopes: List[str] = []
             if read_tools_enabled:
-                resolved_scopes.append(self.default_scopes["read"])
+                resolved_scopes.append(self.scope_levels["read"])
             if upload_file:
-                resolved_scopes.append(self.default_scopes["write"])
+                resolved_scopes.append(self.scope_levels["write"])
             if not resolved_scopes:
-                resolved_scopes.append(self.default_scopes["read"])
+                resolved_scopes.append(self.scope_levels["read"])
             scopes = list(dict.fromkeys(resolved_scopes))
 
         # drive.file only covers app-created files — not sufficient for browsing all files
-        read_scopes = {self.default_scopes["read"], self.default_scopes["full"]}
-        write_scopes = {self.default_scopes["write"], self.default_scopes["full"]}
+        read_scopes = {self.scope_levels["read"], self.scope_levels["full"]}
+        write_scopes = {self.scope_levels["write"], self.scope_levels["full"]}
 
         if read_tools_enabled and not any(s in scopes for s in read_scopes):
             raise ValueError("A Google Drive read scope is required for enabled tools")

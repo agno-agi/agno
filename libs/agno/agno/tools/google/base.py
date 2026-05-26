@@ -27,7 +27,7 @@ class GoogleToolkit(Toolkit):
         api_name: str - Google API name (e.g., "gmail", "calendar")
         api_version: str - API version (e.g., "v1", "v3")
         google_service_name: str - Name for GoogleAuth registry (e.g., "gmail")
-        default_scopes: List[str] or Dict[str, str] - Default scopes (list) or tiered scope levels (dict)
+        default_scopes: List[str] - Default OAuth scopes
 
     Optional overrides:
         require_delegated_user_for_service_account: bool - If True, service account
@@ -37,7 +37,7 @@ class GoogleToolkit(Toolkit):
     api_name: str = ""
     api_version: str = ""
     google_service_name: str = ""
-    default_scopes: Any = []  # List[str] or Dict[str, str] - subclasses override
+    default_scopes: List[str] = []
     require_delegated_user_for_service_account: bool = False
 
     def __init__(
