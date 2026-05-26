@@ -1,24 +1,35 @@
-from unittest.mock import MagicMock
-
 import pytest
 
 pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
+from ag_ui.core import RunAgentInput
+from ag_ui.core.types import UserMessage
+
 from agno.os.interfaces.agui.router import run_agent, run_team
 
 
-class FakeRunInput:
-    def __init__(self):
-        self.messages = [MagicMock(role="user", content="test")]
-        self.thread_id = "test-thread"
-        self.run_id = "test-run"
-        self.forwarded_props = None
-        self.state = None
+def _build_run_input() -> RunAgentInput:
+    """Build a minimal real RunAgentInput for router-level kwargs tests.
+
+    Mirrors the canonical fixture pattern at
+    ``tests/unit/app/test_agui_app.py:1672-1680``.
+    """
+    return RunAgentInput(
+        thread_id="t1",
+        run_id="r1",
+        state={},
+        messages=[UserMessage(id="u1", content="hello")],
+        tools=[],
+        context=[],
+        forwarded_props=None,
+    )
 
 
 class CaptureKwargsTeam:
     def __init__(self):
         self.captured_kwargs = {}
+        self.tools = []
+        self.db = None
 
     async def arun(self, **kwargs):
         self.captured_kwargs = kwargs
@@ -29,6 +40,8 @@ class CaptureKwargsTeam:
 class CaptureKwargsAgent:
     def __init__(self):
         self.captured_kwargs = {}
+        self.tools = []
+        self.db = None
 
     async def arun(self, **kwargs):
         self.captured_kwargs = kwargs
@@ -39,7 +52,7 @@ class CaptureKwargsAgent:
 @pytest.mark.asyncio
 async def test_run_team_passes_stream_events_not_stream_steps():
     fake_team = CaptureKwargsTeam()
-    run_input = FakeRunInput()
+    run_input = _build_run_input()
 
     events = []
     async for event in run_team(fake_team, run_input):
@@ -53,7 +66,7 @@ async def test_run_team_passes_stream_events_not_stream_steps():
 @pytest.mark.asyncio
 async def test_run_agent_passes_stream_events():
     fake_agent = CaptureKwargsAgent()
-    run_input = FakeRunInput()
+    run_input = _build_run_input()
 
     events = []
     async for event in run_agent(fake_agent, run_input):

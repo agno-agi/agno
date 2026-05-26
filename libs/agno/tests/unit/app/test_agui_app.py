@@ -5,8 +5,8 @@ from ag_ui.core import EventType
 from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, Tool, ToolMessage, UserMessage
 
 from agno.os.interfaces.agui.utils import (
-    _agui_tools_to_external_functions,
     EventBuffer,
+    _agui_tools_to_external_functions,
     async_stream_agno_response_as_agui_events,
     extract_agui_tool_messages,
     extract_agui_user_input,
@@ -1544,7 +1544,6 @@ def test_extract_agui_user_input_only_tool_messages_returns_empty():
 
 def test_extract_agui_tool_messages_returns_trailing_tool_messages():
     """Trailing ToolMessages are collected for resume detection."""
-    from agno.os.interfaces.agui.utils import extract_agui_tool_messages
 
     messages = [
         UserMessage(id="u1", content="run the tool"),
@@ -1562,7 +1561,6 @@ def test_extract_agui_tool_messages_returns_trailing_tool_messages():
 
 def test_extract_agui_tool_messages_returns_empty_when_last_is_user():
     """A trailing user message means a fresh request — no tool messages returned."""
-    from agno.os.interfaces.agui.utils import extract_agui_tool_messages
 
     messages = [
         UserMessage(id="u1", content="hello"),
@@ -1575,14 +1573,12 @@ def test_extract_agui_tool_messages_returns_empty_when_last_is_user():
 
 def test_extract_agui_tool_messages_empty_list():
     """Empty message list returns empty list."""
-    from agno.os.interfaces.agui.utils import extract_agui_tool_messages
 
     assert extract_agui_tool_messages([]) == []
 
 
 def test_extract_agui_tool_messages_mixed_ends_with_assistant():
     """Non-tool trailing message stops collection."""
-    from agno.os.interfaces.agui.utils import extract_agui_tool_messages
 
     messages = [
         ToolMessage(id="t1", content="result", tool_call_id="call_1"),
@@ -1657,6 +1653,7 @@ def test_collect_tool_names_mixed():
 async def test_run_agent_uses_arun_for_fresh_user_message():
     """Fresh user message (no trailing ToolMessages) routes to agent.arun."""
     from ag_ui.core import RunAgentInput
+
     from agno.agent import Agent
     from agno.os.interfaces.agui.router import run_agent
 
@@ -1679,7 +1676,7 @@ async def test_run_agent_uses_arun_for_fresh_user_message():
         forwarded_props=None,
     )
 
-    events = [e async for e in run_agent(agent, run_input)]
+    [e async for e in run_agent(agent, run_input)]
 
     agent.arun.assert_called_once()
     assert not hasattr(agent, "acontinue_run") or not agent.acontinue_run.called
@@ -1689,11 +1686,24 @@ async def test_run_agent_uses_arun_for_fresh_user_message():
 async def test_run_agent_uses_acontinue_run_for_tool_resume():
     """Trailing ToolMessages route to agent.acontinue_run with correct requirements."""
     from ag_ui.core import RunAgentInput
+
     from agno.agent import Agent
+    from agno.models.response import ToolExecution
     from agno.os.interfaces.agui.router import run_agent
 
     agent = MagicMock(spec=Agent)
     agent.tools = []
+
+    # The new _resolve_resume_run_id requires either a parent_run_id or a DB
+    # session that contains the paused run. We provide a minimal DB mock that
+    # returns a session whose run owns ``call_1``.
+    paused_run = MagicMock()
+    paused_run.run_id = "run-1"
+    paused_run.tools = [ToolExecution(tool_call_id="call_1", tool_name="lookup")]
+    session = MagicMock()
+    session.runs = [paused_run]
+    agent.db = MagicMock()
+    agent.db.get_session = MagicMock(return_value=session)
 
     async def _fake_stream():
         return
@@ -1715,7 +1725,7 @@ async def test_run_agent_uses_acontinue_run_for_tool_resume():
         forwarded_props=None,
     )
 
-    events = [e async for e in run_agent(agent, run_input)]
+    [e async for e in run_agent(agent, run_input)]
 
     agent.acontinue_run.assert_called_once()
     call_kwargs = agent.acontinue_run.call_args.kwargs
@@ -1732,6 +1742,7 @@ async def test_run_agent_uses_acontinue_run_for_tool_resume():
 async def test_run_agent_resume_without_run_id_emits_error():
     """Tool-resume with missing run_id (simulated via mock) emits RunErrorEvent."""
     from ag_ui.core import EventType
+
     from agno.agent import Agent
     from agno.os.interfaces.agui.router import run_agent
 
@@ -1761,6 +1772,7 @@ async def test_run_agent_resume_without_run_id_emits_error():
 async def test_run_agent_remote_agent_skips_tool_injection():
     """RemoteAgent (not Agent) — merged_tools stays None, run_context.tools is None."""
     from ag_ui.core import RunAgentInput
+
     from agno.agent.remote import RemoteAgent
     from agno.os.interfaces.agui.router import run_agent
 
@@ -1782,7 +1794,7 @@ async def test_run_agent_remote_agent_skips_tool_injection():
         forwarded_props=None,
     )
 
-    events = [e async for e in run_agent(remote, run_input)]
+    [e async for e in run_agent(remote, run_input)]
 
     remote.arun.assert_called_once()
     run_context = remote.arun.call_args.kwargs["run_context"]
@@ -1793,6 +1805,7 @@ async def test_run_agent_remote_agent_skips_tool_injection():
 async def test_run_agent_callable_factory_skips_tool_injection():
     """When agent.tools is a callable factory, tool injection is skipped."""
     from ag_ui.core import RunAgentInput
+
     from agno.agent import Agent
     from agno.os.interfaces.agui.router import run_agent
 
@@ -1815,7 +1828,7 @@ async def test_run_agent_callable_factory_skips_tool_injection():
         forwarded_props=None,
     )
 
-    events = [e async for e in run_agent(agent, run_input)]
+    [e async for e in run_agent(agent, run_input)]
 
     run_context = agent.arun.call_args.kwargs["run_context"]
     assert run_context.tools is None
@@ -1825,6 +1838,7 @@ async def test_run_agent_callable_factory_skips_tool_injection():
 async def test_run_agent_agent_tools_not_mutated():
     """agent.tools list is not mutated — frontend tools go into run_context.tools only."""
     from ag_ui.core import RunAgentInput
+
     from agno.agent import Agent
     from agno.os.interfaces.agui.router import run_agent
     from agno.tools.function import Function
@@ -1859,8 +1873,9 @@ async def test_run_agent_agent_tools_not_mutated():
 @pytest.mark.asyncio
 async def test_run_agent_dedup_collision_skips_frontend_tool():
     """Frontend tool whose name matches an existing agent tool is skipped with a warning."""
-    import logging
+
     from ag_ui.core import RunAgentInput
+
     from agno.agent import Agent
     from agno.os.interfaces.agui.router import run_agent
     from agno.tools.function import Function
@@ -1885,7 +1900,7 @@ async def test_run_agent_dedup_collision_skips_frontend_tool():
         forwarded_props=None,
     )
 
-    events = [e async for e in run_agent(agent, run_input)]
+    [e async for e in run_agent(agent, run_input)]
 
     run_context = agent.arun.call_args.kwargs["run_context"]
     tool_names = [t.name for t in run_context.tools]
@@ -1932,3 +1947,643 @@ def test_agui_tools_to_external_functions_defaults_empty_parameters_schema():
 
     assert len(result) == 1
     assert result[0].parameters == {"type": "object", "properties": {}}
+
+
+# ── A3 hardening tests ──────────────────────────────────────────────────────────
+
+
+def _build_run_input(
+    *,
+    state=None,
+    messages=None,
+    tools=None,
+    forwarded_props=None,
+    run_id="run-1",
+    thread_id="thread-1",
+):
+    """Build a minimal real RunAgentInput. Mirrors the canonical fixture pattern."""
+    from ag_ui.core import RunAgentInput
+
+    return RunAgentInput(
+        thread_id=thread_id,
+        run_id=run_id,
+        state=state,
+        messages=messages or [UserMessage(id="u1", content="hello")],
+        tools=tools or [],
+        context=[],
+        forwarded_props=forwarded_props,
+    )
+
+
+async def _empty_stream():
+    """An empty async generator — used to satisfy MagicMock return values."""
+    return
+    yield
+
+
+@pytest.mark.asyncio
+async def test_run_team_arun_uses_stream_events_not_stream_steps():
+    """Fresh user input on a Team routes to team.arun with stream_events=True (A1)."""
+    from agno.os.interfaces.agui.router import run_team
+    from agno.team.team import Team
+
+    team = MagicMock(spec=Team)
+    team.tools = []
+    team.db = None
+    team.arun = MagicMock(return_value=_empty_stream())
+
+    run_input = _build_run_input()
+    [e async for e in run_team(team, run_input)]
+
+    team.arun.assert_called_once()
+    kwargs = team.arun.call_args.kwargs
+    assert kwargs.get("stream") is True
+    assert kwargs.get("stream_events") is True
+    assert "stream_steps" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_run_team_tool_resume_calls_acontinue_run():
+    """Trailing ToolMessages on a Team route to team.acontinue_run with requirements."""
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import run_team
+    from agno.team.team import Team
+
+    team = MagicMock(spec=Team)
+    team.tools = []
+    paused_run = MagicMock()
+    paused_run.run_id = "run-1"
+    paused_run.tools = [ToolExecution(tool_call_id="call_1", tool_name="lookup")]
+    session = MagicMock()
+    session.runs = [paused_run]
+    team.db = MagicMock()
+    team.db.get_session = MagicMock(return_value=session)
+    team.acontinue_run = MagicMock(return_value=_empty_stream())
+
+    run_input = _build_run_input(
+        messages=[
+            UserMessage(id="u1", content="run tool"),
+            ToolMessage(id="t1", content="42", tool_call_id="call_1"),
+        ],
+    )
+
+    [e async for e in run_team(team, run_input)]
+
+    team.acontinue_run.assert_called_once()
+    kwargs = team.acontinue_run.call_args.kwargs
+    assert kwargs["run_id"] == "run-1"
+    requirements = kwargs["requirements"]
+    assert len(requirements) == 1
+    assert requirements[0].tool_execution.tool_call_id == "call_1"
+
+
+@pytest.mark.asyncio
+async def test_resolve_resume_run_id_parent_run_id_verified():
+    """parent_run_id with valid (session,user_id) ownership is returned directly (L5)."""
+    from agno.os.interfaces.agui.router import _resolve_resume_run_id
+
+    entity = MagicMock()
+    paused_run = MagicMock()
+    paused_run.run_id = "real-run"
+    session = MagicMock()
+    session.runs = [paused_run]
+    entity.db = MagicMock()
+    entity.db.get_session = MagicMock(return_value=session)
+
+    resolved = await _resolve_resume_run_id(
+        entity,
+        session_id="s1",
+        tool_call_ids={"x"},
+        fallback_run_id="fresh",
+        parent_run_id="real-run",
+        user_id="user-123",
+    )
+    assert resolved == "real-run"
+    # H4 scope: user_id is forwarded to db.get_session
+    call_kwargs = entity.db.get_session.call_args.kwargs
+    assert call_kwargs["user_id"] == "user-123"
+
+
+@pytest.mark.asyncio
+async def test_resolve_resume_run_id_parent_run_id_invalid_falls_through_to_scan():
+    """parent_run_id not in session.runs falls through to the tool_call_id scan."""
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import _resolve_resume_run_id
+
+    entity = MagicMock()
+    paused_run = MagicMock()
+    paused_run.run_id = "real-run"
+    paused_run.tools = [ToolExecution(tool_call_id="call_1", tool_name="lookup")]
+    session = MagicMock()
+    session.runs = [paused_run]
+    entity.db = MagicMock()
+    entity.db.get_session = MagicMock(return_value=session)
+
+    resolved = await _resolve_resume_run_id(
+        entity,
+        session_id="s1",
+        tool_call_ids={"call_1"},
+        fallback_run_id="fresh",
+        parent_run_id="not-owned-by-this-session",
+        user_id="u1",
+    )
+    # Falls through to tool_call_id scan, which finds the run owning call_1.
+    assert resolved == "real-run"
+
+
+@pytest.mark.asyncio
+async def test_resolve_resume_run_id_no_parent_db_scan_succeeds():
+    """No parent_run_id: DB scan finds the paused run via tool_call_id."""
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import _resolve_resume_run_id
+
+    entity = MagicMock()
+    paused_run = MagicMock()
+    paused_run.run_id = "real-run"
+    paused_run.tools = [ToolExecution(tool_call_id="call_1", tool_name="lookup")]
+    session = MagicMock()
+    session.runs = [paused_run]
+    entity.db = MagicMock()
+    entity.db.get_session = MagicMock(return_value=session)
+
+    resolved = await _resolve_resume_run_id(
+        entity,
+        session_id="s1",
+        tool_call_ids={"call_1"},
+        fallback_run_id="fresh",
+        parent_run_id=None,
+        user_id="u1",
+    )
+    assert resolved == "real-run"
+
+
+@pytest.mark.asyncio
+async def test_resolve_resume_run_id_db_raises_logs_warning_returns_none():
+    """If db.get_session raises, log_warning is emitted and None is returned."""
+    from agno.os.interfaces.agui.router import _resolve_resume_run_id
+
+    entity = MagicMock()
+    entity.db = MagicMock()
+    entity.db.get_session = MagicMock(side_effect=RuntimeError("db down"))
+
+    resolved = await _resolve_resume_run_id(
+        entity,
+        session_id="s1",
+        tool_call_ids={"x"},
+        fallback_run_id="fresh",
+        parent_run_id=None,
+        user_id="u1",
+    )
+    assert resolved is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_resume_run_id_no_match_returns_none():
+    """tool_call_id not found in any session run → returns None (no fallback)."""
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import _resolve_resume_run_id
+
+    entity = MagicMock()
+    paused_run = MagicMock()
+    paused_run.run_id = "real-run"
+    paused_run.tools = [ToolExecution(tool_call_id="other", tool_name="x")]
+    session = MagicMock()
+    session.runs = [paused_run]
+    entity.db = MagicMock()
+    entity.db.get_session = MagicMock(return_value=session)
+
+    resolved = await _resolve_resume_run_id(
+        entity,
+        session_id="s1",
+        tool_call_ids={"missing"},
+        fallback_run_id="fresh",
+        parent_run_id=None,
+        user_id="u1",
+    )
+    assert resolved is None
+
+
+def test_apply_requirements_replaces_matching_and_preserves_others():
+    """Matching tool_call_ids are replaced; unmatched paused tools are preserved."""
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import _apply_requirements
+    from agno.run.requirement import RunRequirement
+
+    paused = MagicMock()
+    paused.tools = [
+        ToolExecution(tool_call_id="a", tool_name="x"),
+        ToolExecution(tool_call_id="b", tool_name="y"),
+    ]
+    req = RunRequirement(
+        tool_execution=ToolExecution(tool_call_id="a", tool_name="x", result="ok"),
+    )
+
+    accepted = _apply_requirements(paused, [req])
+
+    assert len(accepted) == 1
+    by_id = {t.tool_call_id: t for t in paused.tools}
+    assert by_id["a"].result == "ok"
+    assert by_id["b"].tool_call_id == "b"  # preserved
+
+
+def test_apply_requirements_rejects_unknown_tool_call_id():
+    """C2: requirement with tool_call_id not in snapshot is dropped."""
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import _apply_requirements
+    from agno.run.requirement import RunRequirement
+
+    paused = MagicMock()
+    paused.tools = [ToolExecution(tool_call_id="a", tool_name="x")]
+    req_known = RunRequirement(
+        tool_execution=ToolExecution(tool_call_id="a", tool_name="x", result="ok"),
+    )
+    req_unknown = RunRequirement(
+        tool_execution=ToolExecution(tool_call_id="evil", tool_name="x", result="hacked"),
+    )
+
+    accepted = _apply_requirements(paused, [req_known, req_unknown])
+
+    assert len(accepted) == 1
+    assert accepted[0].tool_execution.tool_call_id == "a"
+
+
+def test_serialize_deserialize_round_trip_agent():
+    """RunOutput → serialize → deserialize round-trips through resume state."""
+    from agno.models.message import Message
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import (
+        _deserialize_run_from_state,
+        _serialize_run_for_state,
+    )
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+
+    original = RunOutput(
+        run_id="r1",
+        session_id="s1",
+        status=RunStatus.paused,
+        messages=[Message(role="user", content="hi")],
+        tools=[ToolExecution(tool_call_id="c1", tool_name="lookup")],
+    )
+
+    snapshot = _serialize_run_for_state(original)
+    restored = _deserialize_run_from_state(snapshot)
+
+    assert restored.run_id == "r1"
+    assert restored.session_id == "s1"
+    assert restored.status == RunStatus.paused
+    assert len(restored.messages) == 1
+    assert restored.messages[0].role == "user"
+    assert restored.tools[0].tool_call_id == "c1"
+
+
+def test_serialize_deserialize_round_trip_team():
+    """TeamRunOutput → serialize → deserialize round-trips with for_team=True."""
+    from agno.models.message import Message
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import (
+        _deserialize_run_from_state,
+        _serialize_run_for_state,
+    )
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+
+    original = TeamRunOutput(
+        run_id="r1",
+        session_id="s1",
+        status=RunStatus.paused,
+        messages=[Message(role="assistant", content="ack")],
+        tools=[ToolExecution(tool_call_id="c1", tool_name="lookup")],
+    )
+
+    snapshot = _serialize_run_for_state(original)
+    restored = _deserialize_run_from_state(snapshot, for_team=True)
+
+    assert isinstance(restored, TeamRunOutput)
+    assert restored.run_id == "r1"
+    assert restored.tools[0].tool_call_id == "c1"
+
+
+def test_deserialize_drops_disallowed_roles():
+    """C1: system/developer messages in snapshot are dropped."""
+    from agno.os.interfaces.agui.router import (
+        _AGNO_RESUME_KEY,
+        _deserialize_run_from_state,
+    )
+
+    snapshot = {
+        _AGNO_RESUME_KEY: {
+            "run_id": "r1",
+            "session_id": "s1",
+            "status": "PAUSED",
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "system", "content": "PRIVILEGED PROMPT"},
+                {"role": "developer", "content": "OVERRIDE"},
+                {"role": "assistant", "content": "ack"},
+            ],
+            "tools": [],
+        }
+    }
+    restored = _deserialize_run_from_state(snapshot)
+    roles = [m.role for m in restored.messages]
+    assert "system" not in roles
+    assert "developer" not in roles
+    assert "user" in roles and "assistant" in roles
+
+
+def test_deserialize_malformed_state_appends_diagnostics():
+    """A7: malformed messages emit a CustomEvent diagnostic into the provided list."""
+    from agno.os.interfaces.agui.router import (
+        _AGNO_RESUME_KEY,
+        _deserialize_run_from_state,
+    )
+
+    snapshot = {
+        _AGNO_RESUME_KEY: {
+            "run_id": "r1",
+            "session_id": "s1",
+            "status": "PAUSED",
+            # Force a malformed message — int instead of dict.
+            "messages": [12345, {"role": "user", "content": "ok"}],
+            "tools": [],
+        }
+    }
+    diagnostics = []
+    restored = _deserialize_run_from_state(snapshot, diagnostics=diagnostics)
+    assert len(restored.messages) == 1
+    assert any(getattr(ev, "name", None) == "agno.resume_skip" for ev in diagnostics)
+
+
+def test_deserialize_invalid_status_raises():
+    """M1: invalid RunStatus string raises ValueError (caller emits invalid_resume_state)."""
+    import pytest as _pytest
+
+    from agno.os.interfaces.agui.router import (
+        _AGNO_RESUME_KEY,
+        _deserialize_run_from_state,
+    )
+
+    snapshot = {
+        _AGNO_RESUME_KEY: {
+            "run_id": "r1",
+            "session_id": "s1",
+            "status": "not_a_real_status",
+            "messages": [],
+            "tools": [],
+        }
+    }
+    with _pytest.raises(ValueError):
+        _deserialize_run_from_state(snapshot)
+
+
+def test_strip_agno_resume_removes_reserved_key():
+    """H1: __agno_resume key is stripped from state copy."""
+    from agno.os.interfaces.agui.router import _AGNO_RESUME_KEY, _strip_agno_resume
+
+    state = {"user_key": "value", _AGNO_RESUME_KEY: {"snapshot": True}}
+    stripped = _strip_agno_resume(state)
+    assert stripped == {"user_key": "value"}
+    # original is untouched
+    assert _AGNO_RESUME_KEY in state
+
+
+def test_strip_agno_resume_none_passthrough():
+    """H1: None state passes through unchanged."""
+    from agno.os.interfaces.agui.router import _strip_agno_resume
+
+    assert _strip_agno_resume(None) is None
+    assert _strip_agno_resume({}) == {}
+
+
+@pytest.mark.asyncio
+async def test_run_agent_strips_agno_resume_from_session_state():
+    """H1 end-to-end: arun receives session_state without __agno_resume."""
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import _AGNO_RESUME_KEY, run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+    agent.db = None
+    agent.arun = MagicMock(return_value=_empty_stream())
+
+    run_input = _build_run_input(
+        state={"user_key": "v", _AGNO_RESUME_KEY: {"snapshot": True}},
+    )
+    [e async for e in run_agent(agent, run_input)]
+
+    forwarded_state = agent.arun.call_args.kwargs["session_state"]
+    assert _AGNO_RESUME_KEY not in forwarded_state
+    assert forwarded_state["user_key"] == "v"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_remote_agent_translates_requirements_to_updated_tools():
+    """A4: RemoteAgent.acontinue_run is called with updated_tools, not requirements."""
+    from agno.agent.remote import RemoteAgent
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import run_agent
+
+    remote = MagicMock(spec=RemoteAgent)
+    paused_run = MagicMock()
+    paused_run.run_id = "run-1"
+    paused_run.tools = [ToolExecution(tool_call_id="call_1", tool_name="lookup")]
+    session = MagicMock()
+    session.runs = [paused_run]
+    remote.db = MagicMock()
+    remote.db.get_session = MagicMock(return_value=session)
+    remote.acontinue_run = MagicMock(return_value=_empty_stream())
+
+    run_input = _build_run_input(
+        messages=[
+            UserMessage(id="u1", content="resume"),
+            ToolMessage(id="t1", content="42", tool_call_id="call_1"),
+        ],
+    )
+    [e async for e in run_agent(remote, run_input)]
+
+    remote.acontinue_run.assert_called_once()
+    kwargs = remote.acontinue_run.call_args.kwargs
+    assert "updated_tools" in kwargs
+    assert "requirements" not in kwargs
+    assert kwargs["updated_tools"][0].tool_call_id == "call_1"
+    assert kwargs["updated_tools"][0].result == "42"
+
+
+def test_h3_invalid_tool_name_skipped():
+    """H3: tool name not matching _FUNCTION_NAME_RE is skipped."""
+    from agno.os.interfaces.agui.utils import _agui_tools_to_external_functions
+
+    bad = Tool(name="bad name with spaces", description="ok", parameters={})
+    good = Tool(name="good_name", description="ok", parameters={})
+    result = _agui_tools_to_external_functions([bad, good])
+    assert len(result) == 1
+    assert result[0].name == "good_name"
+
+
+def test_h3_too_long_description_skipped():
+    """H3: description longer than _MAX_TOOL_DESCRIPTION_LENGTH is skipped."""
+    from agno.os.interfaces.agui.utils import (
+        _MAX_TOOL_DESCRIPTION_LENGTH,
+        _agui_tools_to_external_functions,
+    )
+
+    overlong = Tool(
+        name="bloat",
+        description="x" * (_MAX_TOOL_DESCRIPTION_LENGTH + 1),
+        parameters={},
+    )
+    ok = Tool(name="ok", description="x" * 10, parameters={})
+    result = _agui_tools_to_external_functions([overlong, ok])
+    assert len(result) == 1
+    assert result[0].name == "ok"
+
+
+@pytest.mark.asyncio
+async def test_h4_scope_user_id_passed_to_get_session():
+    """H4 scope: db.get_session is called with user_id from the JWT/auth path."""
+    from agno.agent import Agent
+    from agno.models.response import ToolExecution
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+    paused_run = MagicMock()
+    paused_run.run_id = "run-1"
+    paused_run.tools = [ToolExecution(tool_call_id="call_1", tool_name="lookup")]
+    session = MagicMock()
+    session.runs = [paused_run]
+    agent.db = MagicMock()
+    agent.db.get_session = MagicMock(return_value=session)
+    agent.acontinue_run = MagicMock(return_value=_empty_stream())
+
+    run_input = _build_run_input(
+        messages=[
+            UserMessage(id="u1", content="resume"),
+            ToolMessage(id="t1", content="42", tool_call_id="call_1"),
+        ],
+    )
+    [e async for e in run_agent(agent, run_input, auth_user_id="jwt-user")]
+
+    call_kwargs = agent.db.get_session.call_args.kwargs
+    assert call_kwargs["user_id"] == "jwt-user"
+
+
+@pytest.mark.asyncio
+async def test_h4_jwt_auth_user_id_overrides_forwarded_props():
+    """H4 JWT: auth_user_id beats forwarded_props.user_id."""
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+    agent.db = None
+    agent.arun = MagicMock(return_value=_empty_stream())
+
+    run_input = _build_run_input(forwarded_props={"user_id": "client-spoof"})
+    [e async for e in run_agent(agent, run_input, auth_user_id="jwt-user")]
+
+    assert agent.arun.call_args.kwargs["user_id"] == "jwt-user"
+
+
+@pytest.mark.asyncio
+async def test_h4_jwt_falls_back_to_forwarded_props_when_no_auth():
+    """H4 JWT: when auth_user_id is None, forwarded_props.user_id is used."""
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+    agent.db = None
+    agent.arun = MagicMock(return_value=_empty_stream())
+
+    run_input = _build_run_input(forwarded_props={"user_id": "client-user"})
+    [e async for e in run_agent(agent, run_input)]
+
+    assert agent.arun.call_args.kwargs["user_id"] == "client-user"
+
+
+@pytest.mark.asyncio
+async def test_too_many_requirements_aborts_with_error():
+    """M5: more than 64 tool messages aborts with too_many_requirements."""
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+    agent.db = None
+
+    messages = [UserMessage(id="u1", content="start")]
+    messages.extend(ToolMessage(id=f"t{i}", content="x", tool_call_id=f"call_{i}") for i in range(70))
+    run_input = _build_run_input(messages=messages)
+
+    events = [e async for e in run_agent(agent, run_input)]
+    err = next(e for e in events if e.type == EventType.RUN_ERROR)
+    assert getattr(err, "code", None) == "too_many_requirements"
+
+
+@pytest.mark.asyncio
+async def test_resume_run_not_found_emits_diagnostic():
+    """A7: when no paused run can be resolved and no state snapshot exists, error event is emitted."""
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+    # DB returns a session with no matching paused run
+    session = MagicMock()
+    session.runs = []
+    agent.db = MagicMock()
+    agent.db.get_session = MagicMock(return_value=session)
+
+    run_input = _build_run_input(
+        messages=[
+            UserMessage(id="u1", content="resume"),
+            ToolMessage(id="t1", content="42", tool_call_id="call_X"),
+        ],
+    )
+    events = [e async for e in run_agent(agent, run_input)]
+    err = next(e for e in events if e.type == EventType.RUN_ERROR)
+    assert getattr(err, "code", None) == "resume_run_not_found"
+
+
+@pytest.mark.asyncio
+async def test_collision_emits_custom_event(monkeypatch):
+    """M4: server/frontend tool name collision emits CustomEvent("agno.tool_collision")."""
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+    from agno.tools.function import Function
+
+    existing = Function(name="shared", description="server")
+    agent = MagicMock(spec=Agent)
+    agent.tools = [existing]
+    agent.db = None
+    agent.arun = MagicMock(return_value=_empty_stream())
+
+    run_input = _build_run_input(
+        tools=[Tool(name="shared", description="frontend", parameters={})],
+    )
+    events = [e async for e in run_agent(agent, run_input)]
+    custom = [e for e in events if getattr(e, "name", None) == "agno.tool_collision"]
+    assert len(custom) == 1
+    assert custom[0].value["tool_name"] == "shared"
+
+
+@pytest.mark.asyncio
+async def test_internal_error_emits_correlation_id():
+    """L2: unexpected exception yields a redacted RunErrorEvent with correlation_id."""
+    from agno.agent import Agent
+    from agno.os.interfaces.agui.router import run_agent
+
+    agent = MagicMock(spec=Agent)
+    agent.tools = []
+    agent.db = None
+    agent.arun = MagicMock(side_effect=RuntimeError("internal detail leaks"))
+
+    run_input = _build_run_input()
+    events = [e async for e in run_agent(agent, run_input)]
+    err = next(e for e in events if e.type == EventType.RUN_ERROR)
+    assert getattr(err, "code", None) == "internal_error"
+    assert "correlation_id=" in err.message
+    # The internal exception text MUST NOT leak to the client.
+    assert "internal detail leaks" not in err.message
