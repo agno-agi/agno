@@ -561,3 +561,44 @@ class File(BaseModel):
             "name": self.name,
         }
         return {k: v for k, v in response_dict.items() if v is not None}
+
+
+# V1 Compatibility Aliases
+# V1 had: AudioArtifact, ImageArtifact, VideoArtifact
+# V2 has: Audio, Image, Video
+AudioArtifact = Audio
+ImageArtifact = Image
+VideoArtifact = Video
+FileArtifact = File
+
+__all__ = [
+    "Audio",
+    "Image",
+    "Video",
+    "File",
+    "AudioArtifact",
+    "ImageArtifact",
+    "VideoArtifact",
+    "FileArtifact",
+]
+
+
+# V1 Compatibility: Response Classes
+class AudioResponse(Audio):
+    """V1-compatible AudioResponse class (alias for Audio)."""
+    pass
+
+
+class ImageResponse(Image):
+    """V1-compatible ImageResponse class (alias for Image)."""
+    pass
+
+
+class VideoResponse(Video):
+    """V1-compatible VideoResponse class (alias for Video)."""
+    pass
+
+
+class FileResponse(File):
+    """V1-compatible FileResponse class (alias for File)."""
+    pass
