@@ -84,6 +84,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Gemini(id=model_id)
 
+    elif model_provider == "google-interactions":
+        from agno.models.google import GeminiInteractions
+
+        return GeminiInteractions(id=model_id)
+
     elif model_provider == "groq":
         from agno.models.groq import Groq
 
