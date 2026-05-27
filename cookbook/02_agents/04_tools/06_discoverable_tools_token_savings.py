@@ -1,5 +1,5 @@
 """
-Discoverable Tools — Token Savings Validation
+Discoverable Tools - Token Savings Validation
 =============================================
 
 Instruments Model._format_tools to print the exact tool list sent to the
@@ -14,30 +14,26 @@ DiscoverableTools implementation.
 """
 
 from agno.agent import Agent
-from agno.models.base import Model
 from agno.models.openai import OpenAIResponses
 from agno.tools import DiscoverableTools
 
+
 # ---------------------------------------------------------------------------
-# Instrument _format_tools to log per-iteration tool dispatch
+# Instrument _format_tools via a subclass to log per-iteration tool dispatch
 # ---------------------------------------------------------------------------
-_original_format_tools = Model._format_tools
-_call_idx = [0]
+class InstrumentedOpenAIResponses(OpenAIResponses):
+    _call_idx: int = 0
 
-
-def _instrumented_format_tools(self, tools):
-    result = _original_format_tools(self, tools)
-    _call_idx[0] += 1
-    names = [t["function"]["name"] for t in result if t.get("type") == "function"]
-    print(f">>> API CALL #{_call_idx[0]}: {len(result)} tools sent -> {names}")
-    return result
-
-
-Model._format_tools = _instrumented_format_tools
+    def _format_tools(self, tools):
+        result = super()._format_tools(tools)
+        self._call_idx += 1
+        names = [t["function"]["name"] for t in result if t.get("type") == "function"]
+        print(f">>> API CALL #{self._call_idx}: {len(result)} tools sent -> {names}")
+        return result
 
 
 # ---------------------------------------------------------------------------
-# Tools — 1 always-visible, 7 discoverable
+# Tools - 1 always-visible, 7 discoverable
 # ---------------------------------------------------------------------------
 def get_weather(city: str) -> str:
     """Get current weather for a city."""
@@ -94,7 +90,7 @@ discoverable = DiscoverableTools(
 
 agent = Agent(
     name="Productivity Assistant",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=InstrumentedOpenAIResponses(id="gpt-5.4"),
     tools=[get_weather, discoverable],
     instructions=[
         "You MUST use tools to perform actions, never just describe them.",

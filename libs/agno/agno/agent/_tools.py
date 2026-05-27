@@ -501,12 +501,14 @@ def determine_tools_for_model(
     # so their search_tools meta-Function can mutate _functions mid-run
     from agno.tools.discoverable import DiscoverableTools
 
-    discoverables = [t for t in (processed_tools or []) if isinstance(t, DiscoverableTools)]
+    has_discoverables = bool(processed_tools) and any(isinstance(t, DiscoverableTools) for t in processed_tools)
 
     joint_images = joint_files = joint_audios = joint_videos = None
 
-    # Update the session state for the functions
-    if _functions or discoverables:
+    if has_discoverables:
+        # Only materialize the filter when DT is in play
+        discoverables = [t for t in processed_tools if isinstance(t, DiscoverableTools)]
+
         from inspect import signature
 
         def _func_needs_media(func: Function) -> bool:
@@ -515,9 +517,9 @@ def determine_tools_for_model(
             params = signature(func.entrypoint).parameters
             return any(p in params for p in ("images", "videos", "audios", "files"))
 
-        # Scan upfront tools + discoverable pool — either may need media at runtime
+        # Scan upfront tools + discoverable pool - either may need media at runtime
         needs_media = any(_func_needs_media(f) for f in _functions if isinstance(f, Function))
-        if not needs_media and discoverables:
+        if not needs_media:
             # Check both registries so async-only toolkit functions are not missed
             needs_media = any(
                 _func_needs_media(f)
@@ -525,13 +527,23 @@ def determine_tools_for_model(
                 for f in (dt._async_registry if async_mode else dt._sync_registry).values()
             )
 
-        # Only collect media if functions actually need them
         if needs_media:
             joint_images = collect_joint_images(run_response.input, session)
             joint_files = collect_joint_files(run_response.input)
             joint_audios = collect_joint_audios(run_response.input, session)
             joint_videos = collect_joint_videos(run_response.input, session)
+    elif _functions:
+        # No DiscoverableTools - preserve pre-PR behavior: collect unconditionally,
+        # no per-tool media-need scan.
+        discoverables = []
+        joint_images = collect_joint_images(run_response.input, session)
+        joint_files = collect_joint_files(run_response.input)
+        joint_audios = collect_joint_audios(run_response.input, session)
+        joint_videos = collect_joint_videos(run_response.input, session)
+    else:
+        discoverables = []
 
+    if _functions:
         for func in _functions:  # type: ignore
             if isinstance(func, Function):
                 func._run_context = run_context

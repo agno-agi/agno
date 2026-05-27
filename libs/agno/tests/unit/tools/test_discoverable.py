@@ -1,6 +1,8 @@
 """Unit tests for DiscoverableTools."""
 
+import asyncio
 import json
+import threading
 
 import pytest
 
@@ -63,7 +65,7 @@ def test_registry_built_from_toolkit():
 
 
 def test_toolkit_registers_search_meta_only(dt):
-    # DiscoverableTools is a Toolkit — inherits get_functions() from parent.
+    # DiscoverableTools is a Toolkit - inherits get_functions() from parent.
     # It should register exactly the search_tools meta-Function.
     assert list(dt.functions.keys()) == ["search_tools"]
     assert dt.functions["search_tools"].entrypoint == dt._search
@@ -109,7 +111,7 @@ def test_search_respects_max_results(dt):
     dt.bind(tools_list=fake_list)
     # broad query that hits multiple tools
     result = json.loads(dt._search("email send calendar weather"))
-    # max_results=3, registry has 4 — must cap at 3
+    # max_results=3, registry has 4 - must cap at 3
     assert len(result["discovered_tools"]) <= 3
     assert len(fake_list) <= 3
 
@@ -205,9 +207,7 @@ def test_audit_approval_without_hitl_flag_raises():
 
 def test_function_object_input_registers_in_both_registries():
     """A plain Function passed in should appear in sync + async registries."""
-    func = Function(
-        name="plain", description="Plain function.", entrypoint=lambda: "ok"
-    )
+    func = Function(name="plain", description="Plain function.", entrypoint=lambda: "ok")
     dt = DiscoverableTools(tools=[func])
     assert "plain" in dt._sync_registry
     assert "plain" in dt._async_registry
@@ -263,10 +263,7 @@ def test_agent_accepts_discoverable_tools_inside_tools_list():
     assert any(t is discoverable for t in agent.tools)
     # Registry still holds deferred tool; it is NOT in agent.tools as a top-level entry
     assert "deferred_tool" in discoverable._sync_registry
-    assert not any(
-        callable(t) and getattr(t, "__name__", None) == "deferred_tool"
-        for t in agent.tools
-    )
+    assert not any(callable(t) and getattr(t, "__name__", None) == "deferred_tool" for t in agent.tools)
 
 
 def test_registry_exposes_media_needs_for_host_detection():
@@ -280,10 +277,7 @@ def test_registry_exposes_media_needs_for_host_detection():
     dt = DiscoverableTools(tools=[image_analyzer])
     has_media_tool = any(
         func.entrypoint is not None
-        and any(
-            p in signature(func.entrypoint).parameters
-            for p in ("images", "videos", "audios", "files")
-        )
+        and any(p in signature(func.entrypoint).parameters for p in ("images", "videos", "audios", "files"))
         for func in dt._sync_registry.values()
     )
     assert has_media_tool is True
@@ -304,10 +298,7 @@ def test_async_registry_media_detection():
     dt = DiscoverableTools(tools=[AsyncMediaKit()])
     has_media_in_async = any(
         func.entrypoint is not None
-        and any(
-            p in signature(func.entrypoint).parameters
-            for p in ("images", "videos", "audios", "files")
-        )
+        and any(p in signature(func.entrypoint).parameters for p in ("images", "videos", "audios", "files"))
         for func in dt._async_registry.values()
     )
     assert has_media_in_async is True
@@ -322,9 +313,7 @@ def test_inject_skips_duplicate_names():
 
     dt = DiscoverableTools(tools=[send_email])
     # Simulate an already-visible tool with same name
-    existing = Function(
-        name="send_email", description="Existing.", entrypoint=lambda: "original"
-    )
+    existing = Function(name="send_email", description="Existing.", entrypoint=lambda: "original")
     fake_list = [existing]
     dt.bind(tools_list=fake_list)
     dt._search("email")
@@ -337,7 +326,7 @@ def test_instructions_populated_for_async_only_toolkit():
     """Async-only toolkits register into _async_registry; instructions must still inject.
 
     Regression: _build_instructions previously short-circuited on empty _sync_registry,
-    so a toolkit with only `async def` methods produced empty instructions — the
+    so a toolkit with only `async def` methods produced empty instructions - the
     system-prompt hint that tells the model `search_tools` exists was never injected.
     """
 
@@ -428,3 +417,118 @@ def test_haystack_uses_hydrated_descriptions_for_ranking():
     names = [t["name"] for t in result["discovered_tools"]]
     assert "reset_password" in names
     assert names[0] == "reset_password", "haystack must rank by description text"
+
+
+# ---------------------------------------------------------------------------
+# Concurrency isolation - bind() state is stored in ContextVars, so concurrent
+# runs of the same agent (sharing one DT instance) must not stomp on each
+# other's tools list, active-names set, agent/team refs, or media.
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_async_runs_have_isolated_tools_list():
+    """Two asyncio tasks binding the same DT to different tools lists must not collide."""
+
+    def email_op(to: str) -> str:
+        """Send email."""
+        return "ok"
+
+    def weather_op(city: str) -> str:
+        """Get weather."""
+        return "ok"
+
+    dt = DiscoverableTools(tools=[email_op, weather_op])
+
+    async def run_one(query: str, tools_list: list) -> None:
+        dt.bind(tools_list=tools_list)
+        # Yield so the scheduler can interleave bind/search from sibling tasks
+        await asyncio.sleep(0)
+        dt._search(query)
+        await asyncio.sleep(0)
+
+    list_a: list = []
+    list_b: list = []
+
+    async def main() -> None:
+        await asyncio.gather(
+            run_one("email", list_a),
+            run_one("weather", list_b),
+        )
+
+    asyncio.run(main())
+
+    names_a = [f.name for f in list_a if isinstance(f, Function)]
+    names_b = [f.name for f in list_b if isinstance(f, Function)]
+
+    assert "email_op" in names_a
+    assert "email_op" not in names_b
+    assert "weather_op" in names_b
+    assert "weather_op" not in names_a
+
+
+def test_concurrent_async_runs_have_isolated_active_names():
+    """active_names is per-context - task A's activations don't leak into task B."""
+
+    def alpha() -> str:
+        """Alpha tool."""
+        return "a"
+
+    def beta() -> str:
+        """Beta tool."""
+        return "b"
+
+    dt = DiscoverableTools(tools=[alpha, beta])
+
+    observed: dict = {}
+
+    async def run_one(label: str, query: str) -> None:
+        dt.bind(tools_list=[])
+        await asyncio.sleep(0)
+        dt._search(query)
+        await asyncio.sleep(0)
+        observed[label] = set(dt._active_names)
+
+    async def main() -> None:
+        await asyncio.gather(run_one("a", "alpha"), run_one("b", "beta"))
+
+    asyncio.run(main())
+
+    assert observed["a"] == {"alpha"}
+    assert observed["b"] == {"beta"}
+
+
+def test_concurrent_thread_runs_have_isolated_state():
+    """Two threads binding the same DT must not share tools_list_ref via ContextVars."""
+
+    def op_one() -> str:
+        """First op."""
+        return "1"
+
+    def op_two() -> str:
+        """Second op."""
+        return "2"
+
+    dt = DiscoverableTools(tools=[op_one, op_two])
+
+    list_a: list = []
+    list_b: list = []
+    barrier = threading.Barrier(2)
+
+    def worker(query: str, tools_list: list) -> None:
+        dt.bind(tools_list=tools_list)
+        # Force interleaving: both threads bind, then both search
+        barrier.wait()
+        dt._search(query)
+
+    t1 = threading.Thread(target=worker, args=("one", list_a))
+    t2 = threading.Thread(target=worker, args=("two", list_b))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    names_a = [f.name for f in list_a if isinstance(f, Function)]
+    names_b = [f.name for f in list_b if isinstance(f, Function)]
+
+    assert "op_one" in names_a and "op_one" not in names_b
+    assert "op_two" in names_b and "op_two" not in names_a
