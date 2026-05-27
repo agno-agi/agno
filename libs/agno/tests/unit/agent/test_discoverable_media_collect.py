@@ -151,3 +151,70 @@ def test_discoverable_async_only_media_tool_detected_in_async_mode(patched_colle
     )
 
     assert patched_collectors["images"].called
+
+
+def test_custom_toolkit_with_has_runtime_bind_gets_hook_called(patched_collectors):
+    """Polymorphism: a non-DT Toolkit with has_runtime_bind=True must get on_runtime_bind invoked.
+
+    Confirms the tool-resolution pipeline no longer special-cases DiscoverableTools - any
+    Toolkit subclass that flips the flag and overrides the hook is wired in.
+    """
+
+    invocations: list = []
+
+    class CustomRuntimeKit(Toolkit):
+        has_runtime_bind: bool = True
+
+        def __init__(self):
+            super().__init__(name="custom_runtime")
+
+        def on_runtime_bind(self, tools_list, **kwargs):
+            invocations.append({"tools_list": tools_list, "kwargs": kwargs})
+
+    kit = CustomRuntimeKit()
+    agent = Agent(tools=[kit])
+
+    determine_tools_for_model(
+        agent=agent,
+        model=_mock_model(),
+        processed_tools=agent.tools,
+        run_response=_run_response(),
+        run_context=_run_context(),
+        session=_session(),
+        async_mode=False,
+    )
+
+    assert len(invocations) == 1
+    assert "agent" in invocations[0]["kwargs"]
+    assert invocations[0]["kwargs"]["agent"] is agent
+
+
+def test_custom_toolkit_requires_media_triggers_collect(patched_collectors):
+    """A non-DT Toolkit can also drive media collection via requires_media()."""
+
+    class MediaHungryKit(Toolkit):
+        has_runtime_bind: bool = True
+
+        def __init__(self):
+            super().__init__(name="media_hungry")
+
+        def requires_media(self, async_mode: bool) -> bool:
+            return True
+
+        def on_runtime_bind(self, tools_list, **kwargs):
+            pass
+
+    agent = Agent(tools=[MediaHungryKit()])
+
+    determine_tools_for_model(
+        agent=agent,
+        model=_mock_model(),
+        processed_tools=agent.tools,
+        run_response=_run_response(),
+        run_context=_run_context(),
+        session=_session(),
+        async_mode=False,
+    )
+
+    assert patched_collectors["images"].called
+    assert patched_collectors["files"].called

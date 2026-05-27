@@ -16,6 +16,11 @@ class DiscoverableTools(Toolkit):
     are appended to the live tools list and become callable as regular Functions
     on subsequent iterations of the model loop.
 
+    Integration with the Agent/Team tool-resolution pipeline is polymorphic:
+    ``has_runtime_bind = True`` flags the toolkit, and ``on_runtime_bind`` is the
+    hook the parser calls after upfront tools are resolved. No subclass-specific
+    isinstance checks live in ``agent/_tools.py`` or ``team/_tools.py``.
+
     Concurrency:
         Per-run state (bound tools list, active-names set, agent/team refs,
         media, run_context, async_mode) lives in ``contextvars.ContextVar``s, so
@@ -27,6 +32,8 @@ class DiscoverableTools(Toolkit):
         discoverable = DiscoverableTools(tools=[tool_a, tool_b, ...])
         agent = Agent(tools=[always_visible_tool, discoverable])
     """
+
+    has_runtime_bind: bool = True
 
     def __init__(
         self,
@@ -130,9 +137,10 @@ class DiscoverableTools(Toolkit):
         return val
 
     # ------------------------------------------------------------------ public
-    def bind(
+    def on_runtime_bind(
         self,
         tools_list: List[Any],
+        *,
         agent: Optional[Any] = None,
         team: Optional[Any] = None,
         strict: bool = False,
@@ -148,6 +156,7 @@ class DiscoverableTools(Toolkit):
 
         All state is written to per-instance ContextVars, so concurrent runs
         in sibling asyncio tasks (or threads) get their own isolated view.
+        Called polymorphically by the Agent/Team tool-resolution path.
         """
         self._var_tools_list.set(tools_list)
         self._var_agent.set(agent)
@@ -162,6 +171,24 @@ class DiscoverableTools(Toolkit):
         self._var_async_mode.set(async_mode)
         # Fresh active-names set per bind - never inherit prior-run activations
         self._var_active_names.set(set())
+
+    def requires_media(self, async_mode: bool) -> bool:
+        """Report whether the deferred pool contains any function that consumes media.
+
+        Used by the Agent/Team tool-resolution path to decide whether to collect
+        joint media for this run. Scans the appropriate registry (async vs sync)
+        so async-only toolkit functions are not missed.
+        """
+        from inspect import signature
+
+        registry = self._async_registry if async_mode else self._sync_registry
+        for func in registry.values():
+            if func.entrypoint is None:
+                continue
+            params = signature(func.entrypoint).parameters
+            if any(p in params for p in ("images", "videos", "audios", "files")):
+                return True
+        return False
 
     # ----------------------------------------------------------------- private
     def _build_instructions(self) -> str:

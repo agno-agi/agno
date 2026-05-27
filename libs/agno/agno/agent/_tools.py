@@ -497,18 +497,15 @@ def determine_tools_for_model(
             agent, tools=processed_tools, model=model, run_context=run_context, async_mode=async_mode
         )
 
-    # DiscoverableTools instances in the tools list need bind() after parse_tools
-    # so their search_tools meta-Function can mutate _functions mid-run
-    from agno.tools.discoverable import DiscoverableTools
-
-    has_discoverables = bool(processed_tools) and any(isinstance(t, DiscoverableTools) for t in processed_tools)
+    # Toolkits flagged with has_runtime_bind=True (e.g. DiscoverableTools) need
+    # a per-run callback after parse_tools so they can wire themselves to the
+    # live _functions list. The base Toolkit.on_runtime_bind is a no-op, so
+    # normal toolkits are not affected by this iteration.
+    runtime_bind_toolkits = [t for t in (processed_tools or []) if isinstance(t, Toolkit) and t.has_runtime_bind]
 
     joint_images = joint_files = joint_audios = joint_videos = None
 
-    if has_discoverables:
-        # Only materialize the filter when DT is in play
-        discoverables = [t for t in processed_tools if isinstance(t, DiscoverableTools)]
-
+    if runtime_bind_toolkits:
         from inspect import signature
 
         def _func_needs_media(func: Function) -> bool:
@@ -517,15 +514,10 @@ def determine_tools_for_model(
             params = signature(func.entrypoint).parameters
             return any(p in params for p in ("images", "videos", "audios", "files"))
 
-        # Scan upfront tools + discoverable pool - either may need media at runtime
+        # Scan upfront tools + ask each runtime-bind toolkit whether it needs media
         needs_media = any(_func_needs_media(f) for f in _functions if isinstance(f, Function))
         if not needs_media:
-            # Check both registries so async-only toolkit functions are not missed
-            needs_media = any(
-                _func_needs_media(f)
-                for dt in discoverables
-                for f in (dt._async_registry if async_mode else dt._sync_registry).values()
-            )
+            needs_media = any(tk.requires_media(async_mode) for tk in runtime_bind_toolkits)
 
         if needs_media:
             joint_images = collect_joint_images(run_response.input, session)
@@ -533,15 +525,11 @@ def determine_tools_for_model(
             joint_audios = collect_joint_audios(run_response.input, session)
             joint_videos = collect_joint_videos(run_response.input, session)
     elif _functions:
-        # No DiscoverableTools - preserve pre-PR behavior: collect unconditionally,
-        # no per-tool media-need scan.
-        discoverables = []
+        # No runtime-bind toolkits - preserve pre-PR behavior: collect unconditionally.
         joint_images = collect_joint_images(run_response.input, session)
         joint_files = collect_joint_files(run_response.input)
         joint_audios = collect_joint_audios(run_response.input, session)
         joint_videos = collect_joint_videos(run_response.input, session)
-    else:
-        discoverables = []
 
     if _functions:
         for func in _functions:  # type: ignore
@@ -552,9 +540,10 @@ def determine_tools_for_model(
                 func._audios = joint_audios
                 func._videos = joint_videos
 
-    # Wire each DiscoverableTools in the tools list to the live _functions list
-    for dt in discoverables:
-        dt.bind(
+    # Polymorphic runtime-bind hook - one call per flagged toolkit, no
+    # subclass-specific imports or private-attribute access in this path.
+    for tk in runtime_bind_toolkits:
+        tk.on_runtime_bind(
             tools_list=_functions,
             agent=agent,
             team=agent._team,

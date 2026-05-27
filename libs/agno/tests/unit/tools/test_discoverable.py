@@ -73,7 +73,7 @@ def test_toolkit_registers_search_meta_only(dt):
 
 def test_bind_resets_active_names(dt):
     dt._active_names.add("send_email")
-    dt.bind(tools_list=[])
+    dt.on_runtime_bind(tools_list=[])
     assert dt._active_names == set()
 
 
@@ -93,7 +93,7 @@ def test_toolkit_instructions_empty_when_no_registry():
 
 def test_search_returns_word_matches(dt):
     fake_list: list = []
-    dt.bind(tools_list=fake_list)
+    dt.on_runtime_bind(tools_list=fake_list)
     result = json.loads(dt._search("email send"))
     names = [t["name"] for t in result["discovered_tools"]]
     assert "send_email" in names
@@ -101,14 +101,14 @@ def test_search_returns_word_matches(dt):
 
 def test_search_appends_matches_to_tools_list(dt):
     fake_list: list = []
-    dt.bind(tools_list=fake_list)
+    dt.on_runtime_bind(tools_list=fake_list)
     dt._search("calendar")
     assert any(f.name == "list_calendar_events" for f in fake_list)
 
 
 def test_search_respects_max_results(dt):
     fake_list: list = []
-    dt.bind(tools_list=fake_list)
+    dt.on_runtime_bind(tools_list=fake_list)
     # broad query that hits multiple tools
     result = json.loads(dt._search("email send calendar weather"))
     # max_results=3, registry has 4 - must cap at 3
@@ -118,7 +118,7 @@ def test_search_respects_max_results(dt):
 
 def test_search_skips_already_active(dt):
     fake_list: list = []
-    dt.bind(tools_list=fake_list)
+    dt.on_runtime_bind(tools_list=fake_list)
     dt._search("email")
     before = set(dt._active_names)
     dt._search("email")
@@ -127,7 +127,7 @@ def test_search_skips_already_active(dt):
 
 def test_search_returns_empty_when_no_match(dt):
     fake_list: list = []
-    dt.bind(tools_list=fake_list)
+    dt.on_runtime_bind(tools_list=fake_list)
     result = json.loads(dt._search("xyzzy_no_match_token"))
     assert result["discovered_tools"] == []
     assert fake_list == []
@@ -135,7 +135,7 @@ def test_search_returns_empty_when_no_match(dt):
 
 def test_search_remaining_count(dt):
     fake_list: list = []
-    dt.bind(tools_list=fake_list)
+    dt.on_runtime_bind(tools_list=fake_list)
     result = json.loads(dt._search("email"))
     assert result["remaining"] == len(dt._registry) - len(dt._active_names)
 
@@ -149,7 +149,7 @@ def test_inject_warns_when_unbound(dt, caplog):
 
 def test_substring_fallback_match(dt):
     fake_list: list = []
-    dt.bind(tools_list=fake_list)
+    dt.on_runtime_bind(tools_list=fake_list)
     # Query token "weath" is substring of "weather" but not exact word match
     result = json.loads(dt._search("weath"))
     names = [t["name"] for t in result["discovered_tools"]]
@@ -172,7 +172,7 @@ def test_async_mode_flag_switches_registry():
     # Async registry also has it
     assert "async_only_fn" in dt._async_registry
     fake_list: list = []
-    dt.bind(tools_list=fake_list, async_mode=True)
+    dt.on_runtime_bind(tools_list=fake_list, async_mode=True)
     dt._search("async")
     assert any(f.name == "async_only_fn" for f in fake_list)
 
@@ -216,12 +216,12 @@ def test_function_object_input_registers_in_both_registries():
 def test_bind_resets_active_names_across_runs(dt):
     """A second run must not inherit activations from the first."""
     fake_list_1: list = []
-    dt.bind(tools_list=fake_list_1)
+    dt.on_runtime_bind(tools_list=fake_list_1)
     dt._search("email")
     assert len(dt._active_names) > 0
     # Simulate second run
     fake_list_2: list = []
-    dt.bind(tools_list=fake_list_2)
+    dt.on_runtime_bind(tools_list=fake_list_2)
     assert dt._active_names == set()
     dt._search("email")
     assert len(fake_list_2) > 0
@@ -232,7 +232,7 @@ def test_discovered_function_gets_run_context_and_media(dt):
     fake_list: list = []
     dummy_ctx = object()
     dummy_images = ["img1"]
-    dt.bind(
+    dt.on_runtime_bind(
         tools_list=fake_list,
         run_context=dummy_ctx,  # type: ignore[arg-type]
         images=dummy_images,  # type: ignore[arg-type]
@@ -315,7 +315,7 @@ def test_inject_skips_duplicate_names():
     # Simulate an already-visible tool with same name
     existing = Function(name="send_email", description="Existing.", entrypoint=lambda: "original")
     fake_list = [existing]
-    dt.bind(tools_list=fake_list)
+    dt.on_runtime_bind(tools_list=fake_list)
     dt._search("email")
     # Should NOT have appended a duplicate
     assert len(fake_list) == 1
@@ -385,7 +385,7 @@ def test_search_returns_hydrated_descriptions_for_async_toolkit():
 
     dt = DiscoverableTools(tools=[BillingKit()])
     fake_list: list = []
-    dt.bind(tools_list=fake_list, async_mode=True)
+    dt.on_runtime_bind(tools_list=fake_list, async_mode=True)
     result = json.loads(dt._search("cancel subscription"))
     assert result["discovered_tools"], "search must find the tool"
     found = result["discovered_tools"][0]
@@ -411,7 +411,7 @@ def test_haystack_uses_hydrated_descriptions_for_ranking():
 
     dt = DiscoverableTools(tools=[UserOpsKit()])
     fake_list: list = []
-    dt.bind(tools_list=fake_list, async_mode=True)
+    dt.on_runtime_bind(tools_list=fake_list, async_mode=True)
     # Query keyword "password" only appears in reset_password's description
     result = json.loads(dt._search("password"))
     names = [t["name"] for t in result["discovered_tools"]]
@@ -440,7 +440,7 @@ def test_concurrent_async_runs_have_isolated_tools_list():
     dt = DiscoverableTools(tools=[email_op, weather_op])
 
     async def run_one(query: str, tools_list: list) -> None:
-        dt.bind(tools_list=tools_list)
+        dt.on_runtime_bind(tools_list=tools_list)
         # Yield so the scheduler can interleave bind/search from sibling tasks
         await asyncio.sleep(0)
         dt._search(query)
@@ -455,7 +455,13 @@ def test_concurrent_async_runs_have_isolated_tools_list():
             run_one("weather", list_b),
         )
 
-    asyncio.run(main())
+    # Use a fresh loop instead of asyncio.run() so we don't disturb the default
+    # event-loop policy for sibling tests that call asyncio.get_event_loop().
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(main())
+    finally:
+        loop.close()
 
     names_a = [f.name for f in list_a if isinstance(f, Function)]
     names_b = [f.name for f in list_b if isinstance(f, Function)]
@@ -482,7 +488,7 @@ def test_concurrent_async_runs_have_isolated_active_names():
     observed: dict = {}
 
     async def run_one(label: str, query: str) -> None:
-        dt.bind(tools_list=[])
+        dt.on_runtime_bind(tools_list=[])
         await asyncio.sleep(0)
         dt._search(query)
         await asyncio.sleep(0)
@@ -491,7 +497,13 @@ def test_concurrent_async_runs_have_isolated_active_names():
     async def main() -> None:
         await asyncio.gather(run_one("a", "alpha"), run_one("b", "beta"))
 
-    asyncio.run(main())
+    # Use a fresh loop instead of asyncio.run() so we don't disturb the default
+    # event-loop policy for sibling tests that call asyncio.get_event_loop().
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(main())
+    finally:
+        loop.close()
 
     assert observed["a"] == {"alpha"}
     assert observed["b"] == {"beta"}
@@ -515,7 +527,7 @@ def test_concurrent_thread_runs_have_isolated_state():
     barrier = threading.Barrier(2)
 
     def worker(query: str, tools_list: list) -> None:
-        dt.bind(tools_list=tools_list)
+        dt.on_runtime_bind(tools_list=tools_list)
         # Force interleaving: both threads bind, then both search
         barrier.wait()
         dt._search(query)
