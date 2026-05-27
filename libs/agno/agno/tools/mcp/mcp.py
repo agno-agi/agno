@@ -489,9 +489,8 @@ class MCPTools(Toolkit):
             return
 
         try:
-            # Shield the connection to prevent cancel scope errors from propagating
-            await asyncio.shield(self._connect())
-        except (RuntimeError, BaseException, asyncio.CancelledError) as e:
+            await self._connect()
+        except Exception as e:
             log_error(f"Failed to connect to {str(self)}: {e}")
             await self._safe_cleanup()
 
