@@ -127,10 +127,9 @@ class FalTools(Toolkit):
                     url=url,
                 )
                 return ToolResult(content=f"Video generated successfully at {url}", videos=[video_artifact])
-            
-            else:
-                log_error(f"Unsupported type in result: {result}")
-                return ToolResult(content=f"Unsupported type in result: {result}")
+
+            log_error(f"Unsupported type in result: {result}")
+            return ToolResult(content=f"Unsupported type in result: {result}")
 
         except Exception as e:
             logger.exception("Failed to run model")
