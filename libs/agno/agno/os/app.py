@@ -649,7 +649,15 @@ class AgentOS:
                     existing_team_ids.add(team_id)
 
     def _populate_registry_knowledge(self) -> None:
-        """Add discovered knowledge instances to the registry."""
+        """Add discovered knowledge instances to the registry.
+
+        Sources are the knowledge instances collected by
+        ``_auto_discover_knowledge_instances`` (agents, teams, the AgentOS
+        ``knowledge`` param, and ``registry.knowledge``). That discovery only
+        keeps instances backed by a ``contents_db``, so a ``contents_db`` is
+        required for a knowledge base to be resolvable from a Studio/Builder
+        component config (vector-search-only knowledge is not registered).
+        """
         if self.registry is None:
             self.registry = Registry()
 
