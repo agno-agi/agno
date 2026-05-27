@@ -51,7 +51,7 @@ class SentenceTransformerEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # Run the CPU-bound operation in a thread executor
         return await loop.run_in_executor(None, self.get_embedding, text)
 
@@ -59,5 +59,5 @@ class SentenceTransformerEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self.get_embedding_and_usage, text)

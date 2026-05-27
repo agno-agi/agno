@@ -1216,8 +1216,11 @@ class SingleStoreDb(BaseDb):
             log_error(f"Error deleting memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of memory topics.
@@ -1229,6 +1232,8 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table.c.topics)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchall()
 
                 topics = []
