@@ -524,6 +524,10 @@ def _get_task_management_tools(
         except RunCancelledException:
             use_team_logger()
             _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+            # Preserve any partial member content as task.result before re-raising
+            if member_run_response is not None and member_run_response.content:
+                task.result = str(member_run_response.content)
+                save_task_list(run_context.session_state, task_list)
             raise
         except Exception as e:
             task.status = TaskStatus.failed
@@ -699,6 +703,10 @@ def _get_task_management_tools(
         except RunCancelledException:
             use_team_logger()
             _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+            # Preserve any partial member content as task.result before re-raising
+            if member_run_response is not None and member_run_response.content:
+                task.result = str(member_run_response.content)
+                save_task_list(run_context.session_state, task_list)
             raise
         except Exception as e:
             task.status = TaskStatus.failed

@@ -640,15 +640,17 @@ def _run(
                 return run_response
             except RunCancelledException as e:
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    cleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        cleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
@@ -1776,15 +1778,17 @@ async def _arun(
 
             except RunCancelledException as e:
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    await acleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
@@ -3024,6 +3028,8 @@ def continue_run_dispatch(
 
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
+        if run_response.status == RunStatus.cancelled:
+            raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
         # The run is continued from a provided run_response. This contains the updated tools.
         input = run_response.messages or []
     elif run_id is not None:
@@ -3032,6 +3038,8 @@ def continue_run_dispatch(
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
+        if run_response.status == RunStatus.cancelled:
+            raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
         input = run_response.messages or []
 
@@ -3290,10 +3298,12 @@ def _continue_run(
                 return run_response
             except RunCancelledException as e:
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
-                # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                try:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
@@ -4060,6 +4070,8 @@ async def _acontinue_run(
 
                 # 4. Prepare run response
                 if run_response is not None:
+                    if run_response.status == RunStatus.cancelled:
+                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
                     input = run_response.messages or []
                 elif run_id is not None:
@@ -4068,6 +4080,8 @@ async def _acontinue_run(
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
+                    if run_response.status == RunStatus.cancelled:
+                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                     input = run_response.messages or []
 
@@ -4262,15 +4276,17 @@ async def _acontinue_run(
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    await acleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
@@ -4308,6 +4324,9 @@ async def _acontinue_run(
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
+            except ValueError:
+                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -4437,6 +4456,8 @@ async def _acontinue_run_stream(
 
                 # 4. Prepare run response
                 if run_response is not None:
+                    if run_response.status == RunStatus.cancelled:
+                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
                     input = run_response.messages or []
 
@@ -4446,6 +4467,8 @@ async def _acontinue_run_stream(
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
+                    if run_response.status == RunStatus.cancelled:
+                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                     input = run_response.messages or []
 
@@ -4813,6 +4836,9 @@ async def _acontinue_run_stream(
                     yield run_response
                 break
 
+            except ValueError:
+                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+                raise
             except Exception as e:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
@@ -4943,10 +4969,22 @@ def _handle_run_cancellation(
     reason = _normalize_cancellation_reason(run_response, error)
     log_debug(f"Run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
+    has_partial_content = bool(run_response.content)
     if not run_response.content:
         run_response.content = reason
     if run_response.messages is None and run_messages is not None:
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        messages_for_run_response = [msg for msg in run_messages.messages if msg.add_to_agent_memory]
+        # Preserve partial streamed content as the assistant message, filling an empty trailing one if present
+        if has_partial_content:
+            partial_content = str(run_response.content)
+            trailing_assistant = next(
+                (msg for msg in reversed(messages_for_run_response) if msg.role == "assistant"),
+                None,
+            )
+            if trailing_assistant is None:
+                messages_for_run_response.append(Message(role="assistant", content=partial_content))
+            elif not trailing_assistant.content:
+                trailing_assistant.content = partial_content
         if messages_for_run_response:
             run_response.messages = messages_for_run_response
     # Stop the timer for the Run duration

@@ -477,8 +477,11 @@ def _run_tasks(
         return run_response
 
     except RunCancelledException as e:
-        run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-        _cleanup_and_store(team, run_response=run_response, session=session)
+        run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=session)
+        try:
+            _cleanup_and_store(team, run_response=run_response, session=session)
+        except Exception as store_err:
+            log_warning(f"Failed to persist cancelled run: {store_err}")
         return run_response
 
     except (InputCheckError, OutputCheckError) as e:
@@ -498,7 +501,7 @@ def _run_tasks(
         return run_response
 
     except KeyboardInterrupt:
-        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages, session=session)
         try:
             _cleanup_and_store(team, run_response=run_response, session=session)
         except Exception as store_err:
@@ -946,7 +949,7 @@ def _run_tasks_stream(
         log_debug(f"Team Task Run (Stream) End: {run_response.run_id}", center=True, symbol="*")
 
     except RunCancelledException as e:
-        run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+        run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team,
             run_response,
@@ -979,7 +982,7 @@ def _run_tasks_stream(
         yield run_error
 
     except KeyboardInterrupt:
-        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages, session=session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team,
             run_response,
@@ -1294,8 +1297,11 @@ def _run(
 
                 return run_response
             except RunCancelledException as e:
-                run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-                _cleanup_and_store(team, run_response=run_response, session=session)
+                run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=session)
+                try:
+                    _cleanup_and_store(team, run_response=run_response, session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
@@ -1319,7 +1325,9 @@ def _run(
 
                 return run_response
             except KeyboardInterrupt:
-                run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                run_response = _handle_team_run_cancellation(
+                    run_response, KeyboardInterrupt(), run_messages, session=session
+                )
                 try:
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
@@ -1733,7 +1741,7 @@ def _run_stream(
 
                 break
             except RunCancelledException as e:
-                run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+                run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=session)
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -1769,7 +1777,9 @@ def _run_stream(
                 break
 
             except KeyboardInterrupt:
-                run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                run_response = _handle_team_run_cancellation(
+                    run_response, KeyboardInterrupt(), run_messages, session=session
+                )
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -2269,7 +2279,7 @@ async def _arun_tasks(
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
         # Wait for background memory and learning creation
-        await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
+        await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
         merge_background_metrics(run_response.metrics, collect_background_metrics(memory_task, learning_task))
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2304,11 +2314,14 @@ async def _arun_tasks(
         return run_response
 
     except RunCancelledException as e:
-        run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+        run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=team_session)
         if run_response.run_id:
             await adrain_member_tasks(run_response.run_id)
-        if team_session is not None:
-            await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        try:
+            if team_session is not None:
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        except Exception as store_err:
+            log_warning(f"Failed to persist cancelled run: {store_err}")
         return run_response
 
     except (InputCheckError, OutputCheckError) as e:
@@ -2329,7 +2342,9 @@ async def _arun_tasks(
         return run_response
 
     except (KeyboardInterrupt, asyncio.CancelledError):
-        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+        run_response = _handle_team_run_cancellation(
+            run_response, KeyboardInterrupt(), run_messages, session=team_session
+        )
         try:
             if team_session is not None:
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -2801,7 +2816,7 @@ async def _arun_tasks_stream(
         log_debug(f"Team Task Run (Async Stream) End: {run_response.run_id}", center=True, symbol="*")
 
     except RunCancelledException as e:
-        run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+        run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=team_session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team,
             run_response,
@@ -2838,7 +2853,9 @@ async def _arun_tasks_stream(
         yield run_error
 
     except (KeyboardInterrupt, asyncio.CancelledError):
-        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+        run_response = _handle_team_run_cancellation(
+            run_response, KeyboardInterrupt(), run_messages, session=team_session
+        )
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team,
             run_response,
@@ -3191,10 +3208,13 @@ async def _arun(
                 return run_response
 
             except RunCancelledException as e:
-                run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+                run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=team_session)
                 if run_response.run_id:
                     await adrain_member_tasks(run_response.run_id)
-                await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                try:
+                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
             except (InputCheckError, OutputCheckError) as e:
@@ -3217,7 +3237,9 @@ async def _arun(
                 return run_response
 
             except (KeyboardInterrupt, asyncio.CancelledError):
-                run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                run_response = _handle_team_run_cancellation(
+                    run_response, KeyboardInterrupt(), run_messages, session=team_session
+                )
                 try:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
@@ -3884,7 +3906,7 @@ async def _arun_stream(
                 log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
                 break
             except RunCancelledException as e:
-                run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+                run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=team_session)
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -3925,7 +3947,9 @@ async def _arun_stream(
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError):
-                run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                run_response = _handle_team_run_cancellation(
+                    run_response, KeyboardInterrupt(), run_messages, session=team_session
+                )
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -4234,17 +4258,40 @@ def _handle_team_run_cancellation(
     run_response: TeamRunOutput,
     error: Union[RunCancelledException, KeyboardInterrupt],
     run_messages: Optional["RunMessages"] = None,
+    session: Optional[TeamSession] = None,
 ) -> TeamRunOutput:
     """Prepare a team run response for cancellation: set status, preserve content and messages."""
     reason = _normalize_team_cancellation_reason(run_response, error)
     log_debug(f"Team run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
+    has_partial_content = bool(run_response.content)
     if not run_response.content:
         run_response.content = reason
     if run_response.messages is None and run_messages is not None:
-        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        messages_for_run_response = [msg for msg in run_messages.messages if msg.add_to_agent_memory]
+        # Preserve partial streamed content as the assistant message, filling an empty trailing one if present
+        if has_partial_content:
+            partial_content = str(run_response.content)
+            trailing_assistant = next(
+                (msg for msg in reversed(messages_for_run_response) if msg.role == "assistant"),
+                None,
+            )
+            if trailing_assistant is None:
+                messages_for_run_response.append(Message(role="assistant", content=partial_content))
+            elif not trailing_assistant.content:
+                trailing_assistant.content = partial_content
         if messages_for_run_response:
             run_response.messages = messages_for_run_response
+    # Cancel can interrupt the team's outer add_member_run; re-link any member runs that the
+    # delegate-task cancel branch already upserted into session.runs (intent-based cancel path)
+    if session is not None:
+        existing_member_run_ids = {member_response.run_id for member_response in (run_response.member_responses or [])}
+        for session_run in session.runs or []:
+            if (
+                getattr(session_run, "parent_run_id", None) == run_response.run_id
+                and session_run.run_id not in existing_member_run_ids
+            ):
+                run_response.add_member_run(session_run)
     # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
@@ -5669,6 +5716,9 @@ def continue_run_dispatch(
 
     run_response = cast(TeamRunOutput, run_response)
 
+    if run_response.status == RunStatus.cancelled:
+        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+
     # Save old requirements before overwriting — needed to preserve approval fields for member-level tools
     old_requirements = run_response.requirements
 
@@ -5968,7 +6018,7 @@ def _continue_run_dispatch_stream_with_member_events(
     try:
         yield from member_event_stream
     except RunCancelledException as e:
-        run_response = _handle_team_run_cancellation(run_response, e)
+        run_response = _handle_team_run_cancellation(run_response, e, session=team_session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team, run_response, error=e, run_context=run_context
         )
@@ -5982,7 +6032,7 @@ def _continue_run_dispatch_stream_with_member_events(
             yield run_response
         return
     except KeyboardInterrupt:
-        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt())
+        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), session=team_session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team, run_response, error=KeyboardInterrupt(), run_context=run_context
         )
@@ -6260,8 +6310,11 @@ def _continue_run(
                 return run_response
 
             except RunCancelledException as e:
-                run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-                _cleanup_and_store(team, run_response=run_response, session=session)
+                run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=session)
+                try:
+                    _cleanup_and_store(team, run_response=run_response, session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
             except (InputCheckError, OutputCheckError) as e:
@@ -6281,7 +6334,9 @@ def _continue_run(
                 return run_response
 
             except KeyboardInterrupt:
-                run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                run_response = _handle_team_run_cancellation(
+                    run_response, KeyboardInterrupt(), run_messages, session=session
+                )
                 try:
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
@@ -6512,7 +6567,7 @@ def _continue_run_stream(
                 break
 
             except RunCancelledException as e:
-                run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+                run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=session)
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -6547,7 +6602,9 @@ def _continue_run_stream(
                 break
 
             except KeyboardInterrupt:
-                run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                run_response = _handle_team_run_cancellation(
+                    run_response, KeyboardInterrupt(), run_messages, session=session
+                )
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -6747,6 +6804,9 @@ async def _acontinue_run(
                         raise RuntimeError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
+
+                if run_response.status == RunStatus.cancelled:
+                    raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                 # Save old requirements before overwriting — needed for member-level approval fields
                 old_requirements = run_response.requirements
@@ -6982,7 +7042,7 @@ async def _acontinue_run(
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
-                run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+                run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=team_session)
                 if run_response.run_id:
                     await adrain_member_tasks(run_response.run_id)
                 if team_session is not None:
@@ -7004,7 +7064,9 @@ async def _acontinue_run(
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
-                run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                run_response = _handle_team_run_cancellation(
+                    run_response, KeyboardInterrupt(), run_messages, session=team_session
+                )
                 try:
                     if team_session is not None:
                         await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -7012,6 +7074,9 @@ async def _acontinue_run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
+            except ValueError:
+                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+                raise
             except Exception as e:
                 run_response = cast(TeamRunOutput, run_response)
                 if attempt < num_attempts - 1:
@@ -7093,6 +7158,9 @@ async def _acontinue_run_stream(
                         raise RuntimeError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
+
+                if run_response.status == RunStatus.cancelled:
+                    raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                 # Save old requirements before overwriting — needed for member-level approval fields
                 old_requirements = run_response.requirements
@@ -7519,7 +7587,7 @@ async def _acontinue_run_stream(
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
-                run_response = _handle_team_run_cancellation(run_response, e, run_messages)
+                run_response = _handle_team_run_cancellation(run_response, e, run_messages, session=team_session)
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -7562,7 +7630,9 @@ async def _acontinue_run_stream(
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
-                run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                run_response = _handle_team_run_cancellation(
+                    run_response, KeyboardInterrupt(), run_messages, session=team_session
+                )
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -7580,6 +7650,9 @@ async def _acontinue_run_stream(
                     yield run_response
                 break
 
+            except ValueError:
+                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+                raise
             except Exception as e:
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)

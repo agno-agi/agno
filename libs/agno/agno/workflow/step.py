@@ -24,7 +24,10 @@ from agno.run.agent import (
 from agno.run.agent import (
     RunCompletedEvent as AgentRunCompletedEvent,
 )
-from agno.run.agent import RunContentEvent, RunOutput
+from agno.run.agent import (
+    RunContentEvent,
+    RunOutput,
+)
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.cancel import aregister_member_run, register_member_run
 from agno.run.team import (
@@ -33,8 +36,12 @@ from agno.run.team import (
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
 )
-from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutput
+from agno.run.team import (
+    RunContentEvent as TeamRunContentEvent,
+)
+from agno.run.team import (
+    TeamRunOutput,
+)
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,

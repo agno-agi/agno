@@ -1998,24 +1998,40 @@ class Workflow:
         workflow_run_response.status = RunStatus.running
 
         if callable(self.steps):
-            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
-                raise ValueError("Cannot use async function with synchronous execution")
-            elif isgeneratorfunction(self.steps):
-                content = ""
-                for chunk in self.steps(self, execution_input, **kwargs):
-                    # Check for cancellation while consuming generator
+            try:
+                if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
+                    raise ValueError("Cannot use async function with synchronous execution")
+                elif isgeneratorfunction(self.steps):
+                    content = ""
+                    for chunk in self.steps(self, execution_input, **kwargs):
+                        # Check for cancellation while consuming generator
+                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                else:
+                    # Execute the workflow with the custom executor
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            else:
-                # Execute the workflow with the custom executor
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)  # type: ignore[arg-type]
+                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)  # type: ignore[arg-type]
 
-            workflow_run_response.status = RunStatus.completed
+                workflow_run_response.status = RunStatus.completed
+            except RunCancelledException as e:
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = str(e)
+            finally:
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+                try:
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist workflow run: {store_err}")
+                cleanup_run(workflow_run_response.run_id)  # type: ignore
+                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
         else:
             try:
                 # Track outputs from each step for enhanced data flow
@@ -2031,9 +2047,16 @@ class Workflow:
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
+                # Track current step so the cancel handler can record a placeholder
+                # for the in-flight step (mirrors _execute_stream's behaviour).
+                current_step_name = ""
+                current_step = None
+
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
+                    current_step_name = step_name
+                    current_step = step
                     log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
                     # Create enhanced StepInput
@@ -2237,10 +2260,32 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
+
+                # If cancel fired inside a step, append a placeholder so the
+                # in-flight step is visible in step_results (mirrors the streaming
+                # variant; non-streaming has no partial content to record).
+                if current_step is not None and not any(
+                    getattr(so, "step_name", None) == current_step_name for so in collected_step_outputs
+                ):
+                    collected_step_outputs.append(
+                        StepOutput(
+                            step_name=current_step_name,
+                            step_id=getattr(current_step, "step_id", None),
+                            step_type=StepType.STEP,
+                            executor_type=getattr(current_step, "executor_type", None),
+                            executor_name=getattr(current_step, "executor_name", None),
+                            content=None,
+                            success=False,
+                            error="Cancelled during execution",
+                        )
+                    )
+
                 # Preserve any completed step outputs before cancellation
                 if collected_step_outputs:
                     workflow_run_response.step_results = collected_step_outputs
-                    # Stop the timer for the Run duration
+                    # Stop the timer here so duration is captured before _aggregate_workflow_metrics
+                    # creates a fresh WorkflowMetrics; the finally below is a no-op once the new
+                    # metrics has timer=None (so this is not a double-call).
                     if workflow_run_response.metrics:
                         workflow_run_response.metrics.stop_timer()
 
@@ -2259,13 +2304,15 @@ class Workflow:
                 raise e
 
             finally:
-                # Stop timer on error
                 if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
 
-                self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                session.upsert_run(run=workflow_run_response)
-                self.save_session(session=session)
+                try:
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist workflow run: {store_err}")
                 # Always clean up the run tracking
                 cleanup_run(workflow_run_response.run_id)  # type: ignore
                 cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
@@ -2302,23 +2349,62 @@ class Workflow:
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if callable(self.steps):
-            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
-                raise ValueError("Cannot use async function with synchronous execution")
-            elif isgeneratorfunction(self.steps):
-                content = ""
-                for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
+            try:
+                if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
+                    raise ValueError("Cannot use async function with synchronous execution")
+                elif isgeneratorfunction(self.steps):
+                    content = ""
+                    for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
+                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        # Update the run_response with the content from the result
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                            yield chunk
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                else:
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    # Update the run_response with the content from the result
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                        yield chunk
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            else:
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
-            workflow_run_response.status = RunStatus.completed
+                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
+                workflow_run_response.status = RunStatus.completed
+            except RunCancelledException as e:
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = str(e)
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+                try:
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                cleanup_run(workflow_run_response.run_id)  # type: ignore
+                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+
+                cancelled_event = WorkflowCancelledEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    reason=str(e),
+                )
+                yield self._handle_event(cancelled_event, workflow_run_response)
+
+                workflow_completed_event = WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    metadata=workflow_run_response.metadata,
+                    run_output=workflow_run_response,
+                )
+                yield self._handle_event(workflow_completed_event, workflow_run_response)
+
+                if self.telemetry:
+                    self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+                return
 
         else:
             try:
@@ -2752,9 +2838,9 @@ class Workflow:
                     workflow_name=workflow_run_response.workflow_name,
                     workflow_id=workflow_run_response.workflow_id,
                     session_id=workflow_run_response.session_id,
-                    step_results=workflow_run_response.step_results,  # type: ignore
+                    step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
                     metadata=workflow_run_response.metadata,
-                    run_output=workflow_run_response,
+                    run_output=workflow_run_response,  # Include full run output for nested workflows
                 )
                 yield self._handle_event(workflow_completed_event, workflow_run_response)
 
@@ -2932,28 +3018,38 @@ class Workflow:
             # Execute the workflow with the custom executor
             content = ""
 
-            if iscoroutinefunction(self.steps):  # type: ignore
-                workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-            elif isgeneratorfunction(self.steps):
-                for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            elif isasyncgenfunction(self.steps):  # type: ignore
-                async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-                async for chunk in async_gen:
+            try:
+                if iscoroutinefunction(self.steps):  # type: ignore
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            else:
-                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
-            workflow_run_response.status = RunStatus.completed
+                    workflow_run_response.content = await self._acall_custom_function(
+                        self.steps, execution_input, **kwargs
+                    )
+                elif isgeneratorfunction(self.steps):
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                elif isasyncgenfunction(self.steps):  # type: ignore
+                    async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                    async for chunk in async_gen:
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                else:
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
+                workflow_run_response.status = RunStatus.completed
+            except RunCancelledException as e:
+                # Persistence happens below after the if/else; just mark cancelled and fall through
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = str(e)
 
         else:
             try:
@@ -2970,9 +3066,16 @@ class Workflow:
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
+                # Track current step so the cancel handler can record a placeholder
+                # for the in-flight step (mirrors _aexecute_stream's behaviour).
+                current_step_name = ""
+                current_step = None
+
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
+                    current_step_name = step_name
+                    current_step = step
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
                     # Create enhanced StepInput
@@ -3179,6 +3282,26 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
+
+                # If cancel fired inside a step, append a placeholder so the
+                # in-flight step is visible in step_results (mirrors the streaming
+                # variant; non-streaming has no partial content to record).
+                if current_step is not None and not any(
+                    getattr(so, "step_name", None) == current_step_name for so in collected_step_outputs
+                ):
+                    collected_step_outputs.append(
+                        StepOutput(
+                            step_name=current_step_name,
+                            step_id=getattr(current_step, "step_id", None),
+                            step_type=StepType.STEP,
+                            executor_type=getattr(current_step, "executor_type", None),
+                            executor_name=getattr(current_step, "executor_name", None),
+                            content=None,
+                            success=False,
+                            error="Cancelled during execution",
+                        )
+                    )
+
                 # Preserve any completed step outputs before cancellation
                 if collected_step_outputs:
                     workflow_run_response.step_results = collected_step_outputs
@@ -3251,31 +3374,82 @@ class Workflow:
         yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
 
         if callable(self.steps):
-            if iscoroutinefunction(self.steps):  # type: ignore
-                workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-            elif isgeneratorfunction(self.steps):
-                content = ""
-                for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                        yield chunk
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            elif isasyncgenfunction(self.steps):  # type: ignore
-                content = ""
-                async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-                async for chunk in async_gen:
+            try:
+                if iscoroutinefunction(self.steps):  # type: ignore
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                        yield chunk
+                    workflow_run_response.content = await self._acall_custom_function(
+                        self.steps, execution_input, **kwargs
+                    )
+                elif isgeneratorfunction(self.steps):
+                    content = ""
+                    for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                            yield chunk
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                elif isasyncgenfunction(self.steps):  # type: ignore
+                    content = ""
+                    async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                    async for chunk in async_gen:
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                            yield chunk
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                else:
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    workflow_run_response.content = self.steps(self, execution_input, **kwargs)
+                workflow_run_response.status = RunStatus.completed
+            except RunCancelledException as e:
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = str(e)
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+                try:
+                    self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+                    workflow_session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
                     else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            else:
-                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
-            workflow_run_response.status = RunStatus.completed
+                        self.save_session(session=workflow_session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                await acleanup_run(workflow_run_response.run_id)  # type: ignore
+                await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+
+                cancelled_event = WorkflowCancelledEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=workflow_session.session_id,
+                    reason=str(e),
+                )
+                yield self._handle_event(cancelled_event, workflow_run_response, websocket_handler=websocket_handler)
+
+                workflow_completed_event = WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    metadata=workflow_run_response.metadata,
+                    run_output=workflow_run_response,
+                )
+                yield self._handle_event(
+                    workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler
+                )
+
+                if self.telemetry:
+                    await self._alog_workflow_telemetry(
+                        session_id=workflow_session.session_id, run_id=workflow_run_response.run_id
+                    )
+                return
 
         else:
             try:
@@ -3749,7 +3923,7 @@ class Workflow:
                     session_id=workflow_run_response.session_id,
                     step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
                     metadata=workflow_run_response.metadata,
-                    run_output=workflow_run_response,
+                    run_output=workflow_run_response,  # Include full run output for nested workflows
                 )
                 yield self._handle_event(
                     workflow_completed_event,
@@ -3883,6 +4057,9 @@ class Workflow:
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
         )
+
+        # Register the run for cancellation tracking before spawning the detached task
+        await aregister_run(run_context.run_id)
 
         self._prepare_steps()
 
@@ -4020,6 +4197,9 @@ class Workflow:
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
         )
+
+        # Register the run for cancellation tracking before spawning the detached task
+        await aregister_run(run_context.run_id)
 
         self._prepare_steps()
 
@@ -4165,6 +4345,9 @@ class Workflow:
             session_state=session_state,
             dependencies=dependencies,
         )
+
+        # Register the run for cancellation tracking before spawning the detached task
+        await aregister_run(run_context.run_id)
 
         self._prepare_steps()
 
