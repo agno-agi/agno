@@ -628,6 +628,7 @@ class Model(ABC):
         assistant_message.metrics.start_timer()
         response = await self.ainvoke(
             messages=messages,
+            assistant_message=assistant_message,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
@@ -697,16 +698,31 @@ class Model(ABC):
         if provider_response.audio is not None:
             assistant_message.audio_output = provider_response.audio
 
-        # Add image to assistant message
-        if provider_response.image is not None:
-            assistant_message.image_output = provider_response.image
+        # Add image to assistant message (V1: singular 'image', V2: plural 'images')
+        image = getattr(provider_response, 'image', None)
+        if image is None and hasattr(provider_response, 'images'):
+            images = getattr(provider_response, 'images', None)
+            if images and len(images) > 0:
+                image = images[-1]  # Take last image if multiple
+        if image is not None:
+            assistant_message.image_output = image
 
-        # V2: Add video and file to assistant message
-        if hasattr(provider_response, 'video') and provider_response.video is not None:
-            assistant_message.video_output = provider_response.video
+        # V2: Add video and file to assistant message (handle both singular and plural)
+        video = getattr(provider_response, 'video', None)
+        if video is None and hasattr(provider_response, 'videos'):
+            videos = getattr(provider_response, 'videos', None)
+            if videos and len(videos) > 0:
+                video = videos[-1]  # Take last video if multiple
+        if video is not None:
+            assistant_message.video_output = video
 
-        if hasattr(provider_response, 'file') and provider_response.file is not None:
-            assistant_message.file_output = provider_response.file
+        file_output = getattr(provider_response, 'file', None)
+        if file_output is None and hasattr(provider_response, 'files'):
+            files = getattr(provider_response, 'files', None)
+            if files and len(files) > 0:
+                file_output = files[-1]  # Take last file if multiple
+        if file_output is not None:
+            assistant_message.file_output = file_output
 
         # Add thinking content to assistant message
         if provider_response.thinking is not None:
@@ -901,6 +917,7 @@ class Model(ABC):
         """
         async for response_delta in self.ainvoke_stream(
             messages=messages,
+            assistant_message=assistant_message,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
@@ -1202,7 +1219,10 @@ class Model(ABC):
         """Create a function call result message."""
         kwargs = {}
         if timer is not None:
-            kwargs["metrics"] = MessageMetrics(time=timer.elapsed)
+            # V2: MessageMetrics doesn't accept 'time' parameter, set time after creation
+            metrics = MessageMetrics()
+            metrics.time = timer.elapsed
+            kwargs["metrics"] = metrics
         return Message(
             role=self.tool_message_role,
             content=output if success else function_call.error,

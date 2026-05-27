@@ -2547,7 +2547,7 @@ class Agent:
                 tool_call_id=tool.tool_call_id,
                 tool_name=tool.tool_name,
                 tool_args=tool.tool_args,
-                metrics=MessageMetrics(time=0),
+                metrics=MessageMetrics(),
             )
         )
 
