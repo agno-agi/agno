@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 from agno.media import Audio
 from agno.models.base import Model
+from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -950,7 +951,7 @@ def convert_response_to_structured_format(
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    log_warning(f"Failed to convert response to output model: {str(e)}")
             else:
                 log_warning("Something went wrong. Run response content is not a string")
 
@@ -1062,7 +1063,9 @@ def handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    for model_response_event in agent.model.response_stream(
+    for model_response_event in call_model_stream_with_fallback(
+        agent.model,
+        agent.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1211,7 +1214,9 @@ async def ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    model_response_stream = agent.model.aresponse_stream(
+    model_response_stream = acall_model_stream_with_fallback(
+        agent.model,
+        agent.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1368,6 +1373,13 @@ def handle_model_response_chunk(
         )
     else:
         model_response_event = cast(ModelResponse, model_response_event)
+        # If a fallback model was activated, reset accumulated content
+        if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+            model_response.content = None
+            model_response.reasoning_content = None
+            run_response.content = None
+            run_response.reasoning_content = None
+            return
         # If the model response is an assistant_response, yield a RunOutput
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
             content_type = "str"
@@ -1759,8 +1771,8 @@ def _parse_followups_response(model_response: ModelResponse) -> Optional[List[st
         try:
             data = json.loads(model_response.content)
             followups_obj = Followups.model_validate(data)
-        except Exception:
-            log_warning("Failed to parse followups from model response")
+        except Exception as e:
+            log_warning(f"Failed to parse followups from model response: {str(e)}")
 
     return followups_obj.suggestions if followups_obj is not None else None
 
@@ -1801,7 +1813,7 @@ def generate_followups(
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
     except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+        log_warning(f"Error generating followups: {str(e)}")
 
 
 async def agenerate_followups(
@@ -1828,7 +1840,7 @@ async def agenerate_followups(
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
     except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+        log_warning(f"Error generating followups: {str(e)}")
 
 
 def generate_followups_stream(
@@ -1864,7 +1876,7 @@ def generate_followups_stream(
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
     except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+        log_warning(f"Error generating followups: {str(e)}")
 
     if stream_events:
         yield handle_event(
@@ -1908,7 +1920,7 @@ async def agenerate_followups_stream(
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
     except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+        log_warning(f"Error generating followups: {str(e)}")
 
     if stream_events:
         yield handle_event(

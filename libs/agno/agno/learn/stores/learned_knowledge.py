@@ -41,6 +41,7 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -780,7 +781,7 @@ class LearnedKnowledgeStore(LearningStore):
             return learnings[:limit]
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.search failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.search failed: {str(e)}")
             return []
 
     async def asearch(
@@ -823,7 +824,7 @@ class LearnedKnowledgeStore(LearningStore):
             return learnings[:limit]
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.asearch failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.asearch failed: {str(e)}")
             return []
 
     def _build_search_filters(
@@ -949,7 +950,7 @@ class LearnedKnowledgeStore(LearningStore):
             return True
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.save failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.save failed: {str(e)}")
             return False
 
     async def asave(
@@ -1028,7 +1029,7 @@ class LearnedKnowledgeStore(LearningStore):
             return True
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.asave failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.asave failed: {str(e)}")
             return False
 
     # =========================================================================
@@ -1058,7 +1059,7 @@ class LearnedKnowledgeStore(LearningStore):
                 return False
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.delete failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.delete failed: {str(e)}")
             return False
 
     async def adelete(self, title: str) -> bool:
@@ -1080,7 +1081,7 @@ class LearnedKnowledgeStore(LearningStore):
             return True
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.adelete failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.adelete failed: {str(e)}")
             return False
 
     # =========================================================================
@@ -1101,7 +1102,7 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             # Search for existing learnings to avoid duplicates
             existing = self.search(query=conversation_text[:500], limit=5)
@@ -1136,7 +1137,7 @@ class LearnedKnowledgeStore(LearningStore):
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.extract_and_save failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.extract_and_save failed: {str(e)}")
 
     async def aextract_and_save(
         self,
@@ -1152,7 +1153,7 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             # Search for existing learnings to avoid duplicates
             existing = await self.asearch(query=conversation_text[:500], limit=5)
@@ -1187,7 +1188,7 @@ class LearnedKnowledgeStore(LearningStore):
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.aextract_and_save failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.aextract_and_save failed: {str(e)}")
 
     def _build_extraction_messages(
         self,
@@ -1370,23 +1371,9 @@ These insights are already in the knowledge base. Do not save variations of thes
                 func.strict = True
                 functions.append(func)
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
-
-    def _messages_to_text(self, messages: List[Any]) -> str:
-        """Convert messages to text for extraction."""
-        parts = []
-        for msg in messages:
-            if msg.role == "user":
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"User: {content}")
-            elif msg.role in ["assistant", "model"]:
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"Assistant: {content}")
-        return "\n".join(parts)
 
     def _summarize_existing(self, learnings: List[Any]) -> str:
         """Summarize existing learnings to help avoid duplicates."""
@@ -1438,7 +1425,7 @@ These insights are already in the knowledge base. Do not save variations of thes
             return None
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore._parse_result failed: {e}")
+            log_warning(f"LearnedKnowledgeStore._parse_result failed: {str(e)}")
             return None
 
     def _to_text_content(self, learning: Any) -> str:

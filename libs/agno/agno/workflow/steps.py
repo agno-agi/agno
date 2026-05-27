@@ -15,7 +15,7 @@ from agno.run.workflow import (
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
     Union[
@@ -28,6 +28,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
 
@@ -64,24 +65,41 @@ class Steps:
         requires_confirmation: bool = False,
         confirmation_message: Optional[str] = None,
         on_reject: Union[OnReject, str] = OnReject.skip,
+        human_review: Optional[HumanReview] = None,
     ):
         self.name = name
         self.description = description
         self.steps = steps if steps else []
-        self.requires_confirmation = requires_confirmation
-        self.confirmation_message = confirmation_message
-        self.on_reject = on_reject
+
+        # Build HumanReview config
+        if human_review is not None:
+            self.human_review = human_review
+        else:
+            self.human_review = HumanReview(
+                requires_confirmation=requires_confirmation,
+                confirmation_message=confirmation_message,
+                on_reject=on_reject,
+            )
+
+        from agno.workflow.types import validate_human_review_for_steps
+
+        validate_human_review_for_steps(self.human_review)
+
+        # Backward compat attributes
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result: Dict[str, Any] = {
             "type": "Steps",
             "name": self.name,
             "description": self.description,
             "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
-            "requires_confirmation": self.requires_confirmation,
-            "confirmation_message": self.confirmation_message,
-            "on_reject": str(self.on_reject),
         }
+        if self.human_review:
+            result["human_review"] = self.human_review.to_dict()
+        return result
 
     def create_step_requirement(
         self,
@@ -137,13 +155,20 @@ class Steps:
             else:
                 return Step.from_dict(step_data, registry=registry, db=db, links=links)
 
+        if data.get("human_review"):
+            human_review = HumanReview.from_dict(data["human_review"])
+        else:
+            human_review = HumanReview(
+                requires_confirmation=data.get("requires_confirmation", False),
+                confirmation_message=data.get("confirmation_message"),
+                on_reject=data.get("on_reject", "skip"),
+            )
+
         return cls(
             name=data.get("name"),
             description=data.get("description"),
             steps=[deserialize_step(step) for step in data.get("steps", [])],
-            requires_confirmation=data.get("requires_confirmation", False),
-            confirmation_message=data.get("confirmation_message"),
-            on_reject=data.get("on_reject", OnReject.skip),
+            human_review=human_review,
         )
 
     def _prepare_steps(self):
@@ -155,6 +180,7 @@ class Steps:
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
         from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
 
         prepared_steps: WorkflowSteps = []
         for step in self.steps:
@@ -164,6 +190,8 @@ class Steps:
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, Workflow):
+                prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
             elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
@@ -266,6 +294,18 @@ class Steps:
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
+                    # Check for executor HITL pause in list results
+                    if step_output and getattr(step_output[-1], "is_paused", False):
+                        all_results.extend(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
@@ -274,6 +314,18 @@ class Steps:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
 
@@ -300,7 +352,7 @@ class Steps:
             )
 
         except Exception as e:
-            logger.error(f"Steps execution failed: {e}")
+            logger.exception("Steps execution failed")
             return StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -399,6 +451,18 @@ class Steps:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
 
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=steps_id,
+                        step_type=StepType.STEPS,
+                        content=f"Steps {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
@@ -452,7 +516,7 @@ class Steps:
             )
 
         except Exception as e:
-            logger.error(f"Steps streaming failed: {e}")
+            logger.exception("Steps streaming failed")
             error_result = StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -516,6 +580,18 @@ class Steps:
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
+                    # Check for executor HITL pause in list results
+                    if step_output and getattr(step_output[-1], "is_paused", False):
+                        all_results.extend(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
@@ -524,6 +600,18 @@ class Steps:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
 
@@ -549,7 +637,7 @@ class Steps:
             )
 
         except Exception as e:
-            logger.error(f"Async steps execution failed: {e}")
+            logger.exception("Async steps execution failed")
             return StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -648,6 +736,18 @@ class Steps:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
 
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=steps_id,
+                        step_type=StepType.STEPS,
+                        content=f"Steps {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
@@ -700,7 +800,7 @@ class Steps:
             )
 
         except Exception as e:
-            logger.error(f"Async steps streaming failed: {e}")
+            logger.exception("Async steps streaming failed")
             error_result = StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
