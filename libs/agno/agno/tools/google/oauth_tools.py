@@ -70,9 +70,7 @@ class GoogleOAuthTools(Toolkit):
             ),
             **kwargs,
         )
-        # May be None — wired later by framework in _wire_google_auth()
         self.auth_config = auth_config
-        # Propagated to all Google toolkits via _wire_google_auth
         self.store_token_in_db = store_token_in_db
         self.register(self.oauth_google)
 
