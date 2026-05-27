@@ -141,7 +141,12 @@ class GPT5ReasoningOpenAIResponses(OpenAIResponses):
                 out.append(m)
         return out
 
-    def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+    def _format_messages(
+        self,
+        messages: List[Message],
+        compress_tool_results: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
         msgs = list(messages)
         if self._gpt5_with_reasoning():
             cut = self._index_last_assistant_with_response_id(msgs)
@@ -154,7 +159,7 @@ class GPT5ReasoningOpenAIResponses(OpenAIResponses):
                     "GPT-5 Responses API: no response_id in history; stripped assistant tool_calls "
                     f"and dropped tool rows for safe replay ({len(msgs)} messages)"
                 )
-        return super()._format_messages(msgs)
+        return super()._format_messages(msgs, compress_tool_results=compress_tool_results, tools=tools)
 
     def _process_stream_response(
         self,

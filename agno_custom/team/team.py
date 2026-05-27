@@ -1952,8 +1952,10 @@ class Team:
                     # Yield the audio and transcript bit by bit
                     should_yield = True
 
-                if model_response_event.image is not None:
-                    self.add_image(model_response_event.image)
+                # V2: Use getattr for optional image attribute
+                event_image = getattr(model_response_event, 'image', None)
+                if event_image is not None:
+                    self.add_image(event_image)
 
                     should_yield = True
 
@@ -1962,11 +1964,11 @@ class Team:
                     yield create_team_run_response_content_event(
                         from_run_response=run_response,
                         content=model_response_event.content,
-                        thinking=model_response_event.thinking,
-                        redacted_thinking=model_response_event.redacted_thinking,
+                        thinking=getattr(model_response_event, 'thinking', None),
+                        redacted_thinking=getattr(model_response_event, 'redacted_thinking', None),
                         response_audio=full_model_response.audio,
-                        citations=model_response_event.citations,
-                        image=model_response_event.image,
+                        citations=getattr(model_response_event, 'citations', None),
+                        image=getattr(model_response_event, 'image', None),
                     )
 
             # If the model response is a tool_call_started, add the tool call to the run_response

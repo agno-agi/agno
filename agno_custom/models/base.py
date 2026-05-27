@@ -20,7 +20,7 @@ from typing import (
 from uuid import uuid4
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioResponse, ImageArtifact
+from agno.media import AudioResponse, ImageArtifact, Audio, Video, File, Image
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.utils.log import log_debug, log_error, log_warning
@@ -43,11 +43,20 @@ class MessageData:
     response_content: Any = ""
     response_thinking: Any = ""
     response_redacted_thinking: Any = ""
+    # V2: Reasoning content fields
+    response_reasoning_content: Any = ""
+    response_redacted_reasoning_content: Any = ""
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
     response_audio: Optional[AudioResponse] = None
     response_image: Optional[ImageArtifact] = None
+    # V2: Media output fields
+    response_video: Optional[Video] = None
+    response_file: Optional[File] = None
+
+    # V2: Response metrics for tracking tokens and performance
+    response_metrics: Optional[MessageMetrics] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -692,6 +701,13 @@ class Model(ABC):
         if provider_response.image is not None:
             assistant_message.image_output = provider_response.image
 
+        # V2: Add video and file to assistant message
+        if hasattr(provider_response, 'video') and provider_response.video is not None:
+            assistant_message.video_output = provider_response.video
+
+        if hasattr(provider_response, 'file') and provider_response.file is not None:
+            assistant_message.file_output = provider_response.file
+
         # Add thinking content to assistant message
         if provider_response.thinking is not None:
             assistant_message.thinking = provider_response.thinking
@@ -703,6 +719,10 @@ class Model(ABC):
         # Add reasoning content to assistant message
         if provider_response.reasoning_content is not None:
             assistant_message.reasoning_content = provider_response.reasoning_content
+
+        # V2: Add redacted reasoning content to assistant message
+        if hasattr(provider_response, 'redacted_reasoning_content') and provider_response.redacted_reasoning_content is not None:
+            assistant_message.redacted_reasoning_content = provider_response.redacted_reasoning_content
 
         # Add provider data to assistant message
         if provider_response.provider_data is not None:
@@ -787,12 +807,24 @@ class Model(ABC):
                 assistant_message.thinking = stream_data.response_thinking
             if stream_data.response_redacted_thinking:
                 assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+            # V2: Support reasoning_content and redacted_reasoning_content fields
+            if stream_data.response_reasoning_content:
+                assistant_message.reasoning_content = stream_data.response_reasoning_content
+            if stream_data.response_redacted_reasoning_content:
+                assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
             if stream_data.response_provider_data:
                 assistant_message.provider_data = stream_data.response_provider_data
             if stream_data.response_citations:
                 assistant_message.citations = stream_data.response_citations
             if stream_data.response_audio:
                 assistant_message.audio_output = stream_data.response_audio
+            # V2: Support image, video, and file output
+            if stream_data.response_image:
+                assistant_message.image_output = stream_data.response_image
+            if stream_data.response_video:
+                assistant_message.video_output = stream_data.response_video
+            if stream_data.response_file:
+                assistant_message.file_output = stream_data.response_file
             if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                 assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
@@ -922,10 +954,22 @@ class Model(ABC):
                     assistant_message.thinking = stream_data.response_thinking
                 if stream_data.response_redacted_thinking:
                     assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+                # V2: Support reasoning_content and redacted_reasoning_content fields
+                if stream_data.response_reasoning_content:
+                    assistant_message.reasoning_content = stream_data.response_reasoning_content
+                if stream_data.response_redacted_reasoning_content:
+                    assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
                 if stream_data.response_provider_data:
                     assistant_message.provider_data = stream_data.response_provider_data
                 if stream_data.response_audio:
                     assistant_message.audio_output = stream_data.response_audio
+                # V2: Support image, video, and file output
+                if stream_data.response_image:
+                    assistant_message.image_output = stream_data.response_image
+                if stream_data.response_video:
+                    assistant_message.video_output = stream_data.response_video
+                if stream_data.response_file:
+                    assistant_message.file_output = stream_data.response_file
                 if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
                     assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
@@ -1027,6 +1071,15 @@ class Model(ABC):
             stream_data.response_redacted_thinking += model_response_delta.redacted_thinking
             should_yield = True
 
+        # V2: Handle reasoning_content and redacted_reasoning_content
+        if hasattr(model_response_delta, 'reasoning_content') and model_response_delta.reasoning_content is not None:
+            stream_data.response_reasoning_content += model_response_delta.reasoning_content
+            should_yield = True
+
+        if hasattr(model_response_delta, 'redacted_reasoning_content') and model_response_delta.redacted_reasoning_content is not None:
+            stream_data.response_redacted_reasoning_content += model_response_delta.redacted_reasoning_content
+            should_yield = True
+
         if model_response_delta.citations is not None:
             stream_data.response_citations = model_response_delta.citations
             should_yield = True
@@ -1066,6 +1119,15 @@ class Model(ABC):
         if model_response_delta.image:
             if stream_data.response_image is None:
                 stream_data.response_image = model_response_delta.image
+
+        # V2: Handle video and file responses
+        if hasattr(model_response_delta, 'video') and model_response_delta.video:
+            if stream_data.response_video is None:
+                stream_data.response_video = model_response_delta.video
+
+        if hasattr(model_response_delta, 'file') and model_response_delta.file:
+            if stream_data.response_file is None:
+                stream_data.response_file = model_response_delta.file
 
         if model_response_delta.extra is not None:
             if stream_data.extra is None:

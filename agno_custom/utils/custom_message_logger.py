@@ -37,8 +37,10 @@ def log_message(
         _logger(f"Name: {message.name}")
     if message.tool_call_id:
         _logger(f"Tool call Id: {message.tool_call_id}")
-    if message.thinking:
-        _logger(f"<thinking>\n{message.thinking}\n</thinking>")
+    # V2: Use getattr for optional thinking attribute
+    message_thinking = getattr(message, 'thinking', None)
+    if message_thinking:
+        _logger(f"<thinking>\n{message_thinking}\n</thinking>")
     if message.content:
         if isinstance(message.content, str) or isinstance(message.content, list):
             content = message.content

@@ -3182,9 +3182,9 @@ class Agent:
                     yield create_run_response_content_event(
                         from_run_response=run_response,
                         content=model_response_event.content,
-                        thinking=model_response_event.thinking,
-                        redacted_thinking=model_response_event.redacted_thinking,
-                        citations=model_response_event.citations,
+                        thinking=getattr(model_response_event, 'thinking', None),
+                        redacted_thinking=getattr(model_response_event, 'redacted_thinking', None),
+                        citations=getattr(model_response_event, 'citations', None),
                     )
 
                 # Process audio
