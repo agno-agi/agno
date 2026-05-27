@@ -114,13 +114,27 @@ class DiscoverableTools(Toolkit):
 
     # ----------------------------------------------------------------- private
     def _build_instructions(self) -> str:
-        if not self._sync_registry:
+        count = len(self._sync_registry) or len(self._async_registry)
+        if not count:
             return ""
         return (
-            f"You have access to {len(self._sync_registry)} additional tools not shown by default. "
+            f"You have access to {count} additional tools not shown by default. "
             f"Use `{self._search_tool_name}(query)` to find relevant ones by keyword. "
             "Discovered tools become directly callable on the next turn — do not wrap them."
         )
+
+    def _hydrate(self, func: Function) -> None:
+        """Populate Function.description from the entrypoint docstring when empty.
+
+        Agno's Agent._process_tools normally fills this during agent setup, but
+        _build_registry runs earlier — before agent build — so we extract the
+        docstring ourselves. Description is everything before 'Args:' (Agno's
+        convention; matches Function.process_entrypoint's split).
+        """
+        if (func.description or "").strip():
+            return
+        doc = getattr(func.entrypoint, "__doc__", "") or ""
+        func.description = doc.split("Args:")[0].strip()
 
     def _build_registry(self, tools: List[Union[Toolkit, Callable, Function]]) -> None:
         for tool in tools:
@@ -128,10 +142,13 @@ class DiscoverableTools(Toolkit):
                 sync_fns = tool.get_functions()
                 async_fns = tool.get_async_functions()
                 for name, func in sync_fns.items():
+                    self._hydrate(func)
                     self._register_sync(name, func)
                 for name, func in async_fns.items():
+                    self._hydrate(func)
                     self._register_async(name, func)
             elif isinstance(tool, Function):
+                self._hydrate(tool)
                 self._register_both(tool.name, tool)
             elif callable(tool):
                 func = Function.from_callable(tool)
@@ -139,7 +156,13 @@ class DiscoverableTools(Toolkit):
                 approval_type = getattr(tool, "_agno_approval_type", None)
                 if approval_type is not None:
                     func.approval_type = approval_type
-                    has_hitl = any([func.requires_user_input, func.requires_confirmation, func.external_execution])
+                    has_hitl = any(
+                        [
+                            func.requires_user_input,
+                            func.requires_confirmation,
+                            func.external_execution,
+                        ]
+                    )
                     if approval_type == "required" and not has_hitl:
                         func.requires_confirmation = True
                     elif approval_type == "audit" and not has_hitl:
@@ -148,9 +171,12 @@ class DiscoverableTools(Toolkit):
                             "('requires_confirmation', 'requires_user_input', or 'external_execution') "
                             "to be set on @tool()."
                         )
+                self._hydrate(func)
                 self._register_both(func.name, func)
             else:
-                log_warning(f"DiscoverableTools: unsupported tool type {type(tool).__name__}")
+                log_warning(
+                    f"DiscoverableTools: unsupported tool type {type(tool).__name__}"
+                )
 
     def _register_sync(self, name: str, func: Function) -> None:
         self._sync_registry[name] = func
@@ -191,7 +217,9 @@ class DiscoverableTools(Toolkit):
         for _, name in top:
             self._active_names.add(name)
             self._inject(self._registry[name])
-            discovered.append({"name": name, "description": self._registry[name].description or ""})
+            discovered.append(
+                {"name": name, "description": self._registry[name].description or ""}
+            )
 
         return json.dumps(
             {
@@ -205,9 +233,13 @@ class DiscoverableTools(Toolkit):
             log_warning("DiscoverableTools: tools list not bound; cannot inject")
             return
         # Prevent name collisions with already-visible tools or prior injections
-        existing_names = {t.name for t in self._tools_list_ref if isinstance(t, Function)}
+        existing_names = {
+            t.name for t in self._tools_list_ref if isinstance(t, Function)
+        }
         if func.name in existing_names:
-            log_debug(f"DiscoverableTools: skipping {func.name} (name already in tools list)")
+            log_debug(
+                f"DiscoverableTools: skipping {func.name} (name already in tools list)"
+            )
             return
         copied = func.model_copy(deep=True)
         copied._agent = self._agent

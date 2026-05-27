@@ -205,7 +205,9 @@ def test_audit_approval_without_hitl_flag_raises():
 
 def test_function_object_input_registers_in_both_registries():
     """A plain Function passed in should appear in sync + async registries."""
-    func = Function(name="plain", description="Plain function.", entrypoint=lambda: "ok")
+    func = Function(
+        name="plain", description="Plain function.", entrypoint=lambda: "ok"
+    )
     dt = DiscoverableTools(tools=[func])
     assert "plain" in dt._sync_registry
     assert "plain" in dt._async_registry
@@ -261,7 +263,10 @@ def test_agent_accepts_discoverable_tools_inside_tools_list():
     assert any(t is discoverable for t in agent.tools)
     # Registry still holds deferred tool; it is NOT in agent.tools as a top-level entry
     assert "deferred_tool" in discoverable._sync_registry
-    assert not any(callable(t) and getattr(t, "__name__", None) == "deferred_tool" for t in agent.tools)
+    assert not any(
+        callable(t) and getattr(t, "__name__", None) == "deferred_tool"
+        for t in agent.tools
+    )
 
 
 def test_registry_exposes_media_needs_for_host_detection():
@@ -275,7 +280,10 @@ def test_registry_exposes_media_needs_for_host_detection():
     dt = DiscoverableTools(tools=[image_analyzer])
     has_media_tool = any(
         func.entrypoint is not None
-        and any(p in signature(func.entrypoint).parameters for p in ("images", "videos", "audios", "files"))
+        and any(
+            p in signature(func.entrypoint).parameters
+            for p in ("images", "videos", "audios", "files")
+        )
         for func in dt._sync_registry.values()
     )
     assert has_media_tool is True
@@ -296,7 +304,10 @@ def test_async_registry_media_detection():
     dt = DiscoverableTools(tools=[AsyncMediaKit()])
     has_media_in_async = any(
         func.entrypoint is not None
-        and any(p in signature(func.entrypoint).parameters for p in ("images", "videos", "audios", "files"))
+        and any(
+            p in signature(func.entrypoint).parameters
+            for p in ("images", "videos", "audios", "files")
+        )
         for func in dt._async_registry.values()
     )
     assert has_media_in_async is True
@@ -311,10 +322,109 @@ def test_inject_skips_duplicate_names():
 
     dt = DiscoverableTools(tools=[send_email])
     # Simulate an already-visible tool with same name
-    existing = Function(name="send_email", description="Existing.", entrypoint=lambda: "original")
+    existing = Function(
+        name="send_email", description="Existing.", entrypoint=lambda: "original"
+    )
     fake_list = [existing]
     dt.bind(tools_list=fake_list)
     dt._search("email")
     # Should NOT have appended a duplicate
     assert len(fake_list) == 1
     assert fake_list[0] is existing
+
+
+def test_instructions_populated_for_async_only_toolkit():
+    """Async-only toolkits register into _async_registry; instructions must still inject.
+
+    Regression: _build_instructions previously short-circuited on empty _sync_registry,
+    so a toolkit with only `async def` methods produced empty instructions — the
+    system-prompt hint that tells the model `search_tools` exists was never injected.
+    """
+
+    async def async_op_one() -> str:
+        """First async capability."""
+        return "one"
+
+    async def async_op_two() -> str:
+        """Second async capability."""
+        return "two"
+
+    class AsyncOnlyKit(Toolkit):
+        def __init__(self):
+            super().__init__(name="async_only", tools=[async_op_one, async_op_two])
+
+    dt = DiscoverableTools(tools=[AsyncOnlyKit()])
+    assert dt.instructions, "async-only toolkit must produce non-empty instructions"
+    assert "2 additional tools" in dt.instructions
+    assert "search_tools" in dt.instructions
+
+
+def test_descriptions_hydrated_from_entrypoint_docstring():
+    """Toolkit Function.description is empty pre-agent-build; _hydrate fills it from __doc__.
+
+    Regression: discovered tools were returned with empty description fields because
+    Agno's Agent._process_tools normally fills Function.description late, but
+    _build_registry runs earlier. The model received names with no capability hint.
+    """
+
+    async def archive_record(record_id: int) -> str:
+        """Archive a record by ID. Removes it from active queries but keeps audit trail."""
+        return f"archived {record_id}"
+
+    class ArchiveKit(Toolkit):
+        def __init__(self):
+            super().__init__(name="archive", tools=[archive_record])
+
+    dt = DiscoverableTools(tools=[ArchiveKit()])
+    func = dt._async_registry["archive_record"]
+    assert func.description, "description must be hydrated from docstring"
+    assert "Archive a record by ID" in func.description
+    # Args: block must be stripped (Agno convention)
+    assert "Args:" not in func.description
+
+
+def test_search_returns_hydrated_descriptions_for_async_toolkit():
+    """End-to-end: searching an async toolkit returns descriptions, not empty strings."""
+
+    async def cancel_subscription(user_id: int) -> str:
+        """Cancel an active subscription for a user."""
+        return f"cancelled {user_id}"
+
+    class BillingKit(Toolkit):
+        def __init__(self):
+            super().__init__(name="billing", tools=[cancel_subscription])
+
+    dt = DiscoverableTools(tools=[BillingKit()])
+    fake_list: list = []
+    dt.bind(tools_list=fake_list, async_mode=True)
+    result = json.loads(dt._search("cancel subscription"))
+    assert result["discovered_tools"], "search must find the tool"
+    found = result["discovered_tools"][0]
+    assert found["name"] == "cancel_subscription"
+    assert found["description"], "description must not be empty in search output"
+    assert "subscription" in found["description"].lower()
+
+
+def test_haystack_uses_hydrated_descriptions_for_ranking():
+    """Search ranking depends on description text; hydration must reach the haystack."""
+
+    async def reset_password(user_id: int) -> str:
+        """Trigger a password reset email."""
+        return "ok"
+
+    async def archive_user(user_id: int) -> str:
+        """Move a user record to the archive table."""
+        return "ok"
+
+    class UserOpsKit(Toolkit):
+        def __init__(self):
+            super().__init__(name="user_ops", tools=[reset_password, archive_user])
+
+    dt = DiscoverableTools(tools=[UserOpsKit()])
+    fake_list: list = []
+    dt.bind(tools_list=fake_list, async_mode=True)
+    # Query keyword "password" only appears in reset_password's description
+    result = json.loads(dt._search("password"))
+    names = [t["name"] for t in result["discovered_tools"]]
+    assert "reset_password" in names
+    assert names[0] == "reset_password", "haystack must rank by description text"
