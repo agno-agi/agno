@@ -26,6 +26,7 @@ async def _collect_tool_output(tool, **kwargs) -> str:
             result = chunk
     return result
 
+
 # ---------------------------------------------------------------------------
 # Test fixtures — minimal providers that pass / raise on demand
 # ---------------------------------------------------------------------------
@@ -365,3 +366,208 @@ async def test_base_asetup_is_idempotent():
     # into a lifespan without tracking state themselves.
     await p.asetup()
     await p.asetup()
+
+
+# ---------------------------------------------------------------------------
+# Event streaming tests — verify events ARE yielded (the point of the PR)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_query_tool_yields_events_from_sub_agent():
+    """Events from the sub-agent must be yielded, not just the final answer."""
+    from agno.run.agent import RunOutput
+
+    class _FakeEvent:
+        def __init__(self, name: str):
+            self.name = name
+            self.parent_run_id = None
+
+    class _StreamingProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield _FakeEvent("event1")
+                    yield _FakeEvent("event2")
+                    yield RunOutput(content="final answer")
+
+            return _FakeAgent()
+
+    p = _StreamingProvider(id="s")
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test")
+
+    events = []
+    final_json = None
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            final_json = chunk
+        else:
+            events.append(chunk)
+
+    assert len(events) == 2, f"Expected 2 events, got {len(events)}"
+    assert events[0].name == "event1"
+    assert events[1].name == "event2"
+    assert final_json is not None
+    assert "final answer" in final_json
+
+
+@pytest.mark.asyncio
+async def test_query_tool_sets_parent_run_id_on_events():
+    """Each yielded event must have parent_run_id set to the parent's run_id."""
+    from agno.run.agent import RunOutput
+
+    class _FakeEvent:
+        def __init__(self):
+            self.parent_run_id = None
+
+    class _StreamingProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield _FakeEvent()
+                    yield _FakeEvent()
+                    yield RunOutput(content="done")
+
+            return _FakeAgent()
+
+    p = _StreamingProvider(id="s")
+    query_tool = p._query_tool()
+    rc = RunContext(run_id="parent-run-123", user_id="u", session_id="s")
+    gen = await query_tool.entrypoint(question="test", run_context=rc)
+
+    events = []
+    async for chunk in gen:
+        if not isinstance(chunk, str):
+            events.append(chunk)
+
+    assert len(events) == 2
+    for event in events:
+        assert event.parent_run_id == "parent-run-123", (
+            f"Expected parent_run_id='parent-run-123', got '{event.parent_run_id}'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_query_tool_preserves_existing_parent_run_id():
+    """If event already has parent_run_id, don't overwrite it (nested sub-agents)."""
+    from agno.run.agent import RunOutput
+
+    class _FakeEvent:
+        def __init__(self, parent_run_id=None):
+            self.parent_run_id = parent_run_id
+
+    class _StreamingProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield _FakeEvent(parent_run_id="nested-parent-456")
+                    yield _FakeEvent(parent_run_id=None)
+                    yield RunOutput(content="done")
+
+            return _FakeAgent()
+
+    p = _StreamingProvider(id="s")
+    query_tool = p._query_tool()
+    rc = RunContext(run_id="outer-parent-123", user_id="u", session_id="s")
+    gen = await query_tool.entrypoint(question="test", run_context=rc)
+
+    events = []
+    async for chunk in gen:
+        if not isinstance(chunk, str):
+            events.append(chunk)
+
+    assert events[0].parent_run_id == "nested-parent-456", "Should preserve existing parent_run_id"
+    assert events[1].parent_run_id == "outer-parent-123", "Should set parent_run_id when None"
+
+
+@pytest.mark.asyncio
+async def test_streaming_path_and_aquery_path_both_work():
+    """Provider without _aget_query_agent falls back to aquery (no streaming)."""
+    p = _EchoProvider(id="e")
+    query_tool = p._query_tool()
+    out = await _collect_tool_output(query_tool, question="hello")
+    payload = json.loads(out)
+    assert payload["text"] == "q:hello"
+
+
+@pytest.mark.asyncio
+async def test_streaming_path_handles_no_run_context():
+    """Streaming works even when run_context is None (parent_run_id will be None)."""
+    from agno.run.agent import RunOutput
+
+    class _FakeEvent:
+        def __init__(self):
+            self.parent_run_id = None
+
+    class _StreamingProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    yield _FakeEvent()
+                    yield RunOutput(content="done")
+
+            return _FakeAgent()
+
+    p = _StreamingProvider(id="s")
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test", run_context=None)
+
+    events = []
+    async for chunk in gen:
+        if not isinstance(chunk, str):
+            events.append(chunk)
+
+    assert len(events) == 1
+    assert events[0].parent_run_id is None
+
+
+@pytest.mark.asyncio
+async def test_stream_sub_agent_events_flag_is_passed_to_sub_agent():
+    """The stream_sub_agent_events flag should be passed to agent.arun()."""
+    captured_kwargs = {}
+
+    class _StreamingProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    captured_kwargs.update(kwargs)
+                    from agno.run.agent import RunOutput
+
+                    yield RunOutput(content="done")
+
+            return _FakeAgent()
+
+    p = _StreamingProvider(id="s", stream_sub_agent_events=True)
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test")
+    async for _ in gen:
+        pass
+
+    assert captured_kwargs.get("stream") is True
+    assert captured_kwargs.get("stream_events") is True
+
+
+@pytest.mark.asyncio
+async def test_stream_sub_agent_events_can_be_disabled():
+    """stream_sub_agent_events=False should disable event streaming."""
+    captured_kwargs = {}
+
+    class _StreamingProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context):
+            class _FakeAgent:
+                async def arun(self, message, **kwargs):
+                    captured_kwargs.update(kwargs)
+                    from agno.run.agent import RunOutput
+
+                    yield RunOutput(content="done")
+
+            return _FakeAgent()
+
+    p = _StreamingProvider(id="s", stream_sub_agent_events=False)
+    query_tool = p._query_tool()
+    gen = await query_tool.entrypoint(question="test")
+    async for _ in gen:
+        pass
+
+    assert captured_kwargs.get("stream_events") is False
