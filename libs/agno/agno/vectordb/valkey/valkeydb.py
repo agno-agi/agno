@@ -145,6 +145,7 @@ class ValkeyDB(VectorDb):
                 database_id=self.database_id,
                 credentials=credentials,
                 use_tls=self.use_tls,
+                client_name="agno_db_client",
             )
             self._glide_client = GlideClient.create(config)
             self._client_initialized = True
