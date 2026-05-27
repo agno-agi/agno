@@ -160,14 +160,16 @@ class Memory:
         self.debug_mode = debug_mode
 
     def set_model(self, model: Model) -> None:
+        # V2: Pass model directly without deepcopy to maintain Model instance type
+        # deepcopy breaks the Model object structure for V2 compatibility
         if self.memory_manager is None:
-            self.memory_manager = MemoryManager(model=deepcopy(model))
+            self.memory_manager = MemoryManager(model=model)
         if self.memory_manager.model is None:
-            self.memory_manager.model = deepcopy(model)
+            self.memory_manager.model = model
         if self.summary_manager is None:
-            self.summary_manager = SessionSummarizer(model=deepcopy(model))
+            self.summary_manager = SessionSummarizer(model=model)
         if self.summary_manager.model is None:
-            self.summary_manager.model = deepcopy(model)
+            self.summary_manager.model = model
 
     def get_model(self) -> Model:
         if self.model is None:
