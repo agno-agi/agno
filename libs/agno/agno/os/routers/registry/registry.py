@@ -5,6 +5,10 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agno.os.auth import get_authentication_dependency
+from agno.os.routers.registry.utils import (
+    build_memory_manager_resource,
+    build_session_summary_manager_resource,
+)
 from agno.os.schema import (
     BadRequestResponse,
     CallableMetadata,
@@ -12,7 +16,6 @@ from agno.os.schema import (
     FunctionMetadata,
     InternalServerErrorResponse,
     KnowledgeMetadata,
-    MemoryManagerMetadata,
     ModelMetadata,
     NotFoundResponse,
     PaginatedResponse,
@@ -20,7 +23,6 @@ from agno.os.schema import (
     RegistryContentResponse,
     RegistryResourceType,
     SchemaMetadata,
-    SessionSummaryManagerMetadata,
     ToolMetadata,
     UnauthenticatedResponse,
     ValidationErrorResponse,
@@ -505,54 +507,12 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         # Memory managers
         if resource_type is None or resource_type == RegistryResourceType.MEMORY_MANAGER:
             for mm in getattr(registry, "memory_managers", []) or []:
-                mm_id = _safe_str(getattr(mm, "id", None)) or mm.__class__.__name__
-                mm_name = _safe_str(getattr(mm, "name", None)) or mm_id
-                model = getattr(mm, "model", None)
-                db = getattr(mm, "db", None)
-                mm_metadata = MemoryManagerMetadata(
-                    class_path=_class_path(mm),
-                    owner_id=_safe_str(getattr(mm, "owner_id", None)),
-                    owner_type=_safe_str(getattr(mm, "owner_type", None)),
-                    model_class=_class_path(model) if model else None,
-                    model_id=_safe_str(getattr(model, "id", None)) if model else None,
-                    db_class=_class_path(db) if db else None,
-                    add_memories=getattr(mm, "add_memories", None),
-                    update_memories=getattr(mm, "update_memories", None),
-                    delete_memories=getattr(mm, "delete_memories", None),
-                    clear_memories=getattr(mm, "clear_memories", None),
-                )
-                resources.append(
-                    RegistryContentResponse(
-                        name=mm_name,
-                        id=mm_id,
-                        type=RegistryResourceType.MEMORY_MANAGER,
-                        metadata=mm_metadata.model_dump(exclude_none=True),
-                    )
-                )
+                resources.append(build_memory_manager_resource(mm))
 
         # Session summary managers
         if resource_type is None or resource_type == RegistryResourceType.SESSION_SUMMARY_MANAGER:
             for sm in getattr(registry, "session_summary_managers", []) or []:
-                sm_id = _safe_str(getattr(sm, "id", None)) or sm.__class__.__name__
-                sm_name = _safe_str(getattr(sm, "name", None)) or sm_id
-                model = getattr(sm, "model", None)
-                sm_metadata = SessionSummaryManagerMetadata(
-                    class_path=_class_path(sm),
-                    owner_id=_safe_str(getattr(sm, "owner_id", None)),
-                    owner_type=_safe_str(getattr(sm, "owner_type", None)),
-                    model_class=_class_path(model) if model else None,
-                    model_id=_safe_str(getattr(model, "id", None)) if model else None,
-                    last_n_runs=getattr(sm, "last_n_runs", None),
-                    conversation_limit=getattr(sm, "conversation_limit", None),
-                )
-                resources.append(
-                    RegistryContentResponse(
-                        name=sm_name,
-                        id=sm_id,
-                        type=RegistryResourceType.SESSION_SUMMARY_MANAGER,
-                        metadata=sm_metadata.model_dump(exclude_none=True),
-                    )
-                )
+                resources.append(build_session_summary_manager_resource(sm))
 
         # Stable ordering helps pagination
         resources.sort(key=lambda r: (r.type, r.name))
