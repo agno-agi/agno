@@ -11,7 +11,6 @@ from typing import Literal, Optional
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import File
-from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel
 from rich.pretty import pprint  # noqa
 
@@ -51,7 +50,7 @@ Be conservative. Mark unsure fields low.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=RecipeBook,
 )

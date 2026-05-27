@@ -15,7 +15,7 @@ No variants. The value here is the full pipeline.
 1. For each image URL, an agent extracts a structured `ImageDescription`
    (subject, setting, mood, key objects).
 2. The structured fields are flattened to a single searchable string.
-3. The string is embedded with `OpenAIEmbedder` and stored in LanceDb.
+3. The string is embedded with `GeminiEmbedder` and stored in LanceDb.
 4. A text query searches the index and returns the most similar images.
 
 ## When to use
@@ -33,4 +33,4 @@ pip install lancedb tantivy
 python cookbook/data_labeling/_09_image_extraction_to_vectordb/basic.py
 ```
 
-Requires `OPENAI_API_KEY`. Writes to `tmp/lancedb/` under the repo root.
+Requires `GOOGLE_API_KEY`. Writes to `tmp/lancedb/` under the repo root.
