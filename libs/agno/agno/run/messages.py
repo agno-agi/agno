@@ -22,6 +22,9 @@ class RunMessages:
 
     def get_input_messages(self) -> List[Message]:
         """Get the input messages for the model."""
+        if self.messages:
+            return list(self.messages)
+
         input_messages = []
         if self.system_message is not None:
             input_messages.append(self.system_message)
