@@ -29,7 +29,7 @@ Run:
 from os import getenv
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.auth import GoogleAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
@@ -47,7 +47,7 @@ auth = GoogleAuthConfig(
 
 agent = Agent(
     name="Workspace Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         GmailTools(
             auth_config=auth,

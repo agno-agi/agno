@@ -29,7 +29,7 @@ from os import getenv
 
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.auth import GoogleAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
@@ -48,7 +48,7 @@ auth = GoogleAuthConfig(
 
 agent = Agent(
     name="Enterprise OAuth Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     db=SqliteDb(db_file="tmp/enterprise_oauth.db", encrypt_auth_tokens=False),
     tools=[
         GoogleOAuthTools(auth_config=auth, store_token_in_db=True),
