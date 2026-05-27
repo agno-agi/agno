@@ -12,7 +12,7 @@ Setup:
   3. Slack App -> Event Subscriptions:
        https://<your-domain>/slack/events
   4. Env vars:
-       SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
+       SLACK_TOKEN, SLACK_SIGNING_SECRET
        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
        GOOGLE_REDIRECT_URI=https://<your-domain>/google/oauth/callback
        GOOGLE_OAUTH_STATE_SECRET=<random-secret>  # CSRF protection
@@ -35,7 +35,7 @@ from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
-db = SqliteDb(db_file="tmp/slack_gmail_calendar.db")
+db = SqliteDb(db_file="tmp/slack_gmail_calendar.db", store_auth_tokens=True, encrypt_auth_tokens=False)
 
 # Shared auth config — single OAuth consent covers Gmail + Calendar
 # All parameters read from env vars if not passed explicitly

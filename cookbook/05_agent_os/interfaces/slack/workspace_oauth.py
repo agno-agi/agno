@@ -12,7 +12,7 @@ Setup:
   3. Slack App -> Event Subscriptions:
        https://<your-domain>/slack/events
   4. Env vars:
-       SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
+       SLACK_TOKEN, SLACK_SIGNING_SECRET
        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
        GOOGLE_REDIRECT_URI=https://<your-domain>/google/oauth/callback
        GOOGLE_OAUTH_STATE_SECRET=<random-secret>  # CSRF protection
@@ -27,7 +27,7 @@ from os import getenv
 
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.google.auth import GoogleAuthConfig
@@ -36,7 +36,11 @@ from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
-db = SqliteDb(db_file="tmp/slack_workspace_oauth.db")
+db = SqliteDb(
+    db_file="tmp/slack_workspace_oauth.db",
+    store_auth_tokens=True,
+    encrypt_auth_tokens=False,
+)
 
 # Shared auth config — single OAuth consent covers Gmail + Calendar + Drive
 # All parameters read from env vars if not passed explicitly
@@ -49,7 +53,7 @@ auth = GoogleAuthConfig(
 
 agent = Agent(
     name="Workspace Slack Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
         GoogleOAuthTools(auth_config=auth),
