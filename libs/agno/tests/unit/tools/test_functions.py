@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
@@ -638,6 +639,63 @@ async def test_function_call_async_with_tool_hooks():
     assert hook_calls[0][1] == "test_func"
     assert hook_calls[1][0] == "after"
     assert hook_calls[1][2] == "processed-value1"
+
+
+@pytest.mark.asyncio
+async def test_async_pre_hook_parallel_calls_restore_live_messages_reference():
+    """Parallel async hooks should not leave run_context.messages stale."""
+    observed_ids: List[int] = []
+
+    async def pre_hook(run_context: RunContext):
+        observed_ids.append(id(run_context.messages))
+        await asyncio.sleep(0.01)
+
+    async def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = [
+        Message(role="user", content="first"),
+        Message(role="assistant", content="second"),
+    ]
+    original_messages_ref = run_context.messages
+
+    func = Function(name="test_func", entrypoint=test_func, pre_hook=pre_hook)
+    func._run_context = run_context
+
+    call_1 = FunctionCall(function=func, arguments={"param1": "value1"})
+    call_2 = FunctionCall(function=func, arguments={"param1": "value2"})
+
+    result_1, result_2 = await asyncio.gather(call_1.aexecute(), call_2.aexecute())
+
+    assert result_1.status == "success"
+    assert result_2.status == "success"
+    assert run_context.messages is original_messages_ref
+    assert len(observed_ids) == 2
+
+
+@pytest.mark.asyncio
+async def test_async_tool_hooks_with_multiple_layers_do_not_deadlock():
+    """Nested async tool hooks should execute without deadlocking."""
+
+    async def outer_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        await asyncio.sleep(0.001)
+        return await function_call(**arguments)
+
+    async def inner_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        await asyncio.sleep(0.001)
+        return await function_call(**arguments)
+
+    @tool(tool_hooks=[outer_hook, inner_hook])
+    async def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+
+    result = await asyncio.wait_for(call.aexecute(), timeout=1.0)
+    assert result.status == "success"
+    assert result.result == "processed-value1"
 
 
 def test_tool_decorator_basic():
