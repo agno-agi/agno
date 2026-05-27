@@ -1918,11 +1918,10 @@ class Team:
                     should_yield = True
 
                 # Process thinking
-                if model_response_event.thinking is not None:
-                    if not full_model_response.thinking:
-                        full_model_response.thinking = model_response_event.thinking
-                    else:
-                        full_model_response.thinking += model_response_event.thinking
+                event_thinking = getattr(model_response_event, 'thinking', None)
+                if event_thinking is not None:
+                    current_thinking = getattr(full_model_response, 'thinking', None) or ''
+                    setattr(full_model_response, 'thinking', current_thinking + event_thinking)
                     should_yield = True
 
                 if model_response_event.citations is not None:
@@ -4208,10 +4207,9 @@ class Team:
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
+        # V2: Don't deepcopy model - pass it directly
         if reasoning_model is None and self.model is not None:
-            from copy import deepcopy
-
-            reasoning_model = deepcopy(self.model)
+            reasoning_model = self.model
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -4421,10 +4419,9 @@ class Team:
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
+        # V2: Don't deepcopy model - pass it directly
         if reasoning_model is None and self.model is not None:
-            from copy import deepcopy
-
-            reasoning_model = deepcopy(self.model)
+            reasoning_model = self.model
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return

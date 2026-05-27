@@ -2770,25 +2770,29 @@ class Agent:
             # Update the run_response content with the model response content
             run_response.content = model_response.content
 
-        # Update the run_response thinking with the model response thinking
-        if model_response.thinking is not None:
-            run_response.thinking = model_response.thinking
-        if model_response.redacted_thinking is not None:
+        # Update the run_response thinking with the model response thinking (V2: use getattr for optional attributes)
+        model_thinking = getattr(model_response, 'thinking', None)
+        if model_thinking is not None:
+            run_response.thinking = model_thinking
+        model_redacted_thinking = getattr(model_response, 'redacted_thinking', None)
+        if model_redacted_thinking is not None:
             if run_response.thinking is None:
-                run_response.thinking = model_response.redacted_thinking
+                run_response.thinking = model_redacted_thinking
             else:
-                run_response.thinking += model_response.redacted_thinking
+                run_response.thinking += model_redacted_thinking
 
         # Update the run_response citations with the model response citations
-        if model_response.citations is not None:
-            run_response.citations = model_response.citations
+        model_citations = getattr(model_response, 'citations', None)
+        if model_citations is not None:
+            run_response.citations = model_citations
 
         # Update the run_response tools with the model response tool_executions
-        if model_response.tool_executions is not None:
+        model_tool_executions = getattr(model_response, 'tool_executions', None)
+        if model_tool_executions is not None:
             if run_response.tools is None:
-                run_response.tools = model_response.tool_executions
+                run_response.tools = model_tool_executions
             else:
-                run_response.tools.extend(model_response.tool_executions)
+                run_response.tools.extend(model_tool_executions)
 
             # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunResponse
             for tool_call in model_response.tool_executions:
@@ -2801,8 +2805,10 @@ class Agent:
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
 
-        if model_response.image is not None:
-            self.add_image(model_response.image)
+        # V2: Use getattr for optional image attribute
+        model_image = getattr(model_response, 'image', None)
+        if model_image is not None:
+            self.add_image(model_image)
 
         # Update the run_response messages with the messages
         run_response.messages = run_messages.messages
@@ -3151,28 +3157,27 @@ class Agent:
                     model_response.content = (model_response.content or "") + model_response_event.content
                     run_response.content = model_response.content
 
-                if model_response_event.thinking is not None:
-                    model_response.thinking = (model_response.thinking or "") + model_response_event.thinking
-                    run_response.thinking = model_response.thinking
+                # V2: Use getattr for optional thinking attributes
+                if getattr(model_response_event, 'thinking', None) is not None:
+                    current_thinking = getattr(model_response, 'thinking', '')
+                    setattr(model_response, 'thinking', (current_thinking or '') + model_response_event.thinking)
+                    run_response.thinking = getattr(model_response, 'thinking', None)
 
-                if model_response_event.redacted_thinking is not None:
-                    model_response.redacted_thinking = (
-                        model_response.redacted_thinking or ""
-                    ) + model_response_event.redacted_thinking
+                if getattr(model_response_event, 'redacted_thinking', None) is not None:
+                    current_redacted = getattr(model_response, 'redacted_thinking', '')
+                    setattr(model_response, 'redacted_thinking', (current_redacted or '') + model_response_event.redacted_thinking)
+                    run_response.thinking = getattr(model_response, 'redacted_thinking', None)
 
-                    # We only have thinking on response
-                    run_response.thinking = model_response.redacted_thinking
-
-                if model_response_event.citations is not None:
+                if getattr(model_response_event, 'citations', None) is not None:
                     # We get citations in one chunk
                     run_response.citations = model_response_event.citations
 
                 # Only yield if we have content or thinking to show
                 if (
                     model_response_event.content is not None
-                    or model_response_event.thinking is not None
-                    or model_response_event.redacted_thinking is not None
-                    or model_response_event.citations is not None
+                    or getattr(model_response_event, 'thinking', None) is not None
+                    or getattr(model_response_event, 'redacted_thinking', None) is not None
+                    or getattr(model_response_event, 'citations', None) is not None
                 ):
                     yield create_run_response_content_event(
                         from_run_response=run_response,
@@ -3215,12 +3220,14 @@ class Agent:
                         response_audio=run_response.response_audio,
                     )
 
-                if model_response_event.image is not None:
-                    self.add_image(model_response_event.image)
+                # V2: Use getattr for optional image attribute
+                event_image = getattr(model_response_event, 'image', None)
+                if event_image is not None:
+                    self.add_image(event_image)
 
                     yield create_run_response_content_event(
                         from_run_response=run_response,
-                        image=model_response_event.image,
+                        image=event_image,
                     )
 
             # Handle tool interruption events
@@ -5690,10 +5697,9 @@ class Agent:
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
+        # V2: Don't deepcopy model - pass it directly
         if reasoning_model is None and self.model is not None:
-            from copy import deepcopy
-
-            reasoning_model = deepcopy(self.model)
+            reasoning_model = self.model
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return
@@ -5900,10 +5906,9 @@ class Agent:
         # Get the reasoning model
         reasoning_model: Optional[Model] = self.reasoning_model
         reasoning_model_provided = reasoning_model is not None
+        # V2: Don't deepcopy model - pass it directly
         if reasoning_model is None and self.model is not None:
-            from copy import deepcopy
-
-            reasoning_model = deepcopy(self.model)
+            reasoning_model = self.model
         if reasoning_model is None:
             log_warning("Reasoning error. Reasoning model is None, continuing regular session...")
             return

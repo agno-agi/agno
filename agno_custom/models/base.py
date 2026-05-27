@@ -582,16 +582,17 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
+        # V2: Use setattr for optional attributes that may not exist on ModelResponse
         if assistant_message.thinking is not None:
-            model_response.thinking = assistant_message.thinking
+            setattr(model_response, 'thinking', assistant_message.thinking)
         if assistant_message.redacted_thinking is not None:
-            model_response.redacted_thinking = assistant_message.redacted_thinking
+            setattr(model_response, 'redacted_thinking', assistant_message.redacted_thinking)
         if assistant_message.citations is not None:
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if assistant_message.image_output is not None:
-            model_response.image = assistant_message.image_output
+            setattr(model_response, 'image', assistant_message.image_output)
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}
@@ -640,16 +641,17 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
+        # V2: Use setattr for optional attributes that may not exist on ModelResponse
         if assistant_message.thinking is not None:
-            model_response.thinking = assistant_message.thinking
+            setattr(model_response, 'thinking', assistant_message.thinking)
         if assistant_message.redacted_thinking is not None:
-            model_response.redacted_thinking = assistant_message.redacted_thinking
+            setattr(model_response, 'redacted_thinking', assistant_message.redacted_thinking)
         if assistant_message.citations is not None:
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
             model_response.audio = assistant_message.audio_output
         if assistant_message.image_output is not None:
-            model_response.image = assistant_message.image_output
+            setattr(model_response, 'image', assistant_message.image_output)
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}

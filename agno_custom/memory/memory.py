@@ -1,5 +1,4 @@
 import json
-from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from os import getenv
@@ -144,32 +143,49 @@ class Memory:
         # We are making memories
         if self.model is not None:
             if self.memory_manager is None:
-                self.memory_manager = MemoryManager(model=deepcopy(self.model))
+                self.memory_manager = MemoryManager(model=self.model)
             # Set the model on the memory manager if it is not set
             if self.memory_manager.model is None:
-                self.memory_manager.model = deepcopy(self.model)
+                self.memory_manager.model = self.model
 
-        # We are making session summaries
-        if self.model is not None:
-            if self.summary_manager is None:
-                self.summary_manager = SessionSummarizer(model=deepcopy(self.model))
-            # Set the model on the summary_manager if it is not set
-            elif self.summary_manager.model is None:
-                self.summary_manager.model = deepcopy(self.model)
+        # V2: SessionSummarizer is abstract, skip instantiation
+        # Session summaries are handled differently in V2, summary_manager stays None
 
         self.debug_mode = debug_mode
 
     def set_model(self, model: Model) -> None:
-        # V2: Pass model directly without deepcopy to maintain Model instance type
-        # deepcopy breaks the Model object structure for V2 compatibility
+        # V2: Convert model to proper string format with provider prefix
+        # V2 MemoryManager expects model to be: 'provider:model_id' or Model instance or None
+        model_to_use = None
+        if model is not None:
+            # If model is a Model instance, construct proper string format
+            if hasattr(model, '__class__'):
+                model_class_name = model.__class__.__name__
+                model_id = getattr(model, 'id', str(model))
+
+                # Determine provider from model class
+                if 'OpenAI' in model_class_name:
+                    model_to_use = f"openai:{model_id}"
+                elif 'Anthropic' in model_class_name or 'Claude' in model_class_name:
+                    model_to_use = f"anthropic:{model_id}"
+                elif 'Gemini' in model_class_name or 'Google' in model_class_name:
+                    model_to_use = f"google:{model_id}"
+                else:
+                    # If already in correct format, use as-is; otherwise try to use model_id
+                    if ':' in model_id:
+                        model_to_use = model_id
+                    else:
+                        # Fallback: use model object directly and let V2 handle it
+                        model_to_use = model
+            else:
+                model_to_use = model
+
         if self.memory_manager is None:
-            self.memory_manager = MemoryManager(model=model)
+            self.memory_manager = MemoryManager(model=model_to_use)
         if self.memory_manager.model is None:
-            self.memory_manager.model = model
-        if self.summary_manager is None:
-            self.summary_manager = SessionSummarizer(model=model)
-        if self.summary_manager.model is None:
-            self.summary_manager.model = model
+            self.memory_manager.model = model_to_use
+        # V2: SessionSummarizer is abstract, don't instantiate it
+        # Session summarization is handled differently in V2
 
     def get_model(self) -> Model:
         if self.model is None:

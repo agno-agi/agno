@@ -568,12 +568,12 @@ class Claude(Model):
                                     )
                                 )
                 elif block.type == "thinking":
-                    model_response.thinking = block.thinking
+                    setattr(model_response, 'thinking', block.thinking)
                     model_response.provider_data = {
                         "signature": block.signature,
                     }
                 elif block.type == "redacted_thinking":
-                    model_response.redacted_thinking = block.data
+                    setattr(model_response, 'redacted_thinking', block.data)
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -636,7 +636,7 @@ class Claude(Model):
                 model_response.content = response.delta.text
             # Handle thinking content
             elif response.delta.type == "thinking_delta":
-                model_response.thinking = response.delta.thinking
+                setattr(model_response, 'thinking', response.delta.thinking)
             elif response.delta.type == "signature_delta":
                 model_response.provider_data = {
                     "signature": response.delta.signature,
