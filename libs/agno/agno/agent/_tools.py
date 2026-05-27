@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from typing import (
     TYPE_CHECKING,
+    Any,
     AsyncIterator,
     Callable,
     Dict,
@@ -342,11 +343,13 @@ def should_use_strict_mode(
     use_json_mode: bool,
     structured_outputs: Optional[bool],
     run_context: Optional[RunContext],
+    parser_model: Optional[Any] = None,
 ) -> bool:
     """Whether functions should be sent with strict structured-output schemas."""
     output_schema = run_context.output_schema if run_context else None
     return bool(
         output_schema is not None
+        and parser_model is None
         and (structured_outputs or (not use_json_mode))
         and model.supports_native_structured_outputs
     )
@@ -368,6 +371,7 @@ def parse_tools(
         use_json_mode=agent.use_json_mode,
         structured_outputs=agent.structured_outputs,
         run_context=run_context,
+        parser_model=agent.parser_model,
     )
 
     for tool in tools:
@@ -552,6 +556,7 @@ def determine_tools_for_model(
                 use_json_mode=agent.use_json_mode,
                 structured_outputs=agent.structured_outputs,
                 run_context=run_context,
+                parser_model=agent.parser_model,
             ),
             tool_hooks=agent.tool_hooks,
             run_context=run_context,

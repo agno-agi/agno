@@ -333,6 +333,7 @@ def _determine_tools_for_model(
         use_json_mode=team.use_json_mode,
         structured_outputs=None,
         run_context=run_context,
+        parser_model=team.parser_model,
     )
 
     for tool in _tools:
@@ -474,6 +475,7 @@ def _determine_tools_for_model(
                 use_json_mode=team.use_json_mode,
                 structured_outputs=None,
                 run_context=run_context,
+                parser_model=team.parser_model,
             ),
             tool_hooks=team.tool_hooks,
             run_context=run_context,
