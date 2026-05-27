@@ -35,7 +35,11 @@ from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
-db = SqliteDb(db_file="tmp/slack_gmail_calendar.db", store_auth_tokens=True, encrypt_auth_tokens=False)
+db = SqliteDb(
+    db_file="tmp/slack_gmail_calendar.db",
+    store_auth_tokens=True,
+    encrypt_auth_tokens=False,
+)
 
 # Shared auth config — single OAuth consent covers Gmail + Calendar
 # All parameters read from env vars if not passed explicitly

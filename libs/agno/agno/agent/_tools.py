@@ -379,11 +379,6 @@ def parse_tools(
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
-                # Rebind entrypoint to cloned toolkit instance
-                if _func.entrypoint is not None:
-                    bound = getattr(tool, name, None)
-                    if bound is not None:
-                        _func.entrypoint = bound
                 _func._agent = agent
                 if agent._team is not None:
                     _func._team = agent._team
