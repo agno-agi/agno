@@ -6,6 +6,7 @@ from sqlalchemy.engine import URL, Engine
 from sqlalchemy.orm import Session
 
 from agno.knowledge.document import Document
+from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector import PgVector
 from agno.vectordb.search import SearchType
 
@@ -229,7 +230,8 @@ def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedde
         insert_stmt_sentinel = object()
         mock_insert.return_value = insert_stmt_sentinel
 
-        mock_pgvector.insert("test_content_hash", docs, filters={"tag": "t1"})
+        content_hash = "test_content_hash"
+        mock_pgvector.insert(content_hash, docs, filters={"tag": "t1"})
 
         # Ensure we executed with an insert statement and batch records
         assert sess.execute.call_count == 1
@@ -238,13 +240,21 @@ def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedde
         batch_records = args[1]
         assert isinstance(batch_records, list) and len(batch_records) == 2
 
-        # First record should use explicit id
-        assert batch_records[0]["id"] == "id-1"
+        # IDs now include content_hash for uniqueness
+        from hashlib import md5
+
+        expected_id_0 = md5(f"{docs[0].id}_{content_hash}".encode()).hexdigest()
+        cleaned_content_1 = docs[1].content.replace("\x00", "\ufffd")
+        base_id_1 = md5(cleaned_content_1.encode()).hexdigest()
+        expected_id_1 = md5(f"{base_id_1}_{content_hash}".encode()).hexdigest()
+
+        # First record should use explicit id hashed with content_hash
+        assert batch_records[0]["id"] == expected_id_0
         assert batch_records[0]["meta_data"] == {"k": "v", "tag": "t1"}
         assert batch_records[0]["filters"] == {"tag": "t1"}
 
-        # Second record should fall back to content_hash
-        assert batch_records[1]["id"] == batch_records[1]["content_hash"]
+        # Second record should use content hash hashed with content_hash
+        assert batch_records[1]["id"] == expected_id_1
         assert batch_records[1]["meta_data"] == {"m": 3, "tag": "t1"}
         assert batch_records[1]["filters"] == {"tag": "t1"}
 
@@ -276,15 +286,25 @@ def test_upsert_builds_records_and_sets_conflict_on_id(mock_pgvector, mock_embed
         insert_stmt.values.return_value = after_values
         after_values.on_conflict_do_update.return_value = upsert_stmt
 
-        mock_pgvector.upsert("test_content_hash", docs, filters={"role": "test"})
+        content_hash = "test_content_hash"
+        mock_pgvector.upsert(content_hash, docs, filters={"role": "test"})
 
         # Ensure values() received our batch_records so we can validate IDs
         assert insert_stmt.values.called
         (values_arg,), _ = insert_stmt.values.call_args
         batch_records = values_arg
         assert isinstance(batch_records, list) and len(batch_records) == 2
-        assert batch_records[0]["id"] == "cid-1"  # respects explicit id
-        assert batch_records[1]["id"] == batch_records[1]["content_hash"]  # fallback to hash
+
+        # IDs now include content_hash for uniqueness
+        from hashlib import md5
+
+        expected_id_0 = md5(f"{docs[0].id}_{content_hash}".encode()).hexdigest()
+        cleaned_content_1 = docs[1].content.replace("\x00", "\ufffd")
+        base_id_1 = md5(cleaned_content_1.encode()).hexdigest()
+        expected_id_1 = md5(f"{base_id_1}_{content_hash}".encode()).hexdigest()
+
+        assert batch_records[0]["id"] == expected_id_0  # explicit id hashed with content_hash
+        assert batch_records[1]["id"] == expected_id_1  # content hash hashed with content_hash
 
         # Ensure ON CONFLICT was invoked with index_elements=["id"] and executed
         after_values.on_conflict_do_update.assert_called()
@@ -677,3 +697,562 @@ def test_delete_by_metadata_complex(mock_pgvector):
         result = mock_pgvector.delete_by_metadata({"spicy": False})
         assert result is True
         mock_delete_by_metadata.assert_called_once_with({"spicy": False})
+
+
+def test_get_document_record_merges_filters_into_metadata(mock_pgvector, mock_embedder):
+    """Test that _get_document_record correctly merges filters into meta_data."""
+    doc = Document(
+        id="test-id",
+        content="Test document content",
+        meta_data={"existing_key": "existing_value"},
+        name="test_doc",
+    )
+
+    filters = {"filter_key": "filter_value", "another_filter": "another_value"}
+
+    # Call _get_document_record with filters
+    record = mock_pgvector._get_document_record(doc, filters=filters, content_hash="test_hash")
+
+    # Verify that meta_data in the record includes both original metadata and filters
+    assert record["meta_data"]["existing_key"] == "existing_value"
+    assert record["meta_data"]["filter_key"] == "filter_value"
+    assert record["meta_data"]["another_filter"] == "another_value"
+
+    # Verify filters are stored separately as well
+    assert record["filters"] == filters
+
+
+def test_get_document_record_without_filters(mock_pgvector, mock_embedder):
+    """Test that _get_document_record works correctly without filters."""
+    doc = Document(
+        id="test-id",
+        content="Test document content",
+        meta_data={"key": "value"},
+        name="test_doc",
+    )
+
+    # Call _get_document_record without filters
+    record = mock_pgvector._get_document_record(doc, filters=None, content_hash="test_hash")
+
+    # Verify that meta_data is preserved
+    assert record["meta_data"] == {"key": "value"}
+    assert record["filters"] is None
+
+
+def test_get_document_record_with_empty_document_metadata(mock_pgvector, mock_embedder):
+    """Test that _get_document_record works when document has no metadata."""
+    doc = Document(
+        id="test-id",
+        content="Test document content",
+        name="test_doc",
+    )
+
+    filters = {"filter_key": "filter_value"}
+
+    # Call _get_document_record with filters but no document metadata
+    record = mock_pgvector._get_document_record(doc, filters=filters, content_hash="test_hash")
+
+    # Verify that meta_data contains only the filters
+    assert record["meta_data"]["filter_key"] == "filter_value"
+
+
+def test_insert_merges_filters_into_metadata(mock_pgvector, mock_embedder):
+    """Test that insert correctly merges filters into document metadata.
+
+    This is a regression test for issue #6077.
+    """
+    docs = [
+        Document(
+            id="doc-1",
+            content="Document 1 content",
+            meta_data={"doc_key": "doc_value"},
+            name="doc_1",
+        ),
+    ]
+
+    # Prepare session context manager mock
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    filters = {"knowledge_base_id": "kb-123", "source": "test"}
+
+    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert:
+        insert_stmt_sentinel = object()
+        mock_insert.return_value = insert_stmt_sentinel
+
+        mock_pgvector.insert("test_hash", docs, filters=filters)
+
+        # Get the batch records that were passed to execute
+        args, kwargs = sess.execute.call_args
+        batch_records = args[1]
+
+        # Verify meta_data includes both document metadata and filters
+        assert batch_records[0]["meta_data"]["doc_key"] == "doc_value"
+        assert batch_records[0]["meta_data"]["knowledge_base_id"] == "kb-123"
+        assert batch_records[0]["meta_data"]["source"] == "test"
+
+
+def test_similarity_threshold_valid_accepted(mock_engine, mock_embedder):
+    """Valid threshold values (0.0-1.0) should be accepted."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name="test_threshold",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=0.5,
+                )
+                assert db.similarity_threshold == 0.5
+
+
+def test_similarity_threshold_zero_accepted(mock_engine, mock_embedder):
+    """Threshold of 0.0 should be accepted."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name="test_threshold",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=0.0,
+                )
+                assert db.similarity_threshold == 0.0
+
+
+def test_similarity_threshold_one_accepted(mock_engine, mock_embedder):
+    """Threshold of 1.0 should be accepted."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name="test_threshold",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=1.0,
+                )
+                assert db.similarity_threshold == 1.0
+
+
+def test_similarity_threshold_none_accepted(mock_engine, mock_embedder):
+    """None threshold (disabled) should be accepted."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name="test_threshold",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=None,
+                )
+                assert db.similarity_threshold is None
+
+
+def test_similarity_threshold_above_one_rejected(mock_engine, mock_embedder):
+    """Threshold above 1.0 should raise ValueError."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                with pytest.raises(ValueError, match="similarity_threshold must be between 0.0 and 1.0"):
+                    PgVector(
+                        table_name="test_threshold",
+                        db_engine=mock_engine,
+                        embedder=mock_embedder,
+                        similarity_threshold=1.5,
+                    )
+
+
+def test_similarity_threshold_negative_rejected(mock_engine, mock_embedder):
+    """Negative threshold should raise ValueError."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                with pytest.raises(ValueError, match="similarity_threshold must be between 0.0 and 1.0"):
+                    PgVector(
+                        table_name="test_threshold",
+                        db_engine=mock_engine,
+                        embedder=mock_embedder,
+                        similarity_threshold=-0.1,
+                    )
+
+
+@pytest.mark.parametrize("distance", [Distance.cosine, Distance.l2, Distance.max_inner_product])
+def test_similarity_threshold_with_distance_types(mock_engine, mock_embedder, distance):
+    """Threshold should work with all distance types."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name=f"test_{distance.value}",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=0.7,
+                    distance=distance,
+                )
+                assert db.similarity_threshold == 0.7
+                assert db.distance == distance
+
+
+@pytest.mark.parametrize("search_type", [SearchType.vector, SearchType.hybrid, SearchType.keyword])
+def test_similarity_threshold_with_search_types(mock_engine, mock_embedder, search_type):
+    """Threshold should work with all search types."""
+    with patch("agno.vectordb.pgvector.pgvector.inspect") as mock_inspect:
+        inspector = MagicMock()
+        inspector.has_table.return_value = False
+        mock_inspect.return_value = inspector
+
+        with patch("agno.vectordb.pgvector.pgvector.scoped_session"):
+            with patch("agno.vectordb.pgvector.pgvector.Vector"):
+                db = PgVector(
+                    table_name=f"test_{search_type.value}",
+                    db_engine=mock_engine,
+                    embedder=mock_embedder,
+                    similarity_threshold=0.5,
+                    search_type=search_type,
+                )
+                assert db.similarity_threshold == 0.5
+                assert db.search_type == search_type
+
+
+# ---------------------------------------------------------------------------
+# Prefix-aware text-search query construction
+#
+# `prefix_match=True` previously appended `*` to each query word and fed the
+# result to `websearch_to_tsquery`, which silently drops the `*`. The flag was
+# a no-op. These tests pin the corrected behaviour: prefix-on routes through
+# `to_tsquery` with `:*` per token, prefix-off keeps `websearch_to_tsquery`.
+# ---------------------------------------------------------------------------
+
+
+def _make_db(mock_engine, mock_embedder, *, prefix_match: bool) -> PgVector:
+    with (
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch("agno.vectordb.pgvector.pgvector.Vector"),
+        patch.object(PgVector, "get_table", return_value=MagicMock()),
+    ):
+        return PgVector(
+            table_name=f"test_prefix_{prefix_match}",
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+            prefix_match=prefix_match,
+        )
+
+
+def _ts_query_name(expr) -> str:
+    """Pull the underlying Postgres function name off a SQLAlchemy func expr."""
+    return expr.name  # type: ignore[attr-defined]
+
+
+def _ts_query_bound_value(expr):
+    """Find the named ``query`` bindparam inside a tsquery func expression."""
+    for clause in expr.clauses:
+        if getattr(clause, "key", None) == "query":
+            return clause.value
+    return None
+
+
+def test_build_ts_query_default_uses_websearch(mock_engine, mock_embedder):
+    """With prefix_match=False, queries flow through websearch_to_tsquery untouched."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=False)
+
+    expr = db._build_ts_query("wildlife on the savanna")
+
+    assert expr is not None
+    assert _ts_query_name(expr) == "websearch_to_tsquery"
+    assert _ts_query_bound_value(expr) == "wildlife on the savanna"
+
+
+def test_build_ts_query_prefix_mode_uses_to_tsquery_with_star(mock_engine, mock_embedder):
+    """With prefix_match=True, each token becomes `tok:*` under to_tsquery."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("ani")
+    assert expr is not None
+    assert _ts_query_name(expr) == "to_tsquery"
+    assert _ts_query_bound_value(expr) == "ani:*"
+
+    multi = db._build_ts_query("wildlife san")
+    assert _ts_query_name(multi) == "to_tsquery"
+    assert _ts_query_bound_value(multi) == "wildlife:* & san:*"
+
+
+def test_build_ts_query_prefix_mode_strips_operator_chars(mock_engine, mock_embedder):
+    """Punctuation that `to_tsquery` would reject is tokenized away."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("foo & bar | -baz")
+    assert expr is not None
+    # `&`, `|`, `-` are dropped; the three word tokens are AND-ed with :*.
+    assert _ts_query_bound_value(expr) == "foo:* & bar:* & baz:*"
+
+
+def test_build_ts_query_prefix_mode_empty_query_returns_none(mock_engine, mock_embedder):
+    """Prefix mode with no usable tokens returns None — caller treats as no FTS hit."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    assert db._build_ts_query("") is None
+    assert db._build_ts_query("   ") is None
+    assert db._build_ts_query("!@#$%") is None
+
+
+def test_build_ts_query_default_passes_empty_query_through(mock_engine, mock_embedder):
+    """With prefix_match=False, empty queries still produce a (no-op) websearch tsquery.
+    Same contract as before this fix — callers downstream already tolerate it.
+    """
+    db = _make_db(mock_engine, mock_embedder, prefix_match=False)
+
+    expr = db._build_ts_query("")
+    assert expr is not None
+    assert _ts_query_name(expr) == "websearch_to_tsquery"
+    assert _ts_query_bound_value(expr) == ""
+
+
+def test_build_ts_query_prefix_mode_single_char(mock_engine, mock_embedder):
+    """Single-character prefix is valid input — produces 'a:*'."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("a")
+    assert _ts_query_bound_value(expr) == "a:*"
+
+
+def test_build_ts_query_prefix_mode_unicode_word_chars(mock_engine, mock_embedder):
+    """`\\w` is Unicode-aware — accented characters are preserved, not stripped."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("café")
+    assert _ts_query_bound_value(expr) == "café:*"
+
+    expr = db._build_ts_query("naïve")
+    assert _ts_query_bound_value(expr) == "naïve:*"
+
+
+def test_build_ts_query_prefix_mode_digits_and_underscores(mock_engine, mock_embedder):
+    """Digits and underscores count as word characters."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("abc_123 v2")
+    assert _ts_query_bound_value(expr) == "abc_123:* & v2:*"
+
+
+def test_build_ts_query_prefix_mode_hyphens_split(mock_engine, mock_embedder):
+    """Hyphens are treated as token separators (per `\\w+`) — `cross-country` → two tokens."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("cross-country")
+    assert _ts_query_bound_value(expr) == "cross:* & country:*"
+
+
+def test_build_ts_query_prefix_mode_leading_trailing_whitespace(mock_engine, mock_embedder):
+    """Whitespace around / between tokens is ignored."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("   wild   life   ")
+    assert _ts_query_bound_value(expr) == "wild:* & life:*"
+
+
+def test_prefix_match_default_is_false(mock_engine, mock_embedder):
+    """Default behaviour is unchanged — prefix_match defaults to False."""
+    with (
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch("agno.vectordb.pgvector.pgvector.Vector"),
+        patch.object(PgVector, "get_table", return_value=MagicMock()),
+    ):
+        db = PgVector(
+            table_name="test_default",
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+        )
+    assert db.prefix_match is False
+    expr = db._build_ts_query("anything")
+    assert _ts_query_name(expr) == "websearch_to_tsquery"
+
+
+def test_enable_prefix_matching_still_works(mock_engine, mock_embedder):
+    """The legacy public helper still returns the `tok*` string it always has —
+    kept for backwards compatibility even though `_build_ts_query` is the correct path now.
+    """
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    assert db.enable_prefix_matching("ani") == "ani*"
+    assert db.enable_prefix_matching("wildlife san") == "wildlife* san*"
+    assert db.enable_prefix_matching("") == ""
+
+
+def test_keyword_search_returns_empty_on_no_usable_tokens(mock_engine, mock_embedder):
+    """keyword_search short-circuits to [] when prefix_match strips all tokens."""
+    with (
+        patch("agno.vectordb.pgvector.pgvector.inspect"),
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch("agno.vectordb.pgvector.pgvector.Vector"),
+        patch.object(PgVector, "get_table", return_value=MagicMock()),
+    ):
+        db = PgVector(
+            table_name="test_empty",
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+            prefix_match=True,
+        )
+        db.Session = MagicMock()
+
+        results = db.keyword_search("!@#$")
+        assert results == []
+        # Session was never opened — we short-circuited before any DB work.
+        db.Session.assert_not_called()
+
+
+def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine):
+    """When prefix_match strips all tokens, hybrid_search falls back to ``''::tsquery``.
+
+    Verified by compiling the SELECT statement that hybrid_search hands to the
+    session — the literal cast sidesteps any ``to_tsquery`` parser strictness
+    around empty input.
+    """
+    from pgvector.sqlalchemy import Vector as RealVector
+    from sqlalchemy import Column, MetaData, String, Table
+    from sqlalchemy.dialects import postgresql
+
+    # Create a local embedder mock to avoid mutating the session-scoped fixture
+    local_embedder = MagicMock()
+    local_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
+
+    # Build a real Table so SQLAlchemy can compile the SELECT hybrid_search produces.
+    metadata = MetaData()
+    real_table = Table(
+        "test_hybrid_empty",
+        metadata,
+        Column("id", String, primary_key=True),
+        Column("name", String),
+        Column("meta_data", String),
+        Column("content", String),
+        Column("embedding", RealVector(3)),
+        Column("usage", String),
+    )
+
+    with (
+        patch("agno.vectordb.pgvector.pgvector.inspect"),
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch.object(PgVector, "get_table", return_value=real_table),
+    ):
+        db = PgVector(
+            table_name="test_hybrid_empty",
+            db_engine=mock_engine,
+            embedder=local_embedder,
+            prefix_match=True,
+        )
+
+        captured = {}
+
+        class _SessionCtx:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def begin(self_inner):
+                return self_inner
+
+            def execute(self_inner, stmt):
+                captured["sql"] = str(stmt.compile(dialect=postgresql.dialect()))
+                result = MagicMock()
+                result.fetchall.return_value = []
+                return result
+
+        db.Session = MagicMock(return_value=_SessionCtx())
+        db.hybrid_search("!@#$")
+
+    sql = captured.get("sql", "")
+    assert "''::tsquery" in sql, f"expected empty tsquery literal in SQL, got: {sql}"
+    assert "to_tsquery(" not in sql, f"fallback should not call to_tsquery, got: {sql}"
+
+
+def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine):
+    """hybrid_search still computes embeddings when prefix_match strips all tokens.
+
+    Unlike keyword_search which returns [] immediately, hybrid_search proceeds
+    because the vector similarity branch can return results even without text matches.
+    This test verifies the embedder is called (vector path runs) even when the
+    text search component has no usable tokens.
+    """
+    from pgvector.sqlalchemy import Vector as RealVector
+    from sqlalchemy import Column, MetaData, String, Table
+
+    # Create a local embedder mock to avoid mutating the session-scoped fixture
+    local_embedder = MagicMock()
+    local_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
+
+    metadata = MetaData()
+    real_table = Table(
+        "test_hybrid_vector_fallback",
+        metadata,
+        Column("id", String, primary_key=True),
+        Column("name", String),
+        Column("meta_data", String),
+        Column("content", String),
+        Column("embedding", RealVector(3)),
+        Column("usage", String),
+    )
+
+    with (
+        patch("agno.vectordb.pgvector.pgvector.inspect"),
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch.object(PgVector, "get_table", return_value=real_table),
+    ):
+        db = PgVector(
+            table_name="test_hybrid_vector_fallback",
+            db_engine=mock_engine,
+            embedder=local_embedder,
+            prefix_match=True,
+        )
+
+        class _SessionCtx:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def begin(self_inner):
+                return self_inner
+
+            def execute(self_inner, stmt):
+                result = MagicMock()
+                result.fetchall.return_value = []
+                return result
+
+        db.Session = MagicMock(return_value=_SessionCtx())
+        results = db.hybrid_search("!@#$")
+
+        # Embedder was called — vector search still runs even with no text tokens
+        local_embedder.get_embedding.assert_called_once_with("!@#$")
+        assert results == []

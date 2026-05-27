@@ -95,7 +95,7 @@ def test_agent_anthropic_claude_reasoning_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
 
     run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
@@ -163,7 +163,7 @@ def test_agent_gemini_reasoning_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
 
     run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
@@ -240,7 +240,7 @@ def test_agent_vertexai_claude_reasoning_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
 
     run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
@@ -308,7 +308,7 @@ def test_agent_openai_reasoning_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
 
     run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
@@ -376,7 +376,7 @@ def test_agent_deepseek_reasoning_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
 
     run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
@@ -444,7 +444,7 @@ def test_agent_groq_reasoning_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
 
     run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
@@ -512,7 +512,7 @@ def test_agent_ollama_reasoning_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
 
     run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
@@ -580,7 +580,7 @@ def test_agent_azure_ai_foundry_reasoning_streaming(shared_db):
     )
 
     # Consume all streaming responses
-    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
+    _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True))
 
     run_response = agent.get_last_run_output()
     # Print the reasoning_content when received

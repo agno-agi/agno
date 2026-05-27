@@ -19,6 +19,34 @@ except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
 
 
+def inject_agno_client_header(client_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Add the `x-goog-api-client: agno/<version>` header to a Gemini client's http_options.
+
+    Google requests partner integrations to identify themselves via this header
+    (https://ai.google.dev/gemini-api/docs/partner-integration#client-id) so they
+    can track usage and apply partner-specific behavior. We use a Google-specific
+    header rather than User-Agent so user-supplied User-Agent values aren't overridden.
+
+    Args:
+        client_params: The kwargs dict that will be passed to `genai.Client(...)`.
+
+    Returns:
+        The same dict, with `http_options.headers["x-goog-api-client"]` set.
+        Existing headers and http_options keys are preserved.
+    """
+    from agno import __version__ as agno_version
+
+    http_options = client_params.get("http_options", {})
+    if isinstance(http_options, dict):
+        headers = http_options.get("headers", {})
+        if isinstance(headers, dict):
+            headers["x-goog-api-client"] = f"agno/{agno_version}"
+            http_options["headers"] = headers
+            client_params["http_options"] = http_options
+    return client_params
+
+
 def prepare_response_schema(pydantic_model: Type[BaseModel]) -> Union[Type[BaseModel], Schema]:
     """
     Prepare a Pydantic model for use as Gemini response schema.
@@ -39,7 +67,7 @@ def prepare_response_schema(pydantic_model: Type[BaseModel]) -> Union[Type[BaseM
         try:
             converted = convert_schema(schema_dict)
         except Exception as e:
-            log_warning(f"Failed to convert schema for {pydantic_model}: {e}")
+            log_warning(f"Failed to convert schema for {pydantic_model}: {str(e)}")
             converted = None
 
         if converted is None:
@@ -139,7 +167,7 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 }
                 return image_data
             except Exception as e:
-                log_warning(f"Failed to download image from {image}: {e}")
+                log_warning(f"Failed to download image from {image}: {str(e)}")
                 return None
         else:
             log_warning(f"Unsupported image format: {image}")
@@ -160,7 +188,7 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 "data": content_bytes,
             }
         except Exception as e:
-            log_warning(f"Failed to load image from {image.filepath}: {e}")
+            log_warning(f"Failed to load image from {image.filepath}: {str(e)}")
             return None
 
     # Case 3: Image is a bytes object
@@ -225,12 +253,13 @@ def convert_schema(
     if schema_type is None or schema_type == "null":
         return None
     description = schema_dict.get("description", None)
+    title = schema_dict.get("title", None)
     default = schema_dict.get("default", None)
 
     # Handle enum types
     if "enum" in schema_dict:
         enum_values = schema_dict["enum"]
-        return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default)
+        return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default, title=title)
 
     if schema_type == "object":
         # Handle regular objects with properties
@@ -250,6 +279,10 @@ def convert_schema(
                     if is_nullable:
                         converted_schema.nullable = True
                     properties[key] = converted_schema
+                else:
+                    properties[key] = Schema(
+                        title=prop_def.get("title", None), description=prop_def.get("description", None)
+                    )
 
             required = schema_dict.get("required", [])
 
@@ -260,9 +293,10 @@ def convert_schema(
                     required=required,
                     description=description,
                     default=default,
+                    title=title,
                 )
             else:
-                return Schema(type=GeminiType.OBJECT, description=description, default=default)
+                return Schema(type=GeminiType.OBJECT, description=description, default=default, title=title)
 
         # Handle Dict types (objects with additionalProperties but no properties)
         elif "additionalProperties" in schema_dict:
@@ -305,11 +339,11 @@ def convert_schema(
                 )
             else:
                 # additionalProperties is false or true
-                return Schema(type=GeminiType.OBJECT, description=description, default=default)
+                return Schema(type=GeminiType.OBJECT, description=description, default=default, title=title)
 
         # Handle empty objects
         else:
-            return Schema(type=GeminiType.OBJECT, description=description, default=default)
+            return Schema(type=GeminiType.OBJECT, description=description, default=default, title=title)
 
     elif schema_type == "array" and "items" in schema_dict:
         if not schema_dict["items"]:  # Handle empty {}
@@ -325,6 +359,7 @@ def convert_schema(
             items=items,
             min_items=min_items,
             max_items=max_items,
+            title=title,
         )
 
     elif schema_type == "string":
@@ -332,6 +367,7 @@ def convert_schema(
             "type": GeminiType.STRING,
             "description": description,
             "default": default,
+            "title": title,
         }
         if "format" in schema_dict:
             schema_kwargs["format"] = schema_dict["format"]
@@ -342,6 +378,7 @@ def convert_schema(
             "type": schema_type.upper(),
             "description": description,
             "default": default,
+            "title": title,
         }
         if "maximum" in schema_dict:
             schema_kwargs["maximum"] = schema_dict["maximum"]
@@ -373,6 +410,7 @@ def convert_schema(
                 any_of=any_of,
                 description=description,
                 default=default,
+                title=title,
             )
     else:
         if isinstance(schema_type, list):
@@ -384,7 +422,7 @@ def convert_schema(
         # Only convert to uppercase if schema_type is not empty
         if schema_type:
             schema_type = schema_type.upper()
-            return Schema(type=schema_type, description=description, default=default)
+            return Schema(type=schema_type, description=description, default=default, title=title)
         else:
             # If we get here with an empty type and no other handlers matched,
             # something is wrong with the schema

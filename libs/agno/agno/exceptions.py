@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
@@ -77,8 +78,36 @@ class AgnoError(Exception):
         return str(self.message)
 
 
+class ModelAuthenticationError(AgnoError):
+    """Raised when model authentication fails."""
+
+    def __init__(self, message: str, status_code: int = 401, model_name: Optional[str] = None):
+        super().__init__(message, status_code)
+        self.model_name = model_name
+
+        self.type = "model_authentication_error"
+        self.error_id = "model_authentication_error"
+
+
 class ModelProviderError(AgnoError):
     """Exception raised when a model provider returns an error."""
+
+    # Patterns that indicate a context window / token limit exceeded error
+    CONTEXT_WINDOW_PATTERNS = [
+        "context_length_exceeded",
+        "context window",
+        "maximum context length",
+        "token limit",
+        "max_tokens",
+        "too many tokens",
+        "payload too large",
+        "content_too_large",
+        "request too large",
+        "input too long",
+        "prompt is too long",
+        "prompt too long",
+        "exceeds the model",
+    ]
 
     def __init__(
         self, message: str, status_code: int = 502, model_name: Optional[str] = None, model_id: Optional[str] = None
@@ -90,6 +119,40 @@ class ModelProviderError(AgnoError):
         self.type = "model_provider_error"
         self.error_id = "model_provider_error"
 
+    @classmethod
+    def classify(cls, error: "ModelProviderError") -> "ModelProviderError":
+        """Re-classify a generic ModelProviderError into a specific subclass.
+
+        If the error is already a specific subclass (ModelRateLimitError,
+        ContextWindowExceededError), it is returned as-is. Otherwise, the
+        error message and status code are inspected to determine if a more
+        specific subclass applies.
+        """
+        # Already classified
+        if isinstance(error, (ModelRateLimitError, ContextWindowExceededError)):
+            return error
+
+        # Rate-limit detection (429 standard, 529 Anthropic OverloadedError)
+        if error.status_code in {429, 529}:
+            return ModelRateLimitError(
+                message=error.message,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                model_id=error.model_id,
+            )
+
+        # Context-window detection
+        error_msg = str(error.message).lower()
+        if any(pattern in error_msg for pattern in cls.CONTEXT_WINDOW_PATTERNS):
+            return ContextWindowExceededError(
+                message=error.message,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                model_id=error.model_id,
+            )
+
+        return error
+
 
 class ModelRateLimitError(ModelProviderError):
     """Exception raised when a model provider returns a rate limit error."""
@@ -99,6 +162,16 @@ class ModelRateLimitError(ModelProviderError):
     ):
         super().__init__(message, status_code, model_name, model_id)
         self.error_id = "model_rate_limit_error"
+
+
+class ContextWindowExceededError(ModelProviderError):
+    """Exception raised when the input exceeds a model's context window."""
+
+    def __init__(
+        self, message: str, status_code: int = 400, model_name: Optional[str] = None, model_id: Optional[str] = None
+    ):
+        super().__init__(message, status_code, model_name, model_id)
+        self.error_id = "context_window_exceeded_error"
 
 
 class EvalError(Exception):
@@ -159,3 +232,42 @@ class OutputCheckError(Exception):
         self.message = message
         self.check_trigger = check_trigger
         self.additional_data = additional_data
+
+
+@dataclass
+class RetryableModelProviderError(Exception):
+    original_error: Optional[str] = None
+    # Guidance message to retry a model invocation after an error
+    retry_guidance_message: Optional[str] = None
+
+
+class RemoteServerUnavailableError(AgnoError):
+    """Exception raised when a remote server is unavailable.
+
+    This can happen due to:
+    - Connection refused (server not running)
+    - Connection timeout
+    - Network errors
+    - DNS resolution failures
+    """
+
+    def __init__(
+        self,
+        message: str,
+        base_url: Optional[str] = None,
+        original_error: Optional[Exception] = None,
+    ):
+        super().__init__(message, status_code=503)
+        self.base_url = base_url
+        self.original_error = original_error
+        self.type = "remote_server_unavailable_error"
+        self.error_id = "remote_server_unavailable_error"
+
+
+class PathSecurityError(AgnoError):
+    """Exception raised when path validation rejects user-supplied input."""
+
+    def __init__(self, message: str = "Path security violation"):
+        super().__init__(message, status_code=400)
+        self.type = "path_security_error"
+        self.error_id = "path_security_error"

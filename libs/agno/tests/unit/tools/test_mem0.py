@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from agno.run import RunContext
 from agno.tools.mem0 import Mem0Tools
 
 MockMemory = MagicMock()
@@ -66,9 +67,9 @@ def toolkit_api_key():
 
 
 @pytest.fixture
-def dummy_session_state():
-    """Return a minimal session_state dict that the toolkit expects."""
-    return {}
+def dummy_run_context():
+    """Return a minimal RunContext that the toolkit expects."""
+    return RunContext(run_id="test-run-id", session_id="test-session-id", user_id=None)
 
 
 class TestMem0Toolkit:
@@ -91,51 +92,51 @@ class TestMem0Toolkit:
         MockMemoryClient.assert_called_once_with(api_key="fake-api-key")
         MockMemory.from_config.assert_not_called()
 
-    def test_get_user_id_from_arg(self, toolkit_config):
+    def test_get_user_id_from_arg(self, toolkit_config, dummy_run_context):
         toolkit_config.user_id = "arg_user"
-        user_id = toolkit_config._get_user_id("test_method", {})
+        user_id = toolkit_config._get_user_id("test_method", dummy_run_context)
         assert user_id == "arg_user"
 
-    def test_get_user_id_no_id_provided(self, toolkit_config):
-        result = toolkit_config._get_user_id("test_method", {})
+    def test_get_user_id_no_id_provided(self, toolkit_config, dummy_run_context):
+        result = toolkit_config._get_user_id("test_method", dummy_run_context)
         assert result == "Error in test_method: A user_id must be provided in the method call."
 
-    def test_get_user_id_from_session_state(self, toolkit_config):
-        """Test that user_id is retrieved from session_state when not provided in constructor"""
-        session_state = {"current_user_id": "session_user_123"}
-        user_id = toolkit_config._get_user_id("test_method", session_state)
-        assert user_id == "session_user_123"
+    def test_get_user_id_from_run_context(self, toolkit_config):
+        """Test that user_id is retrieved from run_context when not provided in constructor"""
+        run_context = RunContext(run_id="test-run", session_id="test-session", user_id="context_user_123")
+        user_id = toolkit_config._get_user_id("test_method", run_context)
+        assert user_id == "context_user_123"
 
     def test_get_user_id_constructor_takes_priority(self, toolkit_config):
-        """Test that constructor user_id takes priority over session_state"""
+        """Test that constructor user_id takes priority over run_context"""
         toolkit_config.user_id = "constructor_user"
-        session_state = {"current_user_id": "session_user_123"}
-        user_id = toolkit_config._get_user_id("test_method", session_state)
+        run_context = RunContext(run_id="test-run", session_id="test-session", user_id="context_user_123")
+        user_id = toolkit_config._get_user_id("test_method", run_context)
         assert user_id == "constructor_user"
 
-    def test_add_memory_with_session_state_user_id(self, toolkit_config, mock_memory_instance):
-        """Test that add_memory works with user_id from session_state"""
-        session_state = {"current_user_id": "session_user_add"}
-        result_str = toolkit_config.add_memory(session_state, content="Session user test")
+    def test_add_memory_with_run_context_user_id(self, toolkit_config, mock_memory_instance):
+        """Test that add_memory works with user_id from run_context"""
+        run_context = RunContext(run_id="test-run", session_id="test-session", user_id="context_user_add")
+        result_str = toolkit_config.add_memory(run_context, content="Context user test")
         mock_memory_instance.add.assert_called_once_with(
-            [{"role": "user", "content": "Session user test"}],
-            user_id="session_user_add",
+            [{"role": "user", "content": "Context user test"}],
+            user_id="context_user_add",
             infer=True,
         )
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
 
-    def test_search_memory_with_session_state_user_id(self, toolkit_config, mock_memory_instance):
-        """Test that search_memory works with user_id from session_state"""
-        session_state = {"current_user_id": "session_user_search"}
-        result_str = toolkit_config.search_memory(session_state, query="Session search test")
-        mock_memory_instance.search.assert_called_once_with(query="Session search test", user_id="session_user_search")
+    def test_search_memory_with_run_context_user_id(self, toolkit_config, mock_memory_instance):
+        """Test that search_memory works with user_id from run_context"""
+        run_context = RunContext(run_id="test-run", session_id="test-session", user_id="context_user_search")
+        result_str = toolkit_config.search_memory(run_context, query="Context search test")
+        mock_memory_instance.search.assert_called_once_with(query="Context search test", user_id="context_user_search")
         expected_result = [{"id": "mem-search-456", "memory": "found memory", "score": 0.9}]
         assert json.loads(result_str) == expected_result
 
-    def test_add_memory_success_arg_id(self, toolkit_config, mock_memory_instance, dummy_session_state):
+    def test_add_memory_success_arg_id(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "test_user_add"
-        result_str = toolkit_config.add_memory(dummy_session_state, content="Test message")
+        result_str = toolkit_config.add_memory(dummy_run_context, content="Test message")
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": "Test message"}],
             user_id="test_user_add",
@@ -144,10 +145,10 @@ class TestMem0Toolkit:
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
 
-    def test_add_memory_dict_message(self, toolkit_config, mock_memory_instance, dummy_session_state):
+    def test_add_memory_dict_message(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "user1"
         dict_content = {"role": "user", "content": "Dict message"}
-        result_str = toolkit_config.add_memory(dummy_session_state, content=dict_content)
+        result_str = toolkit_config.add_memory(dummy_run_context, content=dict_content)
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": json.dumps(dict_content)}],
             user_id="user1",
@@ -156,9 +157,9 @@ class TestMem0Toolkit:
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
 
-    def test_add_memory_invalid_message_type(self, toolkit_config, mock_memory_instance, dummy_session_state):
+    def test_add_memory_invalid_message_type(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "user1"
-        result_str = toolkit_config.add_memory(dummy_session_state, content=123)
+        result_str = toolkit_config.add_memory(dummy_run_context, content=123)
         mock_memory_instance.add.assert_called_once_with(
             [{"role": "user", "content": "123"}],
             user_id="user1",
@@ -167,79 +168,79 @@ class TestMem0Toolkit:
         expected_result = {"results": [{"id": "mem-add-123", "memory": "added memory", "event": "ADD"}]}
         assert json.loads(result_str) == expected_result
 
-    def test_add_memory_no_user_id(self, toolkit_config, dummy_session_state):
-        result = toolkit_config.add_memory(dummy_session_state, content="No user ID test")
+    def test_add_memory_no_user_id(self, toolkit_config, dummy_run_context):
+        result = toolkit_config.add_memory(dummy_run_context, content="No user ID test")
         expected_error_msg = "Error in add_memory: A user_id must be provided in the method call."
         assert expected_error_msg in result
 
-    def test_search_memory_success_arg_id(self, toolkit_config, mock_memory_instance, dummy_session_state):
+    def test_search_memory_success_arg_id(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "test_user_search"
-        result_str = toolkit_config.search_memory(dummy_session_state, query="find stuff")
+        result_str = toolkit_config.search_memory(dummy_run_context, query="find stuff")
         mock_memory_instance.search.assert_called_once_with(query="find stuff", user_id="test_user_search")
         expected_result = [{"id": "mem-search-456", "memory": "found memory", "score": 0.9}]
         assert json.loads(result_str) == expected_result
 
-    def test_search_memory_success_default_call(self, toolkit_config, mock_memory_instance, dummy_session_state):
+    def test_search_memory_success_default_call(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "user_default"
-        toolkit_config.search_memory(dummy_session_state, query="default search")
+        toolkit_config.search_memory(dummy_run_context, query="default search")
         mock_memory_instance.search.assert_called_once_with(query="default search", user_id="user_default")
 
-    def test_search_memory_no_user_id(self, toolkit_config, dummy_session_state):
-        result = toolkit_config.search_memory(dummy_session_state, query="No user ID search")
+    def test_search_memory_no_user_id(self, toolkit_config, dummy_run_context):
+        result = toolkit_config.search_memory(dummy_run_context, query="No user ID search")
         expected_error_msg = "Error in search_memory: A user_id must be provided in the method call."
         assert result == expected_error_msg
 
-    def test_search_memory_api_key_list_return(self, toolkit_api_key, mock_memory_client_instance, dummy_session_state):
+    def test_search_memory_api_key_list_return(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "default_user_api"
-        result_str = toolkit_api_key.search_memory(dummy_session_state, query="client search")
+        result_str = toolkit_api_key.search_memory(dummy_run_context, query="client search")
         mock_memory_client_instance.search.assert_called_once_with(query="client search", user_id="default_user_api")
         expected_result = [{"id": "mem-client-search-456", "memory": "found client memory", "score": 0.8}]
         assert json.loads(result_str) == expected_result
 
-    def test_get_all_memories_success(self, toolkit_api_key, mock_memory_client_instance, dummy_session_state):
+    def test_get_all_memories_success(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "user-all-1"
-        result_str = toolkit_api_key.get_all_memories(dummy_session_state)
+        result_str = toolkit_api_key.get_all_memories(dummy_run_context)
         mock_memory_client_instance.get_all.assert_called_once_with(user_id="user-all-1")
         expected = [{"id": "mem-client-all-1", "memory": "all client mem 1"}]
         assert json.loads(result_str) == expected
 
-    def test_get_all_memories_success_dict_return(self, toolkit_config, mock_memory_instance, dummy_session_state):
+    def test_get_all_memories_success_dict_return(self, toolkit_config, mock_memory_instance, dummy_run_context):
         toolkit_config.user_id = "user-all-dict"
-        result_str = toolkit_config.get_all_memories(dummy_session_state)
+        result_str = toolkit_config.get_all_memories(dummy_run_context)
         mock_memory_instance.get_all.assert_called_once_with(user_id="user-all-dict")
         expected = [{"id": "mem-all-1", "memory": "all mem 1"}]
         assert json.loads(result_str) == expected
 
-    def test_get_all_memories_no_user_id(self, toolkit_api_key, dummy_session_state):
-        result_str = toolkit_api_key.get_all_memories(dummy_session_state)
+    def test_get_all_memories_no_user_id(self, toolkit_api_key, dummy_run_context):
+        result_str = toolkit_api_key.get_all_memories(dummy_run_context)
         expected_error_msg = "Error in get_all_memories: A user_id must be provided in the method call."
         assert result_str == expected_error_msg
 
-    def test_get_all_memories_error(self, toolkit_api_key, mock_memory_client_instance, dummy_session_state):
+    def test_get_all_memories_error(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "error-user"
         mock_memory_client_instance.get_all.side_effect = Exception("Test get_all error")
-        result_str = toolkit_api_key.get_all_memories(dummy_session_state)
+        result_str = toolkit_api_key.get_all_memories(dummy_run_context)
         assert "Error getting all memories: Test get_all error" in result_str
 
-    def test_delete_all_memories_success(self, toolkit_api_key, mock_memory_client_instance, dummy_session_state):
+    def test_delete_all_memories_success(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "user-delete-all-1"
-        result_str = toolkit_api_key.delete_all_memories(dummy_session_state)
+        result_str = toolkit_api_key.delete_all_memories(dummy_run_context)
         mock_memory_client_instance.delete_all.assert_called_once_with(user_id="user-delete-all-1")
         expected_str = "Successfully deleted all memories for user_id: user-delete-all-1."
         assert result_str == expected_str
 
-    def test_delete_all_memories_no_user_id(self, toolkit_api_key, dummy_session_state):
-        result_str = toolkit_api_key.delete_all_memories(dummy_session_state)
+    def test_delete_all_memories_no_user_id(self, toolkit_api_key, dummy_run_context):
+        result_str = toolkit_api_key.delete_all_memories(dummy_run_context)
         expected_error_msg = "Error in delete_all_memories: A user_id must be provided in the method call."
         assert "Error deleting all memories:" in result_str and expected_error_msg in result_str
 
-    def test_delete_all_memories_error(self, toolkit_api_key, mock_memory_client_instance, dummy_session_state):
+    def test_delete_all_memories_error(self, toolkit_api_key, mock_memory_client_instance, dummy_run_context):
         toolkit_api_key.user_id = "error-user"
         mock_memory_client_instance.delete_all.side_effect = Exception("Test delete_all error")
-        result_str = toolkit_api_key.delete_all_memories(dummy_session_state)
+        result_str = toolkit_api_key.delete_all_memories(dummy_run_context)
         assert "Error deleting all memories: Test delete_all error" in result_str
 
-    def test_add_memory_with_infer_false(self, monkeypatch, dummy_session_state):
+    def test_add_memory_with_infer_false(self, monkeypatch, dummy_run_context):
         """Test that infer parameter can be configured to False"""
         # Set up mocks for this specific test
         mock_memory = MagicMock()
@@ -250,7 +251,7 @@ class TestMem0Toolkit:
         # Test with config-based toolkit set to infer=False
         monkeypatch.delenv("MEM0_API_KEY", raising=False)
         toolkit_config = Mem0Tools(config={}, user_id="test_user", infer=False)
-        result_str = toolkit_config.add_memory(dummy_session_state, content="Test message")
+        result_str = toolkit_config.add_memory(dummy_run_context, content="Test message")
 
         mock_memory.add.assert_called_once_with(
             [{"role": "user", "content": "Test message"}],

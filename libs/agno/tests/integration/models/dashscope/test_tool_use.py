@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.dashscope import DashScope
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -32,7 +32,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_events=True)
 
     responses = []
     tool_call_seen = False
@@ -74,9 +74,7 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
+    response_stream = await agent.arun("What is the current price of TSLA?", stream=True, stream_events=True)
 
     responses = []
     tool_call_seen = False
@@ -113,7 +111,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=DashScope(id="qwen-plus"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

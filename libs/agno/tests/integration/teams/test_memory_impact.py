@@ -1,7 +1,6 @@
 import asyncio
 import gc
 import tracemalloc
-from time import time
 from typing import List, Tuple
 
 import pytest
@@ -138,7 +137,7 @@ def test_team_memory_impact_with_gc_monitoring(shared_db):
         role="Perform mathematical calculations",
         tools=[simple_calculator],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
     text_agent = Agent(
@@ -147,7 +146,7 @@ def test_team_memory_impact_with_gc_monitoring(shared_db):
         role="Process and analyze text",
         tools=[text_processor],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
     # Create team with memory and storage
@@ -158,7 +157,7 @@ def test_team_memory_impact_with_gc_monitoring(shared_db):
         respond_directly=True,
         determine_input_for_members=False,
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         instructions="Route mathematical questions to the calculator agent and text processing questions to the text processor agent.",
     )
 
@@ -221,7 +220,7 @@ def test_team_memory_impact_with_gc_monitoring(shared_db):
             print(f"Max memory growth in single operation: {max(memory_growth):.2f} MB")
 
         # STRICT MEMORY LIMITS: Final memory must be under 20MB
-        assert final_memory < 5, f"Final memory usage too high: {final_memory:.2f} MB (limit: 5MB)"
+        assert final_memory < 20, f"Final memory usage too high: {final_memory:.2f} MB (limit: 20MB)"
 
         # Verify that garbage collection is working
         # After GC, memory should not be significantly higher than before
@@ -261,7 +260,7 @@ def test_team_memory_cleanup_after_session_switch(shared_db):
         role="Process simple requests",
         tools=[simple_function],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
     team = Team(
@@ -269,7 +268,7 @@ def test_team_memory_cleanup_after_session_switch(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[agent],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
     monitor = MemoryMonitor()
@@ -368,88 +367,44 @@ async def test_team_memory_with_multiple_members(shared_db):
 
         return f"{emoji} Meeting scheduled: {duration_minutes} minutes ({priority} priority)"
 
-    # Mock the model to avoid API calls
-    class MockModel:
-        def __init__(self, id: str):
-            self.id = id
-            self.name = "MockModel"
-            self.provider = "MockProvider"
-            self.assistant_message_role = "assistant"
-
-        def get_instructions_for_model(self, tools: List):
-            return ""
-
-        def get_system_message_for_model(self, tools: List):
-            return ""
-
-        def to_dict(self):
-            return {}
-
-        async def aresponse(self, messages, **kwargs):
-            # Return a mock response
-            return type(
-                "MockResponse",
-                (),
-                {
-                    "content": f"Mock response for {messages[-1].content[:50]}...",
-                    "run_id": f"mock_run_{hash(str(messages))}",
-                    "model": self.name,
-                    "reasoning_content": None,
-                    "citations": None,
-                    "tool_executions": None,
-                    "tool_calls": [],
-                    "audio": None,
-                    "created_at": int(time()),
-                    "usage": type(
-                        "MockUsage", (), {"total_tokens": 100, "prompt_tokens": 50, "completion_tokens": 50}
-                    )(),
-                    "finish_reason": "stop",
-                    "provider_data": None,
-                    "images": [],
-                    "videos": [],
-                    "audios": [],
-                    "files": [],
-                },
-            )()
-
     agent1 = Agent(
         name="Financial Advisor",
-        model=MockModel(id="gpt-4o-mini"),  # type: ignore
+        model=OpenAIChat(id="gpt-4o-mini"),  # type: ignore
         role="Provide financial planning and budget analysis",
         tools=[calculate_budget],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         add_history_to_context=True,
     )
 
     agent2 = Agent(
         name="Health Coach",
-        model=MockModel(id="gpt-4o-mini"),  # type: ignore
+        model=OpenAIChat(id="gpt-4o-mini"),  # type: ignore
         role="Analyze health data and provide wellness recommendations",
         tools=[analyze_health_data],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         add_history_to_context=True,
     )
 
     agent3 = Agent(
         name="Meeting Coordinator",
-        model=MockModel(id="gpt-4o-mini"),  # type: ignore
+        model=OpenAIChat(id="gpt-4o-mini"),  # type: ignore
         role="Help schedule meetings and coordinate team activities",
         tools=[schedule_meeting],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         add_history_to_context=True,
     )
 
     team = Team(
         name="Personal Assistant Team",
-        model=MockModel(id="gpt-4o-mini"),  # type: ignore
+        model=OpenAIChat(id="gpt-4o-mini"),  # type: ignore
         members=[agent1, agent2, agent3],
         respond_directly=True,
         determine_input_for_members=False,
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         add_history_to_context=True,
         instructions="Route financial questions to the Financial Advisor, health-related questions to the Health Coach, and meeting/scheduling requests to the Meeting Coordinator. Remember user preferences and past interactions to provide personalized assistance.",
     )

@@ -12,12 +12,12 @@ from agno.utils.log import log_error, log_warning
 
 
 class NebiusTools(Toolkit):
-    """Tools for interacting with Nebius AI Studio's text-to-image API"""
+    """Tools for interacting with Nebius Token Factory's text-to-image API"""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        base_url: str = "https://api.studio.nebius.com/v1",
+        base_url: str = "https://api.tokenfactory.nebius.com/v1",
         image_model: str = "black-forest-labs/flux-schnell",
         image_quality: Optional[str] = "standard",
         image_size: Optional[str] = "1024x1024",
@@ -26,11 +26,11 @@ class NebiusTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        """Initialize Nebius AI Studio text-to-image tools.
+        """Initialize Nebius Token Factory text-to-image tools.
 
         Args:
             api_key: Nebius API key. If not provided, will look for NEBIUS_API_KEY environment variable.
-            base_url: The base URL for the Nebius AI Studio API. This should be configured according to Nebius's documentation.
+            base_url: The base URL for the Nebius Token Factory API. This should be configured according to Nebius's documentation.
             image_model: The model to use for generation. Options include:
                   - "black-forest-labs/flux-schnell" (fastest)
                   - "black-forest-labs/flux-dev" (balanced)
@@ -69,7 +69,7 @@ class NebiusTools(Toolkit):
         agent: Agent,
         prompt: str,
     ) -> ToolResult:
-        """Generate images based on a text prompt using Nebius AI Studio.
+        """Generate images based on a text prompt using Nebius Token Factory.
 
         Args:
             agent: The agent instance for adding images
@@ -120,5 +120,5 @@ class NebiusTools(Toolkit):
             return ToolResult(content="Failed to generate image: No content received from API.")
 
         except Exception as e:
-            log_error(f"Failed to generate image using {self.image_model}: {e}")
+            log_error(f"Failed to generate image using {self.image_model}: {str(e)}")
             return ToolResult(content=f"Failed to generate image: {e}")

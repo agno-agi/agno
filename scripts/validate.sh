@@ -15,6 +15,4 @@ source ${CURR_DIR}/_utils.sh
 print_heading "Validating all libraries"
 source ${AGNO_DIR}/scripts/validate.sh
 source ${AGNO_INFRA_DIR}/scripts/validate.sh
-
-# Not validating cookbook for now
-# source ${COOKBOOK_DIR}/scripts/validate.sh
+source ${COOKBOOK_DIR}/scripts/validate.sh

@@ -1,12 +1,68 @@
 import base64
+import mimetypes
 import time
 from enum import Enum
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Union
 
 import httpx
 
+from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_info, log_warning
+
+# Ensure .webp is recognized on all platforms
+mimetypes.add_type("image/webp", ".webp")
+
+
+def get_image_type(data: bytes) -> Optional[str]:
+    """Returns the image format from magic bytes in the file header."""
+    if len(data) < 12:
+        return None
+    # PNG: 8-byte signature
+    if data[0:8] == b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a":
+        return "png"
+    # GIF: "GIF8" followed by "9a" or "7a" (we check for 'a')
+    if data[0:4] == b"GIF8" and data[5:6] == b"a":
+        return "gif"
+    # JPEG: SOI marker (Start of Image)
+    if data[0:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    # HEIC/HEIF: ftyp box at offset 4
+    if data[4:8] == b"ftyp":
+        return "heic"
+    # WebP: RIFF container with WEBP identifier
+    if data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def resolve_image_mime_type(
+    mime_type: Optional[str] = None,
+    image_format: Optional[str] = None,
+    file_path: Optional[Union[Path, str]] = None,
+    image_bytes: Optional[bytes] = None,
+) -> str:
+    """Resolve MIME type for an image using a priority cascade.
+
+    Priority: explicit mime_type > format field > file extension > magic bytes > jpeg fallback.
+    Used by OpenAI Chat, OpenAI Responses, and other model providers that need
+    MIME types for base64 data URIs.
+    """
+    if mime_type:
+        return mime_type
+    # Convert short format (e.g. "png") to full MIME
+    if image_format:
+        return f"image/{image_format.lower()}"
+    if file_path:
+        guessed = mimetypes.guess_type(str(file_path))[0]
+        if guessed:
+            return guessed
+    # Magic byte detection
+    if image_bytes:
+        detected = get_image_type(image_bytes)
+        if detected:
+            return f"image/{detected}"
+    return "image/jpeg"
 
 
 class SampleDataFileExtension(str, Enum):
@@ -48,11 +104,22 @@ def download_image(url: str, output_path: str) -> bool:
         return True
 
     except httpx.HTTPError as e:
-        log_warning(f"Error downloading the image: {e}")
+        log_warning(f"Error downloading the image: {str(e)}")
         return False
     except IOError as e:
-        log_warning(f"Error saving the image to '{output_path}': {e}")
+        log_warning(f"Error saving the image to '{output_path}': {str(e)}")
         return False
+
+
+def download_audio(url: str, output_path: str) -> str:
+    """Download audio from URL"""
+    response = httpx.get(url)
+    response.raise_for_status()
+
+    with open(output_path, "wb") as f:
+        for chunk in response.iter_bytes(chunk_size=8192):
+            f.write(chunk)
+    return output_path
 
 
 def download_video(url: str, output_path: str) -> str:
@@ -185,3 +252,177 @@ def download_knowledge_filters_sample_data(
         )
         file_paths.append(str(download_path))
     return file_paths
+
+
+def reconstruct_image_from_dict(img_data):
+    """
+    Reconstruct an Image object from dictionary data.
+
+    Handles both base64-encoded content (from database) and regular image data (url/filepath).
+    """
+    try:
+        if isinstance(img_data, dict):
+            # If content is base64 string, decode it back to bytes
+            if "content" in img_data and isinstance(img_data["content"], str):
+                return Image.from_base64(
+                    img_data["content"],
+                    id=img_data.get("id"),
+                    mime_type=img_data.get("mime_type"),
+                    format=img_data.get("format"),
+                    detail=img_data.get("detail"),
+                    original_prompt=img_data.get("original_prompt"),
+                    revised_prompt=img_data.get("revised_prompt"),
+                    alt_text=img_data.get("alt_text"),
+                )
+            else:
+                # Regular image (filepath/url)
+                return Image(**img_data)
+        return img_data
+    except Exception as e:
+        log_warning(f"Failed to reconstruct image from dict: {str(e)}")
+        return None
+
+
+def reconstruct_video_from_dict(vid_data):
+    """
+    Reconstruct a Video object from dictionary data.
+
+    Handles both base64-encoded content (from database) and regular video data (url/filepath).
+    """
+    try:
+        if isinstance(vid_data, dict):
+            # If content is base64 string, decode it back to bytes
+            if "content" in vid_data and isinstance(vid_data["content"], str):
+                return Video.from_base64(
+                    vid_data["content"],
+                    id=vid_data.get("id"),
+                    mime_type=vid_data.get("mime_type"),
+                    format=vid_data.get("format"),
+                )
+            else:
+                # Regular video (filepath/url)
+                return Video(**vid_data)
+        return vid_data
+    except Exception as e:
+        log_warning(f"Failed to reconstruct video from dict: {str(e)}")
+        return None
+
+
+def reconstruct_audio_from_dict(aud_data):
+    """
+    Reconstruct an Audio object from dictionary data.
+
+    Handles both base64-encoded content (from database) and regular audio data (url/filepath).
+    """
+    try:
+        if isinstance(aud_data, dict):
+            # If content is base64 string, decode it back to bytes
+            if "content" in aud_data and isinstance(aud_data["content"], str):
+                return Audio.from_base64(
+                    aud_data["content"],
+                    id=aud_data.get("id"),
+                    mime_type=aud_data.get("mime_type"),
+                    transcript=aud_data.get("transcript"),
+                    expires_at=aud_data.get("expires_at"),
+                    sample_rate=aud_data.get("sample_rate", 24000),
+                    channels=aud_data.get("channels", 1),
+                )
+            else:
+                # Regular audio (filepath/url)
+                return Audio(**aud_data)
+        return aud_data
+    except Exception as e:
+        log_warning(f"Failed to reconstruct audio from dict: {str(e)}")
+        return None
+
+
+def reconstruct_file_from_dict(file_data):
+    """
+    Reconstruct a File object from dictionary data.
+
+    Handles both base64-encoded content (from database) and regular file data (url/filepath).
+    """
+    try:
+        if isinstance(file_data, dict):
+            # If content is base64 string, decode it back to bytes
+            if "content" in file_data and isinstance(file_data["content"], str):
+                file_obj = File.from_base64(
+                    file_data["content"],
+                    id=file_data.get("id"),
+                    mime_type=file_data.get("mime_type"),
+                    filename=file_data.get("filename"),
+                    name=file_data.get("name"),
+                    format=file_data.get("format"),
+                )
+                # Preserve additional fields that from_base64 doesn't handle
+                if file_data.get("size") is not None:
+                    file_obj.size = file_data.get("size")
+                if file_data.get("file_type") is not None:
+                    file_obj.file_type = file_data.get("file_type")
+                if file_data.get("filepath") is not None:
+                    file_obj.filepath = file_data.get("filepath")
+                if file_data.get("url") is not None:
+                    file_obj.url = file_data.get("url")
+                return file_obj
+            else:
+                # Regular file (filepath/url)
+                return File(**file_data)
+        return file_data
+    except Exception as e:
+        log_warning(f"Failed to reconstruct file from dict: {str(e)}")
+        return None
+
+
+def reconstruct_images(images: Optional[List[dict]]) -> Optional[List[Image]]:
+    """Reconstruct a list of Image objects from list of dictionaries.
+
+    Failed reconstructions are skipped with a warning logged.
+    """
+    if not images:
+        return None
+    reconstructed = [reconstruct_image_from_dict(img_data) for img_data in images]
+    valid_images = [img for img in reconstructed if img is not None]
+    return valid_images if valid_images else None
+
+
+def reconstruct_videos(videos: Optional[List[dict]]) -> Optional[List[Video]]:
+    """Reconstruct a list of Video objects from list of dictionaries.
+
+    Failed reconstructions are skipped with a warning logged.
+    """
+    if not videos:
+        return None
+    reconstructed = [reconstruct_video_from_dict(vid_data) for vid_data in videos]
+    valid_videos = [vid for vid in reconstructed if vid is not None]
+    return valid_videos if valid_videos else None
+
+
+def reconstruct_audio_list(audio: Optional[List[dict]]) -> Optional[List[Audio]]:
+    """Reconstruct a list of Audio objects from list of dictionaries.
+
+    Failed reconstructions are skipped with a warning logged.
+    """
+    if not audio:
+        return None
+    reconstructed = [reconstruct_audio_from_dict(aud_data) for aud_data in audio]
+    valid_audio = [aud for aud in reconstructed if aud is not None]
+    return valid_audio if valid_audio else None
+
+
+def reconstruct_files(files: Optional[List[dict]]) -> Optional[List[File]]:
+    """Reconstruct a list of File objects from list of dictionaries.
+
+    Failed reconstructions are skipped with a warning logged.
+    """
+    if not files:
+        return None
+    reconstructed = [reconstruct_file_from_dict(file_data) for file_data in files]
+    valid_files = [f for f in reconstructed if f is not None]
+    return valid_files if valid_files else None
+
+
+def reconstruct_response_audio(audio: Optional[dict]) -> Optional[Audio]:
+    """Reconstruct a single Audio object for response audio."""
+    if not audio:
+        return None
+    return reconstruct_audio_from_dict(audio)

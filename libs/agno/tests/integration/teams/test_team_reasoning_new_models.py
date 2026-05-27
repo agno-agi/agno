@@ -98,7 +98,7 @@ def test_team_anthropic_claude_reasoning_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 
@@ -173,7 +173,7 @@ def test_team_gemini_reasoning_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 
@@ -257,7 +257,7 @@ def test_team_vertexai_claude_reasoning_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 
@@ -332,7 +332,7 @@ def test_team_openai_reasoning_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 
@@ -407,7 +407,7 @@ def test_team_deepseek_reasoning_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 
@@ -482,7 +482,7 @@ def test_team_groq_reasoning_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 
@@ -557,7 +557,7 @@ def test_team_ollama_reasoning_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 
@@ -632,7 +632,7 @@ def test_team_azure_ai_foundry_reasoning_streaming(shared_db):
 
     # Consume all streaming responses
     reasoning_content_found = False
-    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True):
+    for event in team.run("What is the value of 5! (factorial)?", stream=True, stream_events=True):
         if hasattr(event, "reasoning_content"):
             reasoning_content_found = True
 

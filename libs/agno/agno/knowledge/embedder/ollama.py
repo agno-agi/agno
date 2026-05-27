@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_error, logger
+from agno.utils.log import log_error, log_warning, logger
 
 try:
     import importlib.metadata as metadata
@@ -31,7 +31,7 @@ except ImportError as e:
 
 except Exception as e:
     # Catch-all for unexpected errors
-    log_error(f"An unexpected error occurred: {e}")
+    log_error(f"An unexpected error occurred: {str(e)}")
 
 
 @dataclass
@@ -85,6 +85,10 @@ class OllamaEmbedder(Embedder):
         if self.options is not None:
             kwargs["options"] = self.options
 
+        # Add dimensions parameter for models that support it
+        if self.dimensions is not None:
+            kwargs["dimensions"] = self.dimensions
+
         response = self.client.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:
             embeddings = response["embeddings"]
@@ -103,7 +107,7 @@ class OllamaEmbedder(Embedder):
                 return []
             return embedding
         except Exception as e:
-            logger.warning(e)
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -116,6 +120,10 @@ class OllamaEmbedder(Embedder):
         kwargs: Dict[str, Any] = {}
         if self.options is not None:
             kwargs["options"] = self.options
+
+        # Add dimensions parameter for models that support it
+        if self.dimensions is not None:
+            kwargs["dimensions"] = self.dimensions
 
         response = await self.aclient.embed(input=text, model=self.id, **kwargs)
         if response and "embeddings" in response:
@@ -136,7 +144,7 @@ class OllamaEmbedder(Embedder):
                 return []
             return embedding
         except Exception as e:
-            logger.warning(f"Error getting embedding: {e}")
+            log_warning(f"Error getting embedding: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

@@ -73,7 +73,7 @@ def test_claude_with_openai_output_model_stream(shared_db):
         db=shared_db,
         description="You are an expert on national parks and provide concise guides.",
         output_model=OpenAIChat(id="gpt-4o"),  # Model to parse the output
-        stream_intermediate_steps=True,
+        stream_events=True,
         telemetry=False,
     )
 
@@ -120,7 +120,7 @@ async def test_openai_with_claude_output_model_stream_async(shared_db):
         db=shared_db,
         description="You are an expert on national parks and provide concise guides.",
         output_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
-        stream_intermediate_steps=True,
+        stream_events=True,
         telemetry=False,
     )
 

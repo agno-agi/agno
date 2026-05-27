@@ -22,10 +22,11 @@ except ImportError:
     raise ImportError("The `pinecone` package is not installed, please install using `pip install pinecone`.")
 
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 
@@ -135,7 +136,7 @@ class PineconeDb(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.reranker: Optional[Reranker] = reranker
 
@@ -215,23 +216,6 @@ class PineconeDb(VectorDb):
         if self.exists():
             log_debug(f"Deleting index: {self.name}")
             self.client.delete_index(name=self.name, timeout=self.timeout)
-
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index.
-
-        Args:
-            document (Document): The document to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-
-        """
-        response = self.index.fetch(ids=[document.id], namespace=self.namespace)
-        return len(response.vectors) > 0
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index asynchronously."""
-        return await asyncio.to_thread(self.doc_exists, document)
 
     def name_exists(self, name: str) -> bool:
         """Check if an index with the given name exists.
@@ -376,8 +360,8 @@ class PineconeDb(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -388,10 +372,10 @@ class PineconeDb(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -474,7 +458,7 @@ class PineconeDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
     ) -> List[Document]:
@@ -492,13 +476,16 @@ class PineconeDb(VectorDb):
             List[Document]: The list of matching documents.
 
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in PineconeDB. No filters will be applied.")
+            filters = None
         dense_embedding = self.embedder.get_embedding(query)
 
         if self.use_hybrid_search:
             sparse_embedding = self.sparse_encoder.encode_queries(query)
 
         if dense_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         if self.use_hybrid_search:
@@ -540,7 +527,7 @@ class PineconeDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Union[str, float, int, bool, List, dict]]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
     ) -> List[Document]:
@@ -577,7 +564,7 @@ class PineconeDb(VectorDb):
             self.index.delete(ids=[id])
             return True
         except Exception as e:
-            log_warning(f"Error deleting document with ID {id}: {e}")
+            log_warning(f"Error deleting document with ID {id}: {str(e)}")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -587,7 +574,7 @@ class PineconeDb(VectorDb):
             self.index.delete(filter={"name": {"$eq": name}})
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with name {name}: {e}")
+            log_warning(f"Error deleting documents with name {name}: {str(e)}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -601,7 +588,7 @@ class PineconeDb(VectorDb):
             self.index.delete(filter=filter_conditions)
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with metadata {metadata}: {e}")
+            log_warning(f"Error deleting documents with metadata {metadata}: {str(e)}")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -611,7 +598,7 @@ class PineconeDb(VectorDb):
             self.index.delete(filter={"content_id": {"$eq": content_id}})
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with content_id {content_id}: {e}")
+            log_warning(f"Error deleting documents with content_id {content_id}: {str(e)}")
             return False
 
     def get_count(self) -> int:
@@ -622,7 +609,7 @@ class PineconeDb(VectorDb):
             # The stats include total_vector_count which gives us the count
             return stats.total_vector_count
         except Exception as e:
-            log_warning(f"Error getting document count: {e}")
+            log_warning(f"Error getting document count: {str(e)}")
             return 0
 
     def id_exists(self, id: str) -> bool:
@@ -638,7 +625,7 @@ class PineconeDb(VectorDb):
             response = self.index.fetch(ids=[id], namespace=self.namespace)
             return len(response.vectors) > 0
         except Exception as e:
-            log_warning(f"Error checking if ID {id} exists: {e}")
+            log_warning(f"Error checking if ID {id} exists: {str(e)}")
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
@@ -666,7 +653,7 @@ class PineconeDb(VectorDb):
             )
             return len(response.matches) > 0
         except Exception as e:
-            log_warning(f"Error checking if content_hash {content_hash} exists: {e}")
+            log_warning(f"Error checking if content_hash {content_hash} exists: {str(e)}")
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
@@ -683,7 +670,7 @@ class PineconeDb(VectorDb):
             self.index.delete(filter={"content_hash": {"$eq": content_hash}}, namespace=self.namespace)
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with content_hash {content_hash}: {e}")
+            log_warning(f"Error deleting documents with content_hash {content_hash}: {str(e)}")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -734,8 +721,8 @@ class PineconeDb(VectorDb):
 
             logger.debug(f"Updated metadata for {len(update_data)} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def get_supported_search_types(self) -> List[str]:

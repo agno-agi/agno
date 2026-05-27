@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent  # noqa
 from agno.models.aws import Claude
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -33,7 +33,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_events=True)
 
     responses = []
     tool_call_seen = False
@@ -76,7 +76,7 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
             if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -108,7 +108,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

@@ -1,37 +1,44 @@
 """Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
 
-import logging
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Union
 
-from ag_ui.core import (
-    BaseEvent,
-    EventType,
-    RunAgentInput,
-    RunErrorEvent,
-    RunStartedEvent,
-)
-from ag_ui.encoder import EventEncoder
+from agno.utils.log import log_error
+
+try:
+    from ag_ui.core import (
+        BaseEvent,
+        EventType,
+        RunAgentInput,
+        RunErrorEvent,
+        RunStartedEvent,
+    )
+    from ag_ui.encoder import EventEncoder
+except ImportError as e:
+    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
+
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from agno.agent.agent import Agent
+from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
-    convert_agui_messages_to_agno_messages,
+    extract_agui_user_input,
+    validate_agui_state,
 )
+from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
-logger = logging.getLogger(__name__)
 
-
-async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
-        # Preparing the input for the Agent and emitting the run started event
-        messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
+        # AG-UI frontends send full conversation history every request.
+        # Extract only the last user message — agent manages history via session DB.
+        user_input = extract_agui_user_input(run_input.messages or [])
+
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         # Look for user_id in run_input.forwarded_props
@@ -39,13 +46,18 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
         if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
             user_id = run_input.forwarded_props.get("user_id")
 
+        # Validating the session state is of the expected type (dict)
+        session_state = validate_agui_state(run_input.state, run_input.thread_id)
+
         # Request streaming response from agent
-        response_stream = agent.arun(
-            input=messages,
+        response_stream = agent.arun(  # type: ignore
+            input=user_input,
             session_id=run_input.thread_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             user_id=user_id,
+            session_state=session_state,
+            run_id=run_id,
         )
 
         # Stream the response content in AG-UI format
@@ -58,16 +70,17 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
     # Emit a RunErrorEvent if any error occurs
     except Exception as e:
-        logger.error(f"Error running agent: {e}", exc_info=True)
+        log_error(f"Error running agent: {str(e)}")
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
+async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
-        # Extract the last user message for team execution
-        messages = convert_agui_messages_to_agno_messages(input.messages or [])
+        # AG-UI frontends send full conversation history every request.
+        # Extract only the last user message — team manages history via session DB.
+        user_input = extract_agui_user_input(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Look for user_id in input.forwarded_props
@@ -75,13 +88,18 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
         if input.forwarded_props and isinstance(input.forwarded_props, dict):
             user_id = input.forwarded_props.get("user_id")
 
+        # Validating the session state is of the expected type (dict)
+        session_state = validate_agui_state(input.state, input.thread_id)
+
         # Request streaming response from team
-        response_stream = team.arun(
-            input=messages,
+        response_stream = team.arun(  # type: ignore
+            input=user_input,
             session_id=input.thread_id,
             stream=True,
-            stream_intermediate_steps=True,
+            stream_events=True,
             user_id=user_id,
+            session_state=session_state,
+            run_id=run_id,
         )
 
         # Stream the response content in AG-UI format
@@ -91,11 +109,13 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
             yield event
 
     except Exception as e:
-        logger.error(f"Error running team: {e}", exc_info=True)
+        log_error(f"Error running team: {str(e)}")
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+def attach_routes(
+    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 

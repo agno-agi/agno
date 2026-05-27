@@ -54,7 +54,7 @@ def test_reasoning_content_from_reasoning_tools_streaming():
 
     # Consume all streaming responses and get the final response
     streaming_events = list(
-        streaming_agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True)
+        streaming_agent.run("What is the value of 5! (factorial)?", stream=True, stream_events=True)
     )
 
     # Get the final RunOutput from the last RunCompletedEvent

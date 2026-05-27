@@ -1,15 +1,42 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.media import Audio, Image, Video
+from agno.filters import FilterExpr
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.metrics import Metrics
-from agno.models.response import ToolExecution
+from agno.models.metrics import RunMetrics
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
+
+
+@dataclass
+class RunContext:
+    run_id: str
+    session_id: str
+    user_id: Optional[str] = None
+
+    workflow_id: Optional[str] = None
+    workflow_name: Optional[str] = None
+
+    dependencies: Optional[Dict[str, Any]] = None
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+
+    # Live reference to the current run's message list. Available in tool hooks
+    # via run_context.messages. Hooks receive a shallow copy (via _safe_hook_call)
+    # so accidental list mutations (.clear(), .append()) won't corrupt the run.
+    # Individual Message objects are shared references — do not mutate them.
+    messages: Optional[List[Message]] = None
+
+    # Runtime-resolved callable factory results
+    tools: Optional[List[Any]] = None
+    knowledge: Optional[Any] = None
+    members: Optional[List[Any]] = None
 
 
 @dataclass
@@ -35,7 +62,13 @@ class BaseRunOutputEvent:
                 "reasoning_steps",
                 "references",
                 "additional_input",
+                "session_summary",
                 "metrics",
+                "run_input",
+                "requirements",
+                "tasks",
+                "memories",
+                "followups",
             ]
         }
 
@@ -53,6 +86,9 @@ class BaseRunOutputEvent:
 
         if hasattr(self, "references") and self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if hasattr(self, "followups") and self.followups is not None:
+            _dict["followups"] = self.followups
 
         if hasattr(self, "member_responses") and self.member_responses:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
@@ -81,6 +117,14 @@ class BaseRunOutputEvent:
                 else:
                     _dict["audio"].append(aud)
 
+        if hasattr(self, "files") and self.files is not None:
+            _dict["files"] = []
+            for file in self.files:
+                if isinstance(file, File):
+                    _dict["files"].append(file.to_dict())
+                else:
+                    _dict["files"].append(file)
+
         if hasattr(self, "response_audio") and self.response_audio is not None:
             if isinstance(self.response_audio, Audio):
                 _dict["response_audio"] = self.response_audio.to_dict()
@@ -97,6 +141,8 @@ class BaseRunOutputEvent:
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         if hasattr(self, "tools") and self.tools is not None:
+            from agno.models.response import ToolExecution
+
             _dict["tools"] = []
             for tool in self.tools:
                 if isinstance(tool, ToolExecution):
@@ -105,6 +151,8 @@ class BaseRunOutputEvent:
                     _dict["tools"].append(tool)
 
         if hasattr(self, "tool") and self.tool is not None:
+            from agno.models.response import ToolExecution
+
             if isinstance(self.tool, ToolExecution):
                 _dict["tool"] = self.tool.to_dict()
             else:
@@ -112,6 +160,21 @@ class BaseRunOutputEvent:
 
         if hasattr(self, "metrics") and self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict()
+
+        if hasattr(self, "session_summary") and self.session_summary is not None:
+            _dict["session_summary"] = self.session_summary.to_dict()
+
+        if hasattr(self, "run_input") and self.run_input is not None:
+            _dict["run_input"] = self.run_input.to_dict()
+
+        if hasattr(self, "requirements") and self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
+        if hasattr(self, "memories") and self.memories is not None:
+            _dict["memories"] = [mem.to_dict() if hasattr(mem, "to_dict") else mem for mem in self.memories]
+
+        if hasattr(self, "tasks") and self.tasks is not None:
+            _dict["tasks"] = [t.to_dict() for t in self.tasks]
 
         return _dict
 
@@ -122,8 +185,8 @@ class BaseRunOutputEvent:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response event to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response event to json: {str(e)}")
             raise
 
         if indent is None:
@@ -135,7 +198,15 @@ class BaseRunOutputEvent:
     def from_dict(cls, data: Dict[str, Any]):
         tool = data.pop("tool", None)
         if tool:
+            from agno.models.response import ToolExecution
+
             data["tool"] = ToolExecution.from_dict(tool)
+
+        tools = data.pop("tools", None)
+        if tools:
+            from agno.models.response import ToolExecution
+
+            data["tools"] = [ToolExecution.from_dict(t) for t in tools]
 
         images = data.pop("images", None)
         if images:
@@ -148,6 +219,12 @@ class BaseRunOutputEvent:
         audio = data.pop("audio", None)
         if audio:
             data["audio"] = [Audio.model_validate(audio) for audio in audio]
+
+        files = data.pop("files", None)
+        if files:
+            from agno.utils.media import reconstruct_files
+
+            data["files"] = reconstruct_files(files)
 
         response_audio = data.pop("response_audio", None)
         if response_audio:
@@ -171,9 +248,58 @@ class BaseRunOutputEvent:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            data["metrics"] = Metrics(**metrics)
+            data["metrics"] = RunMetrics.from_dict(metrics)
 
-        return cls(**data)
+        session_summary = data.pop("session_summary", None)
+        if session_summary:
+            from agno.session.summary import SessionSummary
+
+            data["session_summary"] = SessionSummary.from_dict(session_summary)
+
+        run_input = data.pop("run_input", None)
+        if run_input:
+            from agno.run.team import BaseTeamRunEvent
+
+            if issubclass(cls, BaseTeamRunEvent):
+                from agno.run.team import TeamRunInput
+
+                data["run_input"] = TeamRunInput.from_dict(run_input)
+            else:
+                from agno.run.agent import RunInput
+
+                data["run_input"] = RunInput.from_dict(run_input)
+
+        # Handle requirements
+        requirements_data = data.pop("requirements", None)
+        if requirements_data is not None:
+            from agno.run.requirement import RunRequirement
+
+            requirements_list: List[RunRequirement] = []
+            for item in requirements_data:
+                if isinstance(item, RunRequirement):
+                    requirements_list.append(item)
+                elif isinstance(item, dict):
+                    requirements_list.append(RunRequirement.from_dict(item))
+            data["requirements"] = requirements_list if requirements_list else None
+
+        # Handle tasks (TaskData objects in TaskStateUpdatedEvent)
+        tasks_data = data.pop("tasks", None)
+        if tasks_data is not None:
+            from agno.run.team import TaskData
+
+            data["tasks"] = [TaskData.from_dict(t) if isinstance(t, dict) else t for t in tasks_data]
+
+        # Filter data to only include fields that are actually defined in the target class
+        # CustomEvent accepts arbitrary fields, so skip filtering for it
+        if cls.__name__ == "CustomEvent":
+            return cls(**data)
+
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
+        return cls(**filtered_data)
 
     @property
     def is_paused(self):

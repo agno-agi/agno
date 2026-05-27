@@ -1,13 +1,11 @@
 from os import getenv
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, List, Literal, Optional
 from uuid import uuid4
 
-from agno.agent import Agent
 from agno.media import Image
-from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 
 try:
     from openai import OpenAI
@@ -51,7 +49,7 @@ class DalleTools(Toolkit):
             raise ValueError("Dall-e-3 only supports a single image generation.")
 
         if not self.api_key:
-            logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+            log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
         tools: List[Any] = []
         if all or enable_create_image:
@@ -64,7 +62,7 @@ class DalleTools(Toolkit):
         # - Add support for saving images
         # - Add support for editing images
 
-    def create_image(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
+    def create_image(self, prompt: str) -> ToolResult:
         """Use this function to generate an image for a prompt.
 
         Args:
@@ -108,5 +106,5 @@ class DalleTools(Toolkit):
                 images=generated_images if generated_images else None,
             )
         except Exception as e:
-            logger.error(f"Failed to generate image: {e}")
+            logger.exception("Failed to generate image")
             return ToolResult(content=f"Error: {e}")

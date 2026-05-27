@@ -1,6 +1,6 @@
 import asyncio
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.vectordb.clickhouse.index import HNSW
 
@@ -11,9 +11,10 @@ try:
 except ImportError:
     raise ImportError("`clickhouse-connect` not installed. Use `pip install clickhouse-connect` to install it")
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -70,7 +71,7 @@ class Clickhouse(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             _embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = _embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -111,8 +112,8 @@ class Clickhouse(VectorDb):
                     parameters=parameters,
                 )
             )
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Error checking if table exists")
             return False
 
     async def async_table_exists(self) -> bool:
@@ -127,8 +128,8 @@ class Clickhouse(VectorDb):
                 parameters=parameters,
             )
             return bool(result)
-        except Exception as e:
-            logger.error(f"Async error checking if table exists: {e}")
+        except Exception:
+            logger.exception("Async error checking if table exists")
             return False
 
     def create(self) -> None:
@@ -328,8 +329,8 @@ class Clickhouse(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -340,10 +341,10 @@ class Clickhouse(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -448,10 +449,14 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
+        if filters is not None:
+            log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         parameters = self._get_base_parameters()
@@ -479,8 +484,8 @@ class Clickhouse(VectorDb):
                 parameters=parameters,
             )
         except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
-            logger.error("Table might not exist, creating for future use")
+            logger.exception("Error searching for documents")
+            log_error(f"Table might not exist, creating for future use: {str(e)}")
             self.create()
             return []
 
@@ -502,14 +507,17 @@ class Clickhouse(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search for documents asynchronously."""
         async_client = await self._ensure_async_client()
 
+        if filters is not None:
+            log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         parameters = self._get_base_parameters()
@@ -537,8 +545,8 @@ class Clickhouse(VectorDb):
                 parameters=parameters,
             )
         except Exception as e:
-            logger.error(f"Async error searching for documents: {e}")
-            logger.error("Table might not exist, creating for future use")
+            logger.exception("Async error searching for documents")
+            log_error(f"Table might not exist, creating for future use: {str(e)}")
             await self.async_create()
             return []
 
@@ -818,8 +826,8 @@ class Clickhouse(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def get_supported_search_types(self) -> List[str]:

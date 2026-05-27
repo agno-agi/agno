@@ -7,12 +7,20 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_files,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
 
 
 @dataclass
@@ -43,8 +51,11 @@ class TeamRunInput:
             return self.input_content.model_dump_json(exclude_none=True)
         elif isinstance(self.input_content, Message):
             return json.dumps(self.input_content.to_dict())
-        elif isinstance(self.input_content, list) and self.input_content and isinstance(self.input_content[0], Message):
-            return json.dumps([m.to_dict() for m in self.input_content])
+        elif isinstance(self.input_content, list):
+            try:
+                return json.dumps(self.to_dict().get("input_content"))
+            except Exception:
+                return str(self.input_content)
         else:
             return str(self.input_content)
 
@@ -59,12 +70,36 @@ class TeamRunInput:
                 result["input_content"] = self.input_content.model_dump(exclude_none=True)
             elif isinstance(self.input_content, Message):
                 result["input_content"] = self.input_content.to_dict()
-            elif (
-                isinstance(self.input_content, list)
-                and self.input_content
-                and isinstance(self.input_content[0], Message)
-            ):
-                result["input_content"] = [m.to_dict() for m in self.input_content]
+            elif isinstance(self.input_content, list):
+                serialized_items: List[Any] = []
+                for item in self.input_content:
+                    if isinstance(item, Message):
+                        serialized_items.append(item.to_dict())
+                    elif isinstance(item, BaseModel):
+                        serialized_items.append(item.model_dump(exclude_none=True))
+                    elif isinstance(item, dict):
+                        content = dict(item)
+                        if content.get("images"):
+                            content["images"] = [
+                                img.to_dict() if isinstance(img, Image) else img for img in content["images"]
+                            ]
+                        if content.get("videos"):
+                            content["videos"] = [
+                                vid.to_dict() if isinstance(vid, Video) else vid for vid in content["videos"]
+                            ]
+                        if content.get("audios"):
+                            content["audios"] = [
+                                aud.to_dict() if isinstance(aud, Audio) else aud for aud in content["audios"]
+                            ]
+                        if content.get("files"):
+                            content["files"] = [
+                                file.to_dict() if isinstance(file, File) else file for file in content["files"]
+                            ]
+                        serialized_items.append(content)
+                    else:
+                        serialized_items.append(item)
+
+                result["input_content"] = serialized_items
             else:
                 result["input_content"] = self.input_content
 
@@ -82,21 +117,10 @@ class TeamRunInput:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunInput":
         """Create TeamRunInput from dictionary"""
-        images = None
-        if data.get("images"):
-            images = [Image.model_validate(img_data) for img_data in data["images"]]
-
-        videos = None
-        if data.get("videos"):
-            videos = [Video.model_validate(vid_data) for vid_data in data["videos"]]
-
-        audios = None
-        if data.get("audios"):
-            audios = [Audio.model_validate(aud_data) for aud_data in data["audios"]]
-
-        files = None
-        if data.get("files"):
-            files = [File.model_validate(file_data) for file_data in data["files"]]
+        images = reconstruct_images(data.get("images"))
+        videos = reconstruct_videos(data.get("videos"))
+        audios = reconstruct_audio_list(data.get("audios"))
+        files = reconstruct_files(data.get("files"))
 
         return cls(
             input_content=data.get("input_content", ""), images=images, videos=videos, audios=audios, files=files
@@ -109,6 +133,7 @@ class TeamRunEvent(str, Enum):
     run_started = "TeamRunStarted"
     run_content = "TeamRunContent"
     run_intermediate_content = "TeamRunIntermediateContent"
+    run_content_completed = "TeamRunContentCompleted"
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
@@ -116,21 +141,48 @@ class TeamRunEvent(str, Enum):
     pre_hook_started = "TeamPreHookStarted"
     pre_hook_completed = "TeamPreHookCompleted"
 
+    post_hook_started = "TeamPostHookStarted"
+    post_hook_completed = "TeamPostHookCompleted"
+
     tool_call_started = "TeamToolCallStarted"
     tool_call_completed = "TeamToolCallCompleted"
+    tool_call_error = "TeamToolCallError"
 
     reasoning_started = "TeamReasoningStarted"
     reasoning_step = "TeamReasoningStep"
+    reasoning_content_delta = "TeamReasoningContentDelta"
     reasoning_completed = "TeamReasoningCompleted"
 
     memory_update_started = "TeamMemoryUpdateStarted"
     memory_update_completed = "TeamMemoryUpdateCompleted"
+
+    session_summary_started = "TeamSessionSummaryStarted"
+    session_summary_completed = "TeamSessionSummaryCompleted"
 
     parser_model_response_started = "TeamParserModelResponseStarted"
     parser_model_response_completed = "TeamParserModelResponseCompleted"
 
     output_model_response_started = "TeamOutputModelResponseStarted"
     output_model_response_completed = "TeamOutputModelResponseCompleted"
+
+    model_request_started = "TeamModelRequestStarted"
+    model_request_completed = "TeamModelRequestCompleted"
+
+    compression_started = "TeamCompressionStarted"
+    compression_completed = "TeamCompressionCompleted"
+
+    followups_started = "TeamFollowupsStarted"
+    followups_completed = "TeamFollowupsCompleted"
+
+    run_paused = "TeamRunPaused"
+    run_continued = "TeamRunContinued"
+
+    # Task mode events
+    task_iteration_started = "TeamTaskIterationStarted"
+    task_iteration_completed = "TeamTaskIterationCompleted"
+    task_state_updated = "TeamTaskStateUpdated"
+    task_created = "TeamTaskCreated"
+    task_updated = "TeamTaskUpdated"
 
     custom_event = "CustomEvent"
 
@@ -150,6 +202,8 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     step_name: Optional[str] = None
     step_index: Optional[int] = None
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
 
     # For backwards compatibility
     content: Optional[Any] = None
@@ -208,6 +262,11 @@ class IntermediateRunContentEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class RunContentCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.run_content_completed.value
+
+
+@dataclass
 class RunCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.run_completed.value
     content: Optional[Any] = None
@@ -218,6 +277,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -225,7 +285,8 @@ class RunCompletedEvent(BaseTeamRunEvent):
     reasoning_messages: Optional[List[Message]] = None
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
-    metrics: Optional[Metrics] = None
+    metrics: Optional[RunMetrics] = None
+    session_state: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -250,6 +311,32 @@ class RunCancelledEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class RunPausedEvent(BaseTeamRunEvent):
+    """Event sent when the team run is paused due to HITL requirements"""
+
+    event: str = TeamRunEvent.run_paused.value
+    tools: Optional[List[ToolExecution]] = None
+    requirements: Optional[List[RunRequirement]] = None
+
+    @property
+    def is_paused(self):
+        return True
+
+    @property
+    def active_requirements(self) -> List[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [req for req in self.requirements if not req.is_resolved()]
+
+
+@dataclass
+class RunContinuedEvent(BaseTeamRunEvent):
+    """Event sent when a paused team run is continued"""
+
+    event: str = TeamRunEvent.run_continued.value
+
+
+@dataclass
 class PreHookStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.pre_hook_started.value
     pre_hook_name: Optional[str] = None
@@ -264,6 +351,18 @@ class PreHookCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class PostHookStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.post_hook_started.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
+class PostHookCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.post_hook_completed.value
+    post_hook_name: Optional[str] = None
+
+
+@dataclass
 class MemoryUpdateStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_started.value
 
@@ -271,6 +370,18 @@ class MemoryUpdateStartedEvent(BaseTeamRunEvent):
 @dataclass
 class MemoryUpdateCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.memory_update_completed.value
+    memories: Optional[List[Any]] = None
+
+
+@dataclass
+class SessionSummaryStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_started.value
+
+
+@dataclass
+class SessionSummaryCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.session_summary_completed.value
+    session_summary: Optional[Any] = None
 
 
 @dataclass
@@ -284,6 +395,14 @@ class ReasoningStepEvent(BaseTeamRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: str = ""
+
+
+@dataclass
+class ReasoningContentDeltaEvent(BaseTeamRunEvent):
+    """Event for streaming reasoning content chunks as they arrive."""
+
+    event: str = TeamRunEvent.reasoning_content_delta.value
+    reasoning_content: str = ""  # The delta/chunk of reasoning content
 
 
 @dataclass
@@ -307,6 +426,14 @@ class ToolCallCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+    files: Optional[List[File]] = None  # Files produced by the tool call
+
+
+@dataclass
+class ToolCallErrorEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.tool_call_error.value
+    tool: Optional[ToolExecution] = None
+    error: Optional[str] = None
 
 
 @dataclass
@@ -330,30 +457,212 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class ModelRequestStartedEvent(BaseTeamRunEvent):
+    """Event sent when a model request is about to be made"""
+
+    event: str = TeamRunEvent.model_request_started.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+
+@dataclass
+class ModelRequestCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a model request has completed"""
+
+    event: str = TeamRunEvent.model_request_completed.value
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    time_to_first_token: Optional[float] = None
+    reasoning_tokens: Optional[int] = None
+    cache_read_tokens: Optional[int] = None
+    cache_write_tokens: Optional[int] = None
+
+
+@dataclass
+class CompressionStartedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression is about to start"""
+
+    event: str = TeamRunEvent.compression_started.value
+
+
+@dataclass
+class CompressionCompletedEvent(BaseTeamRunEvent):
+    """Event sent when tool result compression has completed"""
+
+    event: str = TeamRunEvent.compression_completed.value
+    tool_results_compressed: Optional[int] = None
+    original_size: Optional[int] = None
+    compressed_size: Optional[int] = None
+
+
+@dataclass
+class FollowupsStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.followups_started.value
+
+
+@dataclass
+class FollowupsCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.followups_completed.value
+    followups: Optional[List[str]] = None
+
+
+@dataclass
+class TaskIterationStartedEvent(BaseTeamRunEvent):
+    """Event sent when a task iteration starts in tasks mode"""
+
+    event: str = TeamRunEvent.task_iteration_started.value
+    iteration: int = 0
+    max_iterations: int = 0
+
+
+@dataclass
+class TaskIterationCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a task iteration completes in tasks mode"""
+
+    event: str = TeamRunEvent.task_iteration_completed.value
+    iteration: int = 0
+    max_iterations: int = 0
+    task_summary: Optional[str] = None
+
+
+@dataclass
+class TaskData:
+    """Structured task data for frontend rendering"""
+
+    id: str = ""
+    title: str = ""
+    description: str = ""
+    status: str = "pending"  # pending, in_progress, completed, failed, blocked
+    assignee: Optional[str] = None
+    dependencies: List[str] = field(default_factory=list)
+    result: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "description": self.description,
+            "status": self.status,
+            "assignee": self.assignee,
+            "dependencies": self.dependencies,
+            "result": self.result,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TaskData":
+        return cls(
+            id=data.get("id", ""),
+            title=data.get("title", ""),
+            description=data.get("description", ""),
+            status=data.get("status", "pending"),
+            assignee=data.get("assignee"),
+            dependencies=data.get("dependencies", []),
+            result=data.get("result"),
+        )
+
+
+@dataclass
+class TaskStateUpdatedEvent(BaseTeamRunEvent):
+    """Event sent when the task state is updated in tasks mode.
+
+    Contains the full structured task list for frontend rendering.
+    The frontend can use the `tasks` field to render a task list UI
+    with checkboxes that update in real-time.
+    """
+
+    event: str = TeamRunEvent.task_state_updated.value
+    task_summary: Optional[str] = None
+    goal_complete: bool = False
+    # Full structured task list for frontend rendering
+    tasks: List[TaskData] = field(default_factory=list)
+    completion_summary: Optional[str] = None
+
+
+@dataclass
+class TaskCreatedEvent(BaseTeamRunEvent):
+    """Event sent immediately when a task is created in tasks mode.
+
+    This allows the frontend to show tasks as they are created,
+    before waiting for the iteration to complete.
+    """
+
+    event: str = TeamRunEvent.task_created.value
+    task_id: str = ""
+    title: str = ""
+    description: str = ""
+    assignee: Optional[str] = None
+    status: str = "pending"
+    dependencies: List[str] = field(default_factory=list)
+
+
+@dataclass
+class TaskUpdatedEvent(BaseTeamRunEvent):
+    """Event sent immediately when a task status changes in tasks mode.
+
+    This allows the frontend to update task status in real-time
+    (e.g., mark as in_progress when execution starts, completed when done).
+    """
+
+    event: str = TeamRunEvent.task_updated.value
+    task_id: str = ""
+    title: str = ""
+    status: str = ""  # pending, in_progress, completed, failed, blocked
+    previous_status: Optional[str] = None
+    result: Optional[str] = None
+    assignee: Optional[str] = None
+
+
+@dataclass
 class CustomEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.custom_event.value
+
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 TeamRunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
     IntermediateRunContentEvent,
+    RunContentCompletedEvent,
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
+    RunPausedEvent,
+    RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
+    ReasoningContentDeltaEvent,
     ReasoningCompletedEvent,
     MemoryUpdateStartedEvent,
     MemoryUpdateCompletedEvent,
+    SessionSummaryStartedEvent,
+    SessionSummaryCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    ModelRequestStartedEvent,
+    ModelRequestCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
+    FollowupsStartedEvent,
+    FollowupsCompletedEvent,
+    TaskIterationStartedEvent,
+    TaskIterationCompletedEvent,
+    TaskStateUpdatedEvent,
+    TaskCreatedEvent,
+    TaskUpdatedEvent,
     CustomEvent,
 ]
 
@@ -362,22 +671,42 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_started.value: RunStartedEvent,
     TeamRunEvent.run_content.value: RunContentEvent,
     TeamRunEvent.run_intermediate_content.value: IntermediateRunContentEvent,
+    TeamRunEvent.run_content_completed.value: RunContentCompletedEvent,
     TeamRunEvent.run_completed.value: RunCompletedEvent,
     TeamRunEvent.run_error.value: RunErrorEvent,
     TeamRunEvent.run_cancelled.value: RunCancelledEvent,
+    TeamRunEvent.run_paused.value: RunPausedEvent,
+    TeamRunEvent.run_continued.value: RunContinuedEvent,
     TeamRunEvent.pre_hook_started.value: PreHookStartedEvent,
     TeamRunEvent.pre_hook_completed.value: PreHookCompletedEvent,
+    TeamRunEvent.post_hook_started.value: PostHookStartedEvent,
+    TeamRunEvent.post_hook_completed.value: PostHookCompletedEvent,
     TeamRunEvent.reasoning_started.value: ReasoningStartedEvent,
     TeamRunEvent.reasoning_step.value: ReasoningStepEvent,
+    TeamRunEvent.reasoning_content_delta.value: ReasoningContentDeltaEvent,
     TeamRunEvent.reasoning_completed.value: ReasoningCompletedEvent,
     TeamRunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
     TeamRunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    TeamRunEvent.session_summary_started.value: SessionSummaryStartedEvent,
+    TeamRunEvent.session_summary_completed.value: SessionSummaryCompletedEvent,
     TeamRunEvent.tool_call_started.value: ToolCallStartedEvent,
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    TeamRunEvent.tool_call_error.value: ToolCallErrorEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    TeamRunEvent.model_request_started.value: ModelRequestStartedEvent,
+    TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
+    TeamRunEvent.compression_started.value: CompressionStartedEvent,
+    TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.followups_started.value: FollowupsStartedEvent,
+    TeamRunEvent.followups_completed.value: FollowupsCompletedEvent,
+    TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,
+    TeamRunEvent.task_iteration_completed.value: TaskIterationCompletedEvent,
+    TeamRunEvent.task_state_updated.value: TaskStateUpdatedEvent,
+    TeamRunEvent.task_created.value: TaskCreatedEvent,
+    TeamRunEvent.task_updated.value: TaskUpdatedEvent,
     TeamRunEvent.custom_event.value: CustomEvent,
 }
 
@@ -397,20 +726,25 @@ def team_run_output_event_from_dict(data: dict) -> BaseTeamRunEvent:
 class TeamRunOutput:
     """Response returned by Team.run() functions"""
 
-    content: Optional[Any] = None
-    content_type: str = "str"
-    messages: Optional[List[Message]] = None
-    metrics: Optional[Metrics] = None
-    model: Optional[str] = None
-    model_provider: Optional[str] = None
-
-    member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
-
     run_id: Optional[str] = None
     team_id: Optional[str] = None
     team_name: Optional[str] = None
     session_id: Optional[str] = None
     parent_run_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+    # Input media and messages from user
+    input: Optional[TeamRunInput] = None
+
+    content: Optional[Any] = None
+    content_type: str = "str"
+
+    messages: Optional[List[Message]] = None
+    metrics: Optional[RunMetrics] = None
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+
+    member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
 
     tools: Optional[List[ToolExecution]] = None
 
@@ -421,14 +755,13 @@ class TeamRunOutput:
 
     response_audio: Optional[Audio] = None  # Model audio response
 
-    # Input media and messages from user
-    input: Optional[TeamRunInput] = None
-
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
+    followups: Optional[List[str]] = None
     model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    session_state: Optional[Dict[str, Any]] = None
 
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -440,10 +773,19 @@ class TeamRunOutput:
 
     status: RunStatus = RunStatus.running
 
+    # User control flow (HITL) requirements to continue a run when paused, in order of arrival
+    requirements: Optional[list[RunRequirement]] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
+
+    @property
+    def active_requirements(self) -> list[RunRequirement]:
+        if not self.requirements:
+            return []
+        return [requirement for requirement in self.requirements if not requirement.is_resolved()]
 
     @property
     def is_paused(self):
@@ -461,6 +803,7 @@ class TeamRunOutput:
             and k
             not in [
                 "messages",
+                "metrics",
                 "status",
                 "tools",
                 "metadata",
@@ -475,10 +818,15 @@ class TeamRunOutput:
                 "reasoning_steps",
                 "reasoning_messages",
                 "references",
+                "requirements",
+                "followups",
             ]
         }
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
+
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -500,6 +848,9 @@ class TeamRunOutput:
 
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if self.followups is not None:
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]
@@ -528,6 +879,9 @@ class TeamRunOutput:
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
 
+        if self.requirements is not None:
+            _dict["requirements"] = [req.to_dict() if hasattr(req, "to_dict") else req for req in self.requirements]
+
         if self.tools is not None:
             _dict["tools"] = []
             for tool in self.tools:
@@ -546,8 +900,8 @@ class TeamRunOutput:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response to json: {str(e)}")
             raise
 
         if indent is None:
@@ -598,23 +952,20 @@ class TeamRunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
-        images = data.pop("images", [])
-        images = [Image.model_validate(image) for image in images] if images else None
-
-        videos = data.pop("videos", [])
-        videos = [Video.model_validate(video) for video in videos] if videos else None
-
-        audio = data.pop("audio", [])
-        audio = [Audio.model_validate(audio) for audio in audio] if audio else None
-
-        files = data.pop("files", [])
-        files = [File.model_validate(file) for file in files] if files else None
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        files = reconstruct_files(data.pop("files", []))
 
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
-        response_audio = data.pop("response_audio", None)
-        response_audio = Audio.model_validate(response_audio) if response_audio else None
+        requirements_data = data.pop("requirements", None)
+        requirements = None
+        if requirements_data is not None:
+            requirements = [RunRequirement.from_dict(r) if isinstance(r, dict) else r for r in requirements_data]
+
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         input_data = data.pop("input", None)
         input_obj = None
@@ -623,10 +974,16 @@ class TeamRunOutput:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            metrics = Metrics(**metrics)
+            metrics = RunMetrics.from_dict(metrics)
 
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
+
+        # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
 
         return cls(
             messages=messages,
@@ -644,8 +1001,9 @@ class TeamRunOutput:
             input=input_obj,
             citations=citations,
             tools=tools,
+            requirements=requirements,
             events=events,
-            **data,
+            **filtered_data,
         )
 
     def get_content_as_string(self, **kwargs) -> str:

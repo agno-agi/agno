@@ -11,9 +11,10 @@ except ImportError as e:
     msg = "The `surrealdb` package is not installed. Please install it via `pip install surrealdb`."
     raise ImportError(msg) from e
 
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -26,14 +27,8 @@ class SurrealDb(VectorDb):
         DEFINE TABLE IF NOT EXISTS {collection} SCHEMAFUL;
         DEFINE FIELD IF NOT EXISTS content ON {collection} TYPE string;
         DEFINE FIELD IF NOT EXISTS embedding ON {collection} TYPE array<float>;
-        DEFINE FIELD IF NOT EXISTS meta_data ON {collection} FLEXIBLE TYPE object;
+        DEFINE FIELD IF NOT EXISTS meta_data ON {collection} TYPE object FLEXIBLE;
         DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
-    """
-
-    DOC_EXISTS_QUERY: Final[str] = """
-        SELECT * FROM {collection}
-        WHERE content = $content
-        LIMIT 1
     """
 
     NAME_EXISTS_QUERY: Final[str] = """
@@ -114,7 +109,6 @@ class SurrealDb(VectorDb):
         """Initialize SurrealDB connection.
 
         Args:
-            url: SurrealDB server URL (e.g. ws://localhost:8000/rpc)
             client: A blocking connection, either HTTP or WS
             async_client: An async connection, either HTTP or WS (default: None)
             collection: Collection name to store documents (default: documents)
@@ -141,7 +135,7 @@ class SurrealDb(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions = self.embedder.dimensions
         self.collection = collection
@@ -220,23 +214,6 @@ class SurrealDb(VectorDb):
                 m=self.m,
             )
             self.client.query(query)
-
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists by its content.
-
-        Args:
-            document: The document to check.
-
-        Returns:
-            True if the document exists, False otherwise.
-
-        """
-        log_debug(f"Checking if document exists: {document.content}")
-        result = self.client.query(
-            self.DOC_EXISTS_QUERY.format(collection=self.collection),
-            {"content": document.content},
-        )
-        return bool(self._extract_result(result))
 
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by its name.
@@ -317,9 +294,11 @@ class SurrealDb(VectorDb):
             if filters:
                 data["meta_data"].update(filters)
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
-            self.client.query(self.UPSERT_QUERY.format(thing=thing), data)
+            self.client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """Search for similar documents.
 
         Args:
@@ -331,6 +310,9 @@ class SurrealDb(VectorDb):
             A list of documents that are similar to the query.
 
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
+            filters = None
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
@@ -346,10 +328,10 @@ class SurrealDb(VectorDb):
             distance=self.distance,
         )
         log_debug(f"Search query: {search_query}")
-        response = self.client.query(
-            search_query,
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
+        search_params: Any = (
+            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
         )
+        response: Any = self.client.query(search_query, search_params)
         log_debug(f"Search response: {response}")
 
         documents = []
@@ -456,7 +438,7 @@ class SurrealDb(VectorDb):
         return bool(result)
 
     @staticmethod
-    def _extract_result(query_result: Union[List[Dict[str, Any]], Dict[str, Any]]) -> Union[List[Any], Dict[str, Any]]:
+    def _extract_result(query_result: Any) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response.
 
         Args:
@@ -487,19 +469,6 @@ class SurrealDb(VectorDb):
                 m=self.m,
             ),
         )
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists by its content asynchronously.
-
-        Returns:
-            True if the document exists, False otherwise.
-
-        """
-        response = await self.async_client.query(
-            self.DOC_EXISTS_QUERY.format(collection=self.collection),
-            {"content": document.content},
-        )
-        return bool(self._extract_result(response))
 
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document exists by its name asynchronously.
@@ -555,13 +524,13 @@ class SurrealDb(VectorDb):
                 data["meta_data"].update(filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
-            await self.async_client.query(self.UPSERT_QUERY.format(thing=thing), data)
+            await self.async_client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
 
     async def async_search(
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     ) -> List[Document]:
         """Search for similar documents asynchronously.
 
@@ -574,6 +543,10 @@ class SurrealDb(VectorDb):
             A list of documents that are similar to the query.
 
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
+            filters = None
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
@@ -587,10 +560,10 @@ class SurrealDb(VectorDb):
             filter_condition=filter_condition,
             distance=self.distance,
         )
-        response = await self.async_client.query(
-            search_query,
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
+        search_params: Any = (
+            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
         )
+        response: Any = await self.async_client.query(search_query, search_params)
         log_debug(f"Search response: {response}")
         documents = []
         for item in response:
@@ -645,7 +618,7 @@ class SurrealDb(VectorDb):
         try:
             # Query for documents with the given content_id
             query = f"SELECT * FROM {self.collection} WHERE content_id = $content_id"
-            result = self.client.query(query, {"content_id": content_id})
+            result: Any = self.client.query(query, {"content_id": content_id})
 
             if not result or not result[0].get("result"):
                 log_debug(f"No documents found with content_id: {content_id}")
@@ -682,7 +655,7 @@ class SurrealDb(VectorDb):
             log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
         except Exception as e:
-            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
             raise
 
     def get_supported_search_types(self) -> List[str]:

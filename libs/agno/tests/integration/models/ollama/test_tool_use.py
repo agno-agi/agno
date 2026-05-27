@@ -5,8 +5,8 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.ollama import Ollama
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -34,7 +34,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_events=True):
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -71,7 +71,7 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -85,7 +85,7 @@ async def test_async_tool_use_stream():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Ollama(id="llama3.2:latest"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

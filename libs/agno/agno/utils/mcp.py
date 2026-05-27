@@ -1,5 +1,6 @@
 import json
 from functools import partial
+from typing import TYPE_CHECKING, Optional, Union
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_exception
@@ -15,24 +16,75 @@ except (ImportError, ModuleNotFoundError):
 from agno.media import Image
 from agno.tools.function import ToolResult
 
+if TYPE_CHECKING:
+    from agno.agent import Agent
+    from agno.run import RunContext
+    from agno.team.team import Team
+    from agno.tools.mcp.mcp import MCPTools
+    from agno.tools.mcp.multi_mcp import MultiMCPTools
 
-def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
+
+def get_entrypoint_for_tool(
+    tool: MCPTool,
+    session: ClientSession,
+    mcp_tools_instance: Optional[Union["MCPTools", "MultiMCPTools"]] = None,
+    server_idx: int = 0,
+):
     """
     Return an entrypoint for an MCP tool.
 
     Args:
         tool: The MCP tool to create an entrypoint for
-        session: The session to use
+        session: The MCP ClientSession to use
+        mcp_tools_instance: Optional MCPTools or MultiMCPTools instance
+        server_idx: Index of the server (for MultiMCPTools)
 
     Returns:
         Callable: The entrypoint function for the tool
     """
-    from agno.agent import Agent
 
-    async def call_tool(agent: Agent, tool_name: str, **kwargs) -> ToolResult:
+    async def call_tool(
+        tool_name: str,
+        _agno_run_context: Optional["RunContext"] = None,
+        _agno_agent: Optional["Agent"] = None,
+        _agno_team: Optional["Team"] = None,
+        **kwargs,
+    ) -> ToolResult:
+        # Framework-injected params use the `_agno_` prefix so they cannot
+        # collide with MCP tool arguments named "run_context", "agent" and
+        # "team".
+
+        # Execute the MCP tool call
         try:
+            # Get the appropriate session for this run
+            # If mcp_tools_instance has header_provider and run_context is provided,
+            # this will create/reuse a session with dynamic headers
+            if mcp_tools_instance and hasattr(mcp_tools_instance, "get_session_for_run"):
+                # Import here to avoid circular imports
+                from agno.tools.mcp.multi_mcp import MultiMCPTools
+
+                # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context
+                if isinstance(mcp_tools_instance, MultiMCPTools):
+                    active_session = await mcp_tools_instance.get_session_for_run(
+                        run_context=_agno_run_context,
+                        server_idx=server_idx,
+                        agent=_agno_agent,
+                        team=_agno_team,
+                    )
+                else:
+                    active_session = await mcp_tools_instance.get_session_for_run(
+                        run_context=_agno_run_context, agent=_agno_agent, team=_agno_team
+                    )
+            else:
+                active_session = session
+
+            try:
+                await active_session.send_ping()
+            except Exception as e:
+                log_exception(e)
+
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await session.call_tool(tool_name, kwargs)  # type: ignore
+            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
 
             # Return an error if the tool call failed
             if result.isError:
@@ -122,3 +174,89 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
             return ToolResult(content=f"Error: {e}")
 
     return partial(call_tool, tool_name=tool.name)
+
+
+def prepare_command(command: str) -> list[str]:
+    """Sanitize a command and split it into parts before using it to run a MCP server."""
+    import os
+    import shutil
+    from shlex import split
+
+    # Block dangerous characters
+    if any(char in command for char in ["&", "|", ";", "`", "$", "(", ")"]):
+        raise ValueError("MCP command can't contain shell metacharacters")
+
+    parts = split(command)
+    if not parts:
+        raise ValueError("MCP command can't be empty")
+
+    # Only allow specific executables
+    ALLOWED_COMMANDS = {
+        # Python
+        "python",
+        "python3",
+        "uv",
+        "uvx",
+        "pipx",
+        # Node
+        "node",
+        "npm",
+        "npx",
+        "yarn",
+        "pnpm",
+        "bun",
+        # Other runtimes
+        "deno",
+        "java",
+        "ruby",
+        "docker",
+    }
+
+    executable = parts[0].split("/")[-1]
+
+    # Check if it's a relative path starting with ./ or ../
+    if executable.startswith("./") or executable.startswith("../"):
+        # Allow relative paths to binaries
+        return parts
+
+    # Check if it's an absolute path to a binary
+    if executable.startswith("/") and os.path.isfile(executable):
+        # Allow absolute paths to existing files
+        return parts
+
+    # Check if it's a binary in current directory without ./
+    if "/" not in executable and os.path.isfile(executable):
+        # Allow binaries in current directory
+        return parts
+
+    # Check if it's a binary in PATH
+    if shutil.which(executable):
+        return parts
+
+    if executable not in ALLOWED_COMMANDS:
+        raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
+
+    first_part = parts[0]
+    executable = first_part.split("/")[-1]
+
+    # Allow known commands
+    if executable in ALLOWED_COMMANDS:
+        return parts
+
+    # Allow relative paths to custom binaries
+    if first_part.startswith(("./", "../")):
+        return parts
+
+    # Allow absolute paths to existing files
+    if first_part.startswith("/") and os.path.isfile(first_part):
+        return parts
+
+    # Allow binaries in current directory without ./
+    if "/" not in first_part and os.path.isfile(first_part):
+        return parts
+
+    # Allow binaries in PATH
+    if shutil.which(first_part):
+        return parts
+
+    raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")

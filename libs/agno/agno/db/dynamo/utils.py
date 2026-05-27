@@ -5,8 +5,10 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.db.base import SessionType
+from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.utils import get_sort_value
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 
@@ -152,7 +154,7 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
             return True
 
         except Exception as e:
-            log_error(f"Failed to create table {table_name}: {e}")
+            log_error(f"Failed to create table {table_name}: {str(e)}")
             return False
 
 
@@ -173,13 +175,35 @@ def apply_pagination(
 def apply_sorting(
     items: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Apply sorting to a list of items."""
+    """Apply sorting to a list of items.
+
+    Args:
+        items: The list of dictionaries to sort
+        sort_by: The field to sort by (defaults to 'created_at')
+        sort_order: The sort order ('asc' or 'desc')
+
+    Returns:
+        The sorted list
+
+    Note:
+        If sorting by "updated_at", will fallback to "created_at" in case of None.
+    """
+    if not items:
+        return items
+
     if sort_by is None:
         sort_by = "created_at"
 
-    reverse = sort_order == "desc"
+    is_descending = sort_order == "desc"
 
-    return sorted(items, key=lambda x: x.get(sort_by, ""), reverse=reverse)
+    # Sort using the helper function that handles updated_at -> created_at fallback
+    sorted_records = sorted(
+        items,
+        key=lambda x: (get_sort_value(x, sort_by) is None, get_sort_value(x, sort_by)),
+        reverse=is_descending,
+    )
+
+    return sorted_records
 
 
 # -- Session utils --
@@ -269,40 +293,6 @@ def deserialize_session_result(
     return None
 
 
-def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
-    """Deserialize session data from DynamoDB format to Session object."""
-    try:
-        deserialized = session.copy()
-
-        # Handle JSON fields
-        json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
-        for field in json_fields:
-            if field in deserialized and deserialized[field] is not None:
-                if isinstance(deserialized[field], str):
-                    try:
-                        deserialized[field] = json.loads(deserialized[field])
-                    except json.JSONDecodeError:
-                        log_error(f"Failed to deserialize {field} field")
-                        deserialized[field] = None
-
-        # Handle timestamp fields
-        for field in ["created_at", "updated_at"]:
-            if field in deserialized and deserialized[field] is not None:
-                if isinstance(deserialized[field], (int, float)):
-                    deserialized[field] = datetime.fromtimestamp(deserialized[field], tz=timezone.utc)
-                elif isinstance(deserialized[field], str):
-                    try:
-                        deserialized[field] = datetime.fromisoformat(deserialized[field])
-                    except ValueError:
-                        deserialized[field] = datetime.fromtimestamp(float(deserialized[field]), tz=timezone.utc)
-
-        return Session.from_dict(deserialized)  # type: ignore
-
-    except Exception as e:
-        log_error(f"Failed to deserialize session: {e}")
-        return None
-
-
 # -- Metrics utils --
 
 
@@ -342,7 +332,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     ]
     all_user_ids = set()
     for session_type, sessions_count_key, runs_count_key in session_types:
-        sessions = sessions_data.get(session_type, [])
+        sessions = sessions_data.get(session_type, []) or []
         metrics[sessions_count_key] = len(sessions)
         for session in sessions:
             if session.get("user_id"):
@@ -360,7 +350,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                 token_metrics[field] += session_metrics.get(field, 0)
     model_metrics = []
     for model, count in model_counts.items():
-        model_id, model_provider = model.split(":")
+        model_id, model_provider = model.rsplit(":", 1)
         model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
     metrics["users_count"] = len(all_user_ids)
     current_time = int(time.time())
@@ -441,7 +431,7 @@ def fetch_all_sessions_data_by_type(
         expression_attribute_names = {}
         expression_attribute_values = {":session_type": {"S": session_type}}
 
-        if user_id:
+        if user_id is not None:
             filter_expression = "#user_id = :user_id"
             expression_attribute_names["#user_id"] = "user_id"
             expression_attribute_values[":user_id"] = {"S": user_id}
@@ -455,16 +445,6 @@ def fetch_all_sessions_data_by_type(
                 filter_expression += f" AND {component_filter}"
             else:
                 filter_expression = component_filter
-
-        if session_name:
-            name_filter = "#session_name = :session_name"
-            expression_attribute_names["#session_name"] = "session_name"
-            expression_attribute_values[":session_name"] = {"S": session_name}
-
-            if filter_expression:
-                filter_expression += f" AND {name_filter}"
-            else:
-                filter_expression = name_filter
 
         # Use GSI query for session_type (more efficient than scan)
         query_kwargs = {
@@ -490,7 +470,7 @@ def fetch_all_sessions_data_by_type(
             items.extend(response.get("Items", []))
 
     except Exception as e:
-        log_error(f"Failed to fetch sessions: {e}")
+        log_error(f"Failed to fetch sessions: {str(e)}")
 
     return items
 
@@ -512,7 +492,7 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
             dynamodb_client.batch_write_item(RequestItems=request_items)
 
     except Exception as e:
-        log_error(f"Failed to bulk upsert metrics: {e}")
+        log_error(f"Failed to bulk upsert metrics: {str(e)}")
 
 
 # -- Query utils --
@@ -679,6 +659,64 @@ def process_query_results(
             if item:
                 deserialized_items.append(item)
         except Exception as e:
-            log_error(f"Failed to deserialize item: {e}")
+            log_error(f"Failed to deserialize item: {str(e)}")
 
     return deserialized_items
+
+
+# -- Cultural Knowledge util methods --
+def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
+    """Serialize a CulturalKnowledge object for database storage.
+
+    Converts the model's separate content, categories, and notes fields
+    into a single JSON dict for the database content column.
+    DynamoDB supports nested maps/dicts natively.
+
+    Args:
+        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
+
+    Returns:
+        Dict[str, Any]: A dictionary with the content field as a dict containing content, categories, and notes.
+    """
+    content_dict: Dict[str, Any] = {}
+    if cultural_knowledge.content is not None:
+        content_dict["content"] = cultural_knowledge.content
+    if cultural_knowledge.categories is not None:
+        content_dict["categories"] = cultural_knowledge.categories
+    if cultural_knowledge.notes is not None:
+        content_dict["notes"] = cultural_knowledge.notes
+
+    return content_dict if content_dict else {}
+
+
+def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
+    """Deserialize a database row to a CulturalKnowledge object.
+
+    The database stores content as a dict containing content, categories, and notes.
+    This method extracts those fields and converts them back to the model format.
+
+    Args:
+        db_row (Dict[str, Any]): The database row as a dictionary.
+
+    Returns:
+        CulturalKnowledge: The cultural knowledge object.
+    """
+    # Extract content, categories, and notes from the content field
+    content_json = db_row.get("content", {}) or {}
+
+    return CulturalKnowledge.from_dict(
+        {
+            "id": db_row.get("id"),
+            "name": db_row.get("name"),
+            "summary": db_row.get("summary"),
+            "content": content_json.get("content"),
+            "categories": content_json.get("categories"),
+            "notes": content_json.get("notes"),
+            "metadata": db_row.get("metadata"),
+            "input": db_row.get("input"),
+            "created_at": db_row.get("created_at"),
+            "updated_at": db_row.get("updated_at"),
+            "agent_id": db_row.get("agent_id"),
+            "team_id": db_row.get("team_id"),
+        }
+    )

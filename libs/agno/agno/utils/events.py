@@ -1,52 +1,90 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.media import Audio, Image
 from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
+    CompressionCompletedEvent,
+    CompressionStartedEvent,
+    FollowupsCompletedEvent,
+    FollowupsStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    ModelRequestCompletedEvent,
+    ModelRequestStartedEvent,
     OutputModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     ParserModelResponseStartedEvent,
+    PostHookCompletedEvent,
+    PostHookStartedEvent,
     PreHookCompletedEvent,
     PreHookStartedEvent,
     ReasoningCompletedEvent,
+    ReasoningContentDeltaEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     RunCancelledEvent,
     RunCompletedEvent,
+    RunContentCompletedEvent,
     RunContentEvent,
     RunContinuedEvent,
     RunErrorEvent,
+    RunEvent,
     RunInput,
     RunOutput,
+    RunOutputEvent,
     RunPausedEvent,
     RunStartedEvent,
+    SessionSummaryCompletedEvent,
+    SessionSummaryStartedEvent,
     ToolCallCompletedEvent,
+    ToolCallErrorEvent,
     ToolCallStartedEvent,
 )
+from agno.run.requirement import RunRequirement
+from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
+from agno.run.team import CompressionStartedEvent as TeamCompressionStartedEvent
+from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
+from agno.run.team import FollowupsStartedEvent as TeamFollowupsStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import ModelRequestCompletedEvent as TeamModelRequestCompletedEvent
+from agno.run.team import ModelRequestStartedEvent as TeamModelRequestStartedEvent
 from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
 from agno.run.team import OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent
 from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
 from agno.run.team import ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent
+from agno.run.team import PostHookCompletedEvent as TeamPostHookCompletedEvent
+from agno.run.team import PostHookStartedEvent as TeamPostHookStartedEvent
 from agno.run.team import PreHookCompletedEvent as TeamPreHookCompletedEvent
 from agno.run.team import PreHookStartedEvent as TeamPreHookStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
+from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
 from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+from agno.run.team import RunContentCompletedEvent as TeamRunContentCompletedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunContinuedEvent as TeamRunContinuedEvent
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.run.team import RunStartedEvent as TeamRunStartedEvent
-from agno.run.team import TeamRunInput, TeamRunOutput
+from agno.run.team import SessionSummaryCompletedEvent as TeamSessionSummaryCompletedEvent
+from agno.run.team import SessionSummaryStartedEvent as TeamSessionSummaryStartedEvent
+from agno.run.team import TaskCreatedEvent as TeamTaskCreatedEvent
+from agno.run.team import TaskData as TeamTaskData
+from agno.run.team import TaskIterationCompletedEvent as TeamTaskIterationCompletedEvent
+from agno.run.team import TaskIterationStartedEvent as TeamTaskIterationStartedEvent
+from agno.run.team import TaskStateUpdatedEvent as TeamTaskStateUpdatedEvent
+from agno.run.team import TaskUpdatedEvent as TeamTaskUpdatedEvent
+from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
+from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
+from agno.session.summary import SessionSummary
 
 
 def create_team_run_started_event(from_run_response: TeamRunOutput) -> TeamRunStartedEvent:
@@ -85,6 +123,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -93,6 +132,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         member_responses=from_run_response.member_responses,  # type: ignore
         metadata=from_run_response.metadata,  # type: ignore
         metrics=from_run_response.metrics,  # type: ignore
+        session_state=from_run_response.session_state,  # type: ignore
     )
 
 
@@ -110,6 +150,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -117,11 +158,14 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
         metadata=from_run_response.metadata,  # type: ignore
         metrics=from_run_response.metrics,  # type: ignore
+        session_state=from_run_response.session_state,  # type: ignore
     )
 
 
 def create_run_paused_event(
-    from_run_response: RunOutput, tools: Optional[List[ToolExecution]] = None
+    from_run_response: RunOutput,
+    tools: Optional[List[ToolExecution]] = None,
+    requirements: Optional[List[RunRequirement]] = None,
 ) -> RunPausedEvent:
     return RunPausedEvent(
         session_id=from_run_response.session_id,
@@ -129,6 +173,7 @@ def create_run_paused_event(
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         tools=tools,
+        requirements=requirements,
         content=from_run_response.content,
     )
 
@@ -142,23 +187,41 @@ def create_run_continued_event(from_run_response: RunOutput) -> RunContinuedEven
     )
 
 
-def create_team_run_error_event(from_run_response: TeamRunOutput, error: str) -> TeamRunErrorEvent:
+def create_team_run_error_event(
+    from_run_response: TeamRunOutput,
+    error: str,
+    error_type: Optional[str] = None,
+    error_id: Optional[str] = None,
+    additional_data: Optional[Dict[str, Any]] = None,
+) -> TeamRunErrorEvent:
     return TeamRunErrorEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
+        error_type=error_type,
+        error_id=error_id,
+        additional_data=additional_data,
     )
 
 
-def create_run_error_event(from_run_response: RunOutput, error: str) -> RunErrorEvent:
+def create_run_error_event(
+    from_run_response: RunOutput,
+    error: str,
+    error_type: Optional[str] = None,
+    error_id: Optional[str] = None,
+    additional_data: Optional[Dict[str, Any]] = None,
+) -> RunErrorEvent:
     return RunErrorEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
+        error_type=error_type,
+        error_id=error_id,
+        additional_data=additional_data,
     )
 
 
@@ -169,6 +232,31 @@ def create_team_run_cancelled_event(from_run_response: TeamRunOutput, reason: st
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+    )
+
+
+def create_team_run_paused_event(
+    from_run_response: TeamRunOutput,
+    tools: Optional[List[ToolExecution]] = None,
+    requirements: Optional[List[RunRequirement]] = None,
+) -> TeamRunPausedEvent:
+    return TeamRunPausedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tools=tools,
+        requirements=requirements,
+        content=from_run_response.content,
+    )
+
+
+def create_team_run_continued_event(from_run_response: TeamRunOutput) -> TeamRunContinuedEvent:
+    return TeamRunContinuedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
     )
 
 
@@ -242,6 +330,54 @@ def create_team_pre_hook_completed_event(
     )
 
 
+def create_post_hook_started_event(
+    from_run_response: RunOutput, post_hook_name: Optional[str] = None
+) -> PostHookStartedEvent:
+    return PostHookStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        post_hook_name=post_hook_name,
+    )
+
+
+def create_team_post_hook_started_event(
+    from_run_response: TeamRunOutput, post_hook_name: Optional[str] = None
+) -> TeamPostHookStartedEvent:
+    return TeamPostHookStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        post_hook_name=post_hook_name,
+    )
+
+
+def create_post_hook_completed_event(
+    from_run_response: RunOutput, post_hook_name: Optional[str] = None
+) -> PostHookCompletedEvent:
+    return PostHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        post_hook_name=post_hook_name,
+    )
+
+
+def create_team_post_hook_completed_event(
+    from_run_response: TeamRunOutput, post_hook_name: Optional[str] = None
+) -> TeamPostHookCompletedEvent:
+    return TeamPostHookCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        post_hook_name=post_hook_name,
+    )
+
+
 def create_memory_update_started_event(from_run_response: RunOutput) -> MemoryUpdateStartedEvent:
     return MemoryUpdateStartedEvent(
         session_id=from_run_response.session_id,
@@ -260,8 +396,55 @@ def create_team_memory_update_started_event(from_run_response: TeamRunOutput) ->
     )
 
 
-def create_memory_update_completed_event(from_run_response: RunOutput) -> MemoryUpdateCompletedEvent:
+def create_memory_update_completed_event(
+    from_run_response: RunOutput, memories: Optional[List[Any]] = None
+) -> MemoryUpdateCompletedEvent:
     return MemoryUpdateCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        memories=memories,
+    )
+
+
+def create_team_memory_update_completed_event(
+    from_run_response: TeamRunOutput, memories: Optional[List[Any]] = None
+) -> TeamMemoryUpdateCompletedEvent:
+    return TeamMemoryUpdateCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        memories=memories,
+    )
+
+
+def create_team_session_summary_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamSessionSummaryStartedEvent:
+    return TeamSessionSummaryStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_session_summary_completed_event(
+    from_run_response: TeamRunOutput, session_summary: Optional[SessionSummary] = None
+) -> TeamSessionSummaryCompletedEvent:
+    return TeamSessionSummaryCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        session_summary=session_summary,
+    )
+
+
+def create_session_summary_started_event(from_run_response: RunOutput) -> SessionSummaryStartedEvent:
+    return SessionSummaryStartedEvent(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
@@ -269,12 +452,15 @@ def create_memory_update_completed_event(from_run_response: RunOutput) -> Memory
     )
 
 
-def create_team_memory_update_completed_event(from_run_response: TeamRunOutput) -> TeamMemoryUpdateCompletedEvent:
-    return TeamMemoryUpdateCompletedEvent(
+def create_session_summary_completed_event(
+    from_run_response: RunOutput, session_summary: Optional[SessionSummary] = None
+) -> SessionSummaryCompletedEvent:
+    return SessionSummaryCompletedEvent(
         session_id=from_run_response.session_id,
-        team_id=from_run_response.team_id,  # type: ignore
-        team_name=from_run_response.team_name,  # type: ignore
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
+        session_summary=session_summary,
     )
 
 
@@ -310,6 +496,19 @@ def create_reasoning_step_event(
     )
 
 
+def create_reasoning_content_delta_event(
+    from_run_response: RunOutput, reasoning_content: str
+) -> ReasoningContentDeltaEvent:
+    """Create an event for streaming reasoning content chunks."""
+    return ReasoningContentDeltaEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        reasoning_content=reasoning_content,
+    )
+
+
 def create_team_reasoning_step_event(
     from_run_response: TeamRunOutput, reasoning_step: ReasoningStep, reasoning_content: str
 ) -> TeamReasoningStepEvent:
@@ -320,6 +519,19 @@ def create_team_reasoning_step_event(
         run_id=from_run_response.run_id,
         content=reasoning_step,
         content_type=reasoning_step.__class__.__name__,
+        reasoning_content=reasoning_content,
+    )
+
+
+def create_team_reasoning_content_delta_event(
+    from_run_response: TeamRunOutput, reasoning_content: str
+) -> TeamReasoningContentDeltaEvent:
+    """Create an event for streaming reasoning content chunks for Team."""
+    return TeamReasoningContentDeltaEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
         reasoning_content=reasoning_content,
     )
 
@@ -385,6 +597,7 @@ def create_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 
@@ -401,6 +614,33 @@ def create_team_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
+    )
+
+
+def create_tool_call_error_event(
+    from_run_response: RunOutput, tool: ToolExecution, error: Optional[str] = None
+) -> ToolCallErrorEvent:
+    return ToolCallErrorEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        error=error,
+    )
+
+
+def create_team_tool_call_error_event(
+    from_run_response: TeamRunOutput, tool: ToolExecution, error: Optional[str] = None
+) -> TeamToolCallErrorEvent:
+    return TeamToolCallErrorEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool=tool,
+        error=error,
     )
 
 
@@ -468,6 +708,28 @@ def create_team_run_output_content_event(
     )
 
 
+def create_run_content_completed_event(
+    from_run_response: RunOutput,
+) -> RunContentCompletedEvent:
+    return RunContentCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_run_content_completed_event(
+    from_run_response: TeamRunOutput,
+) -> TeamRunContentCompletedEvent:
+    return TeamRunContentCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
 def create_parser_model_response_started_event(
     from_run_response: RunOutput,
 ) -> ParserModelResponseStartedEvent:
@@ -487,6 +749,30 @@ def create_parser_model_response_completed_event(
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
+    )
+
+
+def create_followups_started_event(
+    from_run_response: RunOutput,
+) -> FollowupsStartedEvent:
+    return FollowupsStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_followups_completed_event(
+    from_run_response: RunOutput,
+    followups: Optional[List[str]] = None,
+) -> FollowupsCompletedEvent:
+    return FollowupsCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        followups=followups,
     )
 
 
@@ -550,3 +836,309 @@ def create_team_output_model_response_completed_event(
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
     )
+
+
+def create_model_request_started_event(
+    from_run_response: RunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+) -> ModelRequestStartedEvent:
+    return ModelRequestStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+    )
+
+
+def create_model_request_completed_event(
+    from_run_response: RunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    time_to_first_token: Optional[float] = None,
+    reasoning_tokens: Optional[int] = None,
+    cache_read_tokens: Optional[int] = None,
+    cache_write_tokens: Optional[int] = None,
+) -> ModelRequestCompletedEvent:
+    return ModelRequestCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        time_to_first_token=time_to_first_token,
+        reasoning_tokens=reasoning_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
+
+
+def create_team_model_request_started_event(
+    from_run_response: TeamRunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+) -> TeamModelRequestStartedEvent:
+    return TeamModelRequestStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+    )
+
+
+def create_team_model_request_completed_event(
+    from_run_response: TeamRunOutput,
+    model: Optional[str] = None,
+    model_provider: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    time_to_first_token: Optional[float] = None,
+    reasoning_tokens: Optional[int] = None,
+    cache_read_tokens: Optional[int] = None,
+    cache_write_tokens: Optional[int] = None,
+) -> TeamModelRequestCompletedEvent:
+    return TeamModelRequestCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        model=model,
+        model_provider=model_provider,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        time_to_first_token=time_to_first_token,
+        reasoning_tokens=reasoning_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
+
+
+def create_compression_started_event(
+    from_run_response: RunOutput,
+) -> CompressionStartedEvent:
+    return CompressionStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_compression_completed_event(
+    from_run_response: RunOutput,
+    tool_results_compressed: Optional[int] = None,
+    original_size: Optional[int] = None,
+    compressed_size: Optional[int] = None,
+) -> CompressionCompletedEvent:
+    return CompressionCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_results_compressed=tool_results_compressed,
+        original_size=original_size,
+        compressed_size=compressed_size,
+    )
+
+
+def create_team_compression_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamCompressionStartedEvent:
+    return TeamCompressionStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_compression_completed_event(
+    from_run_response: TeamRunOutput,
+    tool_results_compressed: Optional[int] = None,
+    original_size: Optional[int] = None,
+    compressed_size: Optional[int] = None,
+) -> TeamCompressionCompletedEvent:
+    return TeamCompressionCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        tool_results_compressed=tool_results_compressed,
+        original_size=original_size,
+        compressed_size=compressed_size,
+    )
+
+
+def create_team_followups_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamFollowupsStartedEvent:
+    return TeamFollowupsStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_followups_completed_event(
+    from_run_response: TeamRunOutput,
+    followups: Optional[List[str]] = None,
+) -> TeamFollowupsCompletedEvent:
+    return TeamFollowupsCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        followups=followups,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task Mode Events
+# ---------------------------------------------------------------------------
+
+
+def create_team_task_iteration_started_event(
+    from_run_response: TeamRunOutput,
+    iteration: int,
+    max_iterations: int,
+) -> TeamTaskIterationStartedEvent:
+    return TeamTaskIterationStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        iteration=iteration,
+        max_iterations=max_iterations,
+    )
+
+
+def create_team_task_iteration_completed_event(
+    from_run_response: TeamRunOutput,
+    iteration: int,
+    max_iterations: int,
+    task_summary: Optional[str] = None,
+) -> TeamTaskIterationCompletedEvent:
+    return TeamTaskIterationCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        iteration=iteration,
+        max_iterations=max_iterations,
+        task_summary=task_summary,
+    )
+
+
+def create_team_task_state_updated_event(
+    from_run_response: TeamRunOutput,
+    task_summary: Optional[str] = None,
+    goal_complete: bool = False,
+    tasks: Optional[List[TeamTaskData]] = None,
+    completion_summary: Optional[str] = None,
+) -> TeamTaskStateUpdatedEvent:
+    return TeamTaskStateUpdatedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        task_summary=task_summary,
+        goal_complete=goal_complete,
+        tasks=tasks or [],
+        completion_summary=completion_summary,
+    )
+
+
+def create_team_task_created_event(
+    from_run_response: TeamRunOutput,
+    task_id: str,
+    title: str,
+    description: str = "",
+    assignee: Optional[str] = None,
+    status: str = "pending",
+    dependencies: Optional[List[str]] = None,
+) -> TeamTaskCreatedEvent:
+    return TeamTaskCreatedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        task_id=task_id,
+        title=title,
+        description=description,
+        assignee=assignee,
+        status=status,
+        dependencies=dependencies or [],
+    )
+
+
+def create_team_task_updated_event(
+    from_run_response: TeamRunOutput,
+    task_id: str,
+    title: str,
+    status: str,
+    previous_status: Optional[str] = None,
+    result: Optional[str] = None,
+    assignee: Optional[str] = None,
+) -> TeamTaskUpdatedEvent:
+    return TeamTaskUpdatedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        task_id=task_id,
+        title=title,
+        status=status,
+        previous_status=previous_status,
+        result=result,
+        assignee=assignee,
+    )
+
+
+def handle_event(
+    event: Union[RunOutputEvent, TeamRunOutputEvent],
+    run_response: Union[RunOutput, TeamRunOutput],
+    events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
+    store_events: bool = False,
+) -> Union[RunOutputEvent, TeamRunOutputEvent]:
+    # We only store events that are not run_response_content events
+    _events_to_skip: List[str] = [event.value for event in events_to_skip] if events_to_skip else []
+    if store_events and event.event not in _events_to_skip:
+        if run_response.events is None:
+            run_response.events = []
+        run_response.events.append(event)  # type: ignore
+    return event
+
+
+def add_error_event(
+    error: RunErrorEvent,
+    events: Optional[List[RunOutputEvent]],
+):
+    if events is None:
+        events = []
+    events.append(error)
+
+    return events
+
+
+def add_team_error_event(
+    error: TeamRunErrorEvent,
+    events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]],
+):
+    if events is None:
+        events = []
+    events.append(error)
+    return events

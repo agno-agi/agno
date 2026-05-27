@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 from agno.agent.agent import Agent
 from agno.eval.accuracy import AccuracyEval
+from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
 
@@ -74,3 +75,50 @@ def test_reliability_evals_telemetry():
         call_args = mock_create.call_args[1]["eval_run"]
         assert call_args.run_id == reliability_eval.eval_id
         assert call_args.eval_type.value == "reliability"
+
+
+def test_agent_as_judge_numeric_telemetry():
+    """Test that telemetry works for agent-as-judge evaluations (numeric mode)."""
+    eval = AgentAsJudgeEval(
+        criteria="Response must be helpful",
+        scoring_strategy="numeric",
+        threshold=7,
+    )
+
+    # Assert telemetry is active by default
+    assert eval.telemetry
+
+    evaluator = eval.get_evaluator_agent()
+    evaluator.model = MagicMock()
+
+    # Mock the API call that gets made when telemetry is enabled
+    with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
+        eval.run(input="What is Python?", output="Python is a programming language.", print_results=False)
+
+        # Verify API was called with correct parameters
+        mock_create.assert_called_once()
+        call_args = mock_create.call_args[1]["eval_run"]
+        assert call_args.eval_type.value == "agent_as_judge"
+
+
+def test_agent_as_judge_binary_telemetry():
+    """Test that telemetry works for agent-as-judge evaluations (binary mode)."""
+    eval = AgentAsJudgeEval(
+        criteria="Response must not contain personal info",
+        scoring_strategy="binary",
+    )
+
+    # Assert telemetry is active by default
+    assert eval.telemetry
+
+    evaluator = eval.get_evaluator_agent()
+    evaluator.model = MagicMock()
+
+    # Mock the API call that gets made when telemetry is enabled
+    with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
+        eval.run(input="Tell me about privacy", output="Privacy is important.", print_results=False)
+
+        # Verify API was called with correct parameters
+        mock_create.assert_called_once()
+        call_args = mock_create.call_args[1]["eval_run"]
+        assert call_args.eval_type.value == "agent_as_judge"

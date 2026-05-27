@@ -1,13 +1,21 @@
 import logging
-from typing import List, Optional, Union
+import time
+from typing import Any, Dict, List, Optional, Union, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
-from agno.db.base import BaseDb, SessionType
-from agno.os.auth import get_authentication_dependency
+from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.utils import deserialize_session_by_type, detect_session_type, resolve_session_type
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import (
+    enforce_owner_on_entity,
+    resolve_db_and_scope,
+)
 from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
+    CreateSessionRequest,
     DeleteSessionRequest,
     InternalServerErrorResponse,
     NotFoundResponse,
@@ -19,17 +27,21 @@ from agno.os.schema import (
     TeamRunSchema,
     TeamSessionDetailSchema,
     UnauthenticatedResponse,
+    UpdateSessionRequest,
     ValidationErrorResponse,
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
+from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 
 logger = logging.getLogger(__name__)
 
 
-def get_session_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
+def get_session_router(
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings()
+) -> APIRouter:
     """Create session router with comprehensive OpenAPI documentation for session management endpoints."""
     session_router = APIRouter(
         dependencies=[Depends(get_authentication_dependency(settings))],
@@ -45,7 +57,7 @@ def get_session_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoA
     return attach_routes(router=session_router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.get(
         "/sessions",
         response_model=PaginatedResponse[SessionSchema],
@@ -57,6 +69,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             "Supports filtering by session type (agent, team, workflow), component, user, and name. "
             "Sessions represent conversation histories and execution contexts."
         ),
+        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Sessions retrieved successfully",
@@ -82,43 +95,76 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
                 },
             },
             400: {"description": "Invalid session type or filter parameters", "model": BadRequestResponse},
+            404: {"description": "Not found", "model": NotFoundResponse},
             422: {"description": "Validation error in query parameters", "model": ValidationErrorResponse},
         },
     )
     async def get_sessions(
         request: Request,
-        session_type: SessionType = Query(
-            default=SessionType.AGENT,
+        session_type: Optional[SessionType] = Query(
+            default=None,
             alias="type",
-            description="Type of sessions to retrieve (agent, team, or workflow)",
+            description="Type of sessions to retrieve (agent, team, or workflow). If not provided, returns all session types.",
         ),
         component_id: Optional[str] = Query(
             default=None, description="Filter sessions by component ID (agent/team/workflow ID)"
         ),
         user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
         session_name: Optional[str] = Query(default=None, description="Filter sessions by name (partial match)"),
-        limit: Optional[int] = Query(default=20, description="Number of sessions to return per page"),
-        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        limit: Optional[int] = Query(default=20, description="Number of sessions to return per page", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort sessions by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query sessions from"),
+        table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[SessionSchema]:
-        db = get_db(dbs, db_id)
+        try:
+            db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+        except Exception as e:
+            raise HTTPException(status_code=404, detail=f"{e}")
 
-        if hasattr(request.state, "user_id"):
-            user_id = request.state.user_id
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_sessions(
+                session_type=session_type,
+                component_id=component_id,
+                user_id=effective_user_id,
+                session_name=session_name,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value if sort_order else None,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
 
-        sessions, total_count = db.get_sessions(
-            session_type=session_type,
-            component_id=component_id,
-            user_id=user_id,
-            session_name=session_name,
-            limit=limit,
-            page=page,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            sessions, total_count = await db.get_sessions(
+                session_type=session_type,
+                component_id=component_id,
+                user_id=effective_user_id,
+                session_name=session_name,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+        else:
+            sessions, total_count = db.get_sessions(  # type: ignore
+                session_type=session_type,
+                component_id=component_id,
+                user_id=effective_user_id,
+                session_name=session_name,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
 
         return PaginatedResponse(
             data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
@@ -130,6 +176,158 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             ),
         )
 
+    @router.post(
+        "/sessions",
+        response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+        status_code=201,
+        operation_id="create_session",
+        summary="Create New Session",
+        description=(
+            "Create a new empty session with optional configuration. "
+            "Useful for pre-creating sessions with specific session_state, metadata, or other properties "
+            "before running any agent/team/workflow interactions. "
+            "The session can later be used by providing its session_id in run requests."
+        ),
+        response_model_exclude_none=True,
+        responses={
+            201: {
+                "description": "Session created successfully",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "agent_session_example": {
+                                "summary": "Example created agent session",
+                                "value": {
+                                    "user_id": "user-123",
+                                    "agent_session_id": "new-session-id",
+                                    "session_id": "new-session-id",
+                                    "session_name": "New Session",
+                                    "session_state": {"key": "value"},
+                                    "metadata": {"key": "value"},
+                                    "agent_id": "agent-1",
+                                    "created_at": "2025-10-21T12:00:00Z",
+                                    "updated_at": "2025-10-21T12:00:00Z",
+                                },
+                            }
+                        }
+                    }
+                },
+            },
+            400: {"description": "Invalid request parameters", "model": BadRequestResponse},
+            422: {"description": "Validation error", "model": ValidationErrorResponse},
+            500: {"description": "Failed to create session", "model": InternalServerErrorResponse},
+        },
+    )
+    async def create_session(
+        request: Request,
+        session_type: SessionType = Query(
+            default=SessionType.AGENT,
+            alias="type",
+            description="Type of session to create (agent, team, or workflow)",
+        ),
+        create_session_request: CreateSessionRequest = Body(
+            default=CreateSessionRequest(), description="Session configuration data"
+        ),
+        db_id: Optional[str] = Query(default=None, description="Database ID to create session in"),
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        db, _ = await resolve_db_and_scope(request, dbs, db_id)
+
+        # Get user_id from request state if available (from auth middleware).
+        # For non-admin scoped callers the JWT sub wins via enforce_owner below.
+        user_id = create_session_request.user_id
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.create_session(
+                session_type=session_type,
+                session_id=create_session_request.session_id,
+                session_name=create_session_request.session_name,
+                session_state=create_session_request.session_state,
+                metadata=create_session_request.metadata,
+                user_id=user_id,
+                agent_id=create_session_request.agent_id,
+                team_id=create_session_request.team_id,
+                workflow_id=create_session_request.workflow_id,
+                db_id=db_id,
+                headers=headers,
+            )
+
+        # Generate session_id if not provided
+        session_id = create_session_request.session_id or str(uuid4())
+
+        # Prepare session_data with session_state and session_name
+        session_data: dict[str, Any] = {}
+        if create_session_request.session_state is not None:
+            session_data["session_state"] = create_session_request.session_state
+        if create_session_request.session_name is not None:
+            session_data["session_name"] = create_session_request.session_name
+
+        current_time = int(time.time())
+
+        # Create the appropriate session type
+        session: Union[AgentSession, TeamSession, WorkflowSession]
+        if session_type == SessionType.AGENT:
+            session = AgentSession(
+                session_id=session_id,
+                agent_id=create_session_request.agent_id,
+                user_id=user_id,
+                session_data=session_data if session_data else None,
+                metadata=create_session_request.metadata,
+                created_at=current_time,
+                updated_at=current_time,
+            )
+        elif session_type == SessionType.TEAM:
+            session = TeamSession(
+                session_id=session_id,
+                team_id=create_session_request.team_id,
+                user_id=user_id,
+                session_data=session_data if session_data else None,
+                metadata=create_session_request.metadata,
+                created_at=current_time,
+                updated_at=current_time,
+            )
+        elif session_type == SessionType.WORKFLOW:
+            session = WorkflowSession(
+                session_id=session_id,
+                workflow_id=create_session_request.workflow_id,
+                user_id=user_id,
+                session_data=session_data if session_data else None,
+                metadata=create_session_request.metadata,
+                created_at=current_time,
+                updated_at=current_time,
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
+
+        # For non-admin scoped callers force user_id from the JWT to prevent
+        # spoofed user_id payloads being written under another user.
+        enforce_owner_on_entity(request, session, kind="session")
+
+        # Upsert the session to the database
+        try:
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                created_session = await db.upsert_session(session, deserialize=True)
+            else:
+                created_session = db.upsert_session(session, deserialize=True)
+
+            if not created_session:
+                raise HTTPException(status_code=500, detail="Failed to create session")
+
+            # Return appropriate schema based on session type
+            if session_type == SessionType.AGENT:
+                return AgentSessionDetailSchema.from_session(created_session)  # type: ignore
+            elif session_type == SessionType.TEAM:
+                return TeamSessionDetailSchema.from_session(created_session)  # type: ignore
+            else:
+                return WorkflowSessionDetailSchema.from_session(created_session)  # type: ignore
+        except Exception as e:
+            logger.exception("Error creating session")
+            raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
+
     @router.get(
         "/sessions/{session_id}",
         response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
@@ -140,6 +338,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             "Retrieve detailed information about a specific session including metadata, configuration, "
             "and run history. Response schema varies based on session type (agent, team, or workflow)."
         ),
+        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Session details retrieved successfully",
@@ -220,18 +419,44 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     async def get_session_by_id(
         request: Request,
         session_id: str = Path(description="Session ID to retrieve"),
-        session_type: SessionType = Query(
-            default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
         ),
         user_id: Optional[str] = Query(default=None, description="User ID to query session from"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query session from"),
+        table: Optional[str] = Query(default=None, description="Table to query session from"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
-        db = get_db(dbs, db_id)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
-        if hasattr(request.state, "user_id"):
-            user_id = request.state.user_id
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
 
-        session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+        session: Optional[Union[AgentSession, TeamSession, WorkflowSession, Session]] = None
+        if session_type is None:
+            session_type, raw = await resolve_session_type(db, session_id, session_type, effective_user_id)
+            if session_type is None:
+                raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
+            session = deserialize_session_by_type(raw if isinstance(raw, dict) else {})
+        else:
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                session = await db.get_session(
+                    session_id=session_id, session_type=session_type, user_id=effective_user_id
+                )  # type: ignore
+            else:
+                session = db.get_session(session_id=session_id, session_type=session_type, user_id=effective_user_id)  # type: ignore
+
         if not session:
             raise HTTPException(
                 status_code=404, detail=f"{session_type.value.title()} Session with id '{session_id}' not found"
@@ -251,9 +476,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         operation_id="get_session_runs",
         summary="Get Session Runs",
         description=(
-            "Retrieve all runs (executions) for a specific session. Runs represent individual "
-            "interactions or executions within a session. Response schema varies based on session type."
+            "Retrieve all runs (executions) for a specific session with optional timestamp filtering. "
+            "Runs represent individual interactions or executions within a session. "
+            "Response schema varies based on session type."
         ),
+        response_model_exclude_none=True,
         responses={
             200: {
                 "description": "Session runs retrieved successfully",
@@ -362,31 +589,94 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     async def get_session_runs(
         request: Request,
         session_id: str = Path(description="Session ID to get runs from"),
-        session_type: SessionType = Query(
-            default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
         ),
         user_id: Optional[str] = Query(default=None, description="User ID to query runs from"),
+        created_after: Optional[int] = Query(
+            default=None,
+            description="Filter runs created after this Unix timestamp (epoch time in seconds)",
+        ),
+        created_before: Optional[int] = Query(
+            default=None,
+            description="Filter runs created before this Unix timestamp (epoch time in seconds)",
+        ),
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
+        table: Optional[str] = Query(default=None, description="Table to query runs from"),
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
-        db = get_db(dbs, db_id)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
-        if hasattr(request.state, "user_id"):
-            user_id = request.state.user_id
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_session_runs(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                created_after=created_after,
+                created_before=created_before,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
 
-        session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False)
+        start_timestamp = created_after
+        end_timestamp = created_before
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            session = await db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                deserialize=False,
+            )
+        else:
+            session = db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                deserialize=False,
+            )
+
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
 
+        if session_type is None:
+            detected = detect_session_type(session if isinstance(session, dict) else {})
+            session_type = SessionType(detected)
+
         runs = session.get("runs")  # type: ignore
         if not runs:
-            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+            return []
+
+        # Filter runs by timestamp if specified
+        # TODO: Move this filtering into the DB layer
+        filtered_runs = []
+        for run in runs:
+            if start_timestamp or end_timestamp:
+                run_created_at = run.get("created_at")
+                if run_created_at:
+                    # created_at is stored as epoch int
+                    if start_timestamp and run_created_at < start_timestamp:
+                        continue
+                    if end_timestamp and run_created_at > end_timestamp:
+                        continue
+
+            filtered_runs.append(run)
+
+        if not filtered_runs:
+            return []
+
+        run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
 
         if session_type == SessionType.AGENT:
-            return [RunSchema.from_dict(run) for run in runs]
+            return [RunSchema.from_dict(run) for run in filtered_runs]
 
         elif session_type == SessionType.TEAM:
-            run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
-            for run in runs:
+            for run in filtered_runs:
                 if run.get("agent_id") is not None:
                     run_responses.append(RunSchema.from_dict(run))
                 elif run.get("team_id") is not None:
@@ -394,8 +684,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             return run_responses
 
         elif session_type == SessionType.WORKFLOW:
-            run_responses: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []  # type: ignore
-            for run in runs:
+            for run in filtered_runs:
                 if run.get("workflow_id") is not None:
                     run_responses.append(WorkflowRunSchema.from_dict(run))
                 elif run.get("team_id") is not None:
@@ -405,6 +694,112 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             return run_responses
         else:
             raise HTTPException(status_code=400, detail=f"Invalid session type: {session_type}")
+
+    @router.get(
+        "/sessions/{session_id}/runs/{run_id}",
+        response_model=Union[RunSchema, TeamRunSchema, WorkflowRunSchema],
+        status_code=200,
+        operation_id="get_session_run",
+        summary="Get Run by ID",
+        description=(
+            "Retrieve a specific run by its ID from a session. Response schema varies based on the "
+            "run type (agent run, team run, or workflow run)."
+        ),
+        responses={
+            200: {
+                "description": "Run retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "agent_run": {
+                                "summary": "Example agent run",
+                                "value": {
+                                    "run_id": "fcdf50f0-7c32-4593-b2ef-68a558774340",
+                                    "parent_run_id": "80056af0-c7a5-4d69-b6a2-c3eba9f040e0",
+                                    "agent_id": "basic-agent",
+                                    "user_id": "user_123",
+                                    "run_input": "Which tools do you have access to?",
+                                    "content": "I don't have access to external tools.",
+                                    "created_at": 1728499200,
+                                },
+                            }
+                        }
+                    }
+                },
+            },
+            404: {"description": "Session or run not found", "model": NotFoundResponse},
+            422: {"description": "Invalid session type", "model": ValidationErrorResponse},
+        },
+    )
+    async def get_session_run(
+        request: Request,
+        session_id: str = Path(description="Session ID to get run from"),
+        run_id: str = Path(description="Run ID to retrieve"),
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, the run type is inferred from the run's own fields.",
+            alias="type",
+        ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query run from"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query run from"),
+        table: Optional[str] = Query(default=None, description="Table to query run from"),
+    ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_session_run(
+                session_id=session_id,
+                run_id=run_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            session = await db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                deserialize=False,
+            )
+        else:
+            session = db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                deserialize=False,
+            )
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
+
+        runs = session.get("runs")  # type: ignore
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with ID {session_id} has no runs")
+
+        # Find the specific run
+        # TODO: Move this filtering into the DB layer
+        target_run = None
+        for run in runs:
+            if run.get("run_id") == run_id:
+                target_run = run
+                break
+
+        if not target_run:
+            raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}")
+
+        # Return the appropriate schema based on run type
+        if target_run.get("workflow_id") is not None:
+            return WorkflowRunSchema.from_dict(target_run)
+        elif target_run.get("team_id") is not None:
+            return TeamRunSchema.from_dict(target_run)
+        else:
+            return RunSchema.from_dict(target_run)
 
     @router.delete(
         "/sessions/{session_id}",
@@ -421,11 +816,31 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def delete_session(
+        request: Request,
         session_id: str = Path(description="Session ID to delete"),
+        user_id: Optional[str] = Query(default=None, description="User ID to scope deletion to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = get_db(dbs, db_id)
-        db.delete_session(session_id=session_id)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            await db.delete_session(
+                session_id=session_id, db_id=db_id, table=table, headers=headers, user_id=effective_user_id
+            )
+            return
+
+        # For non-admin scoped callers ``effective_user_id`` is the JWT sub;
+        # for admins / unscoped callers it falls back to the query param.
+        local_kwargs: Dict[str, Any] = {"session_id": session_id, "user_id": effective_user_id}
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_session(**local_kwargs)
+        else:
+            db.delete_session(**local_kwargs)
 
     @router.delete(
         "/sessions",
@@ -446,17 +861,42 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def delete_sessions(
+        http_request: Request,
         request: DeleteSessionRequest,
-        session_type: SessionType = Query(
-            default=SessionType.AGENT, description="Default session type filter", alias="type"
-        ),
+        user_id: Optional[str] = Query(default=None, description="User ID to scope deletion to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
         if len(request.session_ids) != len(request.session_types):
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
-        db = get_db(dbs, db_id)
-        db.delete_sessions(session_ids=request.session_ids)
+        db, effective_user_id = await resolve_db_and_scope(http_request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(http_request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            await db.delete_sessions(
+                session_ids=request.session_ids,
+                session_types=request.session_types,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+                user_id=effective_user_id,
+            )
+            return
+
+        # Local backends key sessions on session_id alone — session_types is
+        # only used by RemoteDb's REST contract above.
+        local_kwargs: Dict[str, Any] = {
+            "session_ids": request.session_ids,
+            "user_id": effective_user_id,
+        }
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_sessions(**local_kwargs)
+        else:
+            db.delete_sessions(**local_kwargs)
 
     @router.post(
         "/sessions/{session_id}/rename",
@@ -547,23 +987,198 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def rename_session(
+        request: Request,
         session_id: str = Path(description="Session ID to rename"),
-        session_type: SessionType = Query(
-            default=SessionType.AGENT, description="Session type (agent, team, or workflow)", alias="type"
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
         ),
         session_name: str = Body(embed=True, description="New name for the session"),
+        user_id: Optional[str] = Query(default=None, description="User ID to scope rename to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for rename operation"),
+        table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
-        db = get_db(dbs, db_id)
-        session = db.rename_session(session_id=session_id, session_type=session_type, session_name=session_name)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.rename_session(
+                session_id=session_id,
+                session_name=session_name,
+                session_type=session_type,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+                user_id=effective_user_id,
+            )
+
+        local_kwargs: Dict[str, Any] = {
+            "session_id": session_id,
+            "session_type": session_type,
+            "session_name": session_name,
+            "user_id": effective_user_id,
+        }
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            session = await db.rename_session(**local_kwargs)
+        else:
+            session = db.rename_session(**local_kwargs)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
 
-        if session_type == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(session)  # type: ignore
-        elif session_type == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(session)  # type: ignore
+        if isinstance(session, AgentSession):
+            return AgentSessionDetailSchema.from_session(session)
+        elif isinstance(session, TeamSession):
+            return TeamSessionDetailSchema.from_session(session)
         else:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
+
+    @router.patch(
+        "/sessions/{session_id}",
+        response_model=Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema],
+        status_code=200,
+        operation_id="update_session",
+        summary="Update Session",
+        description=(
+            "Update session properties such as session_name, session_state, metadata, or summary. "
+            "Use this endpoint to modify the session name, update state, add metadata, or update the session summary."
+        ),
+        responses={
+            200: {
+                "description": "Session updated successfully",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "update_summary": {
+                                "summary": "Update session summary",
+                                "value": {
+                                    "summary": {
+                                        "summary": "The user discussed project planning with the agent.",
+                                        "updated_at": "2025-10-21T14:30:00Z",
+                                    }
+                                },
+                            },
+                            "update_metadata": {
+                                "summary": "Update session metadata",
+                                "value": {
+                                    "metadata": {
+                                        "tags": ["planning", "project"],
+                                        "priority": "high",
+                                    }
+                                },
+                            },
+                            "update_session_name": {
+                                "summary": "Update session name",
+                                "value": {"session_name": "Updated Session Name"},
+                            },
+                            "update_session_state": {
+                                "summary": "Update session state",
+                                "value": {
+                                    "session_state": {
+                                        "step": "completed",
+                                        "context": "Project planning finished",
+                                        "progress": 100,
+                                    }
+                                },
+                            },
+                        }
+                    }
+                },
+            },
+            404: {"description": "Session not found", "model": NotFoundResponse},
+            422: {"description": "Invalid request", "model": ValidationErrorResponse},
+            500: {"description": "Failed to update session", "model": InternalServerErrorResponse},
+        },
+    )
+    async def update_session(
+        request: Request,
+        session_id: str = Path(description="Session ID to update"),
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
+        ),
+        update_data: UpdateSessionRequest = Body(description="Session update data"),
+        user_id: Optional[str] = Query(default=None, description="User ID"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for update operation"),
+        table: Optional[str] = Query(default=None, description="Table to use for update operation"),
+    ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.update_session(
+                session_id=session_id,
+                session_type=session_type,
+                session_name=update_data.session_name,
+                session_state=update_data.session_state,
+                metadata=update_data.metadata,
+                summary=update_data.summary,
+                user_id=effective_user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            existing_session = await db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                deserialize=True,
+            )
+        else:
+            existing_session = db.get_session(
+                session_id=session_id,
+                session_type=session_type,
+                user_id=effective_user_id,
+                deserialize=True,
+            )
+
+        if not existing_session:
+            raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
+
+        # Update session properties
+        if update_data.session_name is not None:
+            if existing_session.session_data is None:  # type: ignore
+                existing_session.session_data = {}  # type: ignore
+            existing_session.session_data["session_name"] = update_data.session_name  # type: ignore
+
+        if update_data.session_state is not None:
+            if existing_session.session_data is None:  # type: ignore
+                existing_session.session_data = {}  # type: ignore
+            existing_session.session_data["session_state"] = update_data.session_state  # type: ignore
+
+        if update_data.metadata is not None:
+            existing_session.metadata = update_data.metadata  # type: ignore
+
+        if update_data.summary is not None:
+            from agno.session.summary import SessionSummary
+
+            existing_session.summary = SessionSummary.from_dict(update_data.summary)  # type: ignore
+
+        # Preserve ownership on write — a non-admin scoped caller cannot
+        # silently re-attribute the session to another user.
+        enforce_owner_on_entity(request, existing_session, kind="session")
+
+        if isinstance(db, AsyncBaseDb):
+            updated_session = await db.upsert_session(existing_session, deserialize=True)  # type: ignore
+        else:
+            updated_session = db.upsert_session(existing_session, deserialize=True)  # type: ignore
+
+        if not updated_session:
+            raise HTTPException(status_code=500, detail="Failed to update session")
+
+        if isinstance(updated_session, AgentSession):
+            return AgentSessionDetailSchema.from_session(updated_session)
+        elif isinstance(updated_session, TeamSession):
+            return TeamSessionDetailSchema.from_session(updated_session)
+        else:
+            return WorkflowSessionDetailSchema.from_session(updated_session)  # type: ignore
 
     return router

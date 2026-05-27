@@ -160,3 +160,47 @@ def test_uv_pip_install_package_error(mock_check_call, python_tools):
     mock_check_call.side_effect = Exception("Installation failed")
     result = python_tools.uv_pip_install_package("requests")
     assert "Error installing package requests" in result
+
+
+# Path traversal prevention tests
+def test_check_path_blocks_parent_traversal(temp_dir):
+    """Test that _check_path blocks parent directory traversal."""
+    python_tools = PythonTools(base_dir=temp_dir)
+
+    # Attempting to escape via ..
+    safe, path = python_tools._check_path("../escape.py", python_tools.base_dir, python_tools.restrict_to_base_dir)
+    assert not safe
+
+    # Multiple levels of escape
+    safe, path = python_tools._check_path("../../escape.py", python_tools.base_dir, python_tools.restrict_to_base_dir)
+    assert not safe
+
+    # Sneaky escape via subdir
+    safe, path = python_tools._check_path(
+        "subdir/../../escape.py", python_tools.base_dir, python_tools.restrict_to_base_dir
+    )
+    assert not safe
+
+
+def test_save_to_file_blocks_path_traversal(temp_dir):
+    """Test that save_to_file_and_run blocks path traversal attempts."""
+    python_tools = PythonTools(base_dir=temp_dir)
+
+    result = python_tools.save_to_file_and_run("../malicious.py", "x = 1")
+    assert "outside the allowed base directory" in result
+
+
+def test_read_file_blocks_path_traversal(temp_dir):
+    """Test that read_file blocks path traversal attempts."""
+    python_tools = PythonTools(base_dir=temp_dir)
+
+    result = python_tools.read_file("../../../etc/passwd")
+    assert "Error reading file" in result
+
+
+def test_run_python_file_blocks_path_traversal(temp_dir):
+    """Test that run_python_file_return_variable blocks path traversal attempts."""
+    python_tools = PythonTools(base_dir=temp_dir)
+
+    result = python_tools.run_python_file_return_variable("../malicious.py")
+    assert "outside the allowed base directory" in result

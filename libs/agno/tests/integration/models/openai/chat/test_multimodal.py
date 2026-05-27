@@ -5,7 +5,7 @@ import requests
 from agno.agent.agent import Agent
 from agno.media import Audio, Image
 from agno.models.openai.chat import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 
 def _get_audio_input() -> Union[bytes, Any]:
@@ -16,17 +16,17 @@ def _get_audio_input() -> Union[bytes, Any]:
     return response.content
 
 
-def test_image_input():
+def test_image_input(image_path):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",
-        images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
+        images=[Image(filepath=image_path)],
     )
 
     assert response.content is not None and "golden" in response.content.lower()

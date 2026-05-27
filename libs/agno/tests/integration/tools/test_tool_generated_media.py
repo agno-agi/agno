@@ -11,7 +11,7 @@ from agno.tools.dalle import DalleTools
 @pytest.fixture
 def openai_agent():
     """Create an agent with OpenAI model and DALL-E tools."""
-    return Agent(model=OpenAIChat(id="gpt-4o-mini"), db=InMemoryDb(), tools=[DalleTools()], debug_mode=True)
+    return Agent(model=OpenAIChat(id="gpt-4o-mini"), db=InMemoryDb(), tools=[DalleTools()])
 
 
 def test_dalle_image_generation_in_run_output(openai_agent):
@@ -79,7 +79,7 @@ def test_multiple_images_generation(openai_agent):
 def test_image_generation_with_streaming(openai_agent):
     """Test that images are captured correctly in streaming mode."""
     # Run agent with streaming enabled
-    response_stream = openai_agent.run("Generate a simple image of a green tree", stream=True)
+    response_stream = openai_agent.run("Generate a simple image of a green tree", stream=True, stream_events=True)
 
     # Collect all streaming events and find the completed event
     run_completed_event = None
@@ -139,7 +139,7 @@ def test_openai_speech_generation_in_run_output(openai_agent):
 
 def test_media_persistence_across_runs(shared_db):
     """Test that media persists correctly across multiple runs."""
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, tools=[DalleTools()], debug_mode=True)
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, tools=[DalleTools()])
 
     # First run: Generate image
     response1 = agent.run("Generate an image of a sunset")

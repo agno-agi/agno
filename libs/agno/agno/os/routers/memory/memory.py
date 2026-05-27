@@ -1,16 +1,20 @@
 import logging
 import math
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Path, Query, Request
 from fastapi.routing import APIRouter
 
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
-from agno.os.auth import get_authentication_dependency
+from agno.models.utils import get_model
+from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_scope
 from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
+    OptimizeMemoriesRequest,
+    OptimizeMemoriesResponse,
     UserMemoryCreateSchema,
     UserMemorySchema,
     UserStatsSchema,
@@ -26,12 +30,14 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
 
 
-def get_memory_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
+def get_memory_router(
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+) -> APIRouter:
     """Create memory router with comprehensive OpenAPI documentation for user memory management endpoints."""
     router = APIRouter(
         dependencies=[Depends(get_authentication_dependency(settings))],
@@ -47,7 +53,7 @@ def get_memory_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAP
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
     @router.post(
         "/memories",
         response_model=UserMemorySchema,
@@ -83,24 +89,50 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         request: Request,
         payload: UserMemoryCreateSchema,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
+        table: Optional[str] = Query(default=None, description="Table to use for memory storage"),
     ) -> UserMemorySchema:
-        if hasattr(request.state, "user_id"):
-            user_id = request.state.user_id
-            payload.user_id = user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=payload.user_id)
+        # Scoped callers get their JWT sub; admins/unscoped get the payload value.
+        if effective_user_id is not None:
+            payload.user_id = effective_user_id
 
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
 
-        db = get_db(dbs, db_id)
-        user_memory = db.upsert_user_memory(
-            memory=UserMemory(
-                memory_id=str(uuid4()),
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.create_memory(
                 memory=payload.memory,
                 topics=payload.topics or [],
                 user_id=payload.user_id,
-            ),
-            deserialize=False,
-        )
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memory = await db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=str(uuid4()),
+                    memory=payload.memory,
+                    topics=payload.topics or [],
+                    user_id=payload.user_id,
+                ),
+                deserialize=False,
+            )
+        else:
+            user_memory = db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=str(uuid4()),
+                    memory=payload.memory,
+                    topics=payload.topics or [],
+                    user_id=payload.user_id,
+                ),
+                deserialize=False,
+            )
+
         if not user_memory:
             raise HTTPException(status_code=500, detail="Failed to create memory")
 
@@ -119,12 +151,34 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def delete_memory(
+        request: Request,
         memory_id: str = Path(description="Memory ID to delete"),
         user_id: Optional[str] = Query(default=None, description="User ID to delete memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = get_db(dbs, db_id)
-        db.delete_user_memory(memory_id=memory_id, user_id=user_id)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.delete_memory(
+                memory_id=memory_id,
+                user_id=effective_user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        local_kwargs: Dict[str, Any] = {"memory_id": memory_id}
+        if effective_user_id is not None:
+            local_kwargs["user_id"] = effective_user_id
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_user_memory(**local_kwargs)
+        else:
+            db.delete_user_memory(**local_kwargs)
 
     @router.delete(
         "/memories",
@@ -142,11 +196,33 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def delete_memories(
+        http_request: Request,
         request: DeleteMemoriesRequest,
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
+        table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = get_db(dbs, db_id)
-        db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
+        db, effective_user_id = await resolve_db_and_scope(
+            http_request, dbs, db_id, table, fallback_user_id=request.user_id
+        )
+        if effective_user_id is not None:
+            request.user_id = effective_user_id
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(http_request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.delete_memories(
+                memory_ids=request.memory_ids,
+                user_id=request.user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
+        else:
+            db.delete_user_memories(memory_ids=request.memory_ids, user_id=request.user_id)
 
     @router.get(
         "/memories",
@@ -188,31 +264,56 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         team_id: Optional[str] = Query(default=None, description="Filter memories by team ID"),
         topics: Optional[List[str]] = Depends(parse_topics),
         search_content: Optional[str] = Query(default=None, description="Fuzzy search within memory content"),
-        limit: Optional[int] = Query(default=20, description="Number of memories to return per page"),
-        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        limit: Optional[int] = Query(default=20, description="Number of memories to return per page", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort memories by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
+        table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[UserMemorySchema]:
-        db = get_db(dbs, db_id)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
-        if hasattr(request.state, "user_id"):
-            user_id = request.state.user_id
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_memories(
+                user_id=effective_user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                topics=topics,
+                search_content=search_content,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value if sort_order else "desc",
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
 
-        user_memories, total_count = db.get_user_memories(
-            limit=limit,
-            page=page,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            topics=topics,
-            search_content=search_content,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
+        local_kwargs: Dict[str, Any] = {
+            "limit": limit,
+            "page": page,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "topics": topics,
+            "search_content": search_content,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "deserialize": False,
+        }
+        if effective_user_id is not None:
+            local_kwargs["user_id"] = effective_user_id
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memories, total_count = await db.get_user_memories(**local_kwargs)
+        else:
+            user_memories, total_count = db.get_user_memories(**local_kwargs)  # type: ignore
+
+        memories = [UserMemorySchema.from_dict(user_memory) for user_memory in user_memories]  # type: ignore
         return PaginatedResponse(
-            data=[UserMemorySchema.from_dict(user_memory) for user_memory in user_memories],  # type: ignore
+            data=[memory for memory in memories if memory is not None],
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
@@ -249,12 +350,34 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def get_memory(
+        request: Request,
         memory_id: str = Path(description="Memory ID to retrieve"),
         user_id: Optional[str] = Query(default=None, description="User ID to query memory for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memory from"),
+        table: Optional[str] = Query(default=None, description="Table to query memory from"),
     ) -> UserMemorySchema:
-        db = get_db(dbs, db_id)
-        user_memory = db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_memory(
+                memory_id=memory_id,
+                user_id=effective_user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        local_kwargs: Dict[str, Any] = {"memory_id": memory_id, "deserialize": False}
+        if effective_user_id is not None:
+            local_kwargs["user_id"] = effective_user_id
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memory = await db.get_user_memory(**local_kwargs)
+        else:
+            user_memory = db.get_user_memory(**local_kwargs)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
@@ -292,10 +415,32 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def get_topics(
+        request: Request,
+        user_id: Optional[str] = Query(default=None, description="User ID to filter topics for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
+        table: Optional[str] = Query(default=None, description="Table to query topics from"),
     ) -> List[str]:
-        db = get_db(dbs, db_id)
-        return db.get_all_memory_topics()
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_memory_topics(
+                user_id=effective_user_id,
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        local_kwargs: Dict[str, Any] = {}
+        if effective_user_id is not None:
+            local_kwargs["user_id"] = effective_user_id
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            return await db.get_all_memory_topics(**local_kwargs)
+        else:
+            return db.get_all_memory_topics(**local_kwargs)  # type: ignore[return-value]
 
     @router.patch(
         "/memories/{memory_id}",
@@ -335,25 +480,61 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         payload: UserMemoryCreateSchema,
         memory_id: str = Path(description="Memory ID to update"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
+        table: Optional[str] = Query(default=None, description="Table to use for update"),
     ) -> UserMemorySchema:
-        db = get_db(dbs, db_id)
-
-        if hasattr(request.state, "user_id"):
-            user_id = request.state.user_id
-            payload.user_id = user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=payload.user_id)
+        if effective_user_id is not None:
+            payload.user_id = effective_user_id
 
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
 
-        user_memory = db.upsert_user_memory(
-            memory=UserMemory(
+        # For scoped callers, verify the existing memory belongs to them
+        # before allowing the upsert. Without this, a caller could overwrite
+        # another user's memory_id by supplying it in the path.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and not isinstance(db, RemoteDb):
+            if isinstance(db, AsyncBaseDb):
+                existing = await cast(AsyncBaseDb, db).get_user_memory(memory_id=memory_id, user_id=scoped_user_id)
+            else:
+                existing = db.get_user_memory(memory_id=memory_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Memory not found")
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.update_memory(
                 memory_id=memory_id,
+                user_id=payload.user_id,
                 memory=payload.memory,
                 topics=payload.topics or [],
-                user_id=payload.user_id,
-            ),
-            deserialize=False,
-        )
+                db_id=db_id,
+                table=table,
+                headers=headers,
+            )
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memory = await db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=memory_id,
+                    memory=payload.memory,
+                    topics=payload.topics or [],
+                    user_id=payload.user_id,
+                ),
+                deserialize=False,
+            )
+        else:
+            user_memory = db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=memory_id,
+                    memory=payload.memory,
+                    topics=payload.topics or [],
+                    user_id=payload.user_id,
+                ),
+                deserialize=False,
+            )
         if not user_memory:
             raise HTTPException(status_code=500, detail="Failed to update memory")
 
@@ -390,16 +571,39 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         },
     )
     async def get_user_memory_stats(
-        limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page"),
-        page: Optional[int] = Query(default=1, description="Page number for pagination"),
+        request: Request,
+        limit: Optional[int] = Query(default=20, description="Number of user statistics to return per page", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
+        user_id: Optional[str] = Query(default=None, description="User ID to filter statistics for"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
+        table: Optional[str] = Query(default=None, description="Table to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
-        db = get_db(dbs, db_id)
-        try:
-            user_stats, total_count = db.get_user_memory_stats(
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.get_user_memory_stats(
+                user_id=effective_user_id,
                 limit=limit,
                 page=page,
+                db_id=db_id,
+                table=table,
+                headers=headers,
             )
+
+        try:
+            limit = int(limit) if limit is not None else 20
+            page = int(page) if page is not None else 1
+            local_kwargs: Dict[str, Any] = {"limit": limit, "page": page}
+            if effective_user_id is not None:
+                local_kwargs["user_id"] = effective_user_id
+
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                user_stats, total_count = await db.get_user_memory_stats(**local_kwargs)
+            else:
+                user_stats, total_count = db.get_user_memory_stats(**local_kwargs)
             return PaginatedResponse(
                 data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
                 meta=PaginationInfo(
@@ -412,6 +616,164 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to get user statistics: {str(e)}")
+
+    @router.post(
+        "/optimize-memories",
+        response_model=OptimizeMemoriesResponse,
+        status_code=200,
+        operation_id="optimize_memories",
+        summary="Optimize User Memories",
+        description=(
+            "Optimize all memories for a given user using the default summarize strategy. "
+            "This operation combines all memories into a single comprehensive summary, "
+            "achieving maximum token reduction while preserving all key information. "
+            "To use a custom model, specify the model parameter in 'provider:model_id' format "
+            "(e.g., 'openai:gpt-4o-mini', 'anthropic:claude-3-5-sonnet-20241022'). "
+            "If not specified, uses MemoryManager's default model (gpt-4o). "
+            "Set apply=false to preview optimization results without saving to database."
+        ),
+        responses={
+            200: {
+                "description": "Memories optimized successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "memories": [
+                                {
+                                    "memory_id": "f9361a69-2997-40c7-ae4e-a5861d434047",
+                                    "memory": "User has a 3-year-old golden retriever named Max who loves fetch and walks. Lives in San Francisco's Mission district, works as a product manager in tech. Enjoys hiking Bay Area trails, trying new restaurants (especially Japanese, Thai, Mexican), and learning piano for 1.5 years.",
+                                    "topics": ["pets", "location", "work", "hobbies", "food_preferences"],
+                                    "user_id": "user2",
+                                    "updated_at": "2025-11-18T10:30:00Z",
+                                }
+                            ],
+                            "memories_before": 4,
+                            "memories_after": 1,
+                            "tokens_before": 450,
+                            "tokens_after": 180,
+                            "tokens_saved": 270,
+                            "reduction_percentage": 60.0,
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Bad request - User ID is required or invalid model string format",
+                "model": BadRequestResponse,
+            },
+            404: {"description": "No memories found for user", "model": NotFoundResponse},
+            500: {"description": "Failed to optimize memories", "model": InternalServerErrorResponse},
+        },
+    )
+    async def optimize_memories(
+        http_request: Request,
+        request: OptimizeMemoriesRequest,
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for optimization"),
+        table: Optional[str] = Query(default=None, description="Table to use for optimization"),
+    ) -> OptimizeMemoriesResponse:
+        """Optimize user memories using the default summarize strategy."""
+        from agno.memory import MemoryManager
+        from agno.memory.strategies.types import MemoryOptimizationStrategyType
+
+        try:
+            db, effective_user_id = await resolve_db_and_scope(
+                http_request, dbs, db_id, table, fallback_user_id=request.user_id
+            )
+            if effective_user_id is not None:
+                request.user_id = effective_user_id
+
+            if isinstance(db, RemoteDb):
+                auth_token = get_auth_token_from_request(http_request)
+                headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+                return await db.optimize_memories(
+                    user_id=request.user_id,
+                    model=request.model,
+                    apply=request.apply,
+                    db_id=db_id,
+                    table=table,
+                    headers=headers,
+                )
+
+            # Create memory manager with optional model
+            # db may be a user-scoped DB adapter at this point;
+            # MemoryManager treats it structurally.
+            if request.model:
+                try:
+                    model_instance = get_model(request.model)
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+                memory_manager = MemoryManager(model=model_instance, db=db)  # type: ignore[arg-type]
+            else:
+                # No model specified - use MemoryManager's default
+                memory_manager = MemoryManager(db=db)  # type: ignore[arg-type]
+
+            # Get current memories to count tokens before optimization
+            if isinstance(db, AsyncBaseDb):
+                memories_before = await memory_manager.aget_user_memories(user_id=request.user_id)
+            else:
+                memories_before = memory_manager.get_user_memories(user_id=request.user_id)
+
+            if not memories_before:
+                raise HTTPException(status_code=404, detail=f"No memories found for user {request.user_id}")
+
+            # Count tokens before optimization
+            from agno.memory.strategies.summarize import SummarizeStrategy
+
+            strategy = SummarizeStrategy()
+            tokens_before = strategy.count_tokens(memories_before)
+            memories_before_count = len(memories_before)
+
+            # Optimize memories with default SUMMARIZE strategy
+            if isinstance(db, AsyncBaseDb):
+                optimized_memories = await memory_manager.aoptimize_memories(
+                    user_id=request.user_id,
+                    strategy=MemoryOptimizationStrategyType.SUMMARIZE,
+                    apply=request.apply,
+                )
+            else:
+                optimized_memories = memory_manager.optimize_memories(
+                    user_id=request.user_id,
+                    strategy=MemoryOptimizationStrategyType.SUMMARIZE,
+                    apply=request.apply,
+                )
+
+            # Count tokens after optimization
+            tokens_after = strategy.count_tokens(optimized_memories)
+            memories_after_count = len(optimized_memories)
+
+            # Calculate statistics
+            tokens_saved = tokens_before - tokens_after
+            reduction_percentage = (tokens_saved / tokens_before * 100.0) if tokens_before > 0 else 0.0
+
+            # Convert to schema objects
+            optimized_memory_schemas = [
+                UserMemorySchema(
+                    memory_id=mem.memory_id or "",
+                    memory=mem.memory or "",
+                    topics=mem.topics,
+                    agent_id=mem.agent_id,
+                    team_id=mem.team_id,
+                    user_id=mem.user_id,
+                    updated_at=mem.updated_at,
+                )
+                for mem in optimized_memories
+            ]
+
+            return OptimizeMemoriesResponse(
+                memories=optimized_memory_schemas,
+                memories_before=memories_before_count,
+                memories_after=memories_after_count,
+                tokens_before=tokens_before,
+                tokens_after=tokens_after,
+                tokens_saved=tokens_saved,
+                reduction_percentage=reduction_percentage,
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to optimize memories for user {request.user_id}")
+            raise HTTPException(status_code=500, detail=f"Failed to optimize memories: {str(e)}")
 
     return router
 

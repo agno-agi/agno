@@ -1,3 +1,0 @@
-"""
-Knowledge-related team examples.
-"""

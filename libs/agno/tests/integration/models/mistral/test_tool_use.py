@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent  # noqa
 from agno.models.mistral import MistralChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -35,7 +35,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_events=True):
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -95,7 +95,7 @@ async def test_async_tool_use_stream():
     responses = []
     tool_call_seen = False
 
-    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         responses.append(response)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
@@ -134,7 +134,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=MistralChat(id="mistral-large-latest"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

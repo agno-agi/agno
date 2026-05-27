@@ -2,7 +2,7 @@ import pytest
 
 from agno.agent import Agent, RunOutput
 from agno.models.litellm import LiteLLMOpenAI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -33,7 +33,7 @@ def test_tool_use():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -62,7 +62,7 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_events=True)
 
     responses = []
     tool_call_seen = False
@@ -87,7 +87,7 @@ async def test_async_tool_use():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -117,7 +117,7 @@ async def test_async_tool_use_streaming():
         telemetry=False,
     )
 
-    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_events=True):
         if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
             if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
@@ -133,7 +133,7 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         telemetry=False,
     )
 
@@ -158,7 +158,7 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
-        tools=[DuckDuckGoTools(cache_results=True), get_weather],
+        tools=[WebSearchTools(cache_results=True), get_weather],
         telemetry=False,
     )
 

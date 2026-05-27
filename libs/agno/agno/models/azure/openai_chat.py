@@ -1,10 +1,13 @@
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, Optional
 
 import httpx
 
+from agno.exceptions import ModelAuthenticationError
 from agno.models.openai.like import OpenAILike
+from agno.utils.log import log_warning
 
 try:
     from openai import AsyncAzureOpenAI as AsyncAzureOpenAIClient
@@ -55,12 +58,50 @@ class AzureOpenAI(OpenAILike):
     client: Optional[AzureOpenAIClient] = None
     async_client: Optional[AsyncAzureOpenAIClient] = None
 
+    def __deepcopy__(self, memo: dict) -> "AzureOpenAI":
+        """Create a deep copy that preserves client references.
+
+        Azure OpenAI clients may carry authentication state (e.g. AD tokens,
+        token providers) that cannot be reconstructed from the model's own
+        fields alone. Preserving the client references avoids authentication
+        errors when the copied model is used (e.g. in the reasoning flow).
+        """
+
+        cls = self.__class__
+        new_model = cls.__new__(cls)
+        memo[id(self)] = new_model
+
+        for k, v in self.__dict__.items():
+            if k in {"response_format", "_tools", "_functions"}:
+                continue
+            # Preserve client references instead of nullifying them
+            if k in {"client", "async_client", "http_client"}:
+                setattr(new_model, k, v)
+                continue
+            try:
+                setattr(new_model, k, deepcopy(v, memo))
+            except Exception:
+                try:
+                    setattr(new_model, k, copy(v))
+                except Exception:
+                    setattr(new_model, k, v)
+
+        return new_model
+
     def _get_client_params(self) -> Dict[str, Any]:
         _client_params: Dict[str, Any] = {}
 
         self.api_key = self.api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
         self.azure_deployment = self.azure_deployment or getenv("AZURE_OPENAI_DEPLOYMENT")
+
+        if not (self.api_key or self.azure_ad_token or self.azure_ad_token_provider):
+            raise ModelAuthenticationError(
+                message="Azure OpenAI authentication not configured. Please provide one of:"
+                "AZURE_OPENAI_API_KEY environment variable, azure_ad_token, or azure_ad_token_provider",
+                model_name=self.name,
+            )
+
         params_mapping = {
             "api_key": self.api_key,
             "api_version": self.api_version,
@@ -70,7 +111,6 @@ class AzureOpenAI(OpenAILike):
             "base_url": self.base_url,
             "azure_ad_token": self.azure_ad_token,
             "azure_ad_token_provider": self.azure_ad_token_provider,
-            "http_client": self.http_client,
         }
         if self.default_headers is not None:
             _client_params["default_headers"] = self.default_headers
@@ -95,7 +135,16 @@ class AzureOpenAI(OpenAILike):
 
         _client_params: Dict[str, Any] = self._get_client_params()
 
-        # -*- Create client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using OpenAI SDK default.")
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
+
+        # Create client
         self.client = AzureOpenAIClient(**_client_params)
         return self.client
 
@@ -106,18 +155,21 @@ class AzureOpenAI(OpenAILike):
         Returns:
             AsyncAzureOpenAIClient: An instance of the asynchronous OpenAI client.
         """
-        if self.async_client:
+        if self.async_client and not self.async_client.is_closed():
             return self.async_client
 
         _client_params: Dict[str, Any] = self._get_client_params()
 
         if self.http_client:
-            _client_params["http_client"] = self.http_client
-        else:
-            # Create a new async HTTP client with custom limits
-            _client_params["http_client"] = httpx.AsyncClient(
-                limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
-            )
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["http_client"] = self.http_client
+            else:
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using OpenAI SDK default."
+                )
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         self.async_client = AsyncAzureOpenAIClient(**_client_params)
         return self.async_client

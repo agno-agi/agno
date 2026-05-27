@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
@@ -60,6 +60,7 @@ class AzureAIFoundry(Model):
     stop: Optional[Union[str, List[str]]] = None
     seed: Optional[int] = None
     model_extras: Optional[Dict[str, Any]] = None
+    strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     request_params: Optional[Dict[str, Any]] = None
     # Client parameters
     api_key: Optional[str] = None
@@ -116,7 +117,7 @@ class AzureAIFoundry(Model):
                         name=response_format.__name__,
                         schema=response_format.model_json_schema(),  # type: ignore
                         description=response_format.__doc__,
-                        strict=True,
+                        strict=self.strict_output,
                     ),
                 )
 
@@ -135,15 +136,16 @@ class AzureAIFoundry(Model):
         self.azure_endpoint = self.azure_endpoint or getenv("AZURE_ENDPOINT")
 
         if not self.api_key:
-            raise ValueError("API key is required")
+            log_error("AZURE_API_KEY not set. Please set the AZURE_API_KEY environment variable.")
         if not self.azure_endpoint:
-            raise ValueError("Endpoint URL is required")
+            log_error("AZURE_ENDPOINT not set. Please set the AZURE_ENDPOINT environment variable.")
 
-        base_params = {
+        base_params: Dict[str, Any] = {
             "endpoint": self.azure_endpoint,
-            "credential": AzureKeyCredential(self.api_key),
             "api_version": self.api_version,
         }
+        if self.api_key:
+            base_params["credential"] = AzureKeyCredential(self.api_key)
 
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
@@ -160,7 +162,9 @@ class AzureAIFoundry(Model):
         Returns:
             ChatCompletionsClient: An instance of the Azure AI client.
         """
-        if self.client:
+        # Check if client exists and is not closed
+        # Azure's client doesn't have is_closed(), so we check if _client exists
+        if self.client and hasattr(self.client, "_client"):
             return self.client
 
         client_params = self._get_client_params()
@@ -174,10 +178,27 @@ class AzureAIFoundry(Model):
         Returns:
             AsyncChatCompletionsClient: An instance of the asynchronous Azure AI client.
         """
+        # Check if client exists and is not closed
+        # Azure's async client doesn't have is_closed(), so we check if _client exists
+        if self.async_client and hasattr(self.async_client, "_client"):
+            return self.async_client
+
         client_params = self._get_client_params()
 
         self.async_client = AsyncChatCompletionsClient(**client_params)
         return self.async_client
+
+    def close(self) -> None:
+        """Close the synchronous client and clean up resources."""
+        if self.client:
+            self.client.close()
+            self.client = None
+
+    async def aclose(self) -> None:
+        """Close the asynchronous client and clean up resources."""
+        if self.async_client:
+            await self.async_client.close()
+            self.async_client = None
 
     def invoke(
         self,
@@ -187,17 +208,15 @@ class AzureAIFoundry(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().complete(
-                messages=[format_message(m) for m in messages],
+                messages=[format_message(m, compress_tool_results) for m in messages],
                 **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
             )
             assistant_message.metrics.stop_timer()
@@ -207,7 +226,7 @@ class AzureAIFoundry(Model):
             return model_response
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -215,7 +234,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -226,21 +245,18 @@ class AzureAIFoundry(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Azure AI API.
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
-            async with self.get_async_client() as client:
-                provider_response = await client.complete(
-                    messages=[format_message(m) for m in messages],
-                    **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
-                )
+            provider_response = await self.get_async_client().complete(
+                messages=[format_message(m, compress_tool_results) for m in messages],
+                **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
+            )
             assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
@@ -248,7 +264,7 @@ class AzureAIFoundry(Model):
             return model_response
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -256,7 +272,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -267,18 +283,16 @@ class AzureAIFoundry(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().complete(
-                messages=[format_message(m) for m in messages],
+                messages=[format_message(m, compress_tool_results) for m in messages],
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
             ):
@@ -287,7 +301,7 @@ class AzureAIFoundry(Model):
             assistant_message.metrics.stop_timer()
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -295,7 +309,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -306,29 +320,26 @@ class AzureAIFoundry(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
-            async with self.get_async_client() as client:
-                async_stream = await client.complete(
-                    messages=[format_message(m) for m in messages],
-                    stream=True,
-                    **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
-                )
-                async for chunk in async_stream:  # type: ignore
-                    yield self._parse_provider_response_delta(chunk)
+            async_stream = await self.get_async_client().complete(
+                messages=[format_message(m, compress_tool_results) for m in messages],
+                stream=True,
+                **self.get_request_params(tools=tools, response_format=response_format, tool_choice=tool_choice),
+            )
+            async for chunk in async_stream:  # type: ignore
+                yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -336,7 +347,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _parse_provider_response(self, response: ChatCompletions, **kwargs) -> ModelResponse:
@@ -382,7 +393,7 @@ class AzureAIFoundry(Model):
                 model_response.response_usage = self._get_metrics(response.usage)
 
         except Exception as e:
-            log_error(f"Error parsing Azure AI response: {e}")
+            log_error(f"Error parsing Azure AI response: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
         return model_response
@@ -449,19 +460,24 @@ class AzureAIFoundry(Model):
                 model_response.response_usage = self._get_metrics(response_delta.usage)
 
         except Exception as e:
-            log_error(f"Error parsing Azure AI response delta: {e}")
+            log_error(f"Error parsing Azure AI response delta: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
         return model_response
 
-    def _get_metrics(self, response_usage) -> Metrics:
+    def _get_metrics(self, response_usage) -> MessageMetrics:
         """
-        Parse the given Azure AI Foundry usage into an Agno Metrics object.
+        Parse the given Azure AI Foundry usage into an Agno MessageMetrics object.
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.get("prompt_tokens", 0)
         metrics.output_tokens = response_usage.get("completion_tokens", 0)
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        if prompt_details := response_usage.get("prompt_tokens_details"):
+            metrics.cache_read_tokens = prompt_details.get("cached_tokens", 0) or 0
+        if completion_details := response_usage.get("completion_tokens_details"):
+            metrics.reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
 
         return metrics
