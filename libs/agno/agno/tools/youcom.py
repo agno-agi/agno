@@ -7,7 +7,7 @@ import httpx
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
 
-DEFAULT_BASE_URL = "https://api.you.com"
+DEFAULT_BASE_URL = "https://ydc-index.io"
 
 
 class YouTools(Toolkit):
@@ -23,7 +23,7 @@ class YouTools(Toolkit):
     Args:
         api_key (Optional[str]): You.com API key. Falls back to the ``YDC_API_KEY`` env var.
         base_url (Optional[str]): Override the API base URL. Falls back to the ``YDC_BASE_URL``
-            env var, then defaults to ``https://api.you.com``.
+            env var, then defaults to ``https://ydc-index.io``.
         num_results (int): Default number of search results. Default is 5.
         livecrawl (str): Live-crawl mode for the search API (``"web"``, ``"always"``,
             ``"fallback"``, ``"never"``). Default is ``"web"``.
