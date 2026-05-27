@@ -43,110 +43,6 @@ from agno.utils.events import (
 from agno.utils.log import log_debug, log_warning
 
 
-def _wire_google_auth(
-    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]],
-    agent: Optional["Agent"] = None,
-) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
-    """Wire Google toolkits to a shared GoogleAuthConfig for scope consolidation."""
-    if tools is None:
-        return tools
-
-    try:
-        from agno.tools.google.auth import GoogleAuthConfig
-        from agno.tools.google.base import GoogleToolkit
-        from agno.tools.google.oauth_tools import GoogleOAuthTools
-    except ImportError:
-        return tools
-
-    # Find Google toolkits and OAuth tools
-    google_toolkits = [t for t in tools if isinstance(t, GoogleToolkit)]
-    oauth_tools = [t for t in tools if isinstance(t, GoogleOAuthTools)]
-
-    # Nothing to wire if no Google toolkits
-    if not google_toolkits and not oauth_tools:
-        return tools
-
-    # Check if any toolkit/oauth_tool has a custom GoogleAuthConfig configured
-    shared_config = None
-    for t in google_toolkits + oauth_tools:
-        ga = getattr(t, "auth_config", None)
-        if ga is not None:
-            shared_config = ga
-            break
-
-    # Auto-create GoogleAuthConfig if none provided (cookbook mode)
-    if shared_config is None:
-        shared_config = GoogleAuthConfig()
-        log_debug("Auto-created GoogleAuthConfig for scope consolidation (cookbook mode)")
-
-    config_id = id(shared_config)
-
-    # Wire GoogleAuthConfig to each Google toolkit and register scopes
-    for t in google_toolkits:
-        # Skip if already wired to this config
-        if getattr(t, "_wired_config_id", None) == config_id:
-            continue
-
-        if getattr(t, "auth_config", None) is None:
-            t.auth_config = shared_config
-
-        ga = t.auth_config
-        service_name = getattr(t, "google_service_name", None)
-        scopes = getattr(t, "scopes", None)
-        if ga is not None and service_name and scopes:
-            registered = set(ga._services.get(service_name, []))
-            required = set(scopes)
-            if service_name not in ga._services or not required.issubset(registered):
-                ga.register_service(service_name, scopes)
-                log_debug(f"Registered {service_name} scopes with GoogleAuthConfig")
-
-        # Mark as wired to this config
-        t._wired_config_id = config_id  # type: ignore[attr-defined]
-
-    # Wire GoogleAuthConfig to GoogleOAuthTools if not already set
-    for t in oauth_tools:
-        # Skip if already wired to this config
-        if getattr(t, "_wired_config_id", None) == config_id:
-            continue
-
-        if getattr(t, "auth_config", None) is None:
-            t.auth_config = shared_config
-            log_debug("Wired GoogleAuthConfig to GoogleOAuthTools")
-
-        # Mark as wired to this config
-        t._wired_config_id = config_id  # type: ignore[attr-defined]
-
-    # Propagate store_token_in_db: DB setting takes priority, then GoogleOAuthTools
-    db_store = getattr(getattr(agent, "db", None), "store_auth_tokens", False) if agent else False
-    if db_store:
-        for t in google_toolkits:
-            if not getattr(t, "store_token_in_db", False):
-                t.store_token_in_db = True
-                log_debug(f"Propagated store_token_in_db=True from DB to {t.__class__.__name__}")
-    else:
-        for oauth_tool in oauth_tools:
-            if getattr(oauth_tool, "store_token_in_db", False):
-                for t in google_toolkits:
-                    if not getattr(t, "store_token_in_db", False):
-                        t.store_token_in_db = True
-                        log_debug(f"Propagated store_token_in_db=True to {t.__class__.__name__}")
-                break
-
-    # Propagate service account config from GoogleAuthConfig to all Google toolkits
-    if shared_config:
-        sa_path = getattr(shared_config, "_service_account_path", None)
-        delegated = getattr(shared_config, "_delegated_user", None)
-        for t in google_toolkits:
-            if sa_path and not getattr(t, "service_account_path", None):
-                t.service_account_path = sa_path
-                log_debug(f"Propagated service_account_path to {t.__class__.__name__}")
-            if delegated and not getattr(t, "delegated_user", None):
-                t.delegated_user = delegated
-                log_debug(f"Propagated delegated_user to {t.__class__.__name__}")
-
-    return tools
-
-
 def raise_if_async_tools(agent: Agent) -> None:
     """Raise an exception if any tools contain async functions."""
     if agent.tools is None:
@@ -229,9 +125,6 @@ def get_tools(
 
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
-
-    # Auto-wire Google OAuth config across Google toolkits (idempotent)
-    resolved_tools = _wire_google_auth(resolved_tools, agent)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -336,9 +229,6 @@ async def aget_tools(
 
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
-
-    # Auto-wire Google OAuth config across Google toolkits (idempotent)
-    resolved_tools = _wire_google_auth(resolved_tools, agent)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)

@@ -1,32 +1,40 @@
 """
 Meeting Prep Agent (Calendar + Gmail)
 =====================================
-Prepares you for upcoming meetings by combining calendar and email context.
+
+Multi-toolkit agent that combines calendar and email context for meeting prep.
 
 Workflow:
-1. Fetches your next meeting (or a specific one) from Google Calendar
-2. Identifies attendees and their RSVP status
-3. Searches Gmail for recent threads involving those attendees
-4. Produces a structured prep brief: who's coming, recent topics, open threads
+  1. Fetches your next meeting from Google Calendar
+  2. Identifies attendees and their RSVP status
+  3. Searches Gmail for recent threads involving those attendees
+  4. Produces structured prep brief: who's coming, recent topics, open threads
 
-Key concepts:
-- Two toolkits on one agent: GoogleCalendarTools + GmailTools
-- Multi-step reasoning: calendar lookup -> attendee extraction -> email search
-- output_schema: structured meeting prep brief
-- add_datetime_to_context: agent knows "now" for finding the next meeting
+Why GoogleAuthConfig?
+  Two toolkits (Calendar + Gmail) need different OAuth scopes. GoogleAuthConfig
+  consolidates them into ONE consent screen instead of two separate prompts.
+
+Authentication (env vars):
+  GOOGLE_CLIENT_ID     - OAuth client ID from Google Cloud Console
+  GOOGLE_CLIENT_SECRET - OAuth client secret
 
 Setup:
-1. Enable both Calendar API and Gmail API at https://console.cloud.google.com
-2. Export GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID env vars
-3. pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
-4. First run opens browser for OAuth consent (grants both Calendar + Gmail access)
-   The same token.json works for both APIs if scopes include both.
+  1. Enable Calendar API and Gmail API at https://console.cloud.google.com
+  2. Create OAuth 2.0 credentials (Desktop app)
+  3. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars
+  4. pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+  5. First run opens browser for combined OAuth consent
+
+Run:
+  .venvs/demo/bin/python cookbook/91_tools/google/calendar_gmail_meeting_prep.py
 """
 
+from os import getenv
 from typing import List, Literal, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.tools.google.auth import GoogleAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from pydantic import BaseModel, Field
@@ -74,21 +82,29 @@ class MeetingPrepBrief(BaseModel):
     )
 
 
+# Shared auth config — single OAuth consent covers Calendar + Gmail
+auth = GoogleAuthConfig(
+    client_id=getenv("GOOGLE_CLIENT_ID"),
+    client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+)
+
 agent = Agent(
     name="Meeting Prep Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         GoogleCalendarTools(
+            auth_config=auth,
             create_event=False,
             update_event=False,
             delete_event=False,
         ),
         GmailTools(
+            auth_config=auth,
             include_tools=[
                 "search_emails",
                 "get_emails_by_context",
                 "get_thread",
-            ]
+            ],
         ),
     ],
     instructions=[

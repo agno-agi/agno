@@ -9,7 +9,6 @@ Setup:
   1. Google Cloud Console -> Enable Gmail, Calendar, and Drive APIs
   2. OAuth Client -> Authorized redirect URIs:
        https://<your-domain>/google/oauth/callback
-     (AgentOS auto-mounts this route when GoogleOAuthTools is present)
   3. Slack App -> Event Subscriptions:
        https://<your-domain>/slack/events
   4. Env vars:
@@ -17,40 +16,51 @@ Setup:
        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
        GOOGLE_REDIRECT_URI=https://<your-domain>/google/oauth/callback
        GOOGLE_OAUTH_STATE_SECRET=<random-secret>  # CSRF protection
-       AGNO_ENCRYPTION_KEY=<random-secret>        # Token encryption at rest
 
      Generate secrets with: python -c "import secrets; print(secrets.token_urlsafe(32))"
-
-     To customize the callback path:
-       GoogleOAuthConfig(callback_path="/auth/google/callback")
-       Then set GOOGLE_REDIRECT_URI to match.
 
 Run:
   .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/workspace_oauth.py
 """
 
+from os import getenv
+
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
+from agno.tools.google.auth import GoogleAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
-# Optional: db.encrypt_auth_tokens = False to skip AGNO_ENCRYPTION_KEY requirement
 db = SqliteDb(db_file="tmp/slack_workspace_oauth.db")
+
+# Shared auth config — single OAuth consent covers Gmail + Calendar + Drive
+# All parameters read from env vars if not passed explicitly
+auth = GoogleAuthConfig(
+    client_id=getenv("GOOGLE_CLIENT_ID"),
+    client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+    redirect_uri=getenv("GOOGLE_REDIRECT_URI"),
+    state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+)
 
 agent = Agent(
     name="Workspace Slack Agent",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     db=db,
     tools=[
-        GoogleOAuthTools(),
-        GmailTools(include_tools=["get_latest_emails", "search_emails", "get_message"]),
-        GoogleCalendarTools(),
-        GoogleDriveTools(include_tools=["list_files", "search_files", "read_file"]),
+        GoogleOAuthTools(auth_config=auth),
+        GmailTools(
+            auth_config=auth,
+            include_tools=["get_latest_emails", "search_emails", "get_message"],
+        ),
+        GoogleCalendarTools(auth_config=auth),
+        GoogleDriveTools(
+            auth_config=auth, include_tools=["list_files", "search_files", "read_file"]
+        ),
     ],
     instructions=(
         "You are a Google Workspace assistant in Slack with Gmail, Calendar, and Drive access. "
@@ -67,6 +77,9 @@ agent_os = AgentOS(
     interfaces=[Slack(agent=agent, reply_to_mentions_only=True)],
 )
 app = agent_os.get_app()
+
+# Mount OAuth callback router
+app.include_router(auth.get_oauth_router(db=db))
 
 
 if __name__ == "__main__":

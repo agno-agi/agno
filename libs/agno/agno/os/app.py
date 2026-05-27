@@ -280,7 +280,6 @@ class AgentOS:
             self.on_route_conflict = on_route_conflict
 
         self.interfaces = interfaces or []
-        self._oauth_callback_paths: List[str] = []  # Populated by _discover_oauth_routers()
 
         self.name = name
 
@@ -761,10 +760,6 @@ class AgentOS:
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
 
-        # Auto-mount Google OAuth routers when GoogleOAuthTools is detected
-        for router in self._discover_oauth_routers():
-            self._add_router(fastapi_app, router)
-
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
@@ -929,19 +924,16 @@ class AgentOS:
         # Interfaces use their own authentication mechanisms
         # (e.g. Slack HMAC-SHA256 signing, Telegram webhook verification).
         excluded_route_paths: Optional[List[str]] = None
-        interface_prefixes: List[str] = []
         if self.interfaces:
             interface_prefixes = [
                 f"{interface.prefix}/*"
                 for interface in self.interfaces
                 if hasattr(interface, "prefix") and interface.prefix
             ]
-        oauth_paths = self._oauth_callback_paths or []
-        if interface_prefixes or oauth_paths:
-            # Passing excluded_route_paths replaces the middleware defaults,
-            # so include the default excluded routes as well.
-            excluded_route_paths = (
-                [
+            if interface_prefixes:
+                # Passing excluded_route_paths replaces the middleware defaults,
+                # so include the default excluded routes as well.
+                excluded_route_paths = [
                     "/",
                     "/health",
                     "/info",
@@ -949,10 +941,7 @@ class AgentOS:
                     "/redoc",
                     "/openapi.json",
                     "/docs/oauth2-redirect",
-                ]
-                + interface_prefixes
-                + oauth_paths
-            )
+                ] + interface_prefixes
 
         # Add middleware to stack
         middleware_kwargs: Dict[str, Any] = {
@@ -1056,59 +1045,6 @@ class AgentOS:
             "workflows": workflow_ids,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
-
-    def _discover_oauth_routers(self) -> List[APIRouter]:
-        """Find GoogleOAuthTools in agents and return their OAuth callback routers."""
-        routers: List[APIRouter] = []
-        seen_configs: set = set()
-
-        try:
-            from agno.tools.google.auth import GoogleAuthConfig
-            from agno.tools.google.oauth_tools import GoogleOAuthTools
-        except ImportError:
-            return routers
-
-        for agent in self._agents:
-            if not agent.tools or not isinstance(agent.tools, list):
-                continue
-
-            for tool in agent.tools:
-                if not isinstance(tool, GoogleOAuthTools):
-                    continue
-
-                auth_config = getattr(tool, "auth_config", None)
-                if auth_config is None:
-                    auth_config = GoogleAuthConfig()
-                    tool.auth_config = auth_config
-
-                # Deduplicate by config object identity
-                if id(auth_config) in seen_configs:
-                    continue
-                seen_configs.add(id(auth_config))
-
-                # Resolve DB: agent.db or AgentOS.db
-                db = agent.db or self.db
-                if db is None:
-                    log_warning(
-                        "GoogleOAuthTools found but no db available for OAuth router. "
-                        "Set agent.db or AgentOS(db=...) to enable OAuth callback."
-                    )
-                    continue
-
-                try:
-                    router = auth_config.get_oauth_router(db=db)
-                    routers.append(router)
-                    callback_path = getattr(auth_config, "_callback_path", "/google/oauth/callback")
-                    self._oauth_callback_paths.append(callback_path)
-                    log_warning(
-                        f"Auto-mounted Google OAuth callback at {callback_path}. "
-                        f"Set GOOGLE_REDIRECT_URI to match (e.g., https://your-domain{callback_path}). "
-                        "To customize the path, use GoogleAuthConfig(callback_path='/your/path')."
-                    )
-                except Exception as e:
-                    log_warning(f"Failed to auto-mount OAuth router: {e}")
-
-        return routers
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""

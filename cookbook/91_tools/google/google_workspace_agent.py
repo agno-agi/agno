@@ -2,35 +2,67 @@
 Google Workspace Agent (Gmail + Calendar + Drive)
 =================================================
 
-Single agent with Gmail, Calendar, and Drive access. First run opens browser
-for OAuth consent — one token.json covers all three APIs.
+Multi-toolkit agent with Gmail, Calendar, and Drive. Uses shared GoogleAuthConfig
+so all three APIs are authorized in ONE OAuth consent flow.
+
+Why GoogleAuthConfig?
+  When using multiple Google toolkits, each needs different OAuth scopes.
+  GoogleAuthConfig consolidates them into a single consent screen.
+  Without it, you'd get separate OAuth prompts for each toolkit.
+
+Authentication (env vars):
+  GOOGLE_CLIENT_ID     - OAuth client ID from Google Cloud Console
+  GOOGLE_CLIENT_SECRET - OAuth client secret
+
+  First run opens browser for OAuth consent, saves token to token.json.
 
 Setup:
   1. Enable Gmail, Calendar, and Drive APIs at https://console.cloud.google.com
   2. Create OAuth 2.0 credentials (Desktop app)
-  3. Export GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET env vars
-     OR download credentials.json to working directory
+  3. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars
   4. pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
 Run:
   .venvs/demo/bin/python cookbook/91_tools/google/google_workspace_agent.py
 """
 
+from os import getenv
+
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
+from agno.tools.google.auth import GoogleAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
 
+# ---------------------------------------------------------------------------
+# Shared Auth Config
+# ---------------------------------------------------------------------------
+# Pass the same instance to all Google toolkits for combined OAuth consent.
+
+auth = GoogleAuthConfig(
+    client_id=getenv("GOOGLE_CLIENT_ID"),
+    client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+)
+
 agent = Agent(
     name="Workspace Agent",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[
         GmailTools(
-            include_tools=["get_latest_emails", "search_emails", "create_draft_email"]
+            auth_config=auth,
+            include_tools=["get_latest_emails", "search_emails", "create_draft_email"],
         ),
-        GoogleCalendarTools(create_event=False, update_event=False, delete_event=False),
-        GoogleDriveTools(include_tools=["list_files", "search_files", "read_file"]),
+        GoogleCalendarTools(
+            auth_config=auth,
+            create_event=False,
+            update_event=False,
+            delete_event=False,
+        ),
+        GoogleDriveTools(
+            auth_config=auth,
+            include_tools=["list_files", "search_files", "read_file"],
+        ),
     ],
     instructions=(
         "You are a Google Workspace assistant with Gmail, Calendar, and Drive access. "

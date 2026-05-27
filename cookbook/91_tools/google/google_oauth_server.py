@@ -1,14 +1,43 @@
-"""Multi-user Gmail agent with AgentOS and OAuth callback."""
+"""
+Multi-User Gmail Agent with AgentOS
+===================================
+
+Production-ready pattern: AgentOS server with OAuth callback endpoint.
+Users authenticate via Google OAuth, tokens stored in DB per user_id.
+
+Architecture:
+  1. User visits your app and triggers OAuth flow
+  2. Google redirects to /google/oauth/callback with auth code
+  3. Callback exchanges code for tokens, stores in DB keyed by user_id
+  4. Subsequent requests use stored token — no re-auth needed
+
+Authentication (env vars):
+  GOOGLE_CLIENT_ID         - OAuth client ID from Google Cloud Console
+  GOOGLE_CLIENT_SECRET     - OAuth client secret
+  GOOGLE_OAUTH_STATE_SECRET - HMAC key for signing state JWT (security)
+
+Setup:
+  1. Enable Gmail API at console.cloud.google.com
+  2. Create OAuth credentials (Web application, not Desktop)
+  3. Add redirect URI: http://localhost:8000/google/oauth/callback
+  4. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_OAUTH_STATE_SECRET
+
+Run:
+  GOOGLE_OAUTH_STATE_SECRET=your-secret python google_oauth_server.py
+"""
+
+from os import getenv
 
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.tools.google.auth import GoogleAuthConfig
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 # ---------------------------------------------------------------------------
-# Setup
+# Database for Token Storage
 # ---------------------------------------------------------------------------
 
 db = SqliteDb(
@@ -18,16 +47,28 @@ db = SqliteDb(
 )
 
 # ---------------------------------------------------------------------------
+# Shared Auth Config
+# ---------------------------------------------------------------------------
+
+auth = GoogleAuthConfig(
+    client_id=getenv("GOOGLE_CLIENT_ID"),
+    client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+    state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+)
+
+# ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
 gmail_agent = Agent(
     name="Gmail Agent",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     db=db,
     tools=[
-        GoogleOAuthTools(),
-        GmailTools(include_tools=["get_latest_emails", "search_emails"]),
+        GoogleOAuthTools(auth_config=auth),
+        GmailTools(
+            auth_config=auth, include_tools=["get_latest_emails", "search_emails"]
+        ),
     ],
     instructions="You are a Gmail assistant. Help users manage their email.",
     add_datetime_to_context=True,
@@ -45,6 +86,9 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+# Mount OAuth callback router
+app.include_router(auth.get_oauth_router(db=db))
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -58,8 +102,6 @@ if __name__ == "__main__":
       2. Create OAuth credentials (Web application)
       3. Add redirect URI: http://localhost:8000/google/oauth/callback
       4. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_OAUTH_STATE_SECRET
-
-    AgentOS auto-mounts /google/oauth/callback from GoogleOAuthTools.
     """
     import uvicorn
 
