@@ -118,8 +118,21 @@ def test_get_function_call_argument(sample_functions):
         "param1": None,
         "param2": True,
         "param3": False,
-        "param4": "test",
+        "param4": "  test  ",
     }
+
+
+def test_get_function_call_preserves_string_argument_whitespace(sample_functions):
+    arguments = json.dumps({"code": "\n  return value\n", "space": " "})
+
+    result = get_function_call(
+        name="test_function_2",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+
+    assert result is not None
+    assert result.arguments == {"code": "\n  return value\n", "space": " "}
 
 
 def test_get_function_call_argument_advanced(sample_functions):

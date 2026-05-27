@@ -59,7 +59,7 @@ def get_function_call(
                     elif _v == "false":
                         clean_arguments[k] = False
                     else:
-                        clean_arguments[k] = v.strip()
+                        clean_arguments[k] = v
                 else:
                     clean_arguments[k] = v
 
