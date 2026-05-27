@@ -5,3 +5,9 @@ V2 has: Different storage structure
 
 This module provides V1-compatible paths.
 """
+
+from agno.storage.base import Storage
+from agno.storage.postgres import PostgresStorage
+from agno.storage import session
+
+__all__ = ["Storage", "PostgresStorage", "session"]
