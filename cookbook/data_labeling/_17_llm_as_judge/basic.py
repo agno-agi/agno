@@ -7,10 +7,7 @@ eval primitive - and identical machinery to single-label text
 classification, just applied to (prompt, response) pairs.
 """
 
-from typing import Literal
-
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -19,8 +16,11 @@ from rich.pretty import pprint  # noqa
 # Schema
 # ---------------------------------------------------------------------------
 class Score(BaseModel):
-    overall: Literal[1, 2, 3, 4, 5] = Field(
-        ..., description="Overall quality on a 1-5 scale where 5 is excellent"
+    overall: int = Field(
+        ...,
+        ge=1,
+        le=5,
+        description="Overall quality on a 1-5 scale where 5 is excellent",
     )
 
 
@@ -43,7 +43,7 @@ Use the full scale. Reserve 5 for genuinely excellent responses.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=Score,
 )

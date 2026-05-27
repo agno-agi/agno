@@ -11,7 +11,6 @@ from typing import List, Optional
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Image
-from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -46,7 +45,7 @@ include what is legible and leave the rest null.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=SignReading,
 )
@@ -56,9 +55,8 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # The "Welcome to Fabulous Las Vegas" sign, public domain.
-    url = "https://upload.wikimedia.org/wikipedia/commons/1/10/Welcome_to_Fabulous_Las_Vegas_sign.jpg"
+    url = "https://agno-public.s3.us-east-1.amazonaws.com/images/agno-intro.png"
     run: RunOutput = agent.run(
-        "Extract the text fields from this sign.", images=[Image(url=url)]
+        "Extract the text fields from this image.", images=[Image(url=url)]
     )
     pprint({"url": url, "result": run.content})

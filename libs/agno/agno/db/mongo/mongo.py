@@ -945,8 +945,11 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: The topics.
@@ -959,7 +962,8 @@ class MongoDb(BaseDb):
             if collection is None:
                 return []
 
-            topics = collection.distinct("topics", {})
+            match_filter: Dict[str, Any] = {} if user_id is None else {"user_id": user_id}
+            topics = collection.distinct("topics", match_filter)
             return [topic for topic in topics if topic]
 
         except Exception as e:

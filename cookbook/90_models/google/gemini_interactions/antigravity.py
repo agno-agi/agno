@@ -35,6 +35,4 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent.print_response(
-        "What is the capital of France?"
-    )
+    agent.print_response("What is the capital of France?")
