@@ -8,6 +8,7 @@ from agno.models.anthropic import Claude
 from agno.models.cloudflare import Cloudflare
 from agno.models.google import Gemini
 from agno.models.groq import Groq
+from agno.models.minimax import MiniMax
 from agno.models.n1n import N1N
 from agno.models.openai import OpenAIChat, OpenAIResponses
 from agno.models.utils import get_model
@@ -60,6 +61,13 @@ def test_get_model_parses_cloudflare_workers_ai_catalog_binding():
     model = get_model("cloudflare:@cf/google/gemma-4-26b-a4b-it")
     assert isinstance(model, Cloudflare)
     assert model.id == "workers-ai/@cf/google/gemma-4-26b-a4b-it"
+
+
+def test_get_model_parses_minimax_string():
+    """Test get_model() parses MiniMax model string."""
+    model = get_model("minimax:MiniMax-M2.7")
+    assert isinstance(model, MiniMax)
+    assert model.id == "MiniMax-M2.7"
 
 
 def test_get_model_parses_n1n_string():
