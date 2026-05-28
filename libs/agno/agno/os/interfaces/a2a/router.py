@@ -734,7 +734,7 @@ def attach_routes(
 
         try:
             if isinstance(entity, Workflow):
-                response = entity.arun(
+                response = await entity.arun(
                     input=run_input.input_content,
                     images=list(run_input.images) if run_input.images else None,
                     videos=list(run_input.videos) if run_input.videos else None,
@@ -745,7 +745,7 @@ def attach_routes(
                     **kwargs,
                 )
             else:
-                response = entity.arun(
+                response = await entity.arun(
                     input=run_input.input_content,
                     images=run_input.images,  # type: ignore
                     videos=run_input.videos,  # type: ignore
