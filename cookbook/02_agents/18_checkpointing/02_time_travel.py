@@ -1,19 +1,23 @@
 """Time-travel via /continue with from_checkpoint.
 
-The ``from_checkpoint`` parameter on ``/continue`` truncates a run's messages
-to a given index, prunes tool executions that no longer have references, then
-resumes. The run keeps the same ``run_id`` — this is a rewind in place, not a
-fork. (For a non-destructive rewind, see ``03_forking.py``.)
+Truncate a run's messages to an index K and resume. The run keeps the same
+``run_id`` — this is a **destructive rewind in place**. The history past K
+is overwritten when the run finishes.
 
-Typical use:
-- An eval/research agent went down a wrong path. Rewind to before the wrong
-  turn, supply different guidance via ``input=``, and try again.
-- A bug in a tool poisoned the message history. Rewind past it.
-- Reproduce a specific intermediate state for debugging.
+Three ways to express the same intent:
+- ``from_checkpoint=K``                       → low-level, you pick the index
+- ``from_checkpoint=K, fork=True``            → non-destructive variant
+  (see 03_forking.py)
+- ``regenerate=True``                         → friendly sugar that auto-picks
+  the index just after the last user message
+  (see 04_regenerate.py)
 
-The message index counts ALL messages in the run, including system/user/tool
-messages — not just the assistant turns. Inspect ``response.messages`` to pick
-the right K.
+Use raw ``from_checkpoint`` only when you need to rewind to a *specific*
+intermediate index (e.g. you want to drop the last 3 tool calls, not just the
+final assistant reply). For "redo the last response," use ``regenerate=True``
+— it's the same mechanic but you don't have to count messages.
+
+To inspect the message indices for a run, print ``response.messages``.
 """
 
 import asyncio
@@ -41,7 +45,6 @@ async def main() -> None:
         tools=[get_population],
     )
 
-    # First run — agent answers a question about Paris.
     first = await agent.arun(input="What is the population of Paris?")
     print("First run completed")
     print("  run_id:", first.run_id)
@@ -49,9 +52,10 @@ async def main() -> None:
     print("  content:", first.content)
     print()
 
-    # Rewind to message index 1 (just the original user question, before the
-    # assistant's tool call and answer). Then ask a different question via
-    # input="...". The run continues with a fresh path from index 1.
+    # Rewind to message index 1 (just the original user question) and ask
+    # something different. Note: this is destructive — the original Paris
+    # answer is overwritten in place. For a non-destructive variant pass
+    # fork=True (or just use regenerate=True with additional_instructions).
     rewound = await agent.acontinue_run(
         run_id=first.run_id,
         session_id=first.session_id,
@@ -62,6 +66,11 @@ async def main() -> None:
     print("  run_id:", rewound.run_id, "(same as before — rewind, not fork)")
     print("  message count:", len(rewound.messages or []))
     print("  content:", rewound.content)
+    print()
+
+    # Verify: the session has only ONE run. The Paris path is gone.
+    session = agent.db.get_session(session_id=first.session_id, session_type="agent")
+    print(f"Runs in session: {len(session.runs or [])} (Paris answer was overwritten)")
 
 
 if __name__ == "__main__":

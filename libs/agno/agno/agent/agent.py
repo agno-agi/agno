@@ -818,6 +818,51 @@ class Agent:
         return await _run.acancel_run(run_id)
 
     # ---------------------------------------------------------------
+    # Session branching — copy a session into a new independent session
+    # ---------------------------------------------------------------
+
+    def branch_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Branch a session into a new independent session.
+
+        Deep-copies every run from ``source_session_id`` into a new session with
+        a fresh ``session_id`` and fresh ``run_id``s. The original session is
+        untouched. Useful for exploring alternative conversation paths without
+        polluting the source.
+
+        Args:
+            source_session_id: The session to branch. Defaults to the agent's
+                current ``session_id``.
+            user_id: Caller user_id. Must own the source session. The new
+                session inherits this user_id.
+
+        Returns:
+            The new ``session_id``.
+        """
+        return _run.branch_session_dispatch(
+            self,
+            source_session_id=source_session_id,
+            user_id=user_id,
+        )
+
+    async def abranch_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Async variant of :meth:`branch_session`."""
+        return await _run.abranch_session_dispatch(
+            self,
+            source_session_id=source_session_id,
+            user_id=user_id,
+        )
+
+    # ---------------------------------------------------------------
     # _messages module delegates
     # ---------------------------------------------------------------
 
@@ -1552,6 +1597,9 @@ class Agent:
         input: Optional[str] = None,
         from_checkpoint: Optional[int] = None,
         fork: bool = False,
+        regenerate: bool = False,
+        preserve_original: bool = False,
+        additional_instructions: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         user_id: Optional[str] = None,
@@ -1573,6 +1621,9 @@ class Agent:
             input=input,
             from_checkpoint=from_checkpoint,
             fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,
@@ -1634,6 +1685,9 @@ class Agent:
         input: Optional[str] = None,
         from_checkpoint: Optional[int] = None,
         fork: bool = False,
+        regenerate: bool = False,
+        preserve_original: bool = False,
+        additional_instructions: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1656,6 +1710,9 @@ class Agent:
             input=input,
             from_checkpoint=from_checkpoint,
             fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,

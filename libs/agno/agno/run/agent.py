@@ -672,6 +672,14 @@ class RunOutput:
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
 
+    # Branching lineage: the source session_id this run was originally created in
+    # (set when a session is branched; preserved across nested branches).
+    branched_from: Optional[str] = None
+
+    # Regeneration lineage: the run_id of the immediate predecessor this run was
+    # regenerated from. Walk the chain via repeated lookups if you need full history.
+    regenerated_from: Optional[str] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity

@@ -2891,15 +2891,22 @@ def _fork_run(run_response: RunOutput, from_checkpoint: int) -> RunOutput:
     - ``forked_from_message_index`` set to ``from_checkpoint``
     - messages / tools / requirements truncated per
       :func:`_truncate_run_to_checkpoint`
+    - a fresh ``RunMetrics`` and ``created_at`` (the fork is a new run; it
+      should not inherit the parent's timings, token counts, or birthtime).
 
     Same ``session_id`` — forks are sibling runs within the same session.
     """
     import copy
+    from time import time as _time
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = from_checkpoint
+    # Reset lineage-irrelevant accumulators so the fork reports its own work,
+    # not the parent's. Without this, token counts and durations double-count.
+    forked.metrics = RunMetrics()
+    forked.created_at = int(_time())
     _truncate_run_to_checkpoint(forked, from_checkpoint)
     return forked
 
@@ -2924,13 +2931,83 @@ def _apply_continue_modifiers(
     return run_response
 
 
+def _find_regenerate_checkpoint(run_response: RunOutput) -> int:
+    """Compute the message index at which to truncate when regenerating.
+
+    Regenerate semantics: keep everything through the last user message, drop
+    the final assistant response (and any trailing tool/assistant messages
+    after the last user message). The returned index is the message count to
+    keep — i.e. length-after-truncation.
+
+    Walks backwards: skips trailing assistant messages (with or without
+    tool_calls) and tool-role messages until it finds a user message. Returns
+    that index + 1. Raises ``ValueError`` if no user message exists.
+    """
+    messages = run_response.messages or []
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].role == "user":
+            return i + 1
+    raise ValueError("Cannot regenerate: run has no user messages to regenerate from.")
+
+
+def _normalize_regenerate_params(
+    run_response: Optional[RunOutput],
+    *,
+    regenerate: bool,
+    preserve_original: bool,
+    additional_instructions: Optional[str],
+    fork: bool,
+    from_checkpoint: Optional[int],
+    input: Optional[str],
+) -> tuple[bool, Optional[int], Optional[str]]:
+    """Normalize regenerate-sugar params to canonical (fork, from_checkpoint, input).
+
+    Sugar semantics:
+    - ``regenerate=True`` → ``from_checkpoint`` is auto-computed to drop the
+      final assistant response (and resume from just after the last user
+      message). Pair with ``additional_instructions`` to steer the new output.
+    - ``preserve_original=True`` → ``fork=True`` (keeps the original run as a
+      sibling instead of overwriting). Only meaningful with ``regenerate=True``.
+    - ``additional_instructions`` → ``input``. Reserved name for the regenerate
+      flow.
+
+    Conflicts (raise ``ValueError``):
+    - ``regenerate=True`` with ``from_checkpoint`` or ``fork`` explicitly set
+      (the sugar derives them).
+    - ``additional_instructions`` and ``input`` both set.
+    - ``preserve_original=True`` without ``regenerate=True``.
+
+    Returns: (resolved_fork, resolved_from_checkpoint, resolved_input).
+    """
+    if additional_instructions is not None and input is not None:
+        raise ValueError("Provide either `additional_instructions` or `input`, not both.")
+    if preserve_original and not regenerate:
+        raise ValueError("`preserve_original=True` only makes sense with `regenerate=True`.")
+
+    if not regenerate:
+        return fork, from_checkpoint, input
+
+    if from_checkpoint is not None:
+        raise ValueError("`regenerate=True` derives `from_checkpoint` automatically; do not pass it explicitly.")
+    if fork:
+        raise ValueError(
+            "`regenerate=True` derives the destructive/preserving choice from "
+            "`preserve_original`; do not pass `fork=True` directly."
+        )
+    if run_response is None:
+        raise ValueError("`regenerate=True` requires a loaded run_response to compute the checkpoint.")
+
+    resolved_input = additional_instructions if additional_instructions is not None else input
+    return (preserve_original, _find_regenerate_checkpoint(run_response), resolved_input)
+
+
 def _maybe_append_input_message(run_response: RunOutput, new_input: Optional[str], agent: Agent) -> None:
     """If ``new_input`` is a non-empty string, append it as a new user-role message
     to ``run_response.messages``.
 
     Used by the unified /continue dispatch (ADR-003) when the caller wants to
     extend a persisted run with an additional turn — e.g. continuing a COMPLETED
-    run with a follow-up question, or providing context after an INTERRUPTED
+    run with a follow-up question, or providing context after a mid-flight
     resume. Mutates ``run_response.messages`` in place; the appended message
     flows through ``get_continue_run_messages`` into the model loop.
     """
@@ -2965,6 +3042,9 @@ def continue_run_dispatch(
     input: Optional[str] = None,
     from_checkpoint: Optional[int] = None,
     fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = False,
     user_id: Optional[str] = None,
@@ -2985,7 +3065,7 @@ def continue_run_dispatch(
         requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
         input: Optional new user-message text to append before resuming. Use for
             continuing a COMPLETED run with a follow-up, or adding context to an
-            INTERRUPTED/ERROR resume.
+            RUNNING/ERROR resume.
         from_checkpoint: Optional message index to truncate to before resuming.
             Time-travel — drops messages and tools past index K from the run.
         fork: When True, clone the run with a new ``run_id`` before truncating /
@@ -3076,7 +3156,28 @@ def continue_run_dispatch(
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
         # The run is continued from a provided run_response. This contains the updated tools.
+        # Normalize regenerate-sugar → canonical (fork, from_checkpoint, input) now that
+        # run_response is loaded (regenerate=True needs it to compute the checkpoint).
+        fork, from_checkpoint, input = _normalize_regenerate_params(
+            run_response,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
+            fork=fork,
+            from_checkpoint=from_checkpoint,
+            input=input,
+        )
+        # If regenerated_from lineage applies, record it before truncating.
+        original_run_id_for_lineage = run_response.run_id if regenerate else None
         run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
+        if regenerate and original_run_id_for_lineage:
+            run_response.regenerated_from = original_run_id_for_lineage
+            if preserve_original and run_response.forked_from_run_id:
+                # Mark the original run as REGENERATED so history builders skip it.
+                for r in agent_session.runs or []:
+                    if r.run_id == original_run_id_for_lineage:
+                        r.status = RunStatus.regenerated
+                        break
         input_messages = run_response.messages or []
     elif run_id is not None:
         # The run is continued from a run_id.
@@ -3085,6 +3186,18 @@ def continue_run_dispatch(
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
 
+        # Normalize regenerate-sugar → canonical (fork, from_checkpoint, input).
+        fork, from_checkpoint, input = _normalize_regenerate_params(
+            run_response,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
+            fork=fork,
+            from_checkpoint=from_checkpoint,
+            input=input,
+        )
+        original_run_id_for_lineage = run_response.run_id if regenerate else None
+
         # Apply fork/truncate before validation so the rest of the dispatch operates
         # on the modified state (time-travel + forking land before HITL checks).
         # NOTE: for fork=True, ``run_response.run_id`` becomes a new UUID. The local
@@ -3092,6 +3205,13 @@ def continue_run_dispatch(
         # lookups (the fork inherits the original's resolved approval, if any).
         # ``run_response.run_id`` is what gets persisted as the new sibling run.
         run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
+        if regenerate and original_run_id_for_lineage:
+            run_response.regenerated_from = original_run_id_for_lineage
+            if preserve_original and run_response.forked_from_run_id:
+                for r in agent_session.runs or []:
+                    if r.run_id == original_run_id_for_lineage:
+                        r.status = RunStatus.regenerated
+                        break
 
         input_messages = run_response.messages or []
 
@@ -3120,7 +3240,7 @@ def continue_run_dispatch(
             # 1. The run has unresolved HITL requirements → try admin-approval
             #    resolution; if none, the caller must provide tools/requirements.
             # 2. The run has no unresolved requirements → just resume from current
-            #    state (INTERRUPTED resume, ERROR retry, time-travel, etc.). This
+            #    state (mid-flight resume, ERROR retry, time-travel, etc.). This
             #    is the unified /continue path (ADR-003, ADR-004).
             has_unresolved_requirements = any(not req.is_resolved() for req in (run_response.requirements or []))
             if has_unresolved_requirements:
@@ -3734,6 +3854,9 @@ def acontinue_run_dispatch(  # type: ignore
     input: Optional[str] = None,
     from_checkpoint: Optional[int] = None,
     fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     user_id: Optional[str] = None,
@@ -3756,7 +3879,7 @@ def acontinue_run_dispatch(  # type: ignore
         requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
         input: Optional new user-message text to append before resuming. Use for
             continuing a COMPLETED run with a follow-up, or adding context to an
-            INTERRUPTED/ERROR resume.
+            RUNNING/ERROR resume.
         from_checkpoint: Optional message index to truncate to before resuming.
             Time-travel — drops messages and tools past index K from the run.
         fork: When True, clone the run with a new ``run_id`` before truncating /
@@ -3867,6 +3990,9 @@ def acontinue_run_dispatch(  # type: ignore
                 input=input,
                 from_checkpoint=from_checkpoint,
                 fork=fork,
+                regenerate=regenerate,
+                preserve_original=preserve_original,
+                additional_instructions=additional_instructions,
                 run_id=run_id,
                 user_id=user_id,
                 session_id=session_id,
@@ -3888,6 +4014,9 @@ def acontinue_run_dispatch(  # type: ignore
             input=input,
             from_checkpoint=from_checkpoint,
             fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             run_id=run_id,
             user_id=user_id,
             session_id=session_id,
@@ -3909,6 +4038,9 @@ def acontinue_run_dispatch(  # type: ignore
             input=input,
             from_checkpoint=from_checkpoint,
             fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             run_id=run_id,
             user_id=user_id,
             response_format=response_format,
@@ -3928,6 +4060,9 @@ async def _acontinue_run_background_stream(
     input: Optional[str] = None,
     from_checkpoint: Optional[int] = None,
     fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3985,6 +4120,9 @@ async def _acontinue_run_background_stream(
                 input=input,
                 from_checkpoint=from_checkpoint,
                 fork=fork,
+                regenerate=regenerate,
+                preserve_original=preserve_original,
+                additional_instructions=additional_instructions,
                 run_id=run_id,
                 user_id=user_id,
                 session_id=session_id,
@@ -4075,6 +4213,9 @@ async def _acontinue_run(
     input: Optional[str] = None,
     from_checkpoint: Optional[int] = None,
     fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -4151,7 +4292,24 @@ async def _acontinue_run(
                 # 4. Prepare run response
                 if run_response is not None:
                     # The run is continued from a provided run_response. This contains the updated tools.
+                    fork, from_checkpoint, input = _normalize_regenerate_params(
+                        run_response,
+                        regenerate=regenerate,
+                        preserve_original=preserve_original,
+                        additional_instructions=additional_instructions,
+                        fork=fork,
+                        from_checkpoint=from_checkpoint,
+                        input=input,
+                    )
+                    original_run_id_for_lineage = run_response.run_id if regenerate else None
                     run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
+                    if regenerate and original_run_id_for_lineage:
+                        run_response.regenerated_from = original_run_id_for_lineage
+                        if preserve_original and run_response.forked_from_run_id:
+                            for r in agent_session.runs or []:
+                                if r.run_id == original_run_id_for_lineage:
+                                    r.status = RunStatus.regenerated
+                                    break
                     input_messages = run_response.messages or []
                 elif run_id is not None:
                     # The run is continued from a run_id.
@@ -4160,11 +4318,29 @@ async def _acontinue_run(
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
 
+                    fork, from_checkpoint, input = _normalize_regenerate_params(
+                        run_response,
+                        regenerate=regenerate,
+                        preserve_original=preserve_original,
+                        additional_instructions=additional_instructions,
+                        fork=fork,
+                        from_checkpoint=from_checkpoint,
+                        input=input,
+                    )
+                    original_run_id_for_lineage = run_response.run_id if regenerate else None
+
                     # Apply fork/truncate before validation so the rest of the dispatch operates
                     # on the modified state. The local ``run_id`` continues to refer to the
                     # original run (used for HITL approval lookups); ``run_response.run_id``
                     # is the new UUID when fork=True.
                     run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
+                    if regenerate and original_run_id_for_lineage:
+                        run_response.regenerated_from = original_run_id_for_lineage
+                        if preserve_original and run_response.forked_from_run_id:
+                            for r in agent_session.runs or []:
+                                if r.run_id == original_run_id_for_lineage:
+                                    r.status = RunStatus.regenerated
+                                    break
 
                     input_messages = run_response.messages or []
 
@@ -4190,7 +4366,7 @@ async def _acontinue_run(
                         # 1. The run has unresolved HITL requirements → try admin-approval
                         #    resolution; if none, the caller must provide tools/requirements.
                         # 2. The run has no unresolved requirements → just resume from current
-                        #    state (INTERRUPTED resume, ERROR retry, time-travel, etc.). This
+                        #    state (mid-flight resume, ERROR retry, time-travel, etc.). This
                         #    is the unified /continue path (ADR-003, ADR-004).
                         has_unresolved_requirements = any(
                             not req.is_resolved() for req in (run_response.requirements or [])
@@ -4481,6 +4657,9 @@ async def _acontinue_run_stream(
     input: Optional[str] = None,
     from_checkpoint: Optional[int] = None,
     fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -4553,6 +4732,24 @@ async def _acontinue_run_stream(
                 # 4. Prepare run response
                 if run_response is not None:
                     # The run is continued from a provided run_response. This contains the updated tools.
+                    fork, from_checkpoint, input = _normalize_regenerate_params(
+                        run_response,
+                        regenerate=regenerate,
+                        preserve_original=preserve_original,
+                        additional_instructions=additional_instructions,
+                        fork=fork,
+                        from_checkpoint=from_checkpoint,
+                        input=input,
+                    )
+                    original_run_id_for_lineage = run_response.run_id if regenerate else None
+                    run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
+                    if regenerate and original_run_id_for_lineage:
+                        run_response.regenerated_from = original_run_id_for_lineage
+                        if preserve_original and run_response.forked_from_run_id:
+                            for r in agent_session.runs or []:
+                                if r.run_id == original_run_id_for_lineage:
+                                    r.status = RunStatus.regenerated
+                                    break
                     input_messages = run_response.messages or []
 
                 elif run_id is not None:
@@ -4561,6 +4758,30 @@ async def _acontinue_run_stream(
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
+
+                    fork, from_checkpoint, input = _normalize_regenerate_params(
+                        run_response,
+                        regenerate=regenerate,
+                        preserve_original=preserve_original,
+                        additional_instructions=additional_instructions,
+                        fork=fork,
+                        from_checkpoint=from_checkpoint,
+                        input=input,
+                    )
+                    original_run_id_for_lineage = run_response.run_id if regenerate else None
+
+                    # Apply fork/truncate before validation so the rest of the dispatch operates
+                    # on the modified state. The local ``run_id`` continues to refer to the
+                    # original run (used for HITL approval lookups); ``run_response.run_id``
+                    # is the new UUID when fork=True.
+                    run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
+                    if regenerate and original_run_id_for_lineage:
+                        run_response.regenerated_from = original_run_id_for_lineage
+                        if preserve_original and run_response.forked_from_run_id:
+                            for r in agent_session.runs or []:
+                                if r.run_id == original_run_id_for_lineage:
+                                    r.status = RunStatus.regenerated
+                                    break
 
                     input_messages = run_response.messages or []
 
@@ -4586,8 +4807,8 @@ async def _acontinue_run_stream(
                         # 1. The run has unresolved HITL requirements → try admin-approval
                         #    resolution; if none, the caller must provide tools/requirements.
                         # 2. The run has no unresolved requirements → just resume from current
-                        #    state (INTERRUPTED resume, ERROR retry, time-travel, etc.). This
-                        #    is the unified /continue path (ADR-003, ADR-004).
+                        #    state (ERROR retry, time-travel, etc.). This is the unified
+                        #    /continue path (ADR-003, ADR-004).
                         has_unresolved_requirements = any(
                             not req.is_resolved() for req in (run_response.requirements or [])
                         )
@@ -5284,6 +5505,136 @@ def abuild_after_tool_results_callback(
         await acheckpoint_run(agent, run_response, session, run_context)
 
     return _callback
+
+
+# ---------------------------------------------------------------------------
+# Session branching
+# ---------------------------------------------------------------------------
+
+
+def _build_branched_session(source_session: AgentSession, new_user_id: Optional[str]) -> AgentSession:
+    """Deep-copy ``source_session`` into a brand-new ``AgentSession`` with fresh
+    ``session_id`` and ``run_id``s, recording lineage on both the session and
+    each copied run.
+
+    Lineage shape:
+    - ``session.session_data["branched_from"]`` is the **immediate** parent
+      session_id, overwritten on each re-branch.
+    - ``run.branched_from`` records each run's **original** session_id, set
+      only-if-empty so nested branches keep pointing at the root.
+
+    For root → mid → leaf: ``leaf.session.branched_from == mid``,
+    ``leaf.runs[*].branched_from == root``.
+    """
+    import copy
+    import time as _time
+
+    now = int(_time.time())
+    new_session_id = str(uuid4())
+    branched_runs = copy.deepcopy(source_session.runs or [])
+
+    for run in branched_runs:
+        run.run_id = str(uuid4())
+        run.session_id = new_session_id
+        if not run.branched_from:
+            run.branched_from = source_session.session_id
+
+    new_session_data = copy.deepcopy(source_session.session_data) or {}
+    new_session_data["branched_from"] = source_session.session_id
+
+    return AgentSession(
+        session_id=new_session_id,
+        agent_id=source_session.agent_id,
+        user_id=new_user_id or source_session.user_id,
+        team_id=source_session.team_id,
+        workflow_id=source_session.workflow_id,
+        session_data=new_session_data,
+        metadata=copy.deepcopy(source_session.metadata),
+        agent_data=copy.deepcopy(source_session.agent_data),
+        runs=branched_runs,
+        summary=copy.deepcopy(source_session.summary),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def branch_session_dispatch(
+    agent: Agent,
+    *,
+    source_session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Branch a session into a new independent session.
+
+    Deep-copies every run from the source session into a new session with a
+    fresh ``session_id`` and fresh ``run_id``s, so the new session can diverge
+    without affecting the original. The source is read scoped to the caller's
+    ``user_id`` to prevent cross-user access.
+
+    Args:
+        source_session_id: The session to branch. Defaults to ``agent.session_id``.
+        user_id: Caller user_id. Must own the source session. The new session
+            inherits this user_id.
+
+    Returns:
+        The new ``session_id``.
+    """
+    from agno.agent._init import has_async_db
+    from agno.agent._session import save_session
+    from agno.agent._storage import read_or_create_session
+
+    if has_async_db(agent):
+        raise RuntimeError(
+            "`branch_session` is not supported with an async database. Please use `abranch_session` instead."
+        )
+
+    source_session_id = source_session_id or agent.session_id
+    if source_session_id is None:
+        raise ValueError("source_session_id is required to branch a session.")
+
+    agent.initialize_agent()
+    source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+    if not source_session.runs:
+        raise ValueError("Source session has no runs to branch.")
+
+    new_session = _build_branched_session(source_session, new_user_id=user_id)
+    save_session(agent, session=new_session)
+    return new_session.session_id
+
+
+async def abranch_session_dispatch(
+    agent: Agent,
+    *,
+    source_session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Async variant of :func:`branch_session_dispatch`."""
+    from agno.agent._init import has_async_db
+    from agno.agent._session import asave_session, save_session
+    from agno.agent._storage import aread_or_create_session, read_or_create_session
+
+    source_session_id = source_session_id or agent.session_id
+    if source_session_id is None:
+        raise ValueError("source_session_id is required to branch a session.")
+
+    agent.initialize_agent()
+
+    if has_async_db(agent):
+        source_session = await aread_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+    else:
+        source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
+
+    if not source_session.runs:
+        raise ValueError("Source session has no runs to branch.")
+
+    new_session = _build_branched_session(source_session, new_user_id=user_id)
+
+    if has_async_db(agent):
+        await asave_session(agent, session=new_session)
+    else:
+        save_session(agent, session=new_session)
+
+    return new_session.session_id
 
 
 # ---------------------------------------------------------------------------

@@ -211,6 +211,9 @@ async def agent_continue_response_streamer(
     input: Optional[str] = None,
     from_checkpoint: Optional[int] = None,
     fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -233,6 +236,9 @@ async def agent_continue_response_streamer(
             input=input,
             from_checkpoint=from_checkpoint,
             fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -272,6 +278,9 @@ async def agent_resumable_continue_response_streamer(
     input: Optional[str] = None,
     from_checkpoint: Optional[int] = None,
     fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -304,6 +313,9 @@ async def agent_resumable_continue_response_streamer(
             input=input,
             from_checkpoint=from_checkpoint,
             fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -882,7 +894,7 @@ def get_agent_router(
             "**Variants:**\n"
             "- PAUSED + tools provided → apply HITL tool results, resume\n"
             "- PAUSED + resolved admin approval (empty tools) → apply resolution, resume\n"
-            "- INTERRUPTED / ERROR / RUNNING (no unresolved HITL requirements) → resume from "
+            "- RUNNING / ERROR (no unresolved HITL requirements) → resume from "
             "last persisted state\n"
             "- COMPLETED + new tools → continue with appended messages\n\n"
             "**Tools Parameter:**\n"
@@ -920,7 +932,7 @@ def get_agent_router(
             description=(
                 "Optional new user-message text to append to the run before resuming. "
                 "Use for continuing a COMPLETED run with a follow-up, or adding context "
-                "to an INTERRUPTED/ERROR resume."
+                "to a RUNNING/ERROR resume."
             ),
         ),
         from_checkpoint: Optional[int] = Form(
@@ -937,6 +949,31 @@ def get_agent_router(
                 "When true, clone the run with a new ``run_id`` before resuming. The "
                 "original is untouched; the clone becomes a sibling within the same "
                 "session, with ``forked_from_run_id`` set."
+            ),
+        ),
+        regenerate: bool = Form(
+            False,
+            description=(
+                "Sugar: regenerate the last response of this run. Auto-computes "
+                "``from_checkpoint`` to land just after the last user message. Pair with "
+                "``additional_instructions`` to steer the new output. Pair with "
+                "``preserve_original=true`` to keep the old response as a sibling instead "
+                "of overwriting it."
+            ),
+        ),
+        preserve_original: bool = Form(
+            False,
+            description=(
+                "Only valid with ``regenerate=true``: keep the original run alongside the "
+                "regenerated one (status=REGENERATED). Equivalent to ``fork=true`` under "
+                "the hood."
+            ),
+        ),
+        additional_instructions: Optional[str] = Form(
+            None,
+            description=(
+                "Only valid with ``regenerate=true``: extra guidance appended as a user "
+                "message before re-generation. Friendly alias for ``input``."
             ),
         ),
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
@@ -1058,6 +1095,9 @@ def get_agent_router(
                     input=input,
                     from_checkpoint=from_checkpoint,
                     fork=fork,
+                    regenerate=regenerate,
+                    preserve_original=preserve_original,
+                    additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1075,6 +1115,9 @@ def get_agent_router(
                     input=input,
                     from_checkpoint=from_checkpoint,
                     fork=fork,
+                    regenerate=regenerate,
+                    preserve_original=preserve_original,
+                    additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1098,6 +1141,9 @@ def get_agent_router(
                         input=input,
                         from_checkpoint=from_checkpoint,
                         fork=fork,
+                        regenerate=regenerate,
+                        preserve_original=preserve_original,
+                        additional_instructions=additional_instructions,
                         session_id=session_id,
                         user_id=user_id,
                         stream=False,
@@ -1110,6 +1156,60 @@ def get_agent_router(
 
             except InputCheckError as e:
                 raise HTTPException(status_code=400, detail=str(e))
+
+    @router.post(
+        "/agents/{agent_id}/sessions/{session_id}/branch",
+        tags=["Agents"],
+        operation_id="branch_agent_session",
+        summary="Branch Agent Session",
+        description=(
+            "Deep-copy a session into a new independent session. Every run is copied with a "
+            "fresh ``run_id``; the new session has a fresh ``session_id``. The original is "
+            "untouched. Use to explore alternative conversation paths without mutating the "
+            "source.\n\n"
+            "Distinct from ``/continue?fork=true``: that creates a sibling **run** inside the "
+            "**same** session. This creates a sibling **session**."
+        ),
+        responses={
+            200: {"description": "Session branched successfully"},
+            400: {"description": "Source session is empty or missing", "model": BadRequestResponse},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def branch_agent_session(
+        agent_id: str,
+        session_id: str,
+        request: Request,
+        user_id: Optional[str] = None,
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Scope source-session read to the caller's user_id to prevent
+        # cross-user branching.
+        scoped_user_id = get_scoped_user_id(request)
+        effective_user_id = scoped_user_id or user_id
+
+        try:
+            new_session_id = await agent.abranch_session(  # type: ignore[union-attr]
+                source_session_id=session_id,
+                user_id=effective_user_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {"session_id": new_session_id, "branched_from": session_id}
 
     @router.get(
         "/agents",

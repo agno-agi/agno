@@ -65,8 +65,8 @@ async def main() -> None:
     print()
 
     # Demonstrate the unified /continue API. For a COMPLETED run with no new
-    # input, this is effectively a no-op resume — but it would advance an
-    # INTERRUPTED, ERROR, or RUNNING run from its checkpoint just the same.
+    # input, this is effectively a no-op resume — but it would advance a
+    # RUNNING (mid-flight) or ERROR run from its checkpoint just the same.
     resumed = await agent.acontinue_run(
         run_id=response.run_id,
         session_id=response.session_id,

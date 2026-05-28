@@ -4,7 +4,7 @@ Scope covers the ADR-003 / ADR-004 reframing of ``continue_run_dispatch``:
 - Drop the PAUSED-only 409 gate. Any persisted run can be advanced via /continue
   given a sensible body.
 - A run with NO unresolved HITL requirements + empty body resumes from its
-  current persisted state (INTERRUPTED resume, ERROR retry, time-travel).
+  current persisted state (mid-flight resume, ERROR retry, time-travel).
 - A run WITH unresolved requirements + empty body still requires
   ``requirements`` (or a resolved admin approval) — HITL contract unchanged.
 """
@@ -67,10 +67,10 @@ def _make_agent(monkeypatch: pytest.MonkeyPatch, runs: Optional[list[Any]] = Non
 class TestEmptyBodyResume:
     """Pre-ADR-003, /continue required tools or requirements in the body for
     any run with persisted tools. Now empty body is fine when no requirements
-    are unresolved — supports INTERRUPTED resume, ERROR retry, time-travel."""
+    are unresolved — supports mid-flight resume, ERROR retry, time-travel."""
 
     def test_resume_interrupted_run_with_empty_body(self, monkeypatch: pytest.MonkeyPatch):
-        """An INTERRUPTED run (persisted as RUNNING by checkpoint, no unresolved
+        """A mid-flight run (persisted as RUNNING by checkpoint, no unresolved
         requirements) can be /continue'd with no tools / requirements / input."""
         # A run that was mid-flight: had some tool executions, no HITL pending.
         completed_tool = ToolExecution(tool_call_id="tc-1", tool_name="searcher", tool_args={}, result="ok")
@@ -104,7 +104,7 @@ class TestEmptyBodyResume:
         )
 
         assert captured.get("reached_continue_run") is True, (
-            "_continue_run should be invoked for an INTERRUPTED-style run with empty body"
+            "_continue_run should be invoked for an mid-flight run with empty body"
         )
         # The loaded run state passes through unchanged
         assert captured["run_response"].tools == [completed_tool]
@@ -171,7 +171,7 @@ class TestEmptyBodyResume:
 
     def test_resume_run_with_completed_tools_no_requirements(self, monkeypatch: pytest.MonkeyPatch):
         """A run that completed several tool batches but has no pending HITL
-        (no requirements) resumes with empty body — common INTERRUPTED case."""
+        (no requirements) resumes with empty body — common mid-flight case."""
         run_with_tools = RunOutput(
             run_id="run-tools",
             session_id="session-1",
@@ -620,7 +620,7 @@ class TestInputAppend:
         assert captured["count"] == 1
 
     def test_input_works_alongside_resume_from_interrupted(self, monkeypatch: pytest.MonkeyPatch):
-        """Common case: user has an INTERRUPTED run and wants to add new context
+        """Common case: user has a mid-flight RUNNING run and wants to add new context
         on resume. Both 'resume on empty body' and 'append input' compose."""
         interrupted_run = RunOutput(
             run_id="run-int",
@@ -1008,3 +1008,415 @@ class TestDispatchFork:
         assert original.run_id == "origin-run"
         assert len(original.messages or []) == 3
         assert original.forked_from_run_id is None
+
+
+# ---------------------------------------------------------------------------
+# Bug-fix tests: fork resets metrics, not deep-copy of parent's
+# ---------------------------------------------------------------------------
+
+
+class TestForkMetricsReset:
+    """A forked run is a NEW run — it should report its own work, not inherit the
+    parent's accumulated metrics or birthtime."""
+
+    def test_fork_resets_metrics_to_fresh(self):
+        from agno.models.metrics import RunMetrics
+
+        parent_metrics = RunMetrics()
+        parent_metrics.input_tokens = 100
+        parent_metrics.output_tokens = 50
+        parent_metrics.total_tokens = 150
+        original = RunOutput(
+            run_id="origin",
+            session_id="s",
+            metrics=parent_metrics,
+            messages=[Message(role="user", content="q")],
+        )
+
+        forked = _fork_run(original, from_checkpoint=1)
+
+        assert forked.metrics is not original.metrics, "Fresh metrics object expected"
+        assert forked.metrics.input_tokens == 0
+        assert forked.metrics.output_tokens == 0
+        assert forked.metrics.total_tokens == 0
+        # Parent must remain unchanged
+        assert original.metrics.input_tokens == 100
+
+    def test_fork_resets_created_at(self):
+        import time
+
+        old_t = int(time.time()) - 1000  # 1000s ago
+        original = RunOutput(
+            run_id="origin",
+            session_id="s",
+            created_at=old_t,
+            messages=[Message(role="user", content="q")],
+        )
+
+        forked = _fork_run(original, from_checkpoint=1)
+
+        assert forked.created_at > old_t, "Fork should have a fresh created_at"
+        assert original.created_at == old_t, "Parent's created_at must not be touched"
+
+
+# ---------------------------------------------------------------------------
+# Bug-fix tests: regenerate sugar normalizes to canonical params
+# ---------------------------------------------------------------------------
+
+
+class TestRegenerateSugar:
+    """``regenerate=True``, ``preserve_original=True``, and ``additional_instructions``
+    are sugar params that normalize to the canonical ``fork`` / ``from_checkpoint``
+    / ``input`` triple inside the dispatch."""
+
+    def _build_run_with_assistant_tail(self) -> RunOutput:
+        return RunOutput(
+            run_id="run-A",
+            session_id="s",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="What is 2+2?"),
+                Message(role="assistant", content="4"),
+            ],
+        )
+
+    def test_regenerate_truncates_after_last_user_message(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            stream=False,
+        )
+
+        # The trailing assistant turn is dropped; only the user message survives.
+        assert len(captured["messages"]) == 1
+        assert captured["messages"][0].role == "user"
+
+    def test_regenerate_with_additional_instructions_appends_user_msg(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            additional_instructions="Be more detailed",
+            stream=False,
+        )
+
+        # Original user message + the additional_instructions appended as user.
+        assert len(captured["messages"]) == 2
+        assert captured["messages"][0].content == "What is 2+2?"
+        assert captured["messages"][1].content == "Be more detailed"
+        assert captured["messages"][1].role == "user"
+
+    def test_regenerate_records_regenerated_from_lineage(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["run_response"] = run_response
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            stream=False,
+        )
+
+        assert captured["run_response"].regenerated_from == "run-A"
+
+    def test_preserve_original_marks_old_run_regenerated(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            preserve_original=True,
+            stream=False,
+        )
+
+        # Old run got status flipped (history-builders will skip it).
+        assert run.status == RunStatus.regenerated
+
+    def test_preserve_original_creates_fork_with_new_run_id(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["run_id"] = run_response.run_id
+            captured["forked_from"] = run_response.forked_from_run_id
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            preserve_original=True,
+            stream=False,
+        )
+
+        # Sugar resolves preserve_original=True → fork=True under the hood.
+        assert captured["run_id"] != "run-A"
+        assert captured["forked_from"] == "run-A"
+
+    def test_regenerate_without_preserve_is_destructive(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["run_id"] = run_response.run_id
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            stream=False,
+        )
+
+        # Without preserve_original → in-place rewrite, same run_id.
+        assert captured["run_id"] == "run-A"
+
+    def test_regenerate_conflicts_with_explicit_from_checkpoint(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+
+        with pytest.raises(ValueError, match="derives `from_checkpoint`"):
+            _run.continue_run_dispatch(
+                agent=agent,
+                run_id="run-A",
+                session_id="s",
+                regenerate=True,
+                from_checkpoint=1,
+                stream=False,
+            )
+
+    def test_regenerate_conflicts_with_explicit_fork(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+
+        with pytest.raises(ValueError, match="preserve_original"):
+            _run.continue_run_dispatch(
+                agent=agent,
+                run_id="run-A",
+                session_id="s",
+                regenerate=True,
+                fork=True,
+                stream=False,
+            )
+
+    def test_additional_instructions_with_input_conflicts(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+
+        with pytest.raises(ValueError, match="not both"):
+            _run.continue_run_dispatch(
+                agent=agent,
+                run_id="run-A",
+                session_id="s",
+                regenerate=True,
+                additional_instructions="A",
+                input="B",
+                stream=False,
+            )
+
+    def test_preserve_original_without_regenerate_raises(self, monkeypatch: pytest.MonkeyPatch):
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+
+        with pytest.raises(ValueError, match="`regenerate=True`"):
+            _run.continue_run_dispatch(
+                agent=agent,
+                run_id="run-A",
+                session_id="s",
+                preserve_original=True,
+                stream=False,
+            )
+
+    def test_regenerate_raises_on_run_with_no_user_message(self, monkeypatch: pytest.MonkeyPatch):
+        run = RunOutput(
+            run_id="run-A",
+            session_id="s",
+            messages=[Message(role="assistant", content="hi")],
+        )
+        agent = _make_agent(monkeypatch, runs=[run])
+
+        with pytest.raises(ValueError, match="no user messages"):
+            _run.continue_run_dispatch(
+                agent=agent,
+                run_id="run-A",
+                session_id="s",
+                regenerate=True,
+                stream=False,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Bug-fix tests: branch_session deep-copies + rewrites lineage
+# ---------------------------------------------------------------------------
+
+
+class TestBranchSession:
+    """``Agent.branch_session()`` deep-copies all runs into a fresh session with
+    new run_ids and the lineage pointers set correctly."""
+
+    def _make_branching_agent(self, monkeypatch: pytest.MonkeyPatch, source: AgentSession) -> Agent:
+        agent = Agent(name="b")
+        monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
+        monkeypatch.setattr(
+            _storage,
+            "read_or_create_session",
+            lambda agent, session_id=None, user_id=None: source,
+        )
+        saved: list = []
+        from agno.agent import _session
+
+        monkeypatch.setattr(_session, "save_session", lambda agent, session: saved.append(session))
+        monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+        agent._saved = saved  # type: ignore[attr-defined]
+        return agent
+
+    def test_branch_creates_new_session_with_fresh_ids(self, monkeypatch: pytest.MonkeyPatch):
+        original_run = RunOutput(
+            run_id="r-orig",
+            session_id="s-orig",
+            messages=[Message(role="user", content="hi")],
+        )
+        source = AgentSession(session_id="s-orig", user_id="u1", runs=[original_run])
+        agent = self._make_branching_agent(monkeypatch, source)
+
+        new_sid = agent.branch_session(source_session_id="s-orig", user_id="u1")
+
+        assert new_sid != "s-orig"
+        assert len(agent._saved) == 1  # type: ignore[attr-defined]
+        saved = agent._saved[0]  # type: ignore[attr-defined]
+        assert saved.session_id == new_sid
+        assert len(saved.runs) == 1
+        assert saved.runs[0].run_id != "r-orig"
+        assert saved.runs[0].session_id == new_sid
+        assert saved.runs[0].branched_from == "s-orig"
+
+    def test_branch_does_not_mutate_source(self, monkeypatch: pytest.MonkeyPatch):
+        original_run = RunOutput(
+            run_id="r-orig",
+            session_id="s-orig",
+            messages=[Message(role="user", content="hi")],
+        )
+        source = AgentSession(session_id="s-orig", user_id="u1", runs=[original_run])
+        agent = self._make_branching_agent(monkeypatch, source)
+
+        agent.branch_session(source_session_id="s-orig", user_id="u1")
+
+        # Source session and its run are untouched.
+        assert source.session_id == "s-orig"
+        assert source.runs[0].run_id == "r-orig"
+        assert source.runs[0].session_id == "s-orig"
+        assert source.runs[0].branched_from is None
+
+    def test_branch_raises_on_empty_session(self, monkeypatch: pytest.MonkeyPatch):
+        source = AgentSession(session_id="s-orig", user_id="u1", runs=[])
+        agent = self._make_branching_agent(monkeypatch, source)
+
+        with pytest.raises(ValueError, match="no runs"):
+            agent.branch_session(source_session_id="s-orig", user_id="u1")
+
+    def test_branch_preserves_branched_from_on_nested_branch(self, monkeypatch: pytest.MonkeyPatch):
+        # A run that was already branched once keeps its original source pointer.
+        nested_run = RunOutput(
+            run_id="r-nested",
+            session_id="s-mid",
+            branched_from="s-root",  # root-level lineage already recorded
+            messages=[Message(role="user", content="hi")],
+        )
+        source = AgentSession(session_id="s-mid", user_id="u1", runs=[nested_run])
+        agent = self._make_branching_agent(monkeypatch, source)
+
+        agent.branch_session(source_session_id="s-mid", user_id="u1")
+
+        saved = agent._saved[0]  # type: ignore[attr-defined]
+        # Run-level branched_from preserved (points at root).
+        assert saved.runs[0].branched_from == "s-root"
+        # Session-level branched_from points at immediate parent.
+        assert saved.session_data["branched_from"] == "s-mid"
+
+
+# ---------------------------------------------------------------------------
+# Bug-fix tests: tool dedupe in update_run_response (checkpoint="steps")
+# ---------------------------------------------------------------------------
+
+
+class TestToolDedupeOnUpdate:
+    """When ``checkpoint="steps"`` writes tools mid-run, the terminal
+    ``update_run_response`` must not duplicate them by appending the same
+    cumulative list again."""
+
+    def test_update_run_response_replaces_by_tool_call_id(self):
+        from agno.models.response import ModelResponse
+        from agno.run.agent import RunOutput
+
+        # Existing tool (already written by checkpoint callback)
+        existing = ToolExecution(tool_call_id="tc-1", tool_name="search", result="result-1")
+        run_response = RunOutput(run_id="r", tools=[existing])
+
+        # Model response contains the same tool (cumulative across the loop)
+        same_tool_updated = ToolExecution(tool_call_id="tc-1", tool_name="search", result="result-1-updated")
+        new_tool = ToolExecution(tool_call_id="tc-2", tool_name="fetch", result="result-2")
+        model_response = ModelResponse(tool_executions=[same_tool_updated, new_tool])
+
+        from agno.agent._response import update_run_response
+
+        update_run_response(
+            agent=Agent(name="x"),
+            model_response=model_response,
+            run_response=run_response,
+            run_messages=type("RM", (), {"messages": []})(),
+            run_context=None,
+        )
+
+        # No duplicates by tool_call_id.
+        ids = [t.tool_call_id for t in run_response.tools or []]
+        assert sorted(ids) == ["tc-1", "tc-2"]
+        # Existing entry was replaced with the newer instance.
+        tc1 = next(t for t in run_response.tools if t.tool_call_id == "tc-1")
+        assert tc1.result == "result-1-updated"

@@ -1,0 +1,96 @@
+"""Regenerate the last response via /continue with regenerate=True.
+
+``regenerate=True`` is sugar over ``from_checkpoint``: it auto-picks the
+truncation index to land just after the last user message, drops the previous
+assistant reply, and re-runs the model loop.
+
+Three flavors:
+- ``regenerate=True``                            → in-place rewrite. The old
+  assistant reply is overwritten. Same ``run_id``.
+- ``regenerate=True, preserve_original=True``    → non-destructive. Original
+  run gets ``status=REGENERATED`` (and is skipped when rebuilding history);
+  the new response is a fork with ``regenerated_from`` set.
+- ``regenerate=True, additional_instructions=X`` → append X as a user message
+  before re-generating. Use this to steer the new output.
+
+These compose. ``regenerate=True, preserve_original=True,
+additional_instructions="be more concise"`` is the typical "let me try that
+again with guidance, but keep the old answer" pattern.
+
+Compare to raw ``from_checkpoint`` (02_time_travel.py): same mechanism, but
+``regenerate`` does the message-index math for you.
+"""
+
+import asyncio
+
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+
+
+async def main() -> None:
+    agent = Agent(
+        name="trivia-agent",
+        model=OpenAIResponses(id="gpt-5.4"),
+        db=SqliteDb(
+            session_table="checkpoint_demo",
+            db_file="tmp/checkpoint_regenerate.db",
+        ),
+        checkpoint="steps",
+        markdown=True,
+    )
+
+    # Original run
+    original = await agent.arun(input="Give me 3 fun facts about octopuses.")
+    print("--- Original ---")
+    print(original.content)
+    print()
+
+    # Regenerate in place — the old answer is overwritten.
+    redo = await agent.acontinue_run(
+        run_id=original.run_id,
+        session_id=original.session_id,
+        regenerate=True,
+    )
+    print("--- Regenerated (in place, same run_id) ---")
+    print("  run_id:", redo.run_id, "(==", original.run_id, ")")
+    print(redo.content)
+    print()
+
+    # Regenerate with steering — append instructions before re-running.
+    steered = await agent.acontinue_run(
+        run_id=original.run_id,
+        session_id=original.session_id,
+        regenerate=True,
+        additional_instructions="Make them weirder, and add a citation for each.",
+    )
+    print("--- Regenerated with steering ---")
+    print(steered.content)
+    print()
+
+    # Regenerate but keep the old one — preserve_original creates a fork.
+    preserved = await agent.acontinue_run(
+        run_id=original.run_id,
+        session_id=original.session_id,
+        regenerate=True,
+        preserve_original=True,
+        additional_instructions="Now do it in haiku form.",
+    )
+    print("--- Regenerated with preserve_original=True (fork) ---")
+    print("  run_id:", preserved.run_id, "(new)")
+    print("  regenerated_from:", preserved.regenerated_from)
+    print(preserved.content)
+    print()
+
+    # Verify the session has 2 runs now: original (now REGENERATED) + the fork.
+    session = agent.db.get_session(session_id=original.session_id, session_type="agent")
+    print(f"Session has {len(session.runs or [])} runs:")
+    for r in session.runs or []:
+        line = f"  - {r.run_id} [{r.status}]"
+        if r.regenerated_from:
+            line += f" regenerated_from={r.regenerated_from}"
+        print(line)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
