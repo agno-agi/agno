@@ -130,6 +130,7 @@ class ValkeyDb(BaseDb):
                 database_id=database_id,
                 credentials=credentials,
                 use_tls=use_tls,
+                client_name="agno_db_client",
             )
             self.valkey_client = GlideClient.create(config)
 
