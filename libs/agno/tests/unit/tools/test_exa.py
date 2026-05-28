@@ -34,7 +34,6 @@ def create_mock_search_result(
     author: str = None,
     published_date: str = None,
     text: str = None,
-    highlights: list = None,
 ):
     """Helper function to create mock search result."""
     result = Mock()
@@ -43,7 +42,6 @@ def create_mock_search_result(
     result.author = author
     result.published_date = published_date
     result.text = text
-    result.highlights = highlights
     return result
 
 
@@ -59,10 +57,10 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
     with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
         tools = ExaTools(
-            search=True,
-            get_contents=False,
-            find_similar=True,
-            answer=False,
+            enable_search=True,
+            enable_get_contents=False,
+            enable_find_similar=True,
+            enable_answer=False,
         )
 
         assert "search_exa" in [func.name for func in tools.functions.values()]
@@ -81,7 +79,6 @@ def test_search_exa_success(exa_tools, mock_exa_client):
             author="John Doe",
             published_date="2024-01-01",
             text="Sample text content",
-            highlights=["highlighted text"],
         )
     ]
 
@@ -95,7 +92,6 @@ def test_search_exa_success(exa_tools, mock_exa_client):
     assert result_data[0]["title"] == "Test Article"
     assert result_data[0]["author"] == "John Doe"
     assert result_data[0]["text"] == "Sample text content"
-    assert result_data[0]["highlights"] == ["highlighted text"]
 
 
 def test_get_contents_success(exa_tools, mock_exa_client):
@@ -187,7 +183,6 @@ def test_search_with_category(exa_tools, mock_exa_client):
     mock_exa_client.search_and_contents.assert_called_with(
         "research",
         text=True,
-        highlights=True,
         summary=False,
         num_results=5,
         category="research paper",
@@ -286,7 +281,7 @@ def test_exa_answer_with_model_selection(exa_tools, mock_exa_client):
 def test_init_with_research_tool():
     """Test initialization with research tool enabled."""
     with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
-        tools = ExaTools(research=True)
+        tools = ExaTools(enable_research=True)
 
         assert "research" in [func.name for func in tools.functions.values()]
 

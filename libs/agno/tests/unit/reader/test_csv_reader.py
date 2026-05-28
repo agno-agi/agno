@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from agno.document.base import Document
-from agno.document.reader.csv_reader import CSVReader, CSVUrlReader
+from agno.knowledge.document.base import Document
+from agno.knowledge.reader.csv_reader import CSVReader
 
 # Sample CSV data
 SAMPLE_CSV = """name,age,city
@@ -50,12 +50,21 @@ def csv_reader():
 def test_read_path(csv_reader, csv_file):
     documents = csv_reader.read(csv_file)
 
-    assert len(documents) == 1
+    assert len(documents) == 4
     assert documents[0].name == "test"
     assert documents[0].id.endswith("_1")
 
-    expected_content = "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
-    assert documents[0].content == expected_content
+    expected_content_1 = "name, age, city"
+    assert documents[0].content == expected_content_1
+
+    expected_content_2 = "John, 30, New York"
+    assert documents[1].content == expected_content_2
+
+    expected_content_3 = "Jane, 25, San Francisco"
+    assert documents[2].content == expected_content_3
+
+    expected_content_4 = "Bob, 40, Chicago"
+    assert documents[3].content == expected_content_4
 
 
 def test_read_file_object(csv_reader):
@@ -64,28 +73,43 @@ def test_read_file_object(csv_reader):
 
     documents = csv_reader.read(file_obj)
 
-    assert len(documents) == 1
+    assert len(documents) == 4
     assert documents[0].name == "memory"
     assert documents[0].id.endswith("_1")
 
-    expected_content = "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
-    assert documents[0].content == expected_content
+    expected_content_1 = "name, age, city"
+    assert documents[0].content == expected_content_1
+
+    expected_content_2 = "John, 30, New York"
+    assert documents[1].content == expected_content_2
+
+    expected_content_3 = "Jane, 25, San Francisco"
+    assert documents[2].content == expected_content_3
+
+    expected_content_4 = "Bob, 40, Chicago"
+    assert documents[3].content == expected_content_4
 
 
 def test_read_complex_csv(csv_reader, complex_csv_file):
     documents = csv_reader.read(complex_csv_file, delimiter=",", quotechar='"')
 
-    assert len(documents) == 1
+    assert len(documents) == 3
     assert documents[0].id.endswith("_1")
 
-    expected_content = "product, description with, comma, price Laptop, Pro, High performance, ultra-thin, 1200.99 Phone XL, 5G compatible, water resistant, 899.50 "
-    assert documents[0].content == expected_content
+    expected_content_1 = "product, description with, comma, price"
+    assert documents[0].content == expected_content_1
+
+    expected_content_2 = "Laptop, Pro, High performance, ultra-thin, 1200.99"
+    assert documents[1].content == expected_content_2
+
+    expected_content_3 = "Phone XL, 5G compatible, water resistant, 899.50"
+    assert documents[2].content == expected_content_3
 
 
 def test_read_nonexistent_file(csv_reader, temp_dir):
     nonexistent_path = temp_dir / "nonexistent.csv"
-    documents = csv_reader.read(nonexistent_path)
-    assert documents == []
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        csv_reader.read(nonexistent_path)
 
 
 def test_read_with_chunking(csv_reader, csv_file):
@@ -113,10 +137,13 @@ def test_read_with_chunking(csv_reader, csv_file):
 async def test_async_read_path(csv_reader, csv_file):
     documents = await csv_reader.async_read(csv_file)
 
-    assert len(documents) == 1
+    # RowChunking splits newline-joined content into one doc per row
+    assert len(documents) == 4
     assert documents[0].name == "test"
-    assert documents[0].id.endswith("_1")
-    assert documents[0].content == "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago"
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "John, 30, New York"
+    assert documents[2].content == "Jane, 25, San Francisco"
+    assert documents[3].content == "Bob, 40, Chicago"
 
 
 @pytest.fixture
@@ -143,38 +170,37 @@ row10,39,City10"""
 async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
     documents = await csv_reader.async_read(multi_page_csv_file, page_size=5)
 
-    assert len(documents) == 3
-
-    # Check first page
+    # RowChunking splits newline-joined content into one doc per row (11 rows total)
+    assert len(documents) == 11
     assert documents[0].name == "multi_page"
-    assert documents[0].id is not None and isinstance(documents[0].id, str)
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "row1, 30, City1"
+    assert documents[10].content == "row10, 39, City10"
+
+    # Pagination metadata should still be present on chunked docs from page 1
     assert documents[0].meta_data["page"] == 1
     assert documents[0].meta_data["start_row"] == 1
     assert documents[0].meta_data["rows"] == 5
-
-    # Check second page
-    assert documents[1].id is not None and isinstance(documents[1].id, str)
-    assert documents[1].meta_data["page"] == 2
-    assert documents[1].meta_data["start_row"] == 6
-    assert documents[1].meta_data["rows"] == 5
-
-    # Check third page
-    assert documents[2].id is not None and isinstance(documents[2].id, str)
-    assert documents[2].meta_data["page"] == 3
-    assert documents[2].meta_data["start_row"] == 11
-    assert documents[2].meta_data["rows"] == 1
+    # Docs from page 2 (rows 6-10)
+    assert documents[5].meta_data["page"] == 2
+    assert documents[5].meta_data["start_row"] == 6
+    assert documents[5].meta_data["rows"] == 5
+    # Doc from page 3 (row 11)
+    assert documents[10].meta_data["page"] == 3
+    assert documents[10].meta_data["start_row"] == 11
+    assert documents[10].meta_data["rows"] == 1
 
 
 @pytest.mark.asyncio
 async def test_async_read_with_chunking(csv_reader, csv_file):
-    def mock_chunk(doc):
+    async def mock_achunk(doc):
         return [
             Document(name=f"{doc.name}_chunk1", id=f"{doc.id}_chunk1", content=f"{doc.content}_chunked1"),
             Document(name=f"{doc.name}_chunk2", id=f"{doc.id}_chunk2", content=f"{doc.content}_chunked2"),
         ]
 
     csv_reader.chunk = True
-    csv_reader.chunk_document = mock_chunk
+    csv_reader.achunk_document = mock_achunk
 
     documents = await csv_reader.async_read(csv_file)
 
@@ -194,33 +220,104 @@ async def test_async_read_empty_file(csv_reader, temp_dir):
     assert documents == []
 
 
-@pytest.fixture
-def csv_url_reader():
-    return CSVUrlReader()
+LATIN1_CSV = "name,city\nJosé,São Paulo\nFrançois,Montréal"
 
 
-def test_read_url(csv_url_reader):
-    documents = csv_url_reader.read(CSV_URL)
+def test_read_bytesio_with_custom_encoding():
+    """Test reading BytesIO with custom encoding (Latin-1).
 
-    assert len(documents) == 2
-    assert documents[0].name == "employees"
-    assert documents[0].id.endswith("_1")
+    This tests the fix for BUG-007 where BytesIO reads were hardcoded to UTF-8.
+    """
+    # Encode as Latin-1 (single-byte encoding for accented chars)
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
 
+    # Create reader with Latin-1 encoding
+    reader = CSVReader(encoding="latin-1", chunk=False)
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 1
     content = documents[0].content
-    assert all(field in content for field in ["EmployeeID", "FirstName", "LastName", "Department"])
-    assert all(value in content for value in ["John", "Doe", "Engineering", "Software Engineer", "75000"])
+
+    # Verify accented characters are correctly decoded
+    assert "José" in content
+    assert "São Paulo" in content
+    assert "François" in content
+    assert "Montréal" in content
+
+
+def test_read_bytesio_wrong_encoding_fails():
+    """Test that reading Latin-1 bytes as UTF-8 fails or corrupts data.
+
+    This demonstrates why the encoding parameter is important.
+    """
+    # Encode as Latin-1
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    # Try to read with default UTF-8 encoding (should fail or corrupt)
+    reader = CSVReader(chunk=False)  # Uses UTF-8 by default
+
+    # This should either raise an error or produce corrupted output
+    documents = reader.read(file_obj)
+
+    # If it didn't raise, the content should be corrupted (mojibake)
+    if documents:
+        content = documents[0].content
+        # The accented characters should NOT be correctly decoded
+        assert "José" not in content or "São Paulo" not in content
+
+
+def test_read_path_with_custom_encoding(temp_dir):
+    """Test reading Path with custom encoding."""
+    file_path = temp_dir / "latin1.csv"
+    with open(file_path, "w", encoding="latin-1") as f:
+        f.write(LATIN1_CSV)
+
+    reader = CSVReader(encoding="latin-1", chunk=False)
+    documents = reader.read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content
 
 
 @pytest.mark.asyncio
-async def test_async_read_url(csv_url_reader):
-    documents = await csv_url_reader.async_read(CSV_URL)
+async def test_async_read_bytesio_with_custom_encoding():
+    """Test async reading BytesIO with custom encoding (Latin-1).
 
-    assert len(documents) == 2
-    assert documents[0].name == "employees"
-    assert documents[0].id.endswith("_1")
+    This tests the fix for BUG-007 in the async path.
+    """
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
 
-    expected_first_row = "EmployeeID, FirstName, LastName, Department, Role, Age, Salary, StartDate"
-    expected_second_row = "101, John, Doe, Engineering, Software Engineer, 28, 75000, 2018-06-15"
+    reader = CSVReader(encoding="latin-1", chunk=False)
+    documents = await reader.async_read(file_obj)
 
-    assert expected_first_row in documents[0].content
-    assert expected_second_row in documents[0].content
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content
+
+
+@pytest.mark.asyncio
+async def test_async_read_path_with_custom_encoding(temp_dir):
+    """Test async reading Path with custom encoding.
+
+    This tests the fix for BUG-007 in the async path with Path input.
+    """
+    file_path = temp_dir / "latin1.csv"
+    with open(file_path, "w", encoding="latin-1") as f:
+        f.write(LATIN1_CSV)
+
+    reader = CSVReader(encoding="latin-1", chunk=False)
+    documents = await reader.async_read(file_path)
+
+    assert len(documents) == 1
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content

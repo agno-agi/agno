@@ -1,15 +1,22 @@
 import asyncio
+import re
+from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
 
+from agno.utils.string import generate_id
+
 try:
+    from sqlalchemy import and_, not_, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, scoped_session, sessionmaker
     from sqlalchemy.schema import Column, Index, MetaData, Table
-    from sqlalchemy.sql.expression import bindparam, desc, func, select, text
-    from sqlalchemy.types import DateTime, String
+    from sqlalchemy.sql.elements import ColumnElement
+    from sqlalchemy.sql.expression import bindparam, desc, func, literal_column, select, text
+    from sqlalchemy.types import DateTime, Integer, String
+
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install using `pip install sqlalchemy psycopg`")
 
@@ -18,14 +25,15 @@ try:
 except ImportError:
     raise ImportError("`pgvector` not installed. Please install using `pip install pgvector`")
 
-from agno.document import Document
-from agno.embedder import Embedder
-from agno.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
-from agno.utils.string import safe_content_hash
+from agno.filters import FilterExpr
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
+from agno.knowledge.reranker.base import Reranker
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
+from agno.vectordb.score import normalize_score, score_to_distance_threshold
 from agno.vectordb.search import SearchType
 
 
@@ -41,6 +49,9 @@ class PgVector(VectorDb):
         self,
         table_name: str,
         schema: str = "ai",
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         embedder: Optional[Embedder] = None,
@@ -53,6 +64,8 @@ class PgVector(VectorDb):
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
+        create_schema: bool = True,
+        similarity_threshold: Optional[float] = None,
     ):
         """
         Initialize the PgVector instance.
@@ -60,6 +73,8 @@ class PgVector(VectorDb):
         Args:
             table_name (str): Name of the table to store vector data.
             schema (str): Database schema name.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): Database connection URL.
             db_engine (Optional[Engine]): SQLAlchemy database engine.
             embedder (Optional[Embedder]): Embedder instance for creating embeddings.
@@ -71,6 +86,10 @@ class PgVector(VectorDb):
             content_language (str): Language for full-text search.
             schema_version (int): Version of the database schema.
             auto_upgrade_schema (bool): Automatically upgrade schema if True.
+            reranker (Optional[Reranker]): Reranker instance for reranking search results.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
+            similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
         """
         if not table_name:
             raise ValueError("Table name must be provided.")
@@ -78,13 +97,22 @@ class PgVector(VectorDb):
         if db_engine is None and db_url is None:
             raise ValueError("Either 'db_url' or 'db_engine' must be provided.")
 
+        if id is None:
+            base_seed = db_url or str(db_engine.url)  # type: ignore
+            schema_suffix = table_name if table_name is not None else "ai"
+            seed = f"{base_seed}#{schema_suffix}"
+            id = generate_id(seed)
+
+        # Initialize base class
+        super().__init__(id=id, name=name, description=description, similarity_threshold=similarity_threshold)
+
         if db_engine is None:
             if db_url is None:
                 raise ValueError("Must provide 'db_url' if 'db_engine' is None.")
             try:
                 db_engine = create_engine(db_url)
             except Exception as e:
-                logger.error(f"Failed to create engine from 'db_url': {e}")
+                log_error(f"Failed to create engine from 'db_url': {str(e)}")
                 raise
 
         # Database settings
@@ -96,10 +124,10 @@ class PgVector(VectorDb):
 
         # Embedder for embedding the document contents
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -126,6 +154,9 @@ class PgVector(VectorDb):
 
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
+
+        # Schema creation flag
+        self.create_schema: bool = create_schema
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -155,6 +186,7 @@ class PgVector(VectorDb):
             Column("created_at", DateTime(timezone=True), server_default=func.now()),
             Column("updated_at", DateTime(timezone=True), onupdate=func.now()),
             Column("content_hash", String),
+            Column("content_id", String),
             extend_existing=True,
         )
 
@@ -162,7 +194,7 @@ class PgVector(VectorDb):
         Index(f"idx_{self.table_name}_id", table.c.id)
         Index(f"idx_{self.table_name}_name", table.c.name)
         Index(f"idx_{self.table_name}_content_hash", table.c.content_hash)
-
+        Index(f"idx_{self.table_name}_content_id", table.c.content_id)
         return table
 
     def get_table(self) -> Table:
@@ -188,7 +220,7 @@ class PgVector(VectorDb):
         try:
             return inspect(self.db_engine).has_table(self.table_name, schema=self.schema)
         except Exception as e:
-            logger.error(f"Error checking if table exists: {e}")
+            log_error(f"Error checking if table exists: {str(e)}")
             return False
 
     def create(self) -> None:
@@ -199,9 +231,12 @@ class PgVector(VectorDb):
             with self.Session() as sess, sess.begin():
                 log_debug("Creating extension: vector")
                 sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-                if self.schema is not None:
-                    log_debug(f"Creating schema: {self.schema}")
-                    sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                if self.create_schema and self.schema is not None:
+                    try:
+                        log_debug(f"Creating schema: {self.schema}")
+                        sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
+                    except Exception as e:
+                        log_warning(f"Could not create schema {self.schema}: {str(e)}")
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
 
@@ -226,25 +261,8 @@ class PgVector(VectorDb):
                 result = sess.execute(stmt).first()
                 return result is not None
         except Exception as e:
-            logger.error(f"Error checking if record exists: {e}")
+            log_error(f"Error checking if record exists: {str(e)}")
             return False
-
-    def doc_exists(self, document: Document) -> bool:
-        """
-        Check if a document with the same content hash exists in the table.
-
-        Args:
-            document (Document): The document to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-        """
-        content_hash = safe_content_hash(document.content)
-        return self._record_exists(self.table.c.content_hash, content_hash)
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if document exists asynchronously by running in a thread."""
-        return await asyncio.to_thread(self.doc_exists, document)
 
     def name_exists(self, name: str) -> bool:
         """
@@ -274,6 +292,12 @@ class PgVector(VectorDb):
         """
         return self._record_exists(self.table.c.id, id)
 
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """
+        Check if a document with the given content hash exists in the table.
+        """
+        return self._record_exists(self.table.c.content_hash, content_hash)
+
     def _clean_content(self, content: str) -> str:
         """
         Clean the content by replacing null characters.
@@ -288,6 +312,7 @@ class PgVector(VectorDb):
 
     def insert(
         self,
+        content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
@@ -296,6 +321,7 @@ class PgVector(VectorDb):
         Insert documents into the database.
 
         Args:
+            content_hash (str): The content hash to insert.
             documents (List[Document]): List of documents to insert.
             filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
             batch_size (int): Number of documents to insert in each batch.
@@ -310,28 +336,9 @@ class PgVector(VectorDb):
                         batch_records = []
                         for doc in batch_docs:
                             try:
-                                doc.embed(embedder=self.embedder)
-                                cleaned_content = self._clean_content(doc.content)
-                                content_hash = safe_content_hash(doc.content)
-                                _id = doc.id or content_hash
-
-                                meta_data = doc.meta_data or {}
-                                if filters:
-                                    meta_data.update(filters)
-
-                                record = {
-                                    "id": _id,
-                                    "name": doc.name,
-                                    "meta_data": doc.meta_data,
-                                    "filters": filters,
-                                    "content": cleaned_content,
-                                    "embedding": doc.embedding,
-                                    "usage": doc.usage,
-                                    "content_hash": content_hash,
-                                }
-                                batch_records.append(record)
+                                batch_records.append(self._get_document_record(doc, filters, content_hash))
                             except Exception as e:
-                                logger.error(f"Error processing document '{doc.name}': {e}")
+                                log_error(f"Error processing document '{doc.name}': {str(e)}")
 
                         # Insert the batch of records
                         insert_stmt = postgresql.insert(self.table)
@@ -339,16 +346,72 @@ class PgVector(VectorDb):
                         sess.commit()  # Commit batch independently
                         log_info(f"Inserted batch of {len(batch_records)} documents.")
                     except Exception as e:
-                        logger.error(f"Error with batch starting at index {i}: {e}")
+                        log_error(f"Error with batch starting at index {i}: {str(e)}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception as e:
-            logger.error(f"Error inserting documents: {e}")
+            log_error(f"Error inserting documents: {str(e)}")
             raise
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Insert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.insert, documents, filters)
+    async def async_insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 100,
+    ) -> None:
+        """Insert documents asynchronously with parallel embedding."""
+        try:
+            with self.Session() as sess:
+                for i in range(0, len(documents), batch_size):
+                    batch_docs = documents[i : i + batch_size]
+                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    try:
+                        # Embed all documents in the batch
+                        await self._async_embed_documents(batch_docs)
+
+                        # Prepare documents for insertion
+                        batch_records = []
+                        for doc in batch_docs:
+                            try:
+                                cleaned_content = self._clean_content(doc.content)
+                                # Include content_hash in ID to ensure uniqueness across different content hashes
+                                # This allows the same URL/content to be inserted with different descriptions
+                                base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+                                meta_data = doc.meta_data or {}
+                                if filters:
+                                    meta_data.update(filters)
+
+                                record = {
+                                    "id": record_id,
+                                    "name": doc.name,
+                                    "meta_data": meta_data,
+                                    "filters": filters,
+                                    "content": cleaned_content,
+                                    "embedding": doc.embedding,
+                                    "usage": doc.usage,
+                                    "content_hash": content_hash,
+                                    "content_id": doc.content_id,
+                                }
+                                batch_records.append(record)
+                            except Exception as e:
+                                log_error(f"Error processing document '{doc.name}': {str(e)}")
+
+                        # Insert the batch of records
+                        if batch_records:
+                            insert_stmt = postgresql.insert(self.table)
+                            sess.execute(insert_stmt, batch_records)
+                            sess.commit()  # Commit batch independently
+                            log_info(f"Inserted batch of {len(batch_records)} documents.")
+                    except Exception as e:
+                        log_error(f"Error with batch starting at index {i}: {str(e)}")
+                        sess.rollback()  # Rollback the current batch if there's an error
+                        raise
+        except Exception as e:
+            log_error(f"Error inserting documents: {str(e)}")
+            raise
 
     def upsert_available(self) -> bool:
         """
@@ -361,6 +424,27 @@ class PgVector(VectorDb):
 
     def upsert(
         self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 100,
+    ) -> None:
+        """
+        Upsert documents by content hash.
+        First delete all documents with the same content hash.
+        Then upsert the new documents.
+        """
+        try:
+            if self.content_hash_exists(content_hash):
+                self._delete_by_content_hash(content_hash)
+            self._upsert(content_hash, documents, filters, batch_size)
+        except Exception as e:
+            log_error(f"Error upserting documents by content hash: {str(e)}")
+            raise
+
+    def _upsert(
+        self,
+        content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
@@ -377,33 +461,23 @@ class PgVector(VectorDb):
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
                     batch_docs = documents[i : i + batch_size]
-                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Prepare documents for upserting
-                        batch_records = []
+                        batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                doc.embed(embedder=self.embedder)
-                                cleaned_content = self._clean_content(doc.content)
-                                content_hash = safe_content_hash(doc.content)
-
-                                meta_data = doc.meta_data or {}
-                                if filters:
-                                    meta_data.update(filters)
-
-                                record = {
-                                    "id": content_hash,  # use content_hash as a reproducible id to avoid duplicates while upsert
-                                    "name": doc.name,
-                                    "meta_data": doc.meta_data,
-                                    "filters": filters,
-                                    "content": cleaned_content,
-                                    "embedding": doc.embedding,
-                                    "usage": doc.usage,
-                                    "content_hash": content_hash,
-                                }
-                                batch_records.append(record)
+                                record = self._get_document_record(doc, filters, content_hash)
+                                # Use the generated record ID (which includes content_hash) for deduplication
+                                batch_records_dict[record["id"]] = record
                             except Exception as e:
-                                logger.error(f"Error processing document '{doc.name}': {e}")
+                                log_error(f"Error processing document '{doc.name}': {str(e)}")
+
+                        # Convert dict to list for upsert
+                        batch_records = list(batch_records_dict.values())
+                        if not batch_records:
+                            log_info("No valid records to upsert in this batch.")
+                            continue
 
                         # Upsert the batch of records
                         insert_stmt = postgresql.insert(self.table).values(batch_records)
@@ -417,31 +491,269 @@ class PgVector(VectorDb):
                                 "embedding": insert_stmt.excluded.embedding,
                                 "usage": insert_stmt.excluded.usage,
                                 "content_hash": insert_stmt.excluded.content_hash,
+                                "content_id": insert_stmt.excluded.content_id,
                             },
                         )
                         sess.execute(upsert_stmt)
                         sess.commit()  # Commit batch independently
                         log_info(f"Upserted batch of {len(batch_records)} documents.")
                     except Exception as e:
-                        logger.error(f"Error with batch starting at index {i}: {e}")
+                        log_error(f"Error with batch starting at index {i}: {str(e)}")
                         sess.rollback()  # Rollback the current batch if there's an error
                         raise
         except Exception as e:
-            logger.error(f"Error upserting documents: {e}")
+            log_error(f"Error upserting documents: {str(e)}")
             raise
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Upsert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.upsert, documents, filters)
+    def _get_document_record(
+        self, doc: Document, filters: Optional[Dict[str, Any]] = None, content_hash: str = ""
+    ) -> Dict[str, Any]:
+        doc.embed(embedder=self.embedder)
+        cleaned_content = self._clean_content(doc.content)
+        # Include content_hash in ID to ensure uniqueness across different content hashes
+        # This allows the same URL/content to be inserted with different descriptions
+        base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        meta_data = doc.meta_data or {}
+        if filters:
+            meta_data.update(filters)
+
+        return {
+            "id": record_id,
+            "name": doc.name,
+            "meta_data": meta_data,
+            "filters": filters,
+            "content": cleaned_content,
+            "embedding": doc.embedding,
+            "usage": doc.usage,
+            "content_hash": content_hash,
+            "content_id": doc.content_id,
+        }
+
+    async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
+        """
+        Embed a batch of documents using either batch embedding or individual embedding.
+
+        Args:
+            batch_docs: List of documents to embed
+        """
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in batch_docs]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(batch_docs):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
+                    raise e
+                else:
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+                    # Check for exceptions and handle them
+                    for i, result in enumerate(results):
+                        if isinstance(result, Exception):
+                            error_msg = str(result)
+                            # If it's an event loop closure error, log it but don't fail
+                            if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
+                                log_warning(
+                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}: {e}",
+                                )
+
+                            else:
+                                log_error(f"Error embedding document {i}: {result}: {str(e)}")
+        else:
+            # Use individual embedding
+            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+            # Check for exceptions and handle them
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    error_msg = str(result)
+                    # If it's an event loop closure error, log it but don't fail
+                    if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
+                        log_warning(
+                            f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
+                        )
+                    else:
+                        log_error(f"Error embedding document {i}: {result}")
+
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 100,
+    ) -> None:
+        """Upsert documents asynchronously by running in a thread."""
+        try:
+            if self.content_hash_exists(content_hash):
+                self._delete_by_content_hash(content_hash)
+            await self._async_upsert(content_hash, documents, filters, batch_size)
+        except Exception as e:
+            log_error(f"Error upserting documents by content hash: {str(e)}")
+            raise
+
+    async def _async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 100,
+    ) -> None:
+        """
+        Upsert (insert or update) documents in the database.
+
+        Args:
+            documents (List[Document]): List of documents to upsert.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
+            batch_size (int): Number of documents to upsert in each batch.
+        """
+        try:
+            with self.Session() as sess:
+                for i in range(0, len(documents), batch_size):
+                    batch_docs = documents[i : i + batch_size]
+                    log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    try:
+                        # Embed all documents in the batch
+                        await self._async_embed_documents(batch_docs)
+
+                        # Prepare documents for upserting
+                        batch_records_dict = {}  # Use dict to deduplicate by ID
+                        for idx, doc in enumerate(batch_docs):
+                            try:
+                                cleaned_content = self._clean_content(doc.content)
+                                # Include content_hash in ID to ensure uniqueness across different content hashes
+                                # This allows the same URL/content to be inserted with different descriptions
+                                base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
+                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+                                if (
+                                    doc.embedding is not None
+                                    and isinstance(doc.embedding, list)
+                                    and len(doc.embedding) == 0
+                                ):
+                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
+
+                                if (
+                                    doc.embedding is not None
+                                    and isinstance(doc.embedding, list)
+                                    and len(doc.embedding) == 0
+                                ):
+                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
+
+                                meta_data = doc.meta_data or {}
+                                if filters:
+                                    meta_data.update(filters)
+
+                                record = {
+                                    "id": record_id,  # use record_id as a reproducible id to avoid duplicates while upsert
+                                    "name": doc.name,
+                                    "meta_data": meta_data,
+                                    "filters": filters,
+                                    "content": cleaned_content,
+                                    "embedding": doc.embedding,
+                                    "usage": doc.usage,
+                                    "content_hash": content_hash,
+                                    "content_id": doc.content_id,
+                                }
+                                batch_records_dict[record_id] = record  # This deduplicates by ID
+                            except Exception as e:
+                                log_error(f"Error processing document '{doc.name}': {str(e)}")
+
+                        # Convert dict to list for upsert
+                        batch_records = list(batch_records_dict.values())
+                        if not batch_records:
+                            log_info("No valid records to upsert in this batch.")
+                            continue
+
+                        # Upsert the batch of records
+                        insert_stmt = postgresql.insert(self.table).values(batch_records)
+                        upsert_stmt = insert_stmt.on_conflict_do_update(
+                            index_elements=["id"],
+                            set_={
+                                "name": insert_stmt.excluded.name,
+                                "meta_data": insert_stmt.excluded.meta_data,
+                                "filters": insert_stmt.excluded.filters,
+                                "content": insert_stmt.excluded.content,
+                                "embedding": insert_stmt.excluded.embedding,
+                                "usage": insert_stmt.excluded.usage,
+                                "content_hash": insert_stmt.excluded.content_hash,
+                                "content_id": insert_stmt.excluded.content_id,
+                            },
+                        )
+                        sess.execute(upsert_stmt)
+                        sess.commit()  # Commit batch independently
+                        log_info(f"Upserted batch of {len(batch_records)} documents.")
+                    except Exception as e:
+                        log_error(f"Error with batch starting at index {i}: {str(e)}")
+                        sess.rollback()  # Rollback the current batch if there's an error
+                        raise
+        except Exception as e:
+            log_error(f"Error upserting documents: {str(e)}")
+            raise
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for a document.
+
+        Args:
+            content_id (str): The ID of the document.
+            metadata (Dict[str, Any]): The metadata to update.
+        """
+        try:
+            with self.Session() as sess:
+                # Merge JSONB for metadata, but replace filters entirely (absolute value)
+                stmt = (
+                    update(self.table)
+                    .where(self.table.c.content_id == content_id)
+                    .values(
+                        meta_data=func.coalesce(self.table.c.meta_data, text("'{}'::jsonb")).op("||")(
+                            bindparam("md", type_=postgresql.JSONB)
+                        ),
+                        filters=bindparam("ft", type_=postgresql.JSONB),
+                    )
+                )
+                sess.execute(stmt, {"md": metadata, "ft": metadata})
+                sess.commit()
+        except Exception as e:
+            log_error(f"Error updating metadata for document {content_id}: {str(e)}")
+            raise
+
+    def search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a search based on the configured search type.
 
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.
@@ -453,23 +765,46 @@ class PgVector(VectorDb):
         elif self.search_type == SearchType.hybrid:
             return self.hybrid_search(query=query, limit=limit, filters=filters)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
         return await asyncio.to_thread(self.search, query, limit, filters)
 
-    def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def _dsl_to_sqlalchemy(self, filter_expr, table) -> ColumnElement[bool]:
+        op = filter_expr["op"]
+
+        if op == "EQ":
+            return table.c.meta_data[filter_expr["key"]].astext == str(filter_expr["value"])
+        elif op == "IN":
+            # Postgres JSONB array containment
+            return table.c.meta_data[filter_expr["key"]].astext.in_([str(v) for v in filter_expr["values"]])
+        elif op == "GT":
+            return table.c.meta_data[filter_expr["key"]].astext.cast(Integer) > filter_expr["value"]
+        elif op == "LT":
+            return table.c.meta_data[filter_expr["key"]].astext.cast(Integer) < filter_expr["value"]
+        elif op == "NOT":
+            return not_(self._dsl_to_sqlalchemy(filter_expr["condition"], table))
+        elif op == "AND":
+            return and_(*[self._dsl_to_sqlalchemy(cond, table) for cond in filter_expr["conditions"]])
+        elif op == "OR":
+            return or_(*[self._dsl_to_sqlalchemy(cond, table) for cond in filter_expr["conditions"]])
+        else:
+            raise ValueError(f"Unknown filter operator: {op}")
+
+    def vector_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a vector similarity search.
 
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.
@@ -478,10 +813,19 @@ class PgVector(VectorDb):
             # Get the embedding for the query string
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for Query: {query}")
+                log_error(f"Error getting embedding for Query: {query}")
                 return []
 
-            # Define the columns to select
+            if self.distance == Distance.l2:
+                distance_expr = self.table.c.embedding.l2_distance(query_embedding)
+            elif self.distance == Distance.cosine:
+                distance_expr = self.table.c.embedding.cosine_distance(query_embedding)
+            elif self.distance == Distance.max_inner_product:
+                distance_expr = self.table.c.embedding.max_inner_product(query_embedding)
+            else:
+                log_error(f"Unknown distance metric: {self.distance}")
+                return []
+
             columns = [
                 self.table.c.id,
                 self.table.c.name,
@@ -489,6 +833,7 @@ class PgVector(VectorDb):
                 self.table.c.content,
                 self.table.c.embedding,
                 self.table.c.usage,
+                distance_expr.label("distance"),
             ]
 
             # Build the base statement
@@ -496,18 +841,29 @@ class PgVector(VectorDb):
 
             # Apply filters if provided
             if filters is not None:
-                stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle dict filters
+                if isinstance(filters, dict):
+                    stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle FilterExpr DSL
+                else:
+                    # Convert each DSL expression to SQLAlchemy and AND them together
+                    sqlalchemy_conditions = [
+                        self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table)
+                        for f in filters
+                    ]
+                    stmt = stmt.where(and_(*sqlalchemy_conditions))
 
-            # Order the results based on the distance metric
-            if self.distance == Distance.l2:
-                stmt = stmt.order_by(self.table.c.embedding.l2_distance(query_embedding))
-            elif self.distance == Distance.cosine:
-                stmt = stmt.order_by(self.table.c.embedding.cosine_distance(query_embedding))
-            elif self.distance == Distance.max_inner_product:
-                stmt = stmt.order_by(self.table.c.embedding.max_inner_product(query_embedding))
-            else:
-                logger.error(f"Unknown distance metric: {self.distance}")
-                return []
+            # Apply similarity threshold filter
+            if self.similarity_threshold is not None:
+                distance_threshold = score_to_distance_threshold(self.similarity_threshold, self.distance)
+                if self.distance == Distance.max_inner_product:
+                    # For inner product, negate threshold since pgvector returns negative values
+                    stmt = stmt.where(distance_expr <= -distance_threshold)
+                else:
+                    # For cosine and L2, smaller distances mean higher similarity
+                    stmt = stmt.where(distance_expr <= distance_threshold)
+
+            stmt = stmt.order_by(distance_expr)
 
             # Limit the number of results
             stmt = stmt.limit(limit)
@@ -525,19 +881,24 @@ class PgVector(VectorDb):
                             sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
-                logger.error(f"Error performing semantic search: {e}")
-                logger.error("Table might not exist, creating for future use")
+                log_error(f"Error performing semantic search: {str(e)}")
+                log_error(f"Table might not exist, creating for future use: {str(e)}")
                 self.create()
                 return []
 
-            # Process the results and convert to Document objects
             search_results: List[Document] = []
             for result in results:
+                # For inner product, negate since pgvector returns negative values
+                raw_distance = -result.distance if self.distance == Distance.max_inner_product else result.distance
+                similarity_score = normalize_score(raw_distance, self.distance)
+                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data["similarity_score"] = similarity_score
+
                 search_results.append(
                     Document(
                         id=result.id,
                         name=result.name,
-                        meta_data=result.meta_data,
+                        meta_data=meta_data,
                         content=result.content,
                         embedder=self.embedder,
                         embedding=result.embedding,
@@ -551,12 +912,18 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
-            logger.error(f"Error during vector search: {e}")
+            log_error(f"Error during vector search: {str(e)}")
             return []
 
     def enable_prefix_matching(self, query: str) -> str:
         """
         Preprocess the query for prefix matching.
+
+        Note: this helper is kept for backwards compatibility. The output
+        (``ani*``) is only meaningful when fed to ``to_tsquery``; with
+        ``websearch_to_tsquery`` (the default code path) the ``*`` is
+        silently dropped. New code should use ``_build_ts_query`` below,
+        which routes through ``to_tsquery`` when prefix matching is on.
 
         Args:
             query (str): The original query.
@@ -569,14 +936,43 @@ class PgVector(VectorDb):
         processed_words = [word + "*" for word in words]
         return " ".join(processed_words)
 
-    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def _build_ts_query(self, query: str):
+        """
+        Build the tsquery expression for keyword / hybrid search.
+
+        When ``prefix_match`` is False (default) we use
+        ``websearch_to_tsquery``, which accepts free-form natural language
+        and supports AND/OR/quoted-phrases/-negation. When ``prefix_match``
+        is True we tokenize on word boundaries and build a ``to_tsquery``
+        expression with ``:*`` per token — that lets a partial query like
+        ``"ani"`` match the ``anim`` lexeme that ``"animal"`` lemmatizes
+        into.
+
+        Returns ``None`` for a query that doesn't yield any usable tokens
+        in prefix mode (caller should treat as "no FTS hit").
+        """
+        if not self.prefix_match:
+            return func.websearch_to_tsquery(self.content_language, bindparam("query", value=query))
+
+        # to_tsquery is stricter than websearch_to_tsquery: it doesn't
+        # tolerate punctuation or operators in the input. Tokenize on
+        # word boundaries, append :* per token, AND them.
+        tokens = re.findall(r"\w+", query)
+        if not tokens:
+            return None
+        prefix_query = " & ".join(f"{t}:*" for t in tokens)
+        return func.to_tsquery(self.content_language, bindparam("query", value=prefix_query))
+
+    def keyword_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a keyword search on the 'content' column.
 
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.
@@ -597,16 +993,28 @@ class PgVector(VectorDb):
 
             # Build the text search vector
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-            # Create the ts_query using websearch_to_tsquery with parameter binding
-            processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
-            ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
+            # Build the ts_query — routes through to_tsquery with :* per token
+            # when prefix_match is on, websearch_to_tsquery otherwise.
+            ts_query = self._build_ts_query(query)
+            if ts_query is None:
+                # Prefix mode with no usable tokens (e.g. empty query): nothing to match
+                return []
             # Compute the text rank
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
             # Apply filters if provided
             if filters is not None:
-                # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
-                stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle dict filters
+                if isinstance(filters, dict):
+                    stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle FilterExpr DSL
+                else:
+                    # Convert each DSL expression to SQLAlchemy and AND them together
+                    sqlalchemy_conditions = [
+                        self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table)
+                        for f in filters
+                    ]
+                    stmt = stmt.where(and_(*sqlalchemy_conditions))
 
             # Order by the relevance rank
             stmt = stmt.order_by(text_rank.desc())
@@ -622,8 +1030,8 @@ class PgVector(VectorDb):
                 with self.Session() as sess, sess.begin():
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
-                logger.error(f"Error performing keyword search: {e}")
-                logger.error("Table might not exist, creating for future use")
+                log_error(f"Error performing keyword search: {str(e)}")
+                log_error(f"Table might not exist, creating for future use: {str(e)}")
                 self.create()
                 return []
 
@@ -645,14 +1053,14 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
-            logger.error(f"Error during keyword search: {e}")
+            log_error(f"Error during keyword search: {str(e)}")
             return []
 
     def hybrid_search(
         self,
         query: str,
         limit: int = 5,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector similarity and full-text search.
@@ -660,7 +1068,7 @@ class PgVector(VectorDb):
         Args:
             query (str): The search query.
             limit (int): Maximum number of results to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
 
         Returns:
             List[Document]: List of matching documents.
@@ -669,7 +1077,7 @@ class PgVector(VectorDb):
             # Get the embedding for the query string
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for Query: {query}")
+                log_error(f"Error getting embedding for Query: {query}")
                 return []
 
             # Define the columns to select
@@ -682,13 +1090,26 @@ class PgVector(VectorDb):
                 self.table.c.usage,
             ]
 
-            # Build the text search vector
+            # === TEXT SEARCH COMPONENT ===
+            # Hybrid search combines: (1) text/keyword matching + (2) vector similarity
+
+            # ts_vector: convert document content into searchable tokens
+            # Example: "The quick fox" -> 'fox':3 'quick':2 (stems words, removes stopwords)
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-            # Create the ts_query using websearch_to_tsquery with parameter binding
-            processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
-            ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
-            # Compute the text rank
-            text_rank = func.ts_rank_cd(ts_vector, ts_query)
+
+            # ts_query: convert user's search query into a search pattern
+            # Routes through to_tsquery with :* per token when prefix_match is on,
+            # websearch_to_tsquery otherwise
+            ts_query = self._build_ts_query(query)
+            if ts_query is None:
+                # No usable tokens (e.g. query was "!@#$" or empty)
+                # Fall back to empty tsquery so text_rank=0, letting vector search drive results
+                ts_query = literal_column("''::tsquery")
+
+            # text_rank: score how well document matches the query (0.0 to 1.0)
+            # ts_rank_cd returns small values (0.0-0.1), normalize with x/(x+k) formula
+            raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
+            text_rank = raw_text_rank / (raw_text_rank + 0.1)
 
             # Compute the vector similarity score
             if self.distance == Distance.l2:
@@ -699,15 +1120,17 @@ class PgVector(VectorDb):
             elif self.distance == Distance.cosine:
                 # For cosine distance, smaller distances are better
                 vector_distance = self.table.c.embedding.cosine_distance(query_embedding)
-                vector_score = 1 / (1 + vector_distance)
+                # Convert distance to similarity (cosine_distance = 1 - cosine_similarity)
+                vector_score = func.greatest(0.0, 1 - vector_distance)
             elif self.distance == Distance.max_inner_product:
                 # For inner product, higher values are better
-                # Assume embeddings are normalized, so inner product ranges from -1 to 1
-                raw_vector_score = self.table.c.embedding.max_inner_product(query_embedding)
+                # pgvector returns negative inner product, so negate to get actual value
+                negative_ip = self.table.c.embedding.max_inner_product(query_embedding)
+                inner_product = -negative_ip
                 # Normalize to range [0, 1]
-                vector_score = (raw_vector_score + 1) / 2
+                vector_score = func.greatest(0.0, func.least(1.0, (inner_product + 1) / 2))
             else:
-                logger.error(f"Unknown distance metric: {self.distance}")
+                log_error(f"Unknown distance metric: {self.distance}")
                 return []
 
             # Apply weights to control the influence of each score
@@ -727,7 +1150,20 @@ class PgVector(VectorDb):
 
             # Apply filters if provided
             if filters is not None:
-                stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle dict filters
+                if isinstance(filters, dict):
+                    stmt = stmt.where(self.table.c.meta_data.contains(filters))
+                # Handle FilterExpr DSL
+                else:
+                    # Convert each DSL expression to SQLAlchemy and AND them together
+                    sqlalchemy_conditions = [
+                        self._dsl_to_sqlalchemy(f.to_dict() if hasattr(f, "to_dict") else f, self.table)
+                        for f in filters
+                    ]
+                    stmt = stmt.where(and_(*sqlalchemy_conditions))
+
+            if self.similarity_threshold is not None:
+                stmt = stmt.where(hybrid_score >= self.similarity_threshold)
 
             # Order the results by the hybrid score in descending order
             stmt = stmt.order_by(desc("hybrid_score"))
@@ -748,17 +1184,19 @@ class PgVector(VectorDb):
                             sess.execute(text(f"SET LOCAL hnsw.ef_search = {self.vector_index.ef_search}"))
                     results = sess.execute(stmt).fetchall()
             except Exception as e:
-                logger.error(f"Error performing hybrid search: {e}")
+                log_error(f"Error performing hybrid search: {str(e)}")
                 return []
 
-            # Process the results and convert to Document objects
             search_results: List[Document] = []
             for result in results:
+                meta_data = dict(result.meta_data) if result.meta_data else {}
+                meta_data["similarity_score"] = float(result.hybrid_score)
+
                 search_results.append(
                     Document(
                         id=result.id,
                         name=result.name,
-                        meta_data=result.meta_data,
+                        meta_data=meta_data,
                         content=result.content,
                         embedder=self.embedder,
                         embedding=result.embedding,
@@ -766,10 +1204,14 @@ class PgVector(VectorDb):
                     )
                 )
 
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
             log_info(f"Found {len(search_results)} documents")
+
             return search_results
         except Exception as e:
-            logger.error(f"Error during hybrid search: {e}")
+            log_error(f"Error during hybrid search: {str(e)}")
             return []
 
     def drop(self) -> None:
@@ -782,7 +1224,7 @@ class PgVector(VectorDb):
                 self.table.drop(self.db_engine)
                 log_info(f"Table '{self.table.fullname}' dropped successfully.")
             except Exception as e:
-                logger.error(f"Error dropping table '{self.table.fullname}': {e}")
+                log_error(f"Error dropping table '{self.table.fullname}': {str(e)}")
                 raise
         else:
             log_info(f"Table '{self.table.fullname}' does not exist.")
@@ -817,7 +1259,7 @@ class PgVector(VectorDb):
                 result = sess.execute(stmt).scalar()
                 return int(result) if result is not None else 0
         except Exception as e:
-            logger.error(f"Error getting count from table '{self.table.fullname}': {e}")
+            log_error(f"Error getting count from table '{self.table.fullname}': {str(e)}")
             return 0
 
     def optimize(self, force_recreate: bool = False) -> None:
@@ -858,7 +1300,7 @@ class PgVector(VectorDb):
                 drop_index_sql = f'DROP INDEX IF EXISTS "{self.schema}"."{index_name}";'
                 sess.execute(text(drop_index_sql))
         except Exception as e:
-            logger.error(f"Error dropping index '{index_name}': {e}")
+            log_error(f"Error dropping index '{index_name}': {str(e)}")
             raise
 
     def _create_vector_index(self, force_recreate: bool = False) -> None:
@@ -913,10 +1355,10 @@ class PgVector(VectorDb):
                 elif isinstance(self.vector_index, HNSW):
                     self._create_hnsw_index(sess, table_fullname, index_distance)
                 else:
-                    logger.error(f"Unknown index type: {type(self.vector_index)}")
+                    log_error(f"Unknown index type: {type(self.vector_index)}")
                     return
         except Exception as e:
-            logger.error(f"Error creating vector index '{self.vector_index.name}': {e}")
+            log_error(f"Error creating vector index '{self.vector_index.name}': {str(e)}")
             raise
 
     def _create_ivfflat_index(self, sess: Session, table_fullname: str, index_distance: str) -> None:
@@ -1015,7 +1457,7 @@ class PgVector(VectorDb):
                 )
                 sess.execute(create_gin_index_sql)
         except Exception as e:
-            logger.error(f"Error creating GIN index '{gin_index_name}': {e}")
+            log_error(f"Error creating GIN index '{gin_index_name}': {str(e)}")
             raise
 
     def delete(self) -> bool:
@@ -1034,7 +1476,87 @@ class PgVector(VectorDb):
                 log_info(f"Deleted all records from table '{self.table.fullname}'.")
                 return True
         except Exception as e:
-            logger.error(f"Error deleting rows from table '{self.table.fullname}': {e}")
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {str(e)}")
+            sess.rollback()
+            return False
+
+    def delete_by_id(self, id: str) -> bool:
+        """
+        Delete content by ID.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.id == id)
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with id '{id}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {str(e)}")
+            sess.rollback()
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete content by name.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.name == name)
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with name '{name}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {str(e)}")
+            sess.rollback()
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete content by metadata.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.meta_data.contains(metadata))
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with metadata '{metadata}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {str(e)}")
+            sess.rollback()
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete content by content ID.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.content_id == content_id)
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with content ID '{content_id}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {str(e)}")
+            sess.rollback()
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """
+        Delete content by content hash.
+        """
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = self.table.delete().where(self.table.c.content_hash == content_hash)
+                sess.execute(stmt)
+                sess.commit()
+                log_info(f"Deleted records with content hash '{content_hash}' from table '{self.table.fullname}'.")
+                return True
+        except Exception as e:
+            log_error(f"Error deleting rows from table '{self.table.fullname}': {str(e)}")
             sess.rollback()
             return False
 
@@ -1070,3 +1592,6 @@ class PgVector(VectorDb):
         copied_obj.table = copied_obj.get_table()
 
         return copied_obj
+
+    def get_supported_search_types(self) -> List[str]:
+        return [SearchType.vector, SearchType.keyword, SearchType.hybrid]

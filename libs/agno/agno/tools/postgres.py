@@ -2,36 +2,45 @@ import csv
 from typing import Any, Dict, List, Optional
 
 try:
-    import psycopg2
-    from psycopg2 import sql
-    from psycopg2.extensions import connection as PgConnection
-    from psycopg2.extras import DictCursor
+    import psycopg
+    from psycopg import sql
+    from psycopg.connection import Connection as PgConnection
+    from psycopg.rows import DictRow, dict_row
 except ImportError:
-    raise ImportError(
-        "`psycopg2` not installed. Please install using `pip install psycopg2`. If you face issues, try `pip install psycopg2-binary`."
-    )
+    raise ImportError("`psycopg` not installed. Please install using `pip install 'psycopg-binary'`.")
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
 
 class PostgresTools(Toolkit):
+    """
+    A toolkit for interacting with PostgreSQL databases.
+
+    Args:
+        connection (Optional[PgConnection[DictRow]]): Existing database connection to reuse.
+        db_name (Optional[str]): Database name to connect to.
+        user (Optional[str]): Username for authentication.
+        password (Optional[str]): Password for authentication.
+        host (Optional[str]): PostgreSQL server hostname.
+        port (Optional[int]): PostgreSQL server port number.
+        table_schema (str): Default schema for table operations. Default is "public".
+    """
+
+    _requires_connect: bool = True
+
     def __init__(
         self,
-        connection: Optional[PgConnection] = None,
+        connection: Optional[PgConnection[DictRow]] = None,
         db_name: Optional[str] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
-        run_queries: bool = True,
-        inspect_queries: bool = False,
-        summarize_tables: bool = True,
-        export_tables: bool = False,
         table_schema: str = "public",
         **kwargs,
     ):
-        self._connection: Optional[PgConnection] = connection
+        self._connection: Optional[PgConnection[DictRow]] = connection
         self.db_name: Optional[str] = db_name
         self.user: Optional[str] = user
         self.password: Optional[str] = password
@@ -42,62 +51,79 @@ class PostgresTools(Toolkit):
         tools: List[Any] = [
             self.show_tables,
             self.describe_table,
+            self.summarize_table,
+            self.inspect_query,
+            self.run_query,
+            self.export_table_to_path,
         ]
-        if inspect_queries:
-            tools.append(self.inspect_query)
-        if run_queries:
-            tools.append(self.run_query)
-        if summarize_tables:
-            tools.append(self.summarize_table)
-        if export_tables:
-            tools.append(self.export_table_to_path)
 
         super().__init__(name="postgres_tools", tools=tools, **kwargs)
 
-    @property
-    def connection(self) -> PgConnection:
+    def connect(self) -> PgConnection[DictRow]:
         """
-        Returns the Postgres psycopg2 connection.
-        :return psycopg2.extensions.connection: psycopg2 connection
+        Establish a connection to the PostgreSQL database.
+
+        Returns:
+            The database connection object.
         """
-        if self._connection is None or self._connection.closed:
-            log_debug("Establishing new PostgreSQL connection.")
-            connection_kwargs: Dict[str, Any] = {"cursor_factory": DictCursor}
-            if self.db_name:
-                connection_kwargs["database"] = self.db_name
-            if self.user:
-                connection_kwargs["user"] = self.user
-            if self.password:
-                connection_kwargs["password"] = self.password
-            if self.host:
-                connection_kwargs["host"] = self.host
-            if self.port:
-                connection_kwargs["port"] = self.port
+        if self._connection is not None and not self._connection.closed:
+            log_debug("Connection already established, reusing existing connection")
+            return self._connection
 
-            connection_kwargs["options"] = f"-c search_path={self.table_schema}"
+        log_debug("Establishing new PostgreSQL connection.")
+        connection_kwargs: Dict[str, Any] = {"row_factory": dict_row}
+        if self.db_name:
+            connection_kwargs["dbname"] = self.db_name
+        if self.user:
+            connection_kwargs["user"] = self.user
+        if self.password:
+            connection_kwargs["password"] = self.password
+        if self.host:
+            connection_kwargs["host"] = self.host
+        if self.port:
+            connection_kwargs["port"] = self.port
 
-            self._connection = psycopg2.connect(**connection_kwargs)
-            self._connection.set_session(readonly=True)
+        connection_kwargs["options"] = f"-c search_path={self.table_schema}"
 
+        self._connection = psycopg.connect(**connection_kwargs)
+        self._connection.read_only = True
         return self._connection
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-    def close(self):
+    def close(self) -> None:
         """Closes the database connection if it's open."""
         if self._connection and not self._connection.closed:
             log_debug("Closing PostgreSQL connection.")
             self._connection.close()
             self._connection = None
 
+    @property
+    def is_connected(self) -> bool:
+        """Check if a connection is currently established."""
+        return self._connection is not None and not self._connection.closed
+
+    def _ensure_connection(self) -> PgConnection[DictRow]:
+        """
+        Ensure a connection exists, creating one if necessary.
+
+        Returns:
+            The database connection object.
+        """
+        if not self.is_connected:
+            return self.connect()
+        return self._connection  # type: ignore
+
+    def __enter__(self):
+        return self.connect()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.is_connected:
+            self.close()
+
     def _execute_query(self, query: str, params: Optional[tuple] = None) -> str:
         try:
-            with self.connection.cursor() as cursor:
-                log_debug(f"Running PostgreSQL Query: {query} with Params: {params}")
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
+                log_debug("Running PostgreSQL query")
                 cursor.execute(query, params)
 
                 if cursor.description is None:
@@ -110,16 +136,16 @@ class PostgresTools(Toolkit):
                     return f"Query returned no results.\nColumns: {', '.join(columns)}"
 
                 header = ",".join(columns)
-                data_rows = [",".join(map(str, row)) for row in rows]
+                data_rows = [",".join(map(str, row.values())) for row in rows]
                 return f"{header}\n" + "\n".join(data_rows)
 
-        except psycopg2.Error as e:
-            log_error(f"Database error: {e}")
-            if self.connection and not self.connection.closed:
-                self.connection.rollback()
+        except psycopg.Error as e:
+            log_error(f"Database error: {str(e)}")
+            if self._connection and not self._connection.closed:
+                self._connection.rollback()
             return f"Error executing query: {e}"
         except Exception as e:
-            log_error(f"An unexpected error occurred: {e}")
+            log_error(f"An unexpected error occurred: {str(e)}")
             return f"An unexpected error occurred: {e}"
 
     def show_tables(self) -> str:
@@ -156,7 +182,8 @@ class PostgresTools(Toolkit):
             A string containing a summary of the table.
         """
         try:
-            with self.connection.cursor() as cursor:
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
                 # First, get column information using a parameterized query
                 schema_query = """
                     SELECT column_name, data_type
@@ -203,15 +230,18 @@ class PostgresTools(Toolkit):
                         cursor.execute(query)
                         stats = cursor.fetchone()
                         summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
-                        for key, value in stats.items():
-                            val_str = (
-                                f"{value:.2f}" if isinstance(value, (float, int)) and value is not None else str(value)
-                            )
-                            summary_parts.append(f"  {key}: {val_str}")
+                        if stats is not None:
+                            for key, value in stats.items():
+                                val_str = (
+                                    f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
+                                )
+                                summary_parts.append(f"  {key}: {val_str}")
+                        else:
+                            summary_parts.append("  No statistics available")
 
                 return "\n".join(summary_parts)
 
-        except psycopg2.Error as e:
+        except psycopg.Error as e:
             return f"Error summarizing table: {e}"
 
     def inspect_query(self, query: str) -> str:
@@ -237,17 +267,24 @@ class PostgresTools(Toolkit):
         stmt = sql.SQL("SELECT * FROM {tbl};").format(tbl=table_identifier)
 
         try:
-            with self.connection.cursor() as cursor:
+            connection = self._ensure_connection()
+            with connection.cursor() as cursor:
                 cursor.execute(stmt)
+
+                if cursor.description is None:
+                    return f"Error: Query returned no description for table '{table}'."
+
                 columns = [desc[0] for desc in cursor.description]
 
                 with open(path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow(columns)
-                    writer.writerows(cursor)
+                    writer.writerows(row.values() for row in cursor)
 
             return f"Successfully exported table '{table}' to '{path}'."
-        except (psycopg2.Error, IOError) as e:
+        except (psycopg.Error, IOError) as e:
+            if self._connection and not self._connection.closed:
+                self._connection.rollback()
             return f"Error exporting table: {e}"
 
     def run_query(self, query: str) -> str:

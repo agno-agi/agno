@@ -10,12 +10,20 @@ except ImportError:
 
 
 class PandasTools(Toolkit):
-    def __init__(self, **kwargs):
+    def __init__(
+        self,
+        enable_create_pandas_dataframe: bool = True,
+        enable_run_dataframe_operation: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
         self.dataframes: Dict[str, pd.DataFrame] = {}
 
         tools: List[Any] = []
-        tools.append(self.create_pandas_dataframe)
-        tools.append(self.run_dataframe_operation)
+        if all or enable_create_pandas_dataframe:
+            tools.append(self.create_pandas_dataframe)
+        if all or enable_run_dataframe_operation:
+            tools.append(self.run_dataframe_operation)
 
         super().__init__(name="pandas_tools", tools=tools, **kwargs)
 
@@ -54,7 +62,7 @@ class PandasTools(Toolkit):
             log_debug(f"Created dataframe: {dataframe_name}")
             return dataframe_name
         except Exception as e:
-            logger.error(f"Error creating dataframe: {e}")
+            logger.exception("Error creating dataframe")
             return f"Error creating dataframe: {e}"
 
     def run_dataframe_operation(self, dataframe_name: str, operation: str, operation_parameters: Dict[str, Any]) -> str:
@@ -90,5 +98,5 @@ class PandasTools(Toolkit):
             except Exception:
                 return "Operation ran successfully"
         except Exception as e:
-            logger.error(f"Error running operation: {e}")
+            logger.exception("Error running operation")
             return f"Error running operation: {e}"

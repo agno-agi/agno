@@ -7,7 +7,6 @@ from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
-    from github.GithubObject import NotSet
 
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
@@ -18,45 +17,6 @@ class GithubTools(Toolkit):
         self,
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
-        search_repositories: bool = True,
-        list_repositories: bool = False,
-        get_repository: bool = False,
-        get_pull_request: bool = False,
-        get_pull_request_changes: bool = False,
-        create_issue: bool = False,
-        create_repository: bool = False,
-        delete_repository: bool = False,
-        get_repository_languages: bool = False,
-        list_branches: bool = False,
-        get_pull_request_count: bool = False,
-        get_repository_stars: bool = False,
-        get_pull_requests: bool = False,
-        get_pull_request_comments: bool = False,
-        create_pull_request_comment: bool = False,
-        edit_pull_request_comment: bool = False,
-        get_pull_request_with_details: bool = False,
-        get_repository_with_stats: bool = False,
-        list_issues: bool = False,
-        get_issue: bool = False,
-        comment_on_issue: bool = False,
-        close_issue: bool = False,
-        reopen_issue: bool = False,
-        assign_issue: bool = False,
-        label_issue: bool = False,
-        list_issue_comments: bool = False,
-        edit_issue: bool = False,
-        create_pull_request: bool = False,
-        create_file: bool = False,
-        get_file_content: bool = False,
-        update_file: bool = True,
-        delete_file: bool = False,
-        get_directory_content: bool = False,
-        get_branch_content: bool = False,
-        create_branch: bool = False,
-        set_default_branch: bool = False,
-        search_code: bool = False,
-        search_issues_and_prs: bool = False,
-        create_review_request: bool = False,
         **kwargs,
     ):
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
@@ -64,85 +24,47 @@ class GithubTools(Toolkit):
 
         self.g = self.authenticate()
 
-        tools: List[Any] = []
-        if search_repositories:
-            tools.append(self.search_repositories)
-        if list_repositories:
-            tools.append(self.list_repositories)
-        if get_repository:
-            tools.append(self.get_repository)
-        if get_pull_request:
-            tools.append(self.get_pull_request)
-        if get_pull_request_changes:
-            tools.append(self.get_pull_request_changes)
-        if create_issue:
-            tools.append(self.create_issue)
-        if create_repository:
-            tools.append(self.create_repository)
-        if delete_repository:
-            tools.append(self.delete_repository)
-        if list_branches:
-            tools.append(self.list_branches)
-        if get_repository_languages:
-            tools.append(self.get_repository_languages)
-        if get_pull_request_count:
-            tools.append(self.get_pull_request_count)
-        if get_repository_stars:
-            tools.append(self.get_repository_stars)
-        if get_pull_requests:
-            tools.append(self.get_pull_requests)
-        if get_pull_request_comments:
-            tools.append(self.get_pull_request_comments)
-        if create_pull_request_comment:
-            tools.append(self.create_pull_request_comment)
-        if edit_pull_request_comment:
-            tools.append(self.edit_pull_request_comment)
-        if get_pull_request_with_details:
-            tools.append(self.get_pull_request_with_details)
-        if get_repository_with_stats:
-            tools.append(self.get_repository_with_stats)
-        if list_issues:
-            tools.append(self.list_issues)
-        if get_issue:
-            tools.append(self.get_issue)
-        if comment_on_issue:
-            tools.append(self.comment_on_issue)
-        if close_issue:
-            tools.append(self.close_issue)
-        if reopen_issue:
-            tools.append(self.reopen_issue)
-        if assign_issue:
-            tools.append(self.assign_issue)
-        if label_issue:
-            tools.append(self.label_issue)
-        if list_issue_comments:
-            tools.append(self.list_issue_comments)
-        if edit_issue:
-            tools.append(self.edit_issue)
-        if create_pull_request:
-            tools.append(self.create_pull_request)
-        if create_file:
-            tools.append(self.create_file)
-        if get_file_content:
-            tools.append(self.get_file_content)
-        if update_file:
-            tools.append(self.update_file)
-        if delete_file:
-            tools.append(self.delete_file)
-        if get_directory_content:
-            tools.append(self.get_directory_content)
-        if get_branch_content:
-            tools.append(self.get_branch_content)
-        if create_branch:
-            tools.append(self.create_branch)
-        if set_default_branch:
-            tools.append(self.set_default_branch)
-        if search_code:
-            tools.append(self.search_code)
-        if search_issues_and_prs:
-            tools.append(self.search_issues_and_prs)
-        if create_review_request:
-            tools.append(self.create_review_request)
+        tools: List[Any] = [
+            self.search_repositories,
+            self.list_repositories,
+            self.get_repository,
+            self.get_pull_request,
+            self.get_pull_request_changes,
+            self.create_issue,
+            self.create_repository,
+            self.delete_repository,
+            self.list_branches,
+            self.get_repository_languages,
+            self.get_pull_request_count,
+            self.get_repository_stars,
+            self.get_pull_requests,
+            self.get_pull_request_comments,
+            self.create_pull_request_comment,
+            self.edit_pull_request_comment,
+            self.get_pull_request_with_details,
+            self.get_repository_with_stats,
+            self.list_issues,
+            self.get_issue,
+            self.comment_on_issue,
+            self.close_issue,
+            self.reopen_issue,
+            self.assign_issue,
+            self.label_issue,
+            self.list_issue_comments,
+            self.edit_issue,
+            self.create_pull_request,
+            self.create_file,
+            self.get_file_content,
+            self.update_file,
+            self.delete_file,
+            self.get_directory_content,
+            self.get_branch_content,
+            self.create_branch,
+            self.set_default_branch,
+            self.search_code,
+            self.search_issues_and_prs,
+            self.create_review_request,
+        ]
 
         super().__init__(name="github", tools=tools, **kwargs)
 
@@ -207,7 +129,7 @@ class GithubTools(Toolkit):
             return json.dumps(repo_list, indent=2)
 
         except GithubException as e:
-            logger.error(f"Error searching repositories: {e}")
+            logger.exception("Error searching repositories")
             return json.dumps({"error": str(e)})
 
     def list_repositories(self) -> str:
@@ -222,7 +144,7 @@ class GithubTools(Toolkit):
             repo_names = [repo.full_name for repo in repos]
             return json.dumps(repo_names, indent=2)
         except GithubException as e:
-            logger.error(f"Error listing repositories: {e}")
+            logger.exception("Error listing repositories")
             return json.dumps({"error": str(e)})
 
     def create_repository(
@@ -274,7 +196,7 @@ class GithubTools(Toolkit):
             }
             return json.dumps(repo_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error creating repository: {e}")
+            logger.exception("Error creating repository")
             return json.dumps({"error": str(e)})
 
     def get_repository(self, repo_name: str) -> str:
@@ -302,7 +224,7 @@ class GithubTools(Toolkit):
             }
             return json.dumps(repo_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting repository: {e}")
+            logger.exception("Error getting repository")
             return json.dumps({"error": str(e)})
 
     def get_repository_languages(self, repo_name: str) -> str:
@@ -320,7 +242,7 @@ class GithubTools(Toolkit):
             languages = repo.get_languages()
             return json.dumps(languages, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting repository languages: {e}")
+            logger.exception("Error getting repository languages")
             return json.dumps({"error": str(e)})
 
     def get_pull_request_count(
@@ -360,7 +282,7 @@ class GithubTools(Toolkit):
 
             return json.dumps({"count": count}, indent=2)
         except GithubException as e:
-            logger.error(f"Error counting pull requests: {e}")
+            logger.exception("Error counting pull requests")
             return json.dumps({"error": str(e)})
 
     def get_pull_request(self, repo_name: str, pr_number: int) -> str:
@@ -392,7 +314,7 @@ class GithubTools(Toolkit):
             }
             return json.dumps(pr_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting pull request: {e}")
+            logger.exception("Error getting pull request")
             return json.dumps({"error": str(e)})
 
     def get_pull_request_changes(self, repo_name: str, pr_number: int) -> str:
@@ -425,10 +347,10 @@ class GithubTools(Toolkit):
                 changes.append(file_info)
             return json.dumps(changes, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting pull request changes: {e}")
+            logger.exception("Error getting pull request changes")
             return json.dumps({"error": str(e)})
 
-    def create_issue(self, repo_name: str, title: str, body: Optional[str] = NotSet) -> str:
+    def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
         """Create an issue in a repository.
 
         Args:
@@ -442,7 +364,7 @@ class GithubTools(Toolkit):
         log_debug(f"Creating issue in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
-            issue = repo.create_issue(title=title, body=body)
+            issue = repo.create_issue(title=title, body=body)  # type: ignore
             issue_info = {
                 "id": issue.id,
                 "number": issue.number,
@@ -455,40 +377,68 @@ class GithubTools(Toolkit):
             }
             return json.dumps(issue_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error creating issue: {e}")
+            logger.exception("Error creating issue")
             return json.dumps({"error": str(e)})
 
-    def list_issues(self, repo_name: str, state: str = "open", limit: int = 20) -> str:
-        """List issues for a repository.
+    def list_issues(self, repo_name: str, state: str = "open", page: int = 1, per_page: int = 20) -> str:
+        """List issues for a repository with pagination.
 
         Args:
             repo_name (str): The full name of the repository (e.g., 'owner/repo').
             state (str, optional): The state of issues to list ('open', 'closed', 'all'). Defaults to 'open'.
-            limit (int, optional): The maximum number of issues to return. Defaults to 20.
+            page (int, optional): Page number of results to return, counting from 1. Defaults to 1.
+            per_page (int, optional): Number of results per page. Defaults to 20.
         Returns:
-            A JSON-formatted string containing a list of issues.
+            A JSON-formatted string containing a list of issues with pagination metadata.
         """
-        log_debug(f"Listing issues for repository: {repo_name} with state: {state}")
+        log_debug(f"Listing issues for repository: {repo_name} with state: {state}, page: {page}, per_page: {per_page}")
         try:
             repo = self.g.get_repo(repo_name)
+
             issues = repo.get_issues(state=state)
+
             # Filter out pull requests after fetching issues
-            logger.info(f"Issues: {issues}")
-            filtered_issues = [issue for issue in issues if not issue.pull_request]
+            total_issues = 0
+            all_issues = []
+            for issue in issues:
+                if not issue.pull_request:
+                    all_issues.append(issue)
+                    total_issues += 1
+
+            # Calculate pagination metadata
+            total_pages = (total_issues + per_page - 1) // per_page
+
+            # Validate page number
+            if page < 1:
+                page = 1
+            elif page > total_pages and total_pages > 0:
+                page = total_pages
+
+            # Get the specified page of results
             issue_list = []
-            for issue in filtered_issues[:limit]:
-                issue_info = {
-                    "number": issue.number,
-                    "title": issue.title,
-                    "user": issue.user.login,
-                    "created_at": issue.created_at.isoformat(),
-                    "state": issue.state,
-                    "url": issue.html_url,
-                }
-                issue_list.append(issue_info)
-            return json.dumps(issue_list, indent=2)
+            page_start = (page - 1) * per_page
+            page_end = page_start + per_page
+
+            for i in range(page_start, min(page_end, total_issues)):
+                if i < len(all_issues):
+                    issue = all_issues[i]
+                    issue_info = {
+                        "number": issue.number,
+                        "title": issue.title,
+                        "user": issue.user.login,
+                        "created_at": issue.created_at.isoformat(),
+                        "state": issue.state,
+                        "url": issue.html_url,
+                    }
+                    issue_list.append(issue_info)
+
+            meta = {"current_page": page, "per_page": per_page, "total_items": total_issues, "total_pages": total_pages}
+
+            response = {"data": issue_list, "meta": meta}
+
+            return json.dumps(response, indent=2)
         except GithubException as e:
-            logger.error(f"Error listing issues: {e}")
+            logger.exception("Error listing issues")
             return json.dumps({"error": str(e)})
 
     def get_issue(self, repo_name: str, issue_number: int) -> str:
@@ -519,7 +469,7 @@ class GithubTools(Toolkit):
             }
             return json.dumps(issue_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting issue: {e}")
+            logger.exception("Error getting issue")
             return json.dumps({"error": str(e)})
 
     def comment_on_issue(self, repo_name: str, issue_number: int, comment_body: str) -> str:
@@ -547,7 +497,7 @@ class GithubTools(Toolkit):
             }
             return json.dumps(comment_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error commenting on issue: {e}")
+            logger.exception("Error commenting on issue")
             return json.dumps({"error": str(e)})
 
     def close_issue(self, repo_name: str, issue_number: int) -> str:
@@ -567,7 +517,7 @@ class GithubTools(Toolkit):
             issue.edit(state="closed")
             return json.dumps({"message": f"Issue #{issue_number} closed."}, indent=2)
         except GithubException as e:
-            logger.error(f"Error closing issue: {e}")
+            logger.exception("Error closing issue")
             return json.dumps({"error": str(e)})
 
     def reopen_issue(self, repo_name: str, issue_number: int) -> str:
@@ -587,7 +537,7 @@ class GithubTools(Toolkit):
             issue.edit(state="open")
             return json.dumps({"message": f"Issue #{issue_number} reopened."}, indent=2)
         except GithubException as e:
-            logger.error(f"Error reopening issue: {e}")
+            logger.exception("Error reopening issue")
             return json.dumps({"error": str(e)})
 
     def assign_issue(self, repo_name: str, issue_number: int, assignees: List[str]) -> str:
@@ -608,7 +558,7 @@ class GithubTools(Toolkit):
             issue.edit(assignees=assignees)
             return json.dumps({"message": f"Issue #{issue_number} assigned to {assignees}."}, indent=2)
         except GithubException as e:
-            logger.error(f"Error assigning issue: {e}")
+            logger.exception("Error assigning issue")
             return json.dumps({"error": str(e)})
 
     def label_issue(self, repo_name: str, issue_number: int, labels: List[str]) -> str:
@@ -632,7 +582,7 @@ class GithubTools(Toolkit):
                 indent=2,
             )
         except GithubException as e:
-            logger.error(f"Error labeling issue: {e}")
+            logger.exception("Error labeling issue")
             return json.dumps({"error": str(e)})
 
     def list_issue_comments(self, repo_name: str, issue_number: int) -> str:
@@ -662,15 +612,15 @@ class GithubTools(Toolkit):
                 comment_list.append(comment_info)
             return json.dumps(comment_list, indent=2)
         except GithubException as e:
-            logger.error(f"Error listing issue comments: {e}")
+            logger.exception("Error listing issue comments")
             return json.dumps({"error": str(e)})
 
     def edit_issue(
         self,
         repo_name: str,
         issue_number: int,
-        title: Optional[str] = NotSet,
-        body: Optional[str] = NotSet,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
     ) -> str:
         """Edit the title or body of an issue.
 
@@ -687,10 +637,10 @@ class GithubTools(Toolkit):
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
-            issue.edit(title=title, body=body)
+            issue.edit(title=title, body=body)  # type: ignore
             return json.dumps({"message": f"Issue #{issue_number} updated."}, indent=2)
         except GithubException as e:
-            logger.error(f"Error editing issue: {e}")
+            logger.exception("Error editing issue")
             return json.dumps({"error": str(e)})
 
     def delete_repository(self, repo_name: str) -> str:
@@ -708,7 +658,7 @@ class GithubTools(Toolkit):
             repo.delete()
             return json.dumps({"message": f"Repository {repo_name} deleted successfully"}, indent=2)
         except GithubException as e:
-            logger.error(f"Error deleting repository: {e}")
+            logger.exception("Error deleting repository")
             return json.dumps({"error": str(e)})
 
     def list_branches(self, repo_name: str) -> str:
@@ -725,7 +675,7 @@ class GithubTools(Toolkit):
             branches = [branch.name for branch in repo.get_branches()]
             return json.dumps(branches, indent=2)
         except GithubException as e:
-            logger.error(f"Error listing branches: {e}")
+            logger.exception("Error listing branches")
             return json.dumps({"error": str(e)})
 
     def get_repository_stars(self, repo_name: str) -> str:
@@ -742,7 +692,7 @@ class GithubTools(Toolkit):
             repo = self.g.get_repo(repo_name)
             return json.dumps({"stars": repo.stargazers_count}, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting repository stars: {e}")
+            logger.exception("Error getting repository stars")
             return json.dumps({"error": str(e)})
 
     def get_pull_requests(
@@ -770,7 +720,7 @@ class GithubTools(Toolkit):
             pulls = repo.get_pulls(state=state, sort=sort, direction=direction)
 
             pr_list = []
-            for pr in pulls[:limit]:
+            for pr in pulls:
                 pr_info = {
                     "number": pr.number,
                     "title": pr.title,
@@ -782,9 +732,12 @@ class GithubTools(Toolkit):
                 }
                 pr_list.append(pr_info)
 
+                if len(pr_list) >= limit:
+                    break
+
             return json.dumps(pr_list, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting pull requests by query: {e}")
+            logger.exception("Error getting pull requests by query")
             return json.dumps({"error": str(e)})
 
     def get_pull_request_comments(self, repo_name: str, pr_number: int, include_issue_comments: bool = True) -> str:
@@ -842,7 +795,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(comment_list, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting pull request comments: {e}")
+            logger.exception("Error getting pull request comments")
             return json.dumps({"error": str(e)})
 
     def create_pull_request_comment(
@@ -887,7 +840,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(comment_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error creating pull request comment: {e}")
+            logger.exception("Error creating pull request comment")
             return json.dumps({"error": str(e)})
 
     def edit_pull_request_comment(self, repo_name: str, comment_id: int, body: str) -> str:
@@ -926,7 +879,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(comment_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error editing pull request comment: {e}")
+            logger.exception("Error editing pull request comment")
             return json.dumps({"error": str(e)})
 
     def get_pull_request_with_details(self, repo_name: str, pr_number: int) -> str:
@@ -1034,7 +987,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(pr_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting pull request details: {e}")
+            logger.exception("Error getting pull request details")
             return json.dumps({"error": str(e)})
 
     def get_repository_with_stats(self, repo_name: str) -> str:
@@ -1197,7 +1150,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(repo_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting repository stats: {e}")
+            logger.exception("Error getting repository stats")
             return json.dumps({"error": str(e)})
 
     def create_pull_request(
@@ -1251,7 +1204,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(pr_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error creating pull request: {e}")
+            logger.exception("Error creating pull request")
             return json.dumps({"error": str(e)})
 
     def create_review_request(
@@ -1287,7 +1240,7 @@ class GithubTools(Toolkit):
                 indent=2,
             )
         except GithubException as e:
-            logger.error(f"Error creating review request: {e}")
+            logger.exception("Error creating review request")
             return json.dumps({"error": str(e)})
 
     def create_file(
@@ -1296,7 +1249,7 @@ class GithubTools(Toolkit):
         path: str,
         content: str,
         message: str,
-        branch: Optional[str] = NotSet,
+        branch: Optional[str] = None,
     ) -> str:
         """Create a new file in a repository.
 
@@ -1322,7 +1275,7 @@ class GithubTools(Toolkit):
 
             # Extract relevant information
             file_info = {
-                "path": result["content"].path,
+                "path": result["content"].path,  # type: ignore
                 "sha": result["content"].sha,
                 "url": result["content"].html_url,
                 "commit": {
@@ -1336,7 +1289,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(file_info, indent=2)
         except (GithubException, AssertionError) as e:
-            logger.error(f"Error creating file: {e}")
+            logger.exception("Error creating file")
             return json.dumps({"error": str(e)})
 
     def get_file_content(self, repo_name: str, path: str, ref: Optional[str] = None) -> str:
@@ -1392,7 +1345,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(content_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting file content: {e}")
+            logger.exception("Error getting file content")
             return json.dumps({"error": str(e)})
 
     def update_file(
@@ -1447,7 +1400,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(file_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error updating file: {e}")
+            logger.exception("Error updating file")
             return json.dumps({"error": str(e)})
 
     def delete_file(
@@ -1489,7 +1442,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(commit_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error deleting file: {e}")
+            logger.exception("Error deleting file")
             return json.dumps({"error": str(e)})
 
     def get_directory_content(self, repo_name: str, path: str, ref: Optional[str] = None) -> str:
@@ -1536,7 +1489,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(items, indent=2)
         except GithubException as e:
-            logger.error(f"Error getting directory contents: {e}")
+            logger.exception("Error getting directory contents")
             return json.dumps({"error": str(e)})
 
     def get_branch_content(self, repo_name: str, branch: str = "main") -> str:
@@ -1554,7 +1507,7 @@ class GithubTools(Toolkit):
             # This is just a convenience function that uses get_directory_content with empty path
             return self.get_directory_content(repo_name=repo_name, path="", ref=branch)
         except GithubException as e:
-            logger.error(f"Error getting branch contents: {e}")
+            logger.exception("Error getting branch contents")
             return json.dumps({"error": str(e)})
 
     def create_branch(self, repo_name: str, branch_name: str, source_branch: Optional[str] = None) -> str:
@@ -1591,7 +1544,7 @@ class GithubTools(Toolkit):
 
             return json.dumps(branch_info, indent=2)
         except GithubException as e:
-            logger.error(f"Error creating branch: {e}")
+            logger.exception("Error creating branch")
             return json.dumps({"error": str(e)})
 
     def set_default_branch(self, repo_name: str, branch_name: str) -> str:
@@ -1625,7 +1578,7 @@ class GithubTools(Toolkit):
                 indent=2,
             )
         except GithubException as e:
-            logger.error(f"Error setting default branch: {e}")
+            logger.exception("Error setting default branch")
             return json.dumps({"error": str(e)})
 
     def search_code(
@@ -1670,20 +1623,32 @@ class GithubTools(Toolkit):
             log_debug(f"Final search query: {search_query}")
             code_results = self.g.search_code(search_query)
 
-            # Process results
-            results = []
-            # Limit to 50 results to prevent timeouts
-            for code in code_results[:50]:
-                code_info = {
-                    "repository": code.repository.full_name,
-                    "path": code.path,
-                    "name": code.name,
-                    "sha": code.sha,
-                    "html_url": code.html_url,
-                    "git_url": code.git_url,
-                    "score": code.score,
-                }
-                results.append(code_info)
+            results: list[dict] = []
+            limit = 60
+            max_pages = 2  # GitHub returns 30 items per page, so 2 pages covers our limit
+            page_index = 0
+
+            while len(results) < limit and page_index < max_pages:
+                # Fetch one page of results from GitHub API
+                page_items = code_results.get_page(page_index)
+
+                # Stop if no more results available
+                if not page_items:
+                    break
+
+                # Process each code result in the current page
+                for code in page_items:
+                    code_info = {
+                        "repository": code.repository.full_name,
+                        "path": code.path,
+                        "name": code.name,
+                        "sha": code.sha,
+                        "html_url": code.html_url,
+                        "git_url": code.git_url,
+                        "score": code.score,
+                    }
+                    results.append(code_info)
+                page_index += 1
 
             # Return search results
             return json.dumps(
@@ -1696,7 +1661,7 @@ class GithubTools(Toolkit):
                 indent=2,
             )
         except GithubException as e:
-            logger.error(f"Error searching code: {e}")
+            logger.exception("Error searching code")
             return json.dumps({"error": str(e)})
 
     def search_issues_and_prs(
@@ -1794,5 +1759,5 @@ class GithubTools(Toolkit):
                 indent=2,
             )
         except GithubException as e:
-            logger.error(f"Error searching issues and PRs: {e}")
+            logger.exception("Error searching issues and PRs")
             return json.dumps({"error": str(e)})

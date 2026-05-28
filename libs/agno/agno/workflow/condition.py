@@ -1,0 +1,1333 @@
+import inspect
+from dataclasses import dataclass
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from uuid import uuid4
+
+from agno.registry import Registry
+from agno.run.agent import RunOutputEvent
+from agno.run.base import RunContext
+from agno.run.team import TeamRunOutputEvent
+from agno.run.workflow import (
+    ConditionExecutionCompletedEvent,
+    ConditionExecutionStartedEvent,
+    WorkflowRunOutput,
+    WorkflowRunOutputEvent,
+)
+from agno.session.workflow import WorkflowSession
+from agno.utils.log import log_debug, log_error, logger
+from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
+from agno.workflow.step import Step
+from agno.workflow.types import (
+    ErrorRequirement,
+    HumanReview,
+    OnError,
+    OnReject,
+    StepInput,
+    StepOutput,
+    StepRequirement,
+    StepType,
+)
+
+# Constants for condition branch identifiers
+CONDITION_BRANCH_IF = "if"
+CONDITION_BRANCH_ELSE = "else"
+
+WorkflowSteps = List[
+    Union[
+        Callable[
+            [StepInput], Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]]
+        ],
+        Step,
+        "Steps",  # type: ignore # noqa: F821
+        "Loop",  # type: ignore # noqa: F821
+        "Parallel",  # type: ignore # noqa: F821
+        "Condition",  # type: ignore # noqa: F821
+        "Router",  # type: ignore # noqa: F821
+        "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
+    ]
+]
+
+
+@dataclass
+class Condition:
+    """A condition that executes a step (or list of steps) if the condition is met.
+
+    If the condition evaluates to True, the `steps` are executed.
+    If the condition evaluates to False and `else_steps` is provided (and not empty),
+    the `else_steps` are executed instead.
+
+    The evaluator can be:
+        - A callable function that returns bool
+        - A boolean literal (True/False)
+        - A CEL (Common Expression Language) expression string
+
+    CEL expressions have access to these variables:
+        - input: The workflow input as a string
+        - previous_step_content: Content from the previous step
+        - previous_step_outputs: Map of step name to content string from all previous steps
+        - additional_data: Map of additional data passed to the workflow
+        - session_state: Map of session state values
+
+    Example CEL expressions:
+        - 'input.contains("urgent")'
+        - 'session_state.retry_count < 3'
+        - 'additional_data.priority > 5'
+        - 'previous_step_outputs.research.contains("error")'
+
+    HITL Mode:
+        When `requires_confirmation=True`, the workflow pauses before executing the condition
+        and asks the user to confirm which branch to execute:
+        - If user confirms: Execute the `steps` (if branch)
+        - If user rejects: Behavior depends on `on_reject` setting:
+            - "else" (default): Execute `else_steps` if provided, otherwise skip
+            - "skip": Skip the entire condition (both branches)
+            - "cancel": Cancel the workflow
+
+    Error Handling:
+        The `on_error` field controls what happens when a sub-step within the condition fails:
+        - "skip" (default): Log the error, add it to results, and stop executing remaining sub-steps
+        - "fail": Re-raise the exception, causing the entire workflow to fail
+        - "pause": Pause the workflow and allow user to decide (retry or skip) via HITL
+    """
+
+    steps: WorkflowSteps
+
+    # Evaluator should only return boolean
+    # Can be a callable, a bool, or a CEL expression string
+    # Defaults to True - useful when using requires_confirmation=True where the evaluator is ignored
+    evaluator: Union[
+        Callable[[StepInput], bool],
+        Callable[[StepInput], Awaitable[bool]],
+        bool,
+        str,  # CEL expression
+    ] = True
+
+    # Steps to execute when condition is False (optional)
+    else_steps: Optional[WorkflowSteps] = None
+
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    # Human-in-the-loop (HITL) configuration
+    # If True, the condition will pause before execution and require user confirmation
+    # User confirms -> execute `steps` (if branch)
+    # User rejects -> behavior depends on on_reject setting
+    requires_confirmation: bool = False
+    # Message to display to the user when requesting confirmation
+    confirmation_message: Optional[str] = None
+    # What to do when condition is rejected:
+    # - "else" (default): Execute else_steps branch if provided, otherwise skip
+    # - "skip": Skip entire condition (both branches)
+    # - "cancel": Cancel the workflow
+    on_reject: Union[OnReject, str] = OnReject.else_branch
+    # What to do when a sub-step encounters an error:
+    # - "skip" (default): Log error, add to results, and break execution
+    # - "fail": Re-raise the exception, causing workflow to fail
+    # - "pause": Pause workflow and allow user to decide (retry or skip) via HITL
+    on_error: Union[OnError, str] = OnError.skip
+
+    # HumanReview config (alternative to flat params above)
+    human_review: Optional[HumanReview] = None
+
+    def __post_init__(self) -> None:
+        if self.human_review is not None:
+            pass  # Use the explicit config
+        else:
+            self.human_review = HumanReview(
+                requires_confirmation=self.requires_confirmation,
+                confirmation_message=self.confirmation_message,
+                on_reject=self.on_reject,
+                on_error=self.on_error,
+            )
+
+        from agno.workflow.types import validate_human_review_for_condition
+
+        validate_human_review_for_condition(self.human_review)
+
+        # Backward compat attributes
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+        self.on_error = self.human_review.on_error
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": "Condition",
+            "name": self.name,
+            "description": self.description,
+            "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
+            "else_steps": [step.to_dict() for step in (self.else_steps or []) if hasattr(step, "to_dict")],
+        }
+        if callable(self.evaluator):
+            result["evaluator"] = self.evaluator.__name__
+            result["evaluator_type"] = "function"
+        elif isinstance(self.evaluator, bool):
+            result["evaluator"] = self.evaluator
+            result["evaluator_type"] = "bool"
+        elif isinstance(self.evaluator, str):
+            # CEL expression string
+            result["evaluator"] = self.evaluator
+            result["evaluator_type"] = "cel"
+        else:
+            raise ValueError(f"Invalid evaluator type: {type(self.evaluator).__name__}")
+
+        # Add human review config
+        if self.human_review:
+            result["human_review"] = self.human_review.to_dict()
+
+        return result
+
+    def create_step_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+    ) -> StepRequirement:
+        """Create a StepRequirement for HITL pause (confirmation).
+
+        Args:
+            step_index: Index of the condition in the workflow.
+            step_input: The prepared input for the condition.
+
+        Returns:
+            StepRequirement configured for this condition's HITL needs.
+        """
+        on_reject = self.human_review.on_reject if self.human_review else self.on_reject
+        return StepRequirement(
+            step_id=str(uuid4()),
+            step_name=self.name or f"condition_{step_index + 1}",
+            step_index=step_index,
+            step_type="Condition",
+            requires_confirmation=self.human_review.requires_confirmation
+            if self.human_review
+            else self.requires_confirmation,
+            confirmation_message=(
+                self.human_review.confirmation_message if self.human_review else self.confirmation_message
+            )
+            or f"Execute condition '{self.name or 'condition'}'? (yes=if branch, no=else branch)",
+            on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
+            requires_user_input=False,
+            step_input=step_input,
+        )
+
+    def create_error_requirement(
+        self,
+        step_index: int,
+        error: Exception,
+    ) -> ErrorRequirement:
+        """Create an ErrorRequirement for HITL pause on error.
+
+        Args:
+            step_index: Index of the condition in the workflow.
+            error: The exception that was raised.
+
+        Returns:
+            ErrorRequirement configured for error handling.
+        """
+        return ErrorRequirement(
+            step_id=str(uuid4()),
+            step_name=self.name or f"condition_{step_index + 1}",
+            step_index=step_index,
+            error_message=str(error),
+            error_type=type(error).__name__,
+            retry_count=0,
+        )
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional["Registry"] = None,
+        db: Optional[Any] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> "Condition":
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.steps import Steps
+
+        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+            step_type = step_data.get("type", "Step")
+            if step_type == "Loop":
+                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Parallel":
+                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Steps":
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Condition":
+                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+            elif step_type == "Router":
+                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+            else:
+                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+
+        evaluator_data = data.get("evaluator", True)
+        evaluator_type = data.get("evaluator_type")
+        evaluator: Union[Callable[[StepInput], bool], Callable[[StepInput], Awaitable[bool]], bool, str]
+
+        if isinstance(evaluator_data, bool):
+            evaluator = evaluator_data
+        elif isinstance(evaluator_data, str):
+            # Determine if this is a CEL expression or a function name
+            # Use evaluator_type if provided, otherwise detect
+            if evaluator_type == "cel" or (evaluator_type is None and is_cel_expression(evaluator_data)):
+                # CEL expression - use as-is
+                evaluator = evaluator_data
+            else:
+                # Function name - look up in registry
+                if registry:
+                    func = registry.get_function(evaluator_data)
+                    if func is None:
+                        raise ValueError(f"Evaluator function '{evaluator_data}' not found in registry")
+                    evaluator = func
+                else:
+                    raise ValueError(f"Registry required to deserialize evaluator function '{evaluator_data}'")
+        else:
+            raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
+
+        # Build HumanReview from serialized data
+        if data.get("human_review"):
+            human_review = HumanReview.from_dict(data["human_review"])
+        else:
+            human_review = HumanReview(
+                requires_confirmation=data.get("requires_confirmation", False),
+                confirmation_message=data.get("confirmation_message"),
+                on_reject=data.get("on_reject", "else"),
+                on_error=data.get("on_error", "skip"),
+            )
+
+        return cls(
+            evaluator=evaluator,
+            steps=[deserialize_step(step) for step in data.get("steps", [])],
+            else_steps=[deserialize_step(step) for step in data.get("else_steps", [])],
+            name=data.get("name"),
+            description=data.get("description"),
+            human_review=human_review,
+        )
+
+    def _prepare_steps(self):
+        """Prepare the steps for execution - mirrors workflow logic"""
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
+
+        def prepare_step_list(steps: WorkflowSteps) -> WorkflowSteps:
+            """Helper to prepare a list of steps."""
+            prepared: WorkflowSteps = []
+            for step in steps:
+                if callable(step) and hasattr(step, "__name__"):
+                    prepared.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
+                elif isinstance(step, Agent):
+                    prepared.append(Step(name=step.name, description=step.description, agent=step))
+                elif isinstance(step, Team):
+                    prepared.append(Step(name=step.name, description=step.description, team=step))
+                elif isinstance(step, Workflow):
+                    prepared.append(Step(name=step.name, description=step.description, workflow=step))
+                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                    prepared.append(step)
+                else:
+                    raise ValueError(f"Invalid step type: {type(step).__name__}")
+            return prepared
+
+        self.steps = prepare_step_list(self.steps)
+
+        # Also prepare else_steps if provided and not empty
+        if self.else_steps and len(self.else_steps) > 0:
+            self.else_steps = prepare_step_list(self.else_steps)
+
+    def _update_step_input_from_outputs(
+        self,
+        step_input: StepInput,
+        step_outputs: Union[StepOutput, List[StepOutput]],
+        condition_step_outputs: Optional[Dict[str, StepOutput]] = None,
+    ) -> StepInput:
+        """Helper to update step input from step outputs - mirrors Loop logic"""
+        current_images = step_input.images or []
+        current_videos = step_input.videos or []
+        current_audio = step_input.audio or []
+
+        if isinstance(step_outputs, list):
+            all_images = sum([out.images or [] for out in step_outputs], [])
+            all_videos = sum([out.videos or [] for out in step_outputs], [])
+            all_audio = sum([out.audio or [] for out in step_outputs], [])
+            # Use the last output's content for chaining
+            previous_step_content = step_outputs[-1].content if step_outputs else None
+        else:
+            # Single output
+            all_images = step_outputs.images or []
+            all_videos = step_outputs.videos or []
+            all_audio = step_outputs.audio or []
+            previous_step_content = step_outputs.content
+
+        updated_previous_step_outputs = {}
+        if step_input.previous_step_outputs:
+            updated_previous_step_outputs.update(step_input.previous_step_outputs)
+        if condition_step_outputs:
+            updated_previous_step_outputs.update(condition_step_outputs)
+
+        return StepInput(
+            input=step_input.input,
+            previous_step_content=previous_step_content,
+            previous_step_outputs=updated_previous_step_outputs,
+            additional_data=step_input.additional_data,
+            images=current_images + all_images,
+            videos=current_videos + all_videos,
+            audio=current_audio + all_audio,
+        )
+
+    def _evaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+        """Evaluate the condition and return boolean result.
+
+        Supports:
+            - Boolean literals (True/False)
+            - Callable functions
+            - CEL expression strings
+        """
+        if isinstance(self.evaluator, bool):
+            return self.evaluator
+
+        if isinstance(self.evaluator, str):
+            # CEL expression
+            if not CEL_AVAILABLE:
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                return False
+            try:
+                return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
+            except Exception:
+                logger.exception("CEL expression evaluation failed")
+                return False
+
+        if callable(self.evaluator):
+            if session_state is not None and self._evaluator_has_session_state_param():
+                result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
+            else:
+                result = self.evaluator(step_input)
+
+            if isinstance(result, bool):
+                return result
+            else:
+                logger.warning(f"Condition evaluator returned unexpected type: {type(result)}, expected bool")
+                return False
+
+        return False
+
+    async def _aevaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+        """Async version of condition evaluation.
+
+        Supports:
+            - Boolean literals (True/False)
+            - Callable functions (sync and async)
+            - CEL expression strings
+        """
+        if isinstance(self.evaluator, bool):
+            return self.evaluator
+
+        if isinstance(self.evaluator, str):
+            # CEL expression - CEL evaluation is synchronous
+            if not CEL_AVAILABLE:
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
+                return False
+            try:
+                return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
+            except Exception:
+                logger.exception("CEL expression evaluation failed")
+                return False
+
+        if callable(self.evaluator):
+            has_session_state = session_state is not None and self._evaluator_has_session_state_param()
+
+            if inspect.iscoroutinefunction(self.evaluator):
+                if has_session_state:
+                    result = await self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
+                else:
+                    result = await self.evaluator(step_input)
+            else:
+                if has_session_state:
+                    result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
+                else:
+                    result = self.evaluator(step_input)
+
+            if isinstance(result, bool):
+                return result
+            else:
+                logger.warning(f"Condition evaluator returned unexpected type: {type(result)}, expected bool")
+                return False
+
+        return False
+
+    def _evaluator_has_session_state_param(self) -> bool:
+        """Check if the evaluator function has a session_state parameter"""
+        if not callable(self.evaluator):
+            return False
+
+        try:
+            sig = inspect.signature(self.evaluator)
+            return "session_state" in sig.parameters
+        except Exception:
+            return False
+
+    def _has_else_steps(self) -> bool:
+        """Check if else_steps is provided and not empty."""
+        return self.else_steps is not None and len(self.else_steps) > 0
+
+    def execute(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
+        store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        force_else_branch: bool = False,
+    ) -> StepOutput:
+        """Execute the condition and its steps with sequential chaining.
+
+        If condition is True, executes `steps`.
+        If condition is False and `else_steps` is provided (and not empty), executes `else_steps`.
+        If condition is False and no `else_steps`, returns a "not met" message.
+
+        Args:
+            force_else_branch: If True, skip condition evaluation and execute else_steps directly.
+                              Used when user rejects a Condition with on_reject="else".
+        """
+        log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
+
+        conditional_step_id = str(uuid4())
+
+        self._prepare_steps()
+
+        # If force_else_branch is set (user rejected with on_reject="else"), skip condition evaluation
+        steps_to_execute: WorkflowSteps
+        if force_else_branch:
+            log_debug(f"Condition {self.name} force_else_branch=True, executing else branch directly")
+            if self._has_else_steps():
+                steps_to_execute = self.else_steps  # type: ignore[assignment]
+                branch = CONDITION_BRANCH_ELSE
+                log_debug(f"Condition {self.name} executing {len(steps_to_execute)} else_steps (else branch)")
+            else:
+                # No else_steps provided, skip the condition entirely
+                log_debug(f"Condition {self.name} has no else_steps - skipping condition")
+                return StepOutput(
+                    step_name=self.name,
+                    step_id=conditional_step_id,
+                    step_type=StepType.CONDITION,
+                    content=f"Condition {self.name} rejected - skipped (no else branch)",
+                    success=True,
+                )
+        else:
+            # Evaluate the condition
+            if run_context is not None and run_context.session_state is not None:
+                condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+            else:
+                condition_result = self._evaluate_condition(step_input, session_state=session_state)
+
+            log_debug(f"Condition {self.name} evaluated to: {condition_result}")
+
+            # Determine which steps to execute
+            if condition_result:
+                steps_to_execute = self.steps
+                branch = CONDITION_BRANCH_IF
+                log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
+            elif self._has_else_steps():
+                steps_to_execute = self.else_steps  # type: ignore[assignment]
+                branch = CONDITION_BRANCH_ELSE
+                log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
+            else:
+                # No else_steps provided, return "not met" message
+                log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
+                return StepOutput(
+                    step_name=self.name,
+                    step_id=conditional_step_id,
+                    step_type=StepType.CONDITION,
+                    content=f"Condition {self.name} not met - skipped {len(self.steps)} steps",
+                    success=True,
+                )
+
+        all_results: List[StepOutput] = []
+        current_step_input = step_input
+        condition_step_outputs: Dict[str, StepOutput] = {}
+
+        for i, step in enumerate(steps_to_execute):
+            try:
+                step_output = step.execute(  # type: ignore[union-attr]
+                    current_step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
+                    session_state=session_state,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                )
+
+                # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
+                if isinstance(step_output, list):
+                    all_results.extend(step_output)
+                    if step_output:
+                        step_name = getattr(step, "name", f"step_{i}")
+                        log_debug(f"Executing condition step {i + 1}/{len(steps_to_execute)}: {step_name}")
+
+                        condition_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+                else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=conditional_step_id,
+                            step_type=StepType.CONDITION,
+                            content=f"Condition {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
+                    all_results.append(step_output)
+                    step_name = getattr(step, "name", f"step_{i}")
+                    condition_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by condition step {step_name}")
+                        break
+
+                step_name = getattr(step, "name", f"step_{i}")
+                log_debug(f"Condition step {step_name} completed")
+
+                current_step_input = self._update_step_input_from_outputs(
+                    current_step_input, step_output, condition_step_outputs
+                )
+
+            except Exception as e:
+                step_name = getattr(step, "name", f"step_{i}")
+                logger.exception(f"Condition step {step_name} failed")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                    raise
+
+                # OnError.skip: log error and break
+                error_output = StepOutput(
+                    step_name=step_name,
+                    content=f"Step {step_name} failed: {str(e)}",
+                    success=False,
+                    error=str(e),
+                )
+                all_results.append(error_output)
+                break
+
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results, {branch} branch)", center=True, symbol="-")
+
+        return StepOutput(
+            step_name=self.name,
+            step_id=conditional_step_id,
+            step_type=StepType.CONDITION,
+            content=f"Condition {self.name} completed with {len(all_results)} results ({branch} branch)",
+            success=all(result.success for result in all_results) if all_results else True,
+            error=None,
+            stop=any(result.stop for result in all_results) if all_results else False,
+            steps=all_results,
+        )
+
+    def execute_stream(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        stream_events: bool = False,
+        stream_executor_events: bool = True,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
+        step_index: Optional[Union[int, tuple]] = None,
+        store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        force_else_branch: bool = False,
+    ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+        """Execute the condition with streaming support.
+
+        If condition is True, executes `steps`.
+        If condition is False and `else_steps` is provided (and not empty), executes `else_steps`.
+        If condition is False and no `else_steps`, yields completed event and returns.
+
+        Args:
+            force_else_branch: If True, skip condition evaluation and execute else_steps directly.
+                              Used when user rejects a Condition with on_reject="else".
+        """
+        log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
+
+        conditional_step_id = str(uuid4())
+
+        self._prepare_steps()
+
+        # If force_else_branch is set (user rejected with on_reject="else"), skip condition evaluation
+        steps_to_execute: WorkflowSteps
+        if force_else_branch:
+            log_debug(f"Condition {self.name} force_else_branch=True, executing else branch directly")
+            condition_result = False  # For event reporting purposes
+
+            if stream_events and workflow_run_response:
+                # Yield condition started event (with condition_result=False since user rejected)
+                yield ConditionExecutionStartedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    condition_result=condition_result,
+                    step_id=conditional_step_id,
+                    parent_step_id=parent_step_id,
+                )
+
+            if self._has_else_steps():
+                steps_to_execute = self.else_steps  # type: ignore[assignment]
+                branch = CONDITION_BRANCH_ELSE
+                log_debug(f"Condition {self.name} executing {len(steps_to_execute)} else_steps (else branch)")
+            else:
+                # No else_steps provided, yield completed event and return
+                if stream_events and workflow_run_response:
+                    yield ConditionExecutionCompletedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name or "",
+                        workflow_id=workflow_run_response.workflow_id or "",
+                        session_id=workflow_run_response.session_id or "",
+                        step_name=self.name,
+                        step_index=step_index,
+                        condition_result=False,
+                        executed_steps=0,
+                        branch=None,
+                        step_results=[],
+                        step_id=conditional_step_id,
+                        parent_step_id=parent_step_id,
+                    )
+                return
+        else:
+            # Evaluate the condition
+            if run_context is not None and run_context.session_state is not None:
+                condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+            else:
+                condition_result = self._evaluate_condition(step_input, session_state=session_state)
+            log_debug(f"Condition {self.name} evaluated to: {condition_result}")
+
+            if stream_events and workflow_run_response:
+                # Yield condition started event
+                yield ConditionExecutionStartedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    condition_result=condition_result,
+                    step_id=conditional_step_id,
+                    parent_step_id=parent_step_id,
+                )
+
+            # Determine which steps to execute
+            if condition_result:
+                steps_to_execute = self.steps
+                branch = CONDITION_BRANCH_IF
+                log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
+            elif self._has_else_steps():
+                steps_to_execute = self.else_steps  # type: ignore[assignment]
+                branch = CONDITION_BRANCH_ELSE
+                log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
+            else:
+                # No else_steps provided, yield completed event and return
+                if stream_events and workflow_run_response:
+                    yield ConditionExecutionCompletedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name or "",
+                        workflow_id=workflow_run_response.workflow_id or "",
+                        session_id=workflow_run_response.session_id or "",
+                        step_name=self.name,
+                        step_index=step_index,
+                        condition_result=False,
+                        executed_steps=0,
+                        branch=None,
+                        step_results=[],
+                        step_id=conditional_step_id,
+                        parent_step_id=parent_step_id,
+                    )
+                return
+
+        all_results: List[StepOutput] = []
+        current_step_input = step_input
+        condition_step_outputs: Dict[str, StepOutput] = {}
+
+        for i, step in enumerate(steps_to_execute):
+            try:
+                step_outputs_for_step: List[StepOutput] = []
+
+                # Create child index for each step within condition
+                if step_index is None or isinstance(step_index, int):
+                    # Condition is a main step - child steps get x.1, x.2, x.3 format
+                    child_step_index = (step_index if step_index is not None else 1, i)
+                else:
+                    # Condition is already a child step - child steps get same parent number: x.y, x.y, x.y
+                    child_step_index = step_index
+
+                # Stream step execution
+                for event in step.execute_stream(  # type: ignore[union-attr]
+                    current_step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream_events=stream_events,
+                    stream_executor_events=stream_executor_events,
+                    workflow_run_response=workflow_run_response,
+                    step_index=child_step_index,
+                    store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
+                    session_state=session_state,
+                    parent_step_id=conditional_step_id,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                ):
+                    if isinstance(event, StepOutput):
+                        step_outputs_for_step.append(event)
+                        all_results.append(event)
+                    else:
+                        # Yield other events (streaming content, step events, etc.)
+                        yield event
+
+                step_name = getattr(step, "name", f"step_{i}")
+                log_debug(f"Condition step {step_name} streaming completed")
+
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=conditional_step_id,
+                        step_type=StepType.CONDITION,
+                        content=f"Condition {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
+                if step_outputs_for_step:
+                    if len(step_outputs_for_step) == 1:
+                        condition_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
+                        current_step_input = self._update_step_input_from_outputs(
+                            current_step_input, step_outputs_for_step[0], condition_step_outputs
+                        )
+                    else:
+                        # Use last output
+                        condition_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
+                        current_step_input = self._update_step_input_from_outputs(
+                            current_step_input, step_outputs_for_step, condition_step_outputs
+                        )
+
+            except Exception as e:
+                step_name = getattr(step, "name", f"step_{i}")
+                logger.exception(f"Condition step {step_name} streaming failed")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                    raise
+
+                # OnError.skip: log error and break
+                error_output = StepOutput(
+                    step_name=step_name,
+                    content=f"Step {step_name} failed: {str(e)}",
+                    success=False,
+                    error=str(e),
+                )
+                all_results.append(error_output)
+                break
+
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results, {branch} branch)", center=True, symbol="-")
+        if stream_events and workflow_run_response:
+            # Yield condition completed event
+            yield ConditionExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                condition_result=condition_result,
+                executed_steps=len(steps_to_execute),
+                branch=branch,
+                step_results=all_results,
+                step_id=conditional_step_id,
+                parent_step_id=parent_step_id,
+            )
+
+        yield StepOutput(
+            step_name=self.name,
+            step_id=conditional_step_id,
+            step_type=StepType.CONDITION,
+            content=f"Condition {self.name} completed with {len(all_results)} results ({branch} branch)",
+            success=all(result.success for result in all_results) if all_results else True,
+            stop=any(result.stop for result in all_results) if all_results else False,
+            steps=all_results,
+        )
+
+    async def aexecute(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
+        store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        force_else_branch: bool = False,
+    ) -> StepOutput:
+        """Async execute the condition and its steps with sequential chaining.
+
+        If condition is True, executes `steps`.
+        If condition is False and `else_steps` is provided (and not empty), executes `else_steps`.
+        If condition is False and no `else_steps`, returns a "not met" message.
+
+        Args:
+            force_else_branch: If True, skip condition evaluation and execute else_steps directly.
+                              Used when user rejects a Condition with on_reject="else".
+        """
+        log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
+
+        conditional_step_id = str(uuid4())
+
+        self._prepare_steps()
+
+        # If force_else_branch is set (user rejected with on_reject="else"), skip condition evaluation
+        steps_to_execute: WorkflowSteps
+        if force_else_branch:
+            log_debug(f"Condition {self.name} force_else_branch=True, executing else branch directly")
+            if self._has_else_steps():
+                steps_to_execute = self.else_steps  # type: ignore[assignment]
+                branch = CONDITION_BRANCH_ELSE
+                log_debug(f"Condition {self.name} executing {len(steps_to_execute)} else_steps (else branch)")
+            else:
+                # No else_steps provided, skip the condition entirely
+                log_debug(f"Condition {self.name} has no else_steps - skipping condition")
+                return StepOutput(
+                    step_name=self.name,
+                    step_id=conditional_step_id,
+                    step_type=StepType.CONDITION,
+                    content=f"Condition {self.name} rejected - skipped (no else branch)",
+                    success=True,
+                )
+        else:
+            # Evaluate the condition
+            if run_context is not None and run_context.session_state is not None:
+                condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+            else:
+                condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
+            log_debug(f"Condition {self.name} evaluated to: {condition_result}")
+
+            # Determine which steps to execute
+            if condition_result:
+                steps_to_execute = self.steps
+                branch = CONDITION_BRANCH_IF
+                log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
+            elif self._has_else_steps():
+                steps_to_execute = self.else_steps  # type: ignore[assignment]
+                branch = CONDITION_BRANCH_ELSE
+                log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
+            else:
+                # No else_steps provided, return "not met" message
+                log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
+                return StepOutput(
+                    step_name=self.name,
+                    step_id=conditional_step_id,
+                    step_type=StepType.CONDITION,
+                    content=f"Condition {self.name} not met - skipped {len(self.steps)} steps",
+                    success=True,
+                )
+
+        # Chain steps sequentially like Loop does
+        all_results: List[StepOutput] = []
+        current_step_input = step_input
+        condition_step_outputs: Dict[str, StepOutput] = {}
+
+        for i, step in enumerate(steps_to_execute):
+            try:
+                step_output = await step.aexecute(  # type: ignore[union-attr]
+                    current_step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
+                    session_state=session_state,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                )
+
+                # Handle both single StepOutput and List[StepOutput]
+                if isinstance(step_output, list):
+                    all_results.extend(step_output)
+                    if step_output:
+                        step_name = getattr(step, "name", f"step_{i}")
+                        condition_step_outputs[step_name] = step_output[-1]
+
+                        if any(output.stop for output in step_output):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+                else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=conditional_step_id,
+                            step_type=StepType.CONDITION,
+                            content=f"Condition {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
+                    all_results.append(step_output)
+                    step_name = getattr(step, "name", f"step_{i}")
+                    condition_step_outputs[step_name] = step_output
+
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by condition step {step_name}")
+                        break
+
+                step_name = getattr(step, "name", f"step_{i}")
+                log_debug(f"Condition step {step_name} async completed")
+
+                current_step_input = self._update_step_input_from_outputs(
+                    current_step_input, step_output, condition_step_outputs
+                )
+
+            except Exception as e:
+                step_name = getattr(step, "name", f"step_{i}")
+                logger.exception(f"Condition step {step_name} async failed")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                    raise
+
+                # OnError.skip: log error and break
+                error_output = StepOutput(
+                    step_name=step_name,
+                    content=f"Step {step_name} failed: {str(e)}",
+                    success=False,
+                    error=str(e),
+                )
+                all_results.append(error_output)
+                break
+
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results, {branch} branch)", center=True, symbol="-")
+
+        return StepOutput(
+            step_name=self.name,
+            step_id=conditional_step_id,
+            step_type=StepType.CONDITION,
+            content=f"Condition {self.name} completed with {len(all_results)} results ({branch} branch)",
+            success=all(result.success for result in all_results) if all_results else True,
+            error=None,
+            stop=any(result.stop for result in all_results) if all_results else False,
+            steps=all_results,
+        )
+
+    async def aexecute_stream(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        stream_events: bool = False,
+        stream_executor_events: bool = True,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
+        step_index: Optional[Union[int, tuple]] = None,
+        store_executor_outputs: bool = True,
+        run_context: Optional[RunContext] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        parent_step_id: Optional[str] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
+        background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        force_else_branch: bool = False,
+    ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
+        """Async execute the condition with streaming support.
+
+        If condition is True, executes `steps`.
+        If condition is False and `else_steps` is provided (and not empty), executes `else_steps`.
+        If condition is False and no `else_steps`, yields completed event and returns.
+
+        Args:
+            force_else_branch: If True, skip condition evaluation and execute else_steps directly.
+                              Used when user rejects a Condition with on_reject="else".
+        """
+        log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
+
+        conditional_step_id = str(uuid4())
+
+        self._prepare_steps()
+
+        # If force_else_branch is set (user rejected with on_reject="else"), skip condition evaluation
+        steps_to_execute: WorkflowSteps
+        if force_else_branch:
+            log_debug(f"Condition {self.name} force_else_branch=True, executing else branch directly")
+            condition_result = False  # For event reporting purposes
+
+            if stream_events and workflow_run_response:
+                # Yield condition started event (with condition_result=False since user rejected)
+                yield ConditionExecutionStartedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    condition_result=condition_result,
+                    step_id=conditional_step_id,
+                    parent_step_id=parent_step_id,
+                )
+
+            if self._has_else_steps():
+                steps_to_execute = self.else_steps  # type: ignore[assignment]
+                branch = CONDITION_BRANCH_ELSE
+                log_debug(f"Condition {self.name} executing {len(steps_to_execute)} else_steps (else branch)")
+            else:
+                # No else_steps provided, yield completed event and return
+                if stream_events and workflow_run_response:
+                    yield ConditionExecutionCompletedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name or "",
+                        workflow_id=workflow_run_response.workflow_id or "",
+                        session_id=workflow_run_response.session_id or "",
+                        step_name=self.name,
+                        step_index=step_index,
+                        condition_result=False,
+                        executed_steps=0,
+                        branch=None,
+                        step_results=[],
+                        step_id=conditional_step_id,
+                        parent_step_id=parent_step_id,
+                    )
+                return
+        else:
+            # Evaluate the condition
+            if run_context is not None and run_context.session_state is not None:
+                condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+            else:
+                condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
+            log_debug(f"Condition {self.name} evaluated to: {condition_result}")
+
+            if stream_events and workflow_run_response:
+                # Yield condition started event
+                yield ConditionExecutionStartedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    condition_result=condition_result,
+                    step_id=conditional_step_id,
+                    parent_step_id=parent_step_id,
+                )
+
+            # Determine which steps to execute
+            if condition_result:
+                steps_to_execute = self.steps
+                branch = CONDITION_BRANCH_IF
+                log_debug(f"Condition {self.name} met, executing {len(steps_to_execute)} steps (if branch)")
+            elif self._has_else_steps():
+                steps_to_execute = self.else_steps  # type: ignore[assignment]
+                branch = CONDITION_BRANCH_ELSE
+                log_debug(f"Condition {self.name} not met, executing {len(steps_to_execute)} else_steps (else branch)")
+            else:
+                # No else_steps provided, yield completed event and return
+                if stream_events and workflow_run_response:
+                    yield ConditionExecutionCompletedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name or "",
+                        workflow_id=workflow_run_response.workflow_id or "",
+                        session_id=workflow_run_response.session_id or "",
+                        step_name=self.name,
+                        step_index=step_index,
+                        condition_result=False,
+                        executed_steps=0,
+                        branch=None,
+                        step_results=[],
+                        step_id=conditional_step_id,
+                        parent_step_id=parent_step_id,
+                    )
+                return
+
+        # Chain steps sequentially like Loop does
+        all_results: List[StepOutput] = []
+        current_step_input = step_input
+        condition_step_outputs: Dict[str, StepOutput] = {}
+
+        for i, step in enumerate(steps_to_execute):
+            try:
+                step_outputs_for_step: List[StepOutput] = []
+
+                # Create child index for each step within condition
+                if step_index is None or isinstance(step_index, int):
+                    # Condition is a main step - child steps get x.1, x.2, x.3 format
+                    child_step_index = (step_index if step_index is not None else 1, i)
+                else:
+                    # Condition is already a child step - child steps get same parent number: x.y, x.y, x.y
+                    child_step_index = step_index
+
+                # Stream step execution - mirroring Loop logic
+                async for event in step.aexecute_stream(  # type: ignore[union-attr]
+                    current_step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream_events=stream_events,
+                    stream_executor_events=stream_executor_events,
+                    workflow_run_response=workflow_run_response,
+                    step_index=child_step_index,
+                    store_executor_outputs=store_executor_outputs,
+                    run_context=run_context,
+                    session_state=session_state,
+                    parent_step_id=conditional_step_id,
+                    workflow_session=workflow_session,
+                    add_workflow_history_to_steps=add_workflow_history_to_steps,
+                    num_history_runs=num_history_runs,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                ):
+                    if isinstance(event, StepOutput):
+                        step_outputs_for_step.append(event)
+                        all_results.append(event)
+                    else:
+                        # Yield other events (streaming content, step events, etc.)
+                        yield event
+
+                step_name = getattr(step, "name", f"step_{i}")
+                log_debug(f"Condition step {step_name} async streaming completed")
+
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=conditional_step_id,
+                        step_type=StepType.CONDITION,
+                        content=f"Condition {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
+                if step_outputs_for_step:
+                    if len(step_outputs_for_step) == 1:
+                        condition_step_outputs[step_name] = step_outputs_for_step[0]
+
+                        if step_outputs_for_step[0].stop:
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
+                        current_step_input = self._update_step_input_from_outputs(
+                            current_step_input, step_outputs_for_step[0], condition_step_outputs
+                        )
+                    else:
+                        # Use last output
+                        condition_step_outputs[step_name] = step_outputs_for_step[-1]
+
+                        if any(output.stop for output in step_outputs_for_step):
+                            logger.info(f"Early termination requested by condition step {step_name}")
+                            break
+
+                        current_step_input = self._update_step_input_from_outputs(
+                            current_step_input, step_outputs_for_step, condition_step_outputs
+                        )
+
+            except Exception as e:
+                step_name = getattr(step, "name", f"step_{i}")
+                logger.exception(f"Condition step {step_name} async streaming failed")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                    raise
+
+                # OnError.skip: log error and break
+                error_output = StepOutput(
+                    step_name=step_name,
+                    content=f"Step {step_name} failed: {str(e)}",
+                    success=False,
+                    error=str(e),
+                )
+                all_results.append(error_output)
+                break
+
+        log_debug(f"Condition End: {self.name} ({len(all_results)} results, {branch} branch)", center=True, symbol="-")
+
+        if stream_events and workflow_run_response:
+            # Yield condition completed event
+            yield ConditionExecutionCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=self.name,
+                step_index=step_index,
+                condition_result=condition_result,
+                executed_steps=len(steps_to_execute),
+                branch=branch,
+                step_results=all_results,
+                step_id=conditional_step_id,
+                parent_step_id=parent_step_id,
+            )
+
+        yield StepOutput(
+            step_name=self.name,
+            step_id=conditional_step_id,
+            step_type=StepType.CONDITION,
+            content=f"Condition {self.name} completed with {len(all_results)} results ({branch} branch)",
+            success=all(result.success for result in all_results) if all_results else True,
+            stop=any(result.stop for result in all_results) if all_results else False,
+            steps=all_results,
+        )

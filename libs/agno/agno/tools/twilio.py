@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from twilio.base.exceptions import TwilioRestException
@@ -22,6 +22,10 @@ class TwilioTools(Toolkit):
         region: Optional[str] = None,
         edge: Optional[str] = None,
         debug: bool = False,
+        enable_send_sms: bool = True,
+        enable_get_call_details: bool = True,
+        enable_list_messages: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize the Twilio toolkit.
@@ -51,7 +55,7 @@ class TwilioTools(Toolkit):
 
         # Validate required credentials
         if not self.account_sid:
-            logger.error("TWILIO_ACCOUNT_SID not set. Please set the TWILIO_ACCOUNT_SID environment variable.")
+            log_error("TWILIO_ACCOUNT_SID not set. Please set the TWILIO_ACCOUNT_SID environment variable.")
 
         # Initialize client based on provided authentication method
         if self.api_key and self.api_secret:
@@ -72,7 +76,7 @@ class TwilioTools(Toolkit):
                 edge=self.edge or None,
             )
         else:
-            logger.error(
+            log_error(
                 "Neither (auth_token) nor (api_key and api_secret) provided. "
                 "Please set either TWILIO_AUTH_TOKEN or both TWILIO_API_KEY and TWILIO_API_SECRET environment variables."
             )
@@ -84,9 +88,12 @@ class TwilioTools(Toolkit):
             self.client.http_client.logger.setLevel(logging.INFO)
 
         tools: List[Any] = []
-        tools.append(self.send_sms)
-        tools.append(self.get_call_details)
-        tools.append(self.list_messages)
+        if all or enable_send_sms:
+            tools.append(self.send_sms)
+        if all or enable_get_call_details:
+            tools.append(self.get_call_details)
+        if all or enable_list_messages:
+            tools.append(self.list_messages)
 
         super().__init__(name="twilio", tools=tools, **kwargs)
 
@@ -119,7 +126,7 @@ class TwilioTools(Toolkit):
             log_info(f"SMS sent. SID: {message.sid}, to: {to}")
             return f"Message sent successfully. SID: {message.sid}"
         except TwilioRestException as e:
-            logger.error(f"Failed to send SMS to {to}: {e}")
+            logger.exception(f"Failed to send SMS to {to}")
             return f"Error sending message: {str(e)}"
 
     def get_call_details(self, call_sid: str) -> Dict[str, Any]:
@@ -146,7 +153,7 @@ class TwilioTools(Toolkit):
                 "end_time": str(call.end_time),
             }
         except TwilioRestException as e:
-            logger.error(f"Failed to fetch call details for SID {call_sid}: {e}")
+            logger.exception(f"Failed to fetch call details for SID {call_sid}")
             return {"error": str(e)}
 
     def list_messages(self, limit: int = 20) -> List[Dict[str, Any]]:
@@ -175,5 +182,5 @@ class TwilioTools(Toolkit):
             log_info(f"Retrieved {len(messages)} messages")
             return messages
         except TwilioRestException as e:
-            logger.error(f"Failed to list messages: {e}")
+            logger.exception("Failed to list messages")
             return [{"error": str(e)}]

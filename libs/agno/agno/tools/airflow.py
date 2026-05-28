@@ -7,7 +7,12 @@ from agno.utils.log import log_debug, log_info, logger
 
 class AirflowTools(Toolkit):
     def __init__(
-        self, dags_dir: Optional[Union[Path, str]] = None, save_dag: bool = True, read_dag: bool = True, **kwargs
+        self,
+        dags_dir: Optional[Union[Path, str]] = None,
+        enable_save_dag_file: bool = True,
+        enable_read_dag_file: bool = True,
+        all: bool = False,
+        **kwargs,
     ):
         """
         quick start to work with airflow : https://airflow.apache.org/docs/apache-airflow/stable/start.html
@@ -22,9 +27,9 @@ class AirflowTools(Toolkit):
         self.dags_dir: Path = _dags_dir or Path.cwd()
 
         tools: List[Any] = []
-        if save_dag:
+        if all or enable_save_dag_file:
             tools.append(self.save_dag_file)
-        if read_dag:
+        if all or enable_read_dag_file:
             tools.append(self.read_dag_file)
 
         super().__init__(name="AirflowTools", tools=tools, **kwargs)
@@ -43,9 +48,9 @@ class AirflowTools(Toolkit):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(contents)
             log_info(f"Saved: {file_path}")
-            return str(str(file_path))
+            return str(file_path)
         except Exception as e:
-            logger.error(f"Error saving to file: {e}")
+            logger.exception("Error saving to file")
             return f"Error saving to file: {e}"
 
     def read_dag_file(self, dag_file: str) -> str:
@@ -60,5 +65,5 @@ class AirflowTools(Toolkit):
             contents = file_path.read_text()
             return str(contents)
         except Exception as e:
-            logger.error(f"Error reading file: {e}")
+            logger.exception("Error reading file")
             return f"Error reading file: {e}"

@@ -1,0 +1,4982 @@
+import time
+from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
+from uuid import uuid4
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
+
+from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.db.migrations.manager import MigrationManager
+from agno.db.postgres.schemas import get_table_schema_definition
+from agno.db.postgres.utils import (
+    apply_sorting,
+    bulk_upsert_metrics,
+    calculate_date_metrics,
+    create_schema,
+    deserialize_cultural_knowledge,
+    fetch_all_sessions_data,
+    get_dates_to_calculate_metrics_for,
+    is_table_available,
+    is_valid_table,
+    serialize_cultural_knowledge,
+)
+from agno.db.schemas.culture import CulturalKnowledge
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.schemas.memory import UserMemory
+from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer
+from agno.run.base import RunStatus
+from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_postgres_strings
+
+try:
+    from sqlalchemy import (
+        ForeignKey,
+        ForeignKeyConstraint,
+        Index,
+        PrimaryKeyConstraint,
+        String,
+        UniqueConstraint,
+        and_,
+        case,
+        func,
+        or_,
+        select,
+        update,
+    )
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.dialects.postgresql import TIMESTAMP
+    from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.exc import ProgrammingError
+    from sqlalchemy.orm import scoped_session, sessionmaker
+    from sqlalchemy.schema import Column, MetaData, Table
+    from sqlalchemy.sql.expression import text
+except ImportError:
+    raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+
+
+class PostgresDb(BaseDb):
+    def __init__(
+        self,
+        db_url: Optional[str] = None,
+        db_engine: Optional[Engine] = None,
+        db_schema: Optional[str] = None,
+        session_table: Optional[str] = None,
+        culture_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
+        metrics_table: Optional[str] = None,
+        eval_table: Optional[str] = None,
+        knowledge_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
+        versions_table: Optional[str] = None,
+        components_table: Optional[str] = None,
+        component_configs_table: Optional[str] = None,
+        component_links_table: Optional[str] = None,
+        learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
+        id: Optional[str] = None,
+        create_schema: bool = True,
+    ):
+        """
+        Interface for interacting with a PostgreSQL database.
+
+        The following order is used to determine the database connection:
+            1. Use the db_engine if provided
+            2. Use the db_url
+            3. Raise an error if neither is provided
+
+        Args:
+            db_url (Optional[str]): The database URL to connect to.
+            db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
+            db_schema (Optional[str]): The database schema to use.
+            session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
+            memory_table (Optional[str]): Name of the table to store memories.
+            metrics_table (Optional[str]): Name of the table to store metrics.
+            eval_table (Optional[str]): Name of the table to store evaluation runs data.
+            knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            culture_table (Optional[str]): Name of the table to store cultural knowledge.
+            traces_table (Optional[str]): Name of the table to store run traces.
+            spans_table (Optional[str]): Name of the table to store span events.
+            versions_table (Optional[str]): Name of the table to store schema versions.
+            components_table (Optional[str]): Name of the table to store components.
+            component_configs_table (Optional[str]): Name of the table to store component configurations.
+            component_links_table (Optional[str]): Name of the table to store component references.
+            learnings_table (Optional[str]): Name of the table to store learnings.
+            schedules_table (Optional[str]): Name of the table to store cron schedules.
+            schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            id (Optional[str]): ID of the database.
+            create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
+                Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
+
+        Raises:
+            ValueError: If neither db_url nor db_engine is provided.
+            ValueError: If none of the tables are provided.
+        """
+        _engine: Optional[Engine] = db_engine
+        if _engine is None and db_url is not None:
+            _engine = create_engine(
+                db_url,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+                json_serializer=json_serializer,
+            )
+        if _engine is None:
+            raise ValueError("One of db_url or db_engine must be provided")
+
+        self.db_url: Optional[str] = db_url
+        self.db_engine: Engine = _engine
+
+        if id is None:
+            base_seed = db_url or str(db_engine.url)  # type: ignore
+            schema_suffix = db_schema if db_schema is not None else "ai"
+            seed = f"{base_seed}#{schema_suffix}"
+            id = generate_id(seed)
+
+        super().__init__(
+            id=id,
+            session_table=session_table,
+            memory_table=memory_table,
+            metrics_table=metrics_table,
+            eval_table=eval_table,
+            knowledge_table=knowledge_table,
+            culture_table=culture_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
+            versions_table=versions_table,
+            components_table=components_table,
+            component_configs_table=component_configs_table,
+            component_links_table=component_links_table,
+            learnings_table=learnings_table,
+            schedules_table=schedules_table,
+            schedule_runs_table=schedule_runs_table,
+            approvals_table=approvals_table,
+        )
+
+        self.db_schema: str = db_schema if db_schema is not None else "ai"
+        self.metadata: MetaData = MetaData(schema=self.db_schema)
+        self.create_schema: bool = create_schema
+
+        # Initialize database session
+        self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine, expire_on_commit=False))
+
+    # -- Serialization methods --
+    def to_dict(self):
+        base = super().to_dict()
+        base.update(
+            {
+                "db_url": self.db_url,
+                "db_schema": self.db_schema,
+                "type": "postgres",
+            }
+        )
+        return base
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            db_url=data.get("db_url"),
+            db_schema=data.get("db_schema"),
+            session_table=data.get("session_table"),
+            culture_table=data.get("culture_table"),
+            memory_table=data.get("memory_table"),
+            metrics_table=data.get("metrics_table"),
+            eval_table=data.get("eval_table"),
+            knowledge_table=data.get("knowledge_table"),
+            traces_table=data.get("traces_table"),
+            spans_table=data.get("spans_table"),
+            versions_table=data.get("versions_table"),
+            components_table=data.get("components_table"),
+            component_configs_table=data.get("component_configs_table"),
+            component_links_table=data.get("component_links_table"),
+            learnings_table=data.get("learnings_table"),
+            schedules_table=data.get("schedules_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
+            approvals_table=data.get("approvals_table"),
+            id=data.get("id"),
+        )
+
+    def close(self) -> None:
+        """Close database connections and dispose of the connection pool.
+
+        Should be called during application shutdown to properly release
+        all database connections.
+        """
+        if self.db_engine is not None:
+            self.db_engine.dispose()
+
+    # -- DB methods --
+    def table_exists(self, table_name: str) -> bool:
+        """Check if a table with the given name exists in the Postgres database.
+
+        Args:
+            table_name: Name of the table to check
+
+        Returns:
+            bool: True if the table exists in the database, False otherwise
+        """
+        with self.Session() as sess:
+            return is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
+    def _create_all_tables(self):
+        """Create all tables for the database."""
+        tables_to_create = [
+            (self.session_table_name, "sessions"),
+            (self.memory_table_name, "memories"),
+            (self.metrics_table_name, "metrics"),
+            (self.eval_table_name, "evals"),
+            (self.knowledge_table_name, "knowledge"),
+            (self.versions_table_name, "versions"),
+            (self.components_table_name, "components"),
+            (self.component_configs_table_name, "component_configs"),
+            (self.component_links_table_name, "component_links"),
+            (self.learnings_table_name, "learnings"),
+            (self.schedules_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
+            (self.approvals_table_name, "approvals"),
+        ]
+
+        for table_name, table_type in tables_to_create:
+            self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
+
+    def _create_table(self, table_name: str, table_type: str) -> Table:
+        """
+        Create a table with the appropriate schema based on the table type.
+
+        Supports:
+        - _unique_constraints: [{"name": "...", "columns": [...]}]
+        - __primary_key__: ["col1", "col2", ...]
+        - __foreign_keys__: [{"columns":[...], "ref_table":"...", "ref_columns":[...]}]
+        - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
+        """
+        try:
+            # Pass table names and db_schema for foreign key resolution
+            table_schema = get_table_schema_definition(
+                table_type,
+                traces_table_name=self.trace_table_name,
+                db_schema=self.db_schema,
+                schedules_table_name=self.schedules_table_name,
+            ).copy()
+
+            columns: List[Column] = []
+            indexes: List[str] = []
+
+            # Extract special schema keys before iterating columns
+            schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_primary_key = table_schema.pop("__primary_key__", None)
+            schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
+            schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
+
+            # Build columns
+            for col_name, col_config in table_schema.items():
+                column_args = [col_name, col_config["type"]()]
+                column_kwargs: Dict[str, Any] = {}
+
+                # Column-level PK only if no composite PK is defined
+                if col_config.get("primary_key", False) and schema_primary_key is None:
+                    column_kwargs["primary_key"] = True
+
+                if "nullable" in col_config:
+                    column_kwargs["nullable"] = col_config["nullable"]
+
+                if "default" in col_config:
+                    column_kwargs["default"] = col_config["default"]
+
+                if col_config.get("index", False):
+                    indexes.append(col_name)
+
+                if col_config.get("unique", False):
+                    column_kwargs["unique"] = True
+
+                # Single-column FK
+                if "foreign_key" in col_config:
+                    fk_ref = self._resolve_fk_reference(col_config["foreign_key"])
+                    fk_kwargs: Dict[str, Any] = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(fk_ref, **fk_kwargs))
+
+                columns.append(Column(*column_args, **column_kwargs))
+
+            # Create the table object
+            table = Table(table_name, self.metadata, *columns, schema=self.db_schema)
+
+            # Composite PK
+            if schema_primary_key is not None:
+                missing = [c for c in schema_primary_key if c not in table.c]
+                if missing:
+                    raise ValueError(f"Composite PK references missing columns in {table_name}: {missing}")
+
+                pk_constraint_name = f"{table_name}_pkey"
+                table.append_constraint(PrimaryKeyConstraint(*schema_primary_key, name=pk_constraint_name))
+
+            # Composite FKs
+            for fk_config in schema_foreign_keys:
+                fk_columns = fk_config["columns"]
+                ref_table_logical = fk_config["ref_table"]
+                ref_columns = fk_config["ref_columns"]
+
+                if len(fk_columns) != len(ref_columns):
+                    raise ValueError(
+                        f"Composite FK in {table_name} has mismatched columns/ref_columns: {fk_columns} vs {ref_columns}"
+                    )
+
+                missing = [c for c in fk_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Composite FK references missing columns in {table_name}: {missing}")
+
+                resolved_ref_table = self._resolve_table_name(ref_table_logical)
+                fk_constraint_name = f"{table_name}_{'_'.join(fk_columns)}_fkey"
+
+                # IMPORTANT: since Table(schema=self.db_schema) is used, do NOT schema-qualify these targets.
+                ref_column_strings = [f"{resolved_ref_table}.{col}" for col in ref_columns]
+
+                table.append_constraint(
+                    ForeignKeyConstraint(
+                        fk_columns,
+                        ref_column_strings,
+                        name=fk_constraint_name,
+                    )
+                )
+
+            # Multi-column unique constraints
+            for constraint in schema_unique_constraints:
+                constraint_name = f"{table_name}_{constraint['name']}"
+                constraint_columns = constraint["columns"]
+
+                missing = [c for c in constraint_columns if c not in table.c]
+                if missing:
+                    raise ValueError(f"Unique constraint references missing columns in {table_name}: {missing}")
+
+                table.append_constraint(UniqueConstraint(*constraint_columns, name=constraint_name))
+
+            # Indexes
+            for idx_col in indexes:
+                if idx_col not in table.c:
+                    raise ValueError(f"Index references missing column in {table_name}: {idx_col}")
+                idx_name = f"idx_{table_name}_{idx_col}"
+                Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
+
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
+                idx_cols = [table.c[c] for c in idx_config["columns"]]
+                Index(idx_name, *idx_cols)
+
+            # Create schema if requested
+            if self.create_schema:
+                with self.Session() as sess, sess.begin():
+                    create_schema(session=sess, db_schema=self.db_schema)
+
+            # Create table
+            table_created = False
+            if not self.table_exists(table_name):
+                table.create(self.db_engine, checkfirst=True)
+                log_debug(f"Successfully created table '{self.db_schema}.{table_name}'")
+                table_created = True
+            else:
+                log_debug(f"Table {self.db_schema}.{table_name} already exists, skipping creation")
+
+            # Create indexes (Postgres)
+            for idx in table.indexes:
+                try:
+                    with self.Session() as sess:
+                        exists_query = text(
+                            "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND indexname = :index_name"
+                        )
+                        exists = (
+                            sess.execute(exists_query, {"schema": self.db_schema, "index_name": idx.name}).scalar()
+                            is not None
+                        )
+                        if exists:
+                            log_debug(
+                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
+                            )
+                            continue
+
+                    idx.create(self.db_engine)
+                    log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
+
+                except Exception as e:
+                    log_error(f"Error creating index {idx.name}: {str(e)}")
+
+            # Store the schema version for the created table
+            if table_name != self.versions_table_name and table_created:
+                latest_schema_version = MigrationManager(self).latest_schema_version
+                self.upsert_schema_version(table_name=table_name, version=latest_schema_version.public)
+
+            return table
+
+        except Exception as e:
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
+            raise
+
+    def _resolve_fk_reference(self, fk_ref: str) -> str:
+        """
+        Resolve a simple foreign key reference to fully qualified name.
+
+        Accepts:
+        - "logical_table.column"  -> "{schema}.{resolved_table}.{column}"
+        - already-qualified refs  -> returned as-is
+        """
+        parts = fk_ref.split(".")
+        if len(parts) == 2:
+            table, column = parts
+            resolved_table = self._resolve_table_name(table)
+            return f"{self.db_schema}.{resolved_table}.{column}"
+        return fk_ref
+
+    def _resolve_table_name(self, logical_name: str) -> str:
+        """
+        Resolve logical table name to configured table name.
+        """
+        table_map = {
+            "traces": self.trace_table_name,
+            "spans": self.span_table_name,
+            "sessions": self.session_table_name,
+            "memories": self.memory_table_name,
+            "metrics": self.metrics_table_name,
+            "evals": self.eval_table_name,
+            "knowledge": self.knowledge_table_name,
+            "versions": self.versions_table_name,
+            "components": self.components_table_name,
+            "component_configs": self.component_configs_table_name,
+            "component_links": self.component_links_table_name,
+        }
+        return table_map.get(logical_name, logical_name)
+
+    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        if table_type == "sessions":
+            self.session_table = self._get_or_create_table(
+                table_name=self.session_table_name,
+                table_type="sessions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.session_table
+
+        if table_type == "memories":
+            self.memory_table = self._get_or_create_table(
+                table_name=self.memory_table_name,
+                table_type="memories",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.memory_table
+
+        if table_type == "metrics":
+            self.metrics_table = self._get_or_create_table(
+                table_name=self.metrics_table_name,
+                table_type="metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.metrics_table
+
+        if table_type == "evals":
+            self.eval_table = self._get_or_create_table(
+                table_name=self.eval_table_name,
+                table_type="evals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.eval_table
+
+        if table_type == "knowledge":
+            self.knowledge_table = self._get_or_create_table(
+                table_name=self.knowledge_table_name,
+                table_type="knowledge",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.knowledge_table
+
+        if table_type == "culture":
+            self.culture_table = self._get_or_create_table(
+                table_name=self.culture_table_name,
+                table_type="culture",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.culture_table
+
+        if table_type == "versions":
+            self.versions_table = self._get_or_create_table(
+                table_name=self.versions_table_name,
+                table_type="versions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.versions_table
+
+        if table_type == "traces":
+            self.traces_table = self._get_or_create_table(
+                table_name=self.trace_table_name,
+                table_type="traces",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.traces_table
+
+        if table_type == "spans":
+            # Ensure traces table exists first (spans has FK to traces)
+            if create_table_if_not_found:
+                self._get_table(table_type="traces", create_table_if_not_found=True)
+
+            self.spans_table = self._get_or_create_table(
+                table_name=self.span_table_name,
+                table_type="spans",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.spans_table
+
+        if table_type == "components":
+            self.component_table = self._get_or_create_table(
+                table_name=self.components_table_name,
+                table_type="components",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.component_table
+
+        if table_type == "component_configs":
+            self.component_configs_table = self._get_or_create_table(
+                table_name=self.component_configs_table_name,
+                table_type="component_configs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.component_configs_table
+
+        if table_type == "component_links":
+            self.component_links_table = self._get_or_create_table(
+                table_name=self.component_links_table_name,
+                table_type="component_links",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.component_links_table
+        if table_type == "learnings":
+            self.learnings_table = self._get_or_create_table(
+                table_name=self.learnings_table_name,
+                table_type="learnings",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.learnings_table
+
+        if table_type == "schedules":
+            self.schedules_table = self._get_or_create_table(
+                table_name=self.schedules_table_name,
+                table_type="schedules",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedules_table
+
+        if table_type == "schedule_runs":
+            self.schedule_runs_table = self._get_or_create_table(
+                table_name=self.schedule_runs_table_name,
+                table_type="schedule_runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_runs_table
+
+        if table_type == "approvals":
+            self.approvals_table = self._get_or_create_table(
+                table_name=self.approvals_table_name,
+                table_type="approvals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.approvals_table
+
+        raise ValueError(f"Unknown table type: {table_type}")
+
+    def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Table]:
+        """
+        Check if the table exists and is valid, else create it.
+
+        Args:
+            table_name (str): Name of the table to get or create
+            table_type (str): Type of table (used to get schema definition)
+
+        Returns:
+            Optional[Table]: SQLAlchemy Table object representing the schema.
+        """
+
+        with self.Session() as sess, sess.begin():
+            table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=self.db_schema)
+
+        if not table_is_available:
+            if not create_table_if_not_found:
+                return None
+            return self._create_table(table_name=table_name, table_type=table_type)
+
+        if not is_valid_table(
+            db_engine=self.db_engine,
+            table_name=table_name,
+            table_type=table_type,
+            db_schema=self.db_schema,
+        ):
+            raise ValueError(f"Table {self.db_schema}.{table_name} has an invalid schema")
+
+        try:
+            table = Table(table_name, self.metadata, schema=self.db_schema, autoload_with=self.db_engine)
+            return table
+
+        except Exception as e:
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {str(e)}")
+            raise
+
+    def get_latest_schema_version(self, table_name: str):
+        """Get the latest version of the database schema."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return "2.0.0"
+        with self.Session() as sess:
+            stmt = select(table)
+            # Latest version for the given table
+            stmt = stmt.where(table.c.table_name == table_name)
+            stmt = stmt.order_by(table.c.version.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+            if result is None:
+                return "2.0.0"
+            version_dict = dict(result._mapping)
+            return version_dict.get("version") or "2.0.0"
+
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
+        """Upsert the schema version into the database."""
+        table = self._get_table(table_type="versions", create_table_if_not_found=True)
+        if table is None:
+            return
+        current_datetime = datetime.now().isoformat()
+        with self.Session() as sess, sess.begin():
+            stmt = postgresql.insert(table).values(
+                table_name=table_name,
+                version=version,
+                created_at=current_datetime,  # Store as ISO format string
+                updated_at=current_datetime,
+            )
+            # Update version if table_name already exists
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["table_name"],
+                set_=dict(version=version, updated_at=current_datetime),
+            )
+            sess.execute(stmt)
+
+    # -- Session methods --
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
+        """
+        Delete a session from the database.
+
+        Args:
+            session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+
+        Returns:
+            bool: True if the session was deleted, False otherwise.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
+
+                if result.rowcount == 0:
+                    log_debug(f"No session found to delete with session_id: {session_id} in table {table.name}")
+                    return False
+
+                else:
+                    log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
+                    return True
+
+        except Exception as e:
+            log_error(f"Error deleting session: {str(e)}")
+            raise e
+
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
+        """Delete all given sessions from the database.
+        Can handle multiple session types in the same run.
+
+        Args:
+            session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
+
+            log_debug(f"Successfully deleted {result.rowcount} sessions")
+
+        except Exception as e:
+            log_error(f"Error deleting sessions: {str(e)}")
+            raise e
+
+    def get_session(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """
+        Read a session from the database.
+
+        Args:
+            session_id (str): ID of the session to read.
+            session_type (SessionType): Type of session to get.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+
+        Returns:
+            Union[Session, Dict[str, Any], None]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.session_id == session_id)
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                session = dict(result._mapping)
+
+            if not deserialize:
+                return session
+
+            return deserialize_session(session_type, session)
+
+        except Exception as e:
+            log_error(f"Exception reading from session table: {str(e)}")
+            raise e
+
+    def get_sessions(
+        self,
+        session_type: Optional[SessionType] = None,
+        user_id: Optional[str] = None,
+        component_id: Optional[str] = None,
+        session_name: Optional[str] = None,
+        start_timestamp: Optional[int] = None,
+        end_timestamp: Optional[int] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
+        """
+        Get all sessions in the given table. Can filter by user_id and component_id.
+
+        Args:
+            session_type (Optional[SessionType]): The type of session to get.
+            user_id (Optional[str]): The ID of the user to filter by.
+            component_id (Optional[str]): The ID of the agent / workflow to filter by.
+            start_timestamp (Optional[int]): The start timestamp to filter by.
+            end_timestamp (Optional[int]): The end timestamp to filter by.
+            session_name (Optional[str]): The name of the session to filter by.
+            limit (Optional[int]): The maximum number of sessions to return. Defaults to None.
+            page (Optional[int]): The page number to return. Defaults to None.
+            sort_by (Optional[str]): The field to sort by. Defaults to None.
+            sort_order (Optional[str]): The sort order. Defaults to None.
+            deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+
+        Returns:
+            Union[List[Session], Tuple[List[Dict], int]]:
+                - When deserialize=True: List of Session objects
+                - When deserialize=False: Tuple of (session dictionaries, total count)
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if component_id is not None:
+                    if session_type == SessionType.AGENT:
+                        stmt = stmt.where(table.c.agent_id == component_id)
+                    elif session_type == SessionType.TEAM:
+                        stmt = stmt.where(table.c.team_id == component_id)
+                    elif session_type == SessionType.WORKFLOW:
+                        stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
+                if start_timestamp is not None:
+                    stmt = stmt.where(table.c.created_at >= start_timestamp)
+                if end_timestamp is not None:
+                    stmt = stmt.where(table.c.created_at <= end_timestamp)
+                if session_name is not None:
+                    stmt = stmt.where(
+                        func.coalesce(table.c.session_data["session_name"].astext, "").ilike(f"%{session_name}%")
+                    )
+                if session_type is not None:
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    stmt = stmt.where(table.c.session_type == session_type_value)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                records = sess.execute(stmt).fetchall()
+                if records is None:
+                    return [], 0
+
+                session = [dict(record._mapping) for record in records]
+                if not deserialize:
+                    return session, total_count
+
+            return deserialize_sessions(session_type, session)
+
+        except Exception as e:
+            log_error(f"Exception reading from session table: {str(e)}")
+            raise e
+
+    def rename_session(
+        self,
+        session_id: str,
+        session_type: Optional[SessionType],
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """
+        Rename a session in the database.
+
+        Args:
+            session_id (str): The ID of the session to rename.
+            session_type (Optional[SessionType]): The type of session to rename. Defaults to None.
+            session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+
+        Returns:
+            Optional[Union[Session, Dict[str, Any]]]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
+
+        Raises:
+            Exception: If an error occurs during renaming.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                # Sanitize session_name to remove null bytes
+                sanitized_session_name = sanitize_postgres_string(session_name)
+                stmt = (
+                    update(table)
+                    .where(table.c.session_id == session_id)
+                    .values(
+                        session_data=func.cast(
+                            func.jsonb_set(
+                                func.cast(table.c.session_data, postgresql.JSONB),
+                                text("'{session_name}'"),
+                                func.to_jsonb(sanitized_session_name),
+                            ),
+                            postgresql.JSON,
+                        )
+                    )
+                    .returning(*table.c)
+                )
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                if not row:
+                    return None
+
+            log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+
+            session = dict(row._mapping)
+            if not deserialize:
+                return session
+
+            return deserialize_session(session_type, session)
+
+        except Exception as e:
+            log_error(f"Exception renaming session: {str(e)}")
+            raise e
+
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
+        """
+        Insert or update a session in the database.
+
+        Args:
+            session (Session): The session data to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
+
+        Returns:
+            Optional[Union[Session, Dict[str, Any]]]:
+                - When deserialize=True: Session object
+                - When deserialize=False: Session dictionary
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            session_dict = session.to_dict()
+            # Sanitize JSON/dict fields to remove null bytes from nested strings
+            if session_dict.get("agent_data"):
+                session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
+            if session_dict.get("team_data"):
+                session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
+            if session_dict.get("workflow_data"):
+                session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
+            if session_dict.get("session_data"):
+                session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+            if session_dict.get("summary"):
+                session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+            if session_dict.get("metadata"):
+                session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+            if session_dict.get("runs"):
+                session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
+
+            if isinstance(session, AgentSession):
+                with self.Session() as sess, sess.begin():
+                    stmt = postgresql.insert(table).values(
+                        session_id=session_dict.get("session_id"),
+                        session_type=SessionType.AGENT.value,
+                        agent_id=session_dict.get("agent_id"),
+                        user_id=session_dict.get("user_id"),
+                        runs=session_dict.get("runs"),
+                        agent_data=session_dict.get("agent_data"),
+                        session_data=session_dict.get("session_data"),
+                        summary=session_dict.get("summary"),
+                        metadata=session_dict.get("metadata"),
+                        created_at=session_dict.get("created_at"),
+                        updated_at=session_dict.get("created_at"),
+                    )
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
+                        index_elements=["session_id"],
+                        set_=dict(
+                            agent_id=session_dict.get("agent_id"),
+                            user_id=session_dict.get("user_id"),
+                            agent_data=session_dict.get("agent_data"),
+                            session_data=session_dict.get("session_data"),
+                            summary=session_dict.get("summary"),
+                            metadata=session_dict.get("metadata"),
+                            runs=session_dict.get("runs"),
+                            updated_at=int(time.time()),
+                        ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
+                    ).returning(table)
+                    result = sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
+                    session_dict = dict(row._mapping)
+
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return AgentSession.from_dict(session_dict)
+
+            elif isinstance(session, TeamSession):
+                with self.Session() as sess, sess.begin():
+                    stmt = postgresql.insert(table).values(
+                        session_id=session_dict.get("session_id"),
+                        session_type=SessionType.TEAM.value,
+                        team_id=session_dict.get("team_id"),
+                        user_id=session_dict.get("user_id"),
+                        runs=session_dict.get("runs"),
+                        team_data=session_dict.get("team_data"),
+                        session_data=session_dict.get("session_data"),
+                        summary=session_dict.get("summary"),
+                        metadata=session_dict.get("metadata"),
+                        created_at=session_dict.get("created_at"),
+                        updated_at=session_dict.get("created_at"),
+                    )
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
+                        index_elements=["session_id"],
+                        set_=dict(
+                            team_id=session_dict.get("team_id"),
+                            user_id=session_dict.get("user_id"),
+                            team_data=session_dict.get("team_data"),
+                            session_data=session_dict.get("session_data"),
+                            summary=session_dict.get("summary"),
+                            metadata=session_dict.get("metadata"),
+                            runs=session_dict.get("runs"),
+                            updated_at=int(time.time()),
+                        ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
+                    ).returning(table)
+                    result = sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
+                    session_dict = dict(row._mapping)
+
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return TeamSession.from_dict(session_dict)
+
+            elif isinstance(session, WorkflowSession):
+                with self.Session() as sess, sess.begin():
+                    stmt = postgresql.insert(table).values(
+                        session_id=session_dict.get("session_id"),
+                        session_type=SessionType.WORKFLOW.value,
+                        workflow_id=session_dict.get("workflow_id"),
+                        user_id=session_dict.get("user_id"),
+                        runs=session_dict.get("runs"),
+                        workflow_data=session_dict.get("workflow_data"),
+                        session_data=session_dict.get("session_data"),
+                        summary=session_dict.get("summary"),
+                        metadata=session_dict.get("metadata"),
+                        created_at=session_dict.get("created_at"),
+                        updated_at=session_dict.get("created_at"),
+                    )
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
+                        index_elements=["session_id"],
+                        set_=dict(
+                            workflow_id=session_dict.get("workflow_id"),
+                            user_id=session_dict.get("user_id"),
+                            workflow_data=session_dict.get("workflow_data"),
+                            session_data=session_dict.get("session_data"),
+                            summary=session_dict.get("summary"),
+                            metadata=session_dict.get("metadata"),
+                            runs=session_dict.get("runs"),
+                            updated_at=int(time.time()),
+                        ),
+                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
+                    ).returning(table)
+                    result = sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
+                    session_dict = dict(row._mapping)
+
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return WorkflowSession.from_dict(session_dict)
+
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
+
+        except Exception as e:
+            log_error(f"Exception upserting into sessions table: {str(e)}")
+            raise e
+
+    def upsert_sessions(
+        self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[Session, Dict[str, Any]]]:
+        """
+        Bulk insert or update multiple sessions.
+
+        Args:
+            sessions (List[Session]): The list of session data to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the sessions. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the session object.
+
+        Returns:
+            List[Union[Session, Dict[str, Any]]]: List of upserted sessions
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        try:
+            if not sessions:
+                return []
+
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return []
+
+            # Group sessions by type for better handling
+            agent_sessions = [s for s in sessions if isinstance(s, AgentSession)]
+            team_sessions = [s for s in sessions if isinstance(s, TeamSession)]
+            workflow_sessions = [s for s in sessions if isinstance(s, WorkflowSession)]
+
+            results: List[Union[Session, Dict[str, Any]]] = []
+
+            # Bulk upsert agent sessions
+            if agent_sessions:
+                session_records = []
+                for agent_session in agent_sessions:
+                    session_dict = agent_session.to_dict()
+                    # Sanitize JSON/dict fields to remove null bytes from nested strings
+                    if session_dict.get("agent_data"):
+                        session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
+                    if session_dict.get("session_data"):
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+                    if session_dict.get("summary"):
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+                    if session_dict.get("metadata"):
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+                    if session_dict.get("runs"):
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
+
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                    session_records.append(
+                        {
+                            "session_id": session_dict.get("session_id"),
+                            "session_type": SessionType.AGENT.value,
+                            "agent_id": session_dict.get("agent_id"),
+                            "user_id": session_dict.get("user_id"),
+                            "agent_data": session_dict.get("agent_data"),
+                            "session_data": session_dict.get("session_data"),
+                            "summary": session_dict.get("summary"),
+                            "metadata": session_dict.get("metadata"),
+                            "runs": session_dict.get("runs"),
+                            "created_at": session_dict.get("created_at"),
+                            "updated_at": updated_at,
+                        }
+                    )
+
+                with self.Session() as sess, sess.begin():
+                    stmt: Any = postgresql.insert(table)
+                    update_columns = {
+                        col.name: stmt.excluded[col.name]
+                        for col in table.columns
+                        if col.name not in ["id", "session_id", "created_at"]
+                    }
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
+
+                    result = sess.execute(stmt, session_records)
+                    for row in result.fetchall():
+                        session_dict = dict(row._mapping)
+                        if deserialize:
+                            deserialized_agent_session = AgentSession.from_dict(session_dict)
+                            if deserialized_agent_session is None:
+                                continue
+                            results.append(deserialized_agent_session)
+                        else:
+                            results.append(session_dict)
+
+            # Bulk upsert team sessions
+            if team_sessions:
+                session_records = []
+                for team_session in team_sessions:
+                    session_dict = team_session.to_dict()
+                    # Sanitize JSON/dict fields to remove null bytes from nested strings
+                    if session_dict.get("team_data"):
+                        session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
+                    if session_dict.get("session_data"):
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+                    if session_dict.get("summary"):
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+                    if session_dict.get("metadata"):
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+                    if session_dict.get("runs"):
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
+
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                    session_records.append(
+                        {
+                            "session_id": session_dict.get("session_id"),
+                            "session_type": SessionType.TEAM.value,
+                            "team_id": session_dict.get("team_id"),
+                            "user_id": session_dict.get("user_id"),
+                            "team_data": session_dict.get("team_data"),
+                            "session_data": session_dict.get("session_data"),
+                            "summary": session_dict.get("summary"),
+                            "metadata": session_dict.get("metadata"),
+                            "runs": session_dict.get("runs"),
+                            "created_at": session_dict.get("created_at"),
+                            "updated_at": updated_at,
+                        }
+                    )
+
+                with self.Session() as sess, sess.begin():
+                    stmt = postgresql.insert(table)
+                    update_columns = {
+                        col.name: stmt.excluded[col.name]
+                        for col in table.columns
+                        if col.name not in ["id", "session_id", "created_at"]
+                    }
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
+
+                    result = sess.execute(stmt, session_records)
+                    for row in result.fetchall():
+                        session_dict = dict(row._mapping)
+                        if deserialize:
+                            deserialized_team_session = TeamSession.from_dict(session_dict)
+                            if deserialized_team_session is None:
+                                continue
+                            results.append(deserialized_team_session)
+                        else:
+                            results.append(session_dict)
+
+            # Bulk upsert workflow sessions
+            if workflow_sessions:
+                session_records = []
+                for workflow_session in workflow_sessions:
+                    session_dict = workflow_session.to_dict()
+                    # Sanitize JSON/dict fields to remove null bytes from nested strings
+                    if session_dict.get("workflow_data"):
+                        session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
+                    if session_dict.get("session_data"):
+                        session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+                    if session_dict.get("summary"):
+                        session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+                    if session_dict.get("metadata"):
+                        session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+                    if session_dict.get("runs"):
+                        session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
+
+                    # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                    updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                    session_records.append(
+                        {
+                            "session_id": session_dict.get("session_id"),
+                            "session_type": SessionType.WORKFLOW.value,
+                            "workflow_id": session_dict.get("workflow_id"),
+                            "user_id": session_dict.get("user_id"),
+                            "workflow_data": session_dict.get("workflow_data"),
+                            "session_data": session_dict.get("session_data"),
+                            "summary": session_dict.get("summary"),
+                            "metadata": session_dict.get("metadata"),
+                            "runs": session_dict.get("runs"),
+                            "created_at": session_dict.get("created_at"),
+                            "updated_at": updated_at,
+                        }
+                    )
+
+                with self.Session() as sess, sess.begin():
+                    stmt = postgresql.insert(table)
+                    update_columns = {
+                        col.name: stmt.excluded[col.name]
+                        for col in table.columns
+                        if col.name not in ["id", "session_id", "created_at"]
+                    }
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["session_id"],
+                        set_=update_columns,
+                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
+                    ).returning(table)
+
+                    result = sess.execute(stmt, session_records)
+                    for row in result.fetchall():
+                        session_dict = dict(row._mapping)
+                        if deserialize:
+                            deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
+                            if deserialized_workflow_session is None:
+                                continue
+                            results.append(deserialized_workflow_session)
+                        else:
+                            results.append(session_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception bulk upserting sessions: {str(e)}")
+            return []
+
+    # -- Memory methods --
+    def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
+        """Delete a user memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
+
+        Returns:
+            bool: True if deletion was successful, False otherwise.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id == memory_id)
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted user memory id: {memory_id}")
+                else:
+                    log_debug(f"No user memory found with id: {memory_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting user memory: {str(e)}")
+            raise e
+
+    def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
+        """Delete user memories from the database.
+
+        Args:
+            memory_ids (List[str]): The IDs of the memories to delete.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
+
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+
+                result = sess.execute(delete_stmt)
+
+                if result.rowcount == 0:
+                    log_debug(f"No user memories found with ids: {memory_ids}")
+                else:
+                    log_debug(f"Successfully deleted {result.rowcount} user memories")
+
+        except Exception as e:
+            log_error(f"Error deleting user memories: {str(e)}")
+            raise e
+
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
+        """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
+
+        Returns:
+            List[str]: List of memory topics.
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return []
+
+            with self.Session() as sess, sess.begin():
+                # Filter out NULL topics and ensure topics is an array before extracting elements
+                # jsonb_typeof returns 'array' for JSONB arrays
+                conditions = [
+                    table.c.topics.is_not(None),
+                    func.jsonb_typeof(table.c.topics) == "array",
+                ]
+                if user_id is not None:
+                    conditions.append(table.c.user_id == user_id)
+
+                try:
+                    # jsonb_array_elements_text is a set-returning function that must be used with select_from
+                    stmt = select(func.jsonb_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*conditions))
+                    result = sess.execute(stmt).fetchall()
+                except ProgrammingError:
+                    # Retrying with json_array_elements_text. This works in older versions,
+                    # where the topics column was of type JSON instead of JSONB
+                    # For JSON (not JSONB), we use json_typeof
+                    json_conditions = [
+                        table.c.topics.is_not(None),
+                        func.json_typeof(table.c.topics) == "array",
+                    ]
+                    if user_id is not None:
+                        json_conditions.append(table.c.user_id == user_id)
+                    stmt = select(func.json_array_elements_text(table.c.topics).label("topic"))
+                    stmt = stmt.select_from(table)
+                    stmt = stmt.where(and_(*json_conditions))
+                    result = sess.execute(stmt).fetchall()
+
+                # Extract topics from records - each record is a Row with a 'topic' attribute
+                topics = [record.topic for record in result if record.topic is not None]
+                return list(set(topics))
+
+        except Exception as e:
+            log_error(f"Exception reading from memory table: {str(e)}")
+            return []
+
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
+        """Get a memory from the database.
+
+        Args:
+            memory_id (str): The ID of the memory to get.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+            user_id (Optional[str]): The ID of the user to filter by. Defaults to None.
+
+        Returns:
+            Union[UserMemory, Dict[str, Any], None]:
+                - When deserialize=True: UserMemory object
+                - When deserialize=False: UserMemory dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.memory_id == memory_id)
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+
+                result = sess.execute(stmt).fetchone()
+                if not result:
+                    return None
+
+                memory_raw = dict(result._mapping)
+                if not deserialize:
+                    return memory_raw
+
+            return UserMemory.from_dict(memory_raw)
+
+        except Exception as e:
+            log_error(f"Exception reading from memory table: {str(e)}")
+            raise e
+
+    def get_user_memories(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        topics: Optional[List[str]] = None,
+        search_content: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
+        """Get all memories from the database as UserMemory objects.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            topics (Optional[List[str]]): The topics to filter by.
+            search_content (Optional[str]): The content to search for.
+            limit (Optional[int]): The maximum number of memories to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+
+
+        Returns:
+            Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of UserMemory objects
+                - When deserialize=False: Tuple of (memory dictionaries, total count)
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if topics is not None:
+                    for topic in topics:
+                        stmt = stmt.where(func.cast(table.c.topics, String).like(f'%"{topic}"%'))
+                if search_content is not None:
+                    stmt = stmt.where(func.cast(table.c.memory, postgresql.TEXT).ilike(f"%{search_content}%"))
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                memories_raw = [record._mapping for record in result]
+                if not deserialize:
+                    return memories_raw, total_count
+
+            return [UserMemory.from_dict(record) for record in memories_raw]
+
+        except Exception as e:
+            log_error(f"Exception reading from memory table: {str(e)}")
+            raise e
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            log_error(f"Exception deleting all memories: {str(e)}")
+            raise e
+
+    def get_user_memory_stats(
+        self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get user memories stats.
+
+        Args:
+            limit (Optional[int]): The maximum number of user stats to return.
+            page (Optional[int]): The page number.
+            user_id (Optional[str]): User ID for filtering.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], int]: A list of dictionaries containing user stats and total count.
+
+        Example:
+        (
+            [
+                {
+                    "user_id": "123",
+                    "total_memories": 10,
+                    "last_memory_updated_at": 1714560000,
+                },
+            ],
+            total_count: 1,
+        )
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.memory_id).label("total_memories"),
+                    func.max(table.c.updated_at).label("last_memory_updated_at"),
+                )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+                stmt = stmt.order_by(func.max(table.c.updated_at).desc())
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Pagination
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], 0
+
+                return [
+                    {
+                        "user_id": record.user_id,  # type: ignore
+                        "total_memories": record.total_memories,
+                        "last_memory_updated_at": record.last_memory_updated_at,
+                    }
+                    for record in result
+                ], total_count
+
+        except Exception as e:
+            log_error(f"Exception getting user memory stats: {str(e)}")
+            raise e
+
+    def upsert_user_memory(
+        self, memory: UserMemory, deserialize: Optional[bool] = True
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
+        """Upsert a user memory in the database.
+
+        Args:
+            memory (UserMemory): The user memory to upsert.
+            deserialize (Optional[bool]): Whether to serialize the memory. Defaults to True.
+
+        Returns:
+            Optional[Union[UserMemory, Dict[str, Any]]]:
+                - When deserialize=True: UserMemory object
+                - When deserialize=False: UserMemory dictionary
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
+            sanitized_input = sanitize_postgres_string(memory.input)
+            sanitized_feedback = sanitize_postgres_string(memory.feedback)
+
+            with self.Session() as sess, sess.begin():
+                if memory.memory_id is None:
+                    memory.memory_id = str(uuid4())
+
+                current_time = int(time.time())
+
+                stmt = postgresql.insert(table).values(
+                    memory_id=memory.memory_id,
+                    memory=memory.memory,
+                    input=sanitized_input,
+                    user_id=memory.user_id,
+                    agent_id=memory.agent_id,
+                    team_id=memory.team_id,
+                    topics=memory.topics,
+                    feedback=sanitized_feedback,
+                    created_at=memory.created_at,
+                    updated_at=memory.updated_at
+                    if memory.updated_at is not None
+                    else (memory.created_at if memory.created_at is not None else current_time),
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["memory_id"],
+                    set_=dict(
+                        memory=memory.memory,
+                        topics=memory.topics,
+                        input=sanitized_input,
+                        agent_id=memory.agent_id,
+                        team_id=memory.team_id,
+                        feedback=sanitized_feedback,
+                        updated_at=current_time,
+                        # Preserve created_at on update - don't overwrite existing value
+                        created_at=table.c.created_at,
+                    ),
+                ).returning(table)
+
+                result = sess.execute(stmt)
+                row = result.fetchone()
+
+            memory_raw = dict(row._mapping)
+
+            if not memory_raw or not deserialize:
+                return memory_raw
+
+            return UserMemory.from_dict(memory_raw)
+
+        except Exception as e:
+            log_error(f"Exception upserting user memory: {str(e)}")
+            raise e
+
+    def upsert_memories(
+        self, memories: List[UserMemory], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """
+        Bulk insert or update multiple memories in the database for improved performance.
+
+        Args:
+            memories (List[UserMemory]): The list of memories to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the memories. Defaults to True.
+            preserve_updated_at (bool): If True, preserve the updated_at from the memory object.
+                                       If False (default), set updated_at to current time.
+
+        Returns:
+            List[Union[UserMemory, Dict[str, Any]]]: List of upserted memories
+
+        Raises:
+            Exception: If an error occurs during bulk upsert.
+        """
+        try:
+            if not memories:
+                return []
+
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return []
+
+            # Prepare memory records for bulk insert
+            memory_records = []
+            current_time = int(time.time())
+
+            for memory in memories:
+                if memory.memory_id is None:
+                    memory.memory_id = str(uuid4())
+
+                # Use preserved updated_at if flag is set (even if None), otherwise use current time
+                updated_at = memory.updated_at if preserve_updated_at else current_time
+
+                # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
+                sanitized_input = sanitize_postgres_string(memory.input)
+                sanitized_feedback = sanitize_postgres_string(memory.feedback)
+
+                memory_records.append(
+                    {
+                        "memory_id": memory.memory_id,
+                        "memory": memory.memory,
+                        "input": sanitized_input,
+                        "user_id": memory.user_id,
+                        "agent_id": memory.agent_id,
+                        "team_id": memory.team_id,
+                        "topics": memory.topics,
+                        "feedback": sanitized_feedback,
+                        "created_at": memory.created_at,
+                        "updated_at": updated_at,
+                    }
+                )
+
+            results: List[Union[UserMemory, Dict[str, Any]]] = []
+
+            with self.Session() as sess, sess.begin():
+                insert_stmt = postgresql.insert(table)
+                update_columns = {
+                    col.name: insert_stmt.excluded[col.name]
+                    for col in table.columns
+                    if col.name not in ["memory_id", "created_at"]  # Don't update primary key or created_at
+                }
+                stmt = insert_stmt.on_conflict_do_update(index_elements=["memory_id"], set_=update_columns).returning(
+                    table
+                )
+
+                result = sess.execute(stmt, memory_records)
+                for row in result.fetchall():
+                    memory_dict = dict(row._mapping)
+                    if deserialize:
+                        deserialized_memory = UserMemory.from_dict(memory_dict)
+                        if deserialized_memory is None:
+                            continue
+                        results.append(deserialized_memory)
+                    else:
+                        results.append(memory_dict)
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception bulk upserting memories: {str(e)}")
+            return []
+
+    # -- Metrics methods --
+    def _get_all_sessions_for_metrics_calculation(
+        self, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all sessions of all types (agent, team, workflow) as raw dictionaries.
+
+         Args:
+            start_timestamp (Optional[int]): The start timestamp to filter by. Defaults to None.
+            end_timestamp (Optional[int]): The end timestamp to filter by. Defaults to None.
+
+        Returns:
+            List[Dict[str, Any]]: List of session dictionaries with session_type field.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return []
+
+            stmt = select(
+                table.c.user_id,
+                table.c.session_data,
+                table.c.runs,
+                table.c.created_at,
+                table.c.session_type,
+            )
+
+            if start_timestamp is not None:
+                stmt = stmt.where(table.c.created_at >= start_timestamp)
+            if end_timestamp is not None:
+                stmt = stmt.where(table.c.created_at <= end_timestamp)
+
+            with self.Session() as sess:
+                result = sess.execute(stmt).fetchall()
+
+                return [record._mapping for record in result]
+
+        except Exception as e:
+            log_error(f"Exception reading from sessions table: {str(e)}")
+            raise e
+
+    def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
+        """Get the first date for which metrics calculation is needed:
+
+        1. If there are metrics records, return the date of the first day without a complete metrics record.
+        2. If there are no metrics records, return the date of the first recorded session.
+        3. If there are no metrics records and no sessions records, return None.
+
+        Args:
+            table (Table): The table to get the starting date for.
+
+        Returns:
+            Optional[date]: The starting date for which metrics calculation is needed.
+        """
+        with self.Session() as sess:
+            stmt = select(table).order_by(table.c.date.desc()).limit(1)
+            result = sess.execute(stmt).fetchone()
+
+            # 1. Return the date of the first day without a complete metrics record.
+            if result is not None:
+                if result.completed:
+                    return result._mapping["date"] + timedelta(days=1)
+                else:
+                    return result._mapping["date"]
+
+        # 2. No metrics records. Return the date of the first recorded session.
+        first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+
+        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
+
+        # 3. No metrics records and no sessions records. Return None.
+        if first_session_date is None:
+            return None
+
+        return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
+
+    def calculate_metrics(self) -> Optional[list[dict]]:
+        """Calculate metrics for all dates without complete metrics.
+
+        Returns:
+            Optional[list[dict]]: The calculated metrics.
+
+        Raises:
+            Exception: If an error occurs during metrics calculation.
+        """
+        try:
+            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            starting_date = self._get_metrics_calculation_starting_date(table)
+
+            if starting_date is None:
+                log_info("No session data found. Won't calculate metrics.")
+                return None
+
+            dates_to_process = get_dates_to_calculate_metrics_for(starting_date)
+            if not dates_to_process:
+                log_info("Metrics already calculated for all relevant dates.")
+                return None
+
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
+            end_timestamp = int(
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+
+            sessions = self._get_all_sessions_for_metrics_calculation(
+                start_timestamp=start_timestamp, end_timestamp=end_timestamp
+            )
+
+            all_sessions_data = fetch_all_sessions_data(
+                sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
+            )
+            if not all_sessions_data:
+                log_info("No new session data found. Won't calculate metrics.")
+                return None
+
+            results = []
+            metrics_records = []
+
+            for date_to_process in dates_to_process:
+                date_key = date_to_process.isoformat()
+                sessions_for_date = all_sessions_data.get(date_key, {})
+
+                # Skip dates with no sessions
+                if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
+                    continue
+
+                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+
+                metrics_records.append(metrics_record)
+
+            if metrics_records:
+                with self.Session() as sess, sess.begin():
+                    results = bulk_upsert_metrics(session=sess, table=table, metrics_records=metrics_records)
+
+            log_debug("Updated metrics calculations")
+
+            return results
+
+        except Exception as e:
+            log_error(f"Exception refreshing metrics: {str(e)}")
+            raise e
+
+    def get_metrics(
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+
+        Returns:
+            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return [], None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+                if starting_date:
+                    stmt = stmt.where(table.c.date >= starting_date)
+                if ending_date:
+                    stmt = stmt.where(table.c.date <= ending_date)
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [], None
+
+                # Get the latest updated_at
+                latest_stmt = select(func.max(table.c.updated_at))
+                latest_updated_at = sess.execute(latest_stmt).scalar()
+
+            return [row._mapping for row in result], latest_updated_at
+
+        except Exception as e:
+            log_error(f"Exception getting metrics: {str(e)}")
+            raise e
+
+    # -- Knowledge methods --
+    def delete_knowledge_content(self, id: str):
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+        """
+        try:
+            table = self._get_table(table_type="knowledge")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.id == id)
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Exception deleting knowledge content: {str(e)}")
+            raise e
+
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+        """
+        try:
+            table = self._get_table(table_type="knowledge")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                return KnowledgeRow.model_validate(result._mapping)
+
+        except Exception as e:
+            log_error(f"Exception getting knowledge content: {str(e)}")
+            raise e
+
+    def get_knowledge_contents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
+    ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+
+        Returns:
+            List[KnowledgeRow]: The knowledge contents.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="knowledge")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Apply linked_to filter if provided
+                if linked_to is not None:
+                    stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Get total count before applying limit and pagination
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Apply pagination after count
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+
+        except Exception as e:
+            log_error(f"Exception getting knowledge contents: {str(e)}")
+            raise e
+
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+        """
+        try:
+            table = self._get_table(table_type="knowledge", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                # Get the actual table columns to avoid "unconsumed column names" error
+                table_columns = set(table.columns.keys())
+
+                # Only include fields that exist in the table and are not None
+                insert_data = {}
+                update_fields = {}
+
+                # Map of KnowledgeRow fields to table columns
+                field_mapping = {
+                    "id": "id",
+                    "name": "name",
+                    "description": "description",
+                    "metadata": "metadata",
+                    "type": "type",
+                    "size": "size",
+                    "linked_to": "linked_to",
+                    "access_count": "access_count",
+                    "status": "status",
+                    "status_message": "status_message",
+                    "created_at": "created_at",
+                    "updated_at": "updated_at",
+                    "external_id": "external_id",
+                }
+
+                # Build insert and update data only for fields that exist in the table
+                # String fields that need sanitization
+                string_fields = {"name", "description", "type", "status", "status_message", "external_id", "linked_to"}
+
+                for model_field, table_column in field_mapping.items():
+                    if table_column in table_columns:
+                        value = getattr(knowledge_row, model_field, None)
+                        if value is not None:
+                            # Sanitize string fields to remove null bytes
+                            if table_column in string_fields and isinstance(value, str):
+                                value = sanitize_postgres_string(value)
+                            # Sanitize metadata dict if present
+                            elif table_column == "metadata" and isinstance(value, dict):
+                                value = sanitize_postgres_strings(value)
+                            insert_data[table_column] = value
+                            # Don't include ID in update_fields since it's the primary key
+                            if table_column != "id":
+                                update_fields[table_column] = value
+
+                # Ensure id is always included for the insert
+                if "id" in table_columns and knowledge_row.id:
+                    insert_data["id"] = knowledge_row.id
+
+                # Handle case where update_fields is empty (all fields are None or don't exist in table)
+                if not update_fields:
+                    # If we have insert_data, just do an insert without conflict resolution
+                    if insert_data:
+                        stmt = postgresql.insert(table).values(insert_data)
+                        sess.execute(stmt)
+                    else:
+                        # If we have no data at all, this is an error
+                        log_error("No valid fields found for knowledge row upsert")
+                        return None
+                else:
+                    # Normal upsert with conflict resolution
+                    stmt = (
+                        postgresql.insert(table)
+                        .values(insert_data)
+                        .on_conflict_do_update(index_elements=["id"], set_=update_fields)
+                    )
+                    sess.execute(stmt)
+
+            return knowledge_row
+
+        except Exception as e:
+            log_error(f"Error upserting knowledge row: {str(e)}")
+            raise e
+
+    # -- Eval methods --
+    def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
+        """Create an EvalRunRecord in the database.
+
+        Args:
+            eval_run (EvalRunRecord): The eval run to create.
+
+        Returns:
+            Optional[EvalRunRecord]: The created eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during creation.
+        """
+        try:
+            table = self._get_table(table_type="evals", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                current_time = int(time.time())
+                eval_data = eval_run.model_dump()
+                # Sanitize string fields in eval_run
+                if eval_data.get("name"):
+                    eval_data["name"] = sanitize_postgres_string(eval_data["name"])
+                if eval_data.get("evaluated_component_name"):
+                    eval_data["evaluated_component_name"] = sanitize_postgres_string(
+                        eval_data["evaluated_component_name"]
+                    )
+                # Sanitize nested dicts/JSON fields
+                if eval_data.get("eval_data"):
+                    eval_data["eval_data"] = sanitize_postgres_strings(eval_data["eval_data"])
+                if eval_data.get("eval_input"):
+                    eval_data["eval_input"] = sanitize_postgres_strings(eval_data["eval_input"])
+
+                stmt = postgresql.insert(table).values(
+                    {"created_at": current_time, "updated_at": current_time, **eval_data}
+                )
+                sess.execute(stmt)
+
+            log_debug(f"Created eval run with id '{eval_run.run_id}'")
+
+            return eval_run
+
+        except Exception as e:
+            log_error(f"Error creating eval run: {str(e)}")
+            raise e
+
+    def delete_eval_run(self, eval_run_id: str) -> None:
+        """Delete an eval run from the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to delete.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.run_id == eval_run_id)
+                result = sess.execute(stmt)
+
+                if result.rowcount == 0:
+                    log_warning(f"No eval run found with ID: {eval_run_id}")
+                else:
+                    log_debug(f"Deleted eval run with ID: {eval_run_id}")
+
+        except Exception as e:
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+        """Delete multiple eval runs from the database.
+
+        Args:
+            eval_run_ids (List[str]): List of eval run IDs to delete.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                result = sess.execute(stmt)
+
+                if result.rowcount == 0:
+                    log_warning(f"No eval runs found with IDs: {eval_run_ids}")
+                else:
+                    log_debug(f"Deleted {result.rowcount} eval runs")
+
+        except Exception as e:
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
+            raise e
+
+    def get_eval_run(
+        self, eval_run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        """Get an eval run from the database.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to get.
+            deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+
+        Returns:
+            Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+                - When deserialize=True: EvalRunRecord object
+                - When deserialize=False: EvalRun dictionary
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.run_id == eval_run_id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                eval_run_raw = dict(result._mapping)
+                if not deserialize:
+                    return eval_run_raw
+
+                return EvalRunRecord.model_validate(eval_run_raw)
+
+        except Exception as e:
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    def get_eval_runs(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        model_id: Optional[str] = None,
+        filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+        """Get all eval runs from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of eval runs to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            model_id (Optional[str]): The ID of the model to filter by.
+            eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
+            filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
+            deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+
+        Returns:
+            Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of EvalRunRecord objects
+                - When deserialize=False: List of dictionaries
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if model_id is not None:
+                    stmt = stmt.where(table.c.model_id == model_id)
+                if eval_type is not None and len(eval_type) > 0:
+                    stmt = stmt.where(table.c.eval_type.in_(eval_type))
+                if filter_type is not None:
+                    if filter_type == EvalFilterType.AGENT:
+                        stmt = stmt.where(table.c.agent_id.is_not(None))
+                    elif filter_type == EvalFilterType.TEAM:
+                        stmt = stmt.where(table.c.team_id.is_not(None))
+                    elif filter_type == EvalFilterType.WORKFLOW:
+                        stmt = stmt.where(table.c.workflow_id.is_not(None))
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                if sort_by is None:
+                    stmt = stmt.order_by(table.c.created_at.desc())
+                else:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                eval_runs_raw = [row._mapping for row in result]
+                if not deserialize:
+                    return eval_runs_raw, total_count
+
+                return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
+
+        except Exception as e:
+            log_error(f"Exception getting eval runs: {str(e)}")
+            raise e
+
+    def rename_eval_run(
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        """Upsert the name of an eval run in the database, returning raw dictionary.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            name (str): The new name of the eval run.
+
+        Returns:
+            Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during update.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                # Sanitize string field to remove null bytes
+                sanitized_name = sanitize_postgres_string(name)
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == eval_run_id)
+                    .values(name=sanitized_name, updated_at=int(time.time()))
+                )
+                sess.execute(stmt)
+
+            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            if not eval_run_raw or not deserialize:
+                return eval_run_raw
+
+            return EvalRunRecord.model_validate(eval_run_raw)
+
+        except Exception as e:
+            log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
+            raise e
+
+    # -- Culture methods --
+
+    def clear_cultural_knowledge(self) -> None:
+        """Delete all cultural knowledge from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
+            raise e
+
+    def delete_cultural_knowledge(self, id: str) -> None:
+        """Delete a cultural knowledge entry from the database.
+
+        Args:
+            id (str): The ID of the cultural knowledge to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                delete_stmt = table.delete().where(table.c.id == id)
+                result = sess.execute(delete_stmt)
+
+                success = result.rowcount > 0
+                if success:
+                    log_debug(f"Successfully deleted cultural knowledge id: {id}")
+                else:
+                    log_debug(f"No cultural knowledge found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
+            raise e
+
+    def get_cultural_knowledge(
+        self, id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Get a cultural knowledge entry from the database.
+
+        Args:
+            id (str): The ID of the cultural knowledge to get.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge entry, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return None
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                db_row = dict(result._mapping)
+                if not db_row or not deserialize:
+                    return db_row
+
+            return deserialize_cultural_knowledge(db_row)
+
+        except Exception as e:
+            log_error(f"Exception reading from cultural knowledge table: {str(e)}")
+            raise e
+
+    def get_all_cultural_knowledge(
+        self,
+        name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+        """Get all cultural knowledge from the database as CulturalKnowledge objects.
+
+        Args:
+            name (Optional[str]): The name of the cultural knowledge to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            limit (Optional[int]): The maximum number of cultural knowledge entries to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
+                - When deserialize=True: List of CulturalKnowledge objects
+                - When deserialize=False: List of CulturalKnowledge dictionaries and total count
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        try:
+            table = self._get_table(table_type="culture")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
+
+                # Filtering
+                if name is not None:
+                    stmt = stmt.where(table.c.name == name)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+
+                # Get total count after applying filtering
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
+
+                # Sorting
+                stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                # Paginating
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if not result:
+                    return [] if deserialize else ([], 0)
+
+                db_rows = [dict(record._mapping) for record in result]
+
+                if not deserialize:
+                    return db_rows, total_count
+
+            return [deserialize_cultural_knowledge(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from cultural knowledge table: {str(e)}")
+            raise e
+
+    def upsert_cultural_knowledge(
+        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
+    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
+        """Upsert a cultural knowledge entry into the database.
+
+        Args:
+            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
+            deserialize (Optional[bool]): Whether to deserialize the cultural knowledge. Defaults to True.
+
+        Returns:
+            Optional[CulturalKnowledge]: The upserted cultural knowledge entry.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table = self._get_table(table_type="culture", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if cultural_knowledge.id is None:
+                cultural_knowledge.id = str(uuid4())
+
+            # Serialize content, categories, and notes into a JSON dict for DB storage
+            content_dict = serialize_cultural_knowledge(cultural_knowledge)
+            # Sanitize content_dict to remove null bytes from nested strings
+            if content_dict:
+                content_dict = cast(Dict[str, Any], sanitize_postgres_strings(content_dict))
+
+            # Sanitize string fields to remove null bytes (PostgreSQL doesn't allow them)
+            sanitized_name = sanitize_postgres_string(cultural_knowledge.name)
+            sanitized_summary = sanitize_postgres_string(cultural_knowledge.summary)
+            sanitized_input = sanitize_postgres_string(cultural_knowledge.input)
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    id=cultural_knowledge.id,
+                    name=sanitized_name,
+                    summary=sanitized_summary,
+                    content=content_dict if content_dict else None,
+                    metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
+                    if cultural_knowledge.metadata
+                    else None,
+                    input=sanitized_input,
+                    created_at=cultural_knowledge.created_at,
+                    updated_at=int(time.time()),
+                    agent_id=cultural_knowledge.agent_id,
+                    team_id=cultural_knowledge.team_id,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["id"],
+                    set_=dict(
+                        name=sanitized_name,
+                        summary=sanitized_summary,
+                        content=content_dict if content_dict else None,
+                        metadata=sanitize_postgres_strings(cultural_knowledge.metadata)
+                        if cultural_knowledge.metadata
+                        else None,
+                        input=sanitized_input,
+                        updated_at=int(time.time()),
+                        agent_id=cultural_knowledge.agent_id,
+                        team_id=cultural_knowledge.team_id,
+                    ),
+                ).returning(table)
+
+                result = sess.execute(stmt)
+                row = result.fetchone()
+
+                if row is None:
+                    return None
+
+            db_row = dict(row._mapping)
+            if not db_row or not deserialize:
+                return db_row
+
+            return deserialize_cultural_knowledge(db_row)
+
+        except Exception as e:
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
+            raise e
+
+    # -- Migrations --
+
+    def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
+        """Migrate all content in the given table to the right v2 table"""
+
+        from agno.db.migrations.v1_to_v2 import (
+            get_all_table_content,
+            parse_agent_sessions,
+            parse_memories,
+            parse_team_sessions,
+            parse_workflow_sessions,
+        )
+
+        # Get all content from the old table
+        old_content: list[dict[str, Any]] = get_all_table_content(
+            db=self,
+            db_schema=v1_db_schema,
+            table_name=v1_table_name,
+        )
+        if not old_content:
+            log_info(f"No content to migrate from table {v1_table_name}")
+            return
+
+        # Parse the content into the new format
+        memories: List[UserMemory] = []
+        sessions: Sequence[Union[AgentSession, TeamSession, WorkflowSession]] = []
+        if v1_table_type == "agent_sessions":
+            sessions = parse_agent_sessions(old_content)
+        elif v1_table_type == "team_sessions":
+            sessions = parse_team_sessions(old_content)
+        elif v1_table_type == "workflow_sessions":
+            sessions = parse_workflow_sessions(old_content)
+        elif v1_table_type == "memories":
+            memories = parse_memories(old_content)
+        else:
+            raise ValueError(f"Invalid table type: {v1_table_type}")
+
+        # Insert the new content into the new table
+        if v1_table_type == "agent_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table_name}")
+
+        elif v1_table_type == "team_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table_name}")
+
+        elif v1_table_type == "workflow_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table_name}")
+
+        elif v1_table_type == "memories":
+            for memory in memories:
+                self.upsert_user_memory(memory)
+            log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
+
+    # --- Traces ---
+    def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
+        """Build base query for traces with aggregated span counts.
+
+        Args:
+            table: The traces table.
+            spans_table: The spans table (optional).
+
+        Returns:
+            SQLAlchemy select statement with total_spans and error_count calculated dynamically.
+        """
+        from sqlalchemy import case, literal
+
+        if spans_table is not None:
+            # JOIN with spans table to calculate total_spans and error_count
+            return (
+                select(
+                    table,
+                    func.coalesce(func.count(spans_table.c.span_id), 0).label("total_spans"),
+                    func.coalesce(func.sum(case((spans_table.c.status_code == "ERROR", 1), else_=0)), 0).label(
+                        "error_count"
+                    ),
+                )
+                .select_from(table.outerjoin(spans_table, table.c.trace_id == spans_table.c.trace_id))
+                .group_by(table.c.trace_id)
+            )
+        else:
+            # Fallback if spans table doesn't exist
+            return select(table, literal(0).label("total_spans"), literal(0).label("error_count"))
+
+    def _get_trace_component_level_expr(self, workflow_id_col, team_id_col, agent_id_col, name_col):
+        """Build a SQL CASE expression that returns the component level for a trace.
+
+        Component levels (higher = more important):
+            - 3: Workflow root (.run or .arun with workflow_id)
+            - 2: Team root (.run or .arun with team_id)
+            - 1: Agent root (.run or .arun with agent_id)
+            - 0: Child span (not a root)
+
+        Args:
+            workflow_id_col: SQL column/expression for workflow_id
+            team_id_col: SQL column/expression for team_id
+            agent_id_col: SQL column/expression for agent_id
+            name_col: SQL column/expression for name
+
+        Returns:
+            SQLAlchemy CASE expression returning the component level as an integer.
+        """
+        is_root_name = or_(name_col.contains(".run"), name_col.contains(".arun"))
+
+        return case(
+            # Workflow root (level 3)
+            (and_(workflow_id_col.isnot(None), is_root_name), 3),
+            # Team root (level 2)
+            (and_(team_id_col.isnot(None), is_root_name), 2),
+            # Agent root (level 1)
+            (and_(agent_id_col.isnot(None), is_root_name), 1),
+            # Child span or unknown (level 0)
+            else_=0,
+        )
+
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Uses INSERT ... ON CONFLICT DO UPDATE (upsert) to handle concurrent inserts
+        atomically and avoid race conditions.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            table = self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            trace_dict = trace.to_dict()
+            trace_dict.pop("total_spans", None)
+            trace_dict.pop("error_count", None)
+            # Sanitize string fields and nested JSON structures
+            if trace_dict.get("name"):
+                trace_dict["name"] = sanitize_postgres_string(trace_dict["name"])
+            if trace_dict.get("status"):
+                trace_dict["status"] = sanitize_postgres_string(trace_dict["status"])
+            # Sanitize any nested dict/JSON fields
+            trace_dict = cast(Dict[str, Any], sanitize_postgres_strings(trace_dict))
+
+            with self.Session() as sess, sess.begin():
+                # Use upsert to handle concurrent inserts atomically
+                # On conflict, update fields while preserving existing non-null context values
+                # and keeping the earliest start_time
+                insert_stmt = postgresql.insert(table).values(trace_dict)
+
+                # Build component level expressions for comparing trace priority
+                new_level = self._get_trace_component_level_expr(
+                    insert_stmt.excluded.workflow_id,
+                    insert_stmt.excluded.team_id,
+                    insert_stmt.excluded.agent_id,
+                    insert_stmt.excluded.name,
+                )
+                existing_level = self._get_trace_component_level_expr(
+                    table.c.workflow_id,
+                    table.c.team_id,
+                    table.c.agent_id,
+                    table.c.name,
+                )
+
+                # Build the ON CONFLICT DO UPDATE clause
+                # Use LEAST for start_time, GREATEST for end_time to capture full trace duration
+                # Use COALESCE to preserve existing non-null context values
+                upsert_stmt = insert_stmt.on_conflict_do_update(
+                    index_elements=["trace_id"],
+                    set_={
+                        "end_time": func.greatest(table.c.end_time, insert_stmt.excluded.end_time),
+                        "start_time": func.least(table.c.start_time, insert_stmt.excluded.start_time),
+                        "duration_ms": func.extract(
+                            "epoch",
+                            func.cast(
+                                func.greatest(table.c.end_time, insert_stmt.excluded.end_time),
+                                TIMESTAMP(timezone=True),
+                            )
+                            - func.cast(
+                                func.least(table.c.start_time, insert_stmt.excluded.start_time),
+                                TIMESTAMP(timezone=True),
+                            ),
+                        )
+                        * 1000,
+                        "status": insert_stmt.excluded.status,
+                        # Update name only if new trace is from a higher-level component
+                        # Priority: workflow (3) > team (2) > agent (1) > child spans (0)
+                        "name": case(
+                            (new_level > existing_level, insert_stmt.excluded.name),
+                            else_=table.c.name,
+                        ),
+                        # Preserve existing non-null context values: COALESCE returns
+                        # the first non-null arg, so put the existing column first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": func.coalesce(table.c.run_id, insert_stmt.excluded.run_id),
+                        "session_id": func.coalesce(table.c.session_id, insert_stmt.excluded.session_id),
+                        "user_id": func.coalesce(table.c.user_id, insert_stmt.excluded.user_id),
+                        "agent_id": func.coalesce(table.c.agent_id, insert_stmt.excluded.agent_id),
+                        "team_id": func.coalesce(table.c.team_id, insert_stmt.excluded.team_id),
+                        "workflow_id": func.coalesce(table.c.workflow_id, insert_stmt.excluded.workflow_id),
+                    },
+                )
+                sess.execute(upsert_stmt)
+
+        except Exception as e:
+            log_error(f"Error creating trace: {str(e)}")
+            # Don't raise - tracing should not break the main application flow
+
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                return None
+
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                # Build query with aggregated span counts
+                stmt = self._get_traces_base_query(table, spans_table)
+
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                elif run_id:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                else:
+                    log_debug("get_trace called without any filter parameters")
+                    return None
+
+                # Order by most recent and get first result
+                stmt = stmt.order_by(table.c.start_time.desc()).limit(1)
+                result = sess.execute(stmt).fetchone()
+
+                if result:
+                    return Trace.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting trace: {str(e)}")
+            return None
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            from agno.tracing.schemas import Trace
+
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            # Get spans table for JOIN
+            spans_table = self._get_table(table_type="spans")
+
+            with self.Session() as sess:
+                # Build base query with aggregated span counts
+                base_stmt = self._get_traces_base_query(table, spans_table)
+
+                # Apply filters
+                if run_id:
+                    base_stmt = base_stmt.where(table.c.run_id == run_id)
+                if session_id:
+                    base_stmt = base_stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if status:
+                    base_stmt = base_stmt.where(table.c.status == status)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
+
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Apply pagination
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+
+                traces = [Trace.from_dict(dict(row._mapping)) for row in results]
+                return traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {str(e)}")
+            return [], 0
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        try:
+            table = self._get_table(table_type="traces")
+            if table is None:
+                log_debug("Traces table not found")
+                return [], 0
+
+            with self.Session() as sess:
+                # Build base query grouped by session_id
+                base_stmt = (
+                    select(
+                        table.c.session_id,
+                        func.max(table.c.user_id).label("user_id"),
+                        func.max(table.c.agent_id).label("agent_id"),
+                        func.max(table.c.team_id).label("team_id"),
+                        func.max(table.c.workflow_id).label("workflow_id"),
+                        func.count(table.c.trace_id).label("total_traces"),
+                        func.min(table.c.created_at).label("first_trace_at"),
+                        func.max(table.c.created_at).label("last_trace_at"),
+                    )
+                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                    .group_by(table.c.session_id)
+                )
+
+                # Apply filters
+                if user_id is not None:
+                    base_stmt = base_stmt.where(table.c.user_id == user_id)
+                if workflow_id:
+                    base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
+                if team_id:
+                    base_stmt = base_stmt.where(table.c.team_id == team_id)
+                if agent_id:
+                    base_stmt = base_stmt.where(table.c.agent_id == agent_id)
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
+
+                # Get total count of sessions
+                count_stmt = select(func.count()).select_from(base_stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Apply pagination and ordering
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+
+                # Convert to list of dicts with datetime objects
+                stats_list = []
+                for row in results:
+                    # Convert ISO strings to datetime objects
+                    first_trace_at_str = row.first_trace_at
+                    last_trace_at_str = row.last_trace_at
+
+                    # Parse ISO format strings to datetime objects
+                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+
+                    stats_list.append(
+                        {
+                            "session_id": row.session_id,
+                            "user_id": row.user_id,
+                            "agent_id": row.agent_id,
+                            "team_id": row.team_id,
+                            "workflow_id": row.workflow_id,
+                            "total_traces": row.total_traces,
+                            "first_trace_at": first_trace_at,
+                            "last_trace_at": last_trace_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {str(e)}")
+            return [], 0
+
+    # --- Spans ---
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                span_dict = span.to_dict()
+                # Sanitize string fields and nested JSON structures
+                if span_dict.get("name"):
+                    span_dict["name"] = sanitize_postgres_string(span_dict["name"])
+                if span_dict.get("status_code"):
+                    span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
+                # Sanitize any nested dict/JSON fields
+                span_dict = cast(Dict[str, Any], sanitize_postgres_strings(span_dict))
+                stmt = postgresql.insert(table).values(span_dict)
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating span: {str(e)}")
+
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table = self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                for span in spans:
+                    span_dict = span.to_dict()
+                    # Sanitize string fields and nested JSON structures
+                    if span_dict.get("name"):
+                        span_dict["name"] = sanitize_postgres_string(span_dict["name"])
+                    if span_dict.get("status_code"):
+                        span_dict["status_code"] = sanitize_postgres_string(span_dict["status_code"])
+                    # Sanitize any nested dict/JSON fields
+                    span_dict = sanitize_postgres_strings(span_dict)
+                    stmt = postgresql.insert(table).values(span_dict)
+                    sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {str(e)}")
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.span_id == span_id)
+                result = sess.execute(stmt).fetchone()
+                if result:
+                    return Span.from_dict(dict(result._mapping))
+                return None
+
+        except Exception as e:
+            log_error(f"Error getting span: {str(e)}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            from agno.tracing.schemas import Span
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                # Apply filters
+                if trace_id:
+                    stmt = stmt.where(table.c.trace_id == trace_id)
+                if parent_span_id:
+                    stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                if limit:
+                    stmt = stmt.limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [Span.from_dict(dict(row._mapping)) for row in results]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {str(e)}")
+            return []
+
+    # --- Components ---
+    def get_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="components")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(
+                    table.c.component_id == component_id,
+                    table.c.deleted_at.is_(None),
+                )
+
+                if component_type is not None:
+                    stmt = stmt.where(table.c.component_type == component_type.value)
+
+                row = sess.execute(stmt).mappings().one_or_none()
+                return dict(row) if row else None
+
+        except Exception as e:
+            log_error(f"Error getting component: {str(e)}")
+            raise
+
+    def upsert_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        current_version: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a component.
+
+        Args:
+            component_id: Unique identifier.
+            component_type: Type (agent|team|workflow). Required for create, optional for update.
+            name: Display name.
+            description: Optional description.
+            current_version: Optional current version.
+            metadata: Optional metadata dict.
+
+        Returns:
+            Created/updated component dictionary.
+
+        Raises:
+            ValueError: If creating and component_type is not provided.
+        """
+        try:
+            table = self._get_table(table_type="components", create_table_if_not_found=True)
+            if table is None:
+                raise ValueError("Components table not found")
+
+            with self.Session() as sess, sess.begin():
+                existing = sess.execute(
+                    select(table).where(
+                        table.c.component_id == component_id,
+                        table.c.deleted_at.is_(None),
+                    )
+                ).fetchone()
+                if existing is None:
+                    # Create new component
+                    if component_type is None:
+                        raise ValueError("component_type is required when creating a new component")
+
+                    sess.execute(
+                        table.insert().values(
+                            component_id=component_id,
+                            component_type=component_type.value,
+                            name=name,
+                            description=description,
+                            current_version=None,
+                            metadata=metadata,
+                            created_at=int(time.time()),
+                        )
+                    )
+                    log_debug(f"Created component {component_id}")
+
+                elif existing.deleted_at is not None:
+                    # Reactivate soft-deleted
+                    if component_type is None:
+                        raise ValueError("component_type is required when reactivating a deleted component")
+
+                    sess.execute(
+                        table.update()
+                        .where(table.c.component_id == component_id)
+                        .values(
+                            component_type=component_type.value,
+                            name=name or component_id,
+                            description=description,
+                            current_version=None,
+                            metadata=metadata,
+                            updated_at=int(time.time()),
+                            deleted_at=None,
+                        )
+                    )
+                    log_debug(f"Reactivated component {component_id}")
+
+                else:
+                    # Update existing
+                    updates: Dict[str, Any] = {"updated_at": int(time.time())}
+                    if component_type is not None:
+                        updates["component_type"] = component_type.value
+                    if name is not None:
+                        updates["name"] = name
+                    if description is not None:
+                        updates["description"] = description
+                    if current_version is not None:
+                        updates["current_version"] = current_version
+                    if metadata is not None:
+                        updates["metadata"] = metadata
+
+                    sess.execute(table.update().where(table.c.component_id == component_id).values(**updates))
+                    log_debug(f"Updated component {component_id}")
+
+            result = self.get_component(component_id)
+            if result is None:
+                raise ValueError(f"Failed to get component {component_id} after upsert")
+            return result
+
+        except Exception as e:
+            log_error(f"Error upserting component: {str(e)}")
+            raise
+
+    def delete_component(
+        self,
+        component_id: str,
+        hard_delete: bool = False,
+    ) -> bool:
+        """Delete a component and all its configs/links.
+
+        Args:
+            component_id: The component ID.
+            hard_delete: If True, permanently delete. Otherwise soft-delete.
+
+        Returns:
+            True if deleted, False if not found or already deleted.
+        """
+        try:
+            components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs")
+            links_table = self._get_table(table_type="component_links")
+
+            if components_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                # Verify component exists (and not already soft-deleted for soft-delete)
+                if hard_delete:
+                    exists = sess.execute(
+                        select(components_table.c.component_id).where(components_table.c.component_id == component_id)
+                    ).scalar_one_or_none()
+                else:
+                    exists = sess.execute(
+                        select(components_table.c.component_id).where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
+                    ).scalar_one_or_none()
+
+                if exists is None:
+                    log_error(f"Component {component_id} not found")
+                    return False
+
+                if hard_delete:
+                    # Delete links where this component is parent or child
+                    if links_table is not None:
+                        sess.execute(links_table.delete().where(links_table.c.parent_component_id == component_id))
+                        sess.execute(links_table.delete().where(links_table.c.child_component_id == component_id))
+                    # Delete configs
+                    if configs_table is not None:
+                        sess.execute(configs_table.delete().where(configs_table.c.component_id == component_id))
+                    # Delete component
+                    sess.execute(components_table.delete().where(components_table.c.component_id == component_id))
+                else:
+                    # Soft delete (preserve current_version for potential reactivation)
+                    sess.execute(
+                        components_table.update()
+                        .where(components_table.c.component_id == component_id)
+                        .values(deleted_at=int(time.time()))
+                    )
+
+            return True
+
+        except Exception as e:
+            log_error(f"Error deleting component: {str(e)}")
+            raise
+
+    def list_components(
+        self,
+        component_type: Optional[ComponentType] = None,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List components with pagination.
+
+        Args:
+            component_type: Filter by type (agent|team|workflow).
+            include_deleted: Include soft-deleted components.
+            limit: Maximum number of items to return.
+            offset: Number of items to skip.
+            exclude_component_ids: Component IDs to exclude from results.
+
+        Returns:
+            Tuple of (list of component dicts, total count).
+        """
+        try:
+            table = self._get_table(table_type="components")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess:
+                # Build base where clause
+                where_clauses = []
+                if component_type is not None:
+                    where_clauses.append(table.c.component_type == component_type.value)
+                if not include_deleted:
+                    where_clauses.append(table.c.deleted_at.is_(None))
+                if exclude_component_ids:
+                    where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(table)
+                for clause in where_clauses:
+                    count_stmt = count_stmt.where(clause)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Get paginated results
+                stmt = select(table).order_by(
+                    table.c.created_at.desc(),
+                    table.c.component_id,
+                )
+                for clause in where_clauses:
+                    stmt = stmt.where(clause)
+                stmt = stmt.limit(limit).offset(offset)
+
+                rows = sess.execute(stmt).mappings().all()
+                return [dict(r) for r in rows], total_count
+
+        except Exception as e:
+            log_error(f"Error listing components: {str(e)}")
+            raise
+
+    def create_component_with_config(
+        self,
+        component_id: str,
+        component_type: ComponentType,
+        name: Optional[str],
+        config: Dict[str, Any],
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+        stage: str = "draft",
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Create a component with its initial config atomically.
+
+        Args:
+            component_id: Unique identifier.
+            component_type: Type (agent|team|workflow).
+            name: Display name.
+            config: The config data.
+            description: Optional description.
+            metadata: Optional metadata dict.
+            label: Optional config label.
+            stage: "draft" or "published".
+            notes: Optional notes.
+            links: Optional list of links. Each must have child_version set.
+
+        Returns:
+            Tuple of (component dict, config dict).
+
+        Raises:
+            ValueError: If component already exists, invalid stage, or link missing child_version.
+        """
+        if stage not in {"draft", "published"}:
+            raise ValueError(f"Invalid stage: {stage}")
+
+        # Validate links have child_version
+        if links:
+            for link in links:
+                if link.get("child_version") is None:
+                    raise ValueError(f"child_version is required for link to {link['child_component_id']}")
+
+        try:
+            components_table = self._get_table(table_type="components", create_table_if_not_found=True)
+            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
+            links_table = self._get_table(table_type="component_links", create_table_if_not_found=True)
+
+            if components_table is None:
+                raise ValueError("Components table not found")
+            if configs_table is None:
+                raise ValueError("Component configs table not found")
+
+            with self.Session() as sess, sess.begin():
+                # Check if component already exists
+                existing = sess.execute(
+                    select(components_table.c.component_id).where(components_table.c.component_id == component_id)
+                ).scalar_one_or_none()
+
+                if existing is not None:
+                    raise ValueError(f"Component {component_id} already exists")
+
+                # Check label uniqueness
+                if label is not None:
+                    existing_label = sess.execute(
+                        select(configs_table.c.version).where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.label == label,
+                        )
+                    ).first()
+                    if existing_label:
+                        raise ValueError(f"Label '{label}' already exists for {component_id}")
+
+                now = int(time.time())
+                version = 1
+
+                # Create component
+                sess.execute(
+                    components_table.insert().values(
+                        component_id=component_id,
+                        component_type=component_type.value,
+                        name=name,
+                        description=description,
+                        metadata=metadata,
+                        current_version=version if stage == "published" else None,
+                        created_at=now,
+                    )
+                )
+
+                # Create initial config
+                sess.execute(
+                    configs_table.insert().values(
+                        component_id=component_id,
+                        version=version,
+                        label=label,
+                        stage=stage,
+                        config=config,
+                        notes=notes,
+                        created_at=now,
+                    )
+                )
+
+                # Create links if provided
+                if links and links_table is not None:
+                    for link in links:
+                        sess.execute(
+                            links_table.insert().values(
+                                parent_component_id=component_id,
+                                parent_version=version,
+                                link_kind=link["link_kind"],
+                                link_key=link["link_key"],
+                                child_component_id=link["child_component_id"],
+                                child_version=link["child_version"],
+                                position=link["position"],
+                                meta=link.get("meta"),
+                                created_at=now,
+                            )
+                        )
+
+            # Fetch and return both
+            component = self.get_component(component_id)
+            config_result = self.get_config(component_id, version=version)
+
+            if component is None:
+                raise ValueError(f"Failed to get component {component_id} after creation")
+            if config_result is None:
+                raise ValueError(f"Failed to get config for {component_id} after creation")
+
+            return component, config_result
+
+        except Exception as e:
+            log_error(f"Error creating component with config: {str(e)}")
+            raise
+
+    # --- Component Configs ---
+    def get_config(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a config by component ID and version or label.
+
+        Args:
+            component_id: The component ID.
+            version: Specific version number. If None, uses current or latest draft.
+            label: Config label to lookup. Ignored if version is provided.
+
+        Returns:
+            Config dictionary or None if not found.
+        """
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
+                return None
+
+            with self.Session() as sess:
+                # Verify component exists and get current_version
+                component_row = (
+                    sess.execute(
+                        select(components_table.c.component_id, components_table.c.current_version).where(
+                            components_table.c.component_id == component_id,
+                            components_table.c.deleted_at.is_(None),
+                        )
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+
+                if component_row is None:
+                    return None
+
+                current_version = component_row["current_version"]
+
+                if version is not None:
+                    stmt = select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                elif label is not None:
+                    stmt = select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.label == label,
+                    )
+                elif current_version is not None:
+                    # Use the current published version
+                    stmt = select(configs_table).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == current_version,
+                    )
+                else:
+                    # No current_version set (draft only) - get the latest version
+                    stmt = (
+                        select(configs_table)
+                        .where(configs_table.c.component_id == component_id)
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
+                    )
+
+                row = sess.execute(stmt).mappings().one_or_none()
+                return dict(row) if row else None
+
+        except Exception as e:
+            log_error(f"Error getting config: {str(e)}")
+            raise
+
+    def upsert_config(
+        self,
+        component_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        stage: Optional[str] = None,
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """Create or update a config version for a component.
+
+        Rules:
+            - Draft configs can be edited freely
+            - Published configs are immutable
+            - Publishing a config automatically sets it as current_version
+
+        Args:
+            component_id: The component ID.
+            config: The config data. Required for create, optional for update.
+            version: If None, creates new version. If provided, updates that version.
+            label: Optional human-readable label.
+            stage: "draft" or "published". Defaults to "draft" for new configs.
+            notes: Optional notes.
+            links: Optional list of links. Each link must have child_version set.
+
+        Returns:
+            Created/updated config dictionary.
+
+        Raises:
+            ValueError: If component doesn't exist, version not found, label conflict,
+                        or attempting to update a published config.
+        """
+        if stage is not None and stage not in {"draft", "published"}:
+            raise ValueError(f"Invalid stage: {stage}")
+
+        try:
+            components_table = self._get_table(table_type="components")
+            configs_table = self._get_table(table_type="component_configs", create_table_if_not_found=True)
+            links_table = self._get_table(table_type="component_links", create_table_if_not_found=True)
+
+            if components_table is None:
+                raise ValueError("Components table not found")
+            if configs_table is None:
+                raise ValueError("Component configs table not found")
+
+            with self.Session() as sess, sess.begin():
+                # Verify component exists and is not deleted
+                component = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+
+                if component is None:
+                    raise ValueError(f"Component {component_id} not found")
+
+                # Label uniqueness check
+                if label is not None:
+                    label_query = select(configs_table.c.version).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.label == label,
+                    )
+                    if version is not None:
+                        label_query = label_query.where(configs_table.c.version != version)
+
+                    if sess.execute(label_query).first():
+                        raise ValueError(f"Label '{label}' already exists for {component_id}")
+
+                # Validate links have child_version
+                if links:
+                    for link in links:
+                        if link.get("child_version") is None:
+                            raise ValueError(f"child_version is required for link to {link['child_component_id']}")
+
+                if version is None:
+                    if config is None:
+                        raise ValueError("config is required when creating a new version")
+
+                    # Default to draft for new configs
+                    if stage is None:
+                        stage = "draft"
+
+                    max_version = sess.execute(
+                        select(configs_table.c.version)
+                        .where(configs_table.c.component_id == component_id)
+                        .order_by(configs_table.c.version.desc())
+                        .limit(1)
+                    ).scalar()
+
+                    final_version = (max_version or 0) + 1
+
+                    sess.execute(
+                        configs_table.insert().values(
+                            component_id=component_id,
+                            version=final_version,
+                            label=label,
+                            stage=stage,
+                            config=config,
+                            notes=notes,
+                            created_at=int(time.time()),
+                        )
+                    )
+                else:
+                    existing = (
+                        sess.execute(
+                            select(configs_table.c.version, configs_table.c.stage).where(
+                                configs_table.c.component_id == component_id,
+                                configs_table.c.version == version,
+                            )
+                        )
+                        .mappings()
+                        .one_or_none()
+                    )
+
+                    if existing is None:
+                        raise ValueError(f"Config {component_id} v{version} not found")
+
+                    # Published configs are immutable
+                    if existing["stage"] == "published":
+                        raise ValueError(f"Cannot update published config {component_id} v{version}")
+
+                    # Build update dict with only provided fields
+                    updates: Dict[str, Any] = {"updated_at": int(time.time())}
+                    if label is not None:
+                        updates["label"] = label
+                    if stage is not None:
+                        updates["stage"] = stage
+                    if config is not None:
+                        updates["config"] = config
+                    if notes is not None:
+                        updates["notes"] = notes
+
+                    sess.execute(
+                        configs_table.update()
+                        .where(
+                            configs_table.c.component_id == component_id,
+                            configs_table.c.version == version,
+                        )
+                        .values(**updates)
+                    )
+                    final_version = version
+
+                if links is not None and links_table is not None:
+                    sess.execute(
+                        links_table.delete().where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == final_version,
+                        )
+                    )
+                    for link in links:
+                        sess.execute(
+                            links_table.insert().values(
+                                parent_component_id=component_id,
+                                parent_version=final_version,
+                                link_kind=link["link_kind"],
+                                link_key=link["link_key"],
+                                child_component_id=link["child_component_id"],
+                                child_version=link["child_version"],
+                                position=link["position"],
+                                meta=link.get("meta"),
+                                created_at=int(time.time()),
+                            )
+                        )
+
+                # Determine final stage (could be from update or create)
+                final_stage = stage if stage is not None else (existing["stage"] if version is not None else "draft")
+
+                if final_stage == "published":
+                    sess.execute(
+                        components_table.update()
+                        .where(components_table.c.component_id == component_id)
+                        .values(current_version=final_version, updated_at=int(time.time()))
+                    )
+
+            result = self.get_config(component_id, version=final_version)
+            if result is None:
+                raise ValueError(f"Failed to get config {component_id} v{final_version} after upsert")
+            return result
+
+        except Exception as e:
+            log_error(f"Error upserting config: {str(e)}")
+            raise
+
+    def delete_config(
+        self,
+        component_id: str,
+        version: int,
+    ) -> bool:
+        """Delete a specific config version.
+
+        Only draft configs can be deleted. Published configs are immutable.
+        Cannot delete the current version.
+
+        Args:
+            component_id: The component ID.
+            version: The version to delete.
+
+        Returns:
+            True if deleted, False if not found.
+
+        Raises:
+            ValueError: If attempting to delete a published or current config.
+        """
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            links_table = self._get_table(table_type="component_links")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                # Get config stage and check if it's current
+                config_row = sess.execute(
+                    select(configs_table.c.stage).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                ).scalar_one_or_none()
+
+                if config_row is None:
+                    return False
+
+                # Check if it's current version
+                current = sess.execute(
+                    select(components_table.c.current_version).where(components_table.c.component_id == component_id)
+                ).scalar_one_or_none()
+
+                if current == version:
+                    raise ValueError(f"Cannot delete current config {component_id} v{version}")
+
+                # Delete associated links
+                if links_table is not None:
+                    sess.execute(
+                        links_table.delete().where(
+                            links_table.c.parent_component_id == component_id,
+                            links_table.c.parent_version == version,
+                        )
+                    )
+
+                # Delete the config
+                sess.execute(
+                    configs_table.delete().where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                )
+
+            return True
+
+        except Exception as e:
+            log_error(f"Error deleting config: {str(e)}")
+            raise
+
+    def list_configs(
+        self,
+        component_id: str,
+        include_config: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """List all config versions for a component.
+
+        Args:
+            component_id: The component ID.
+            include_config: If True, include full config blob. Otherwise just metadata.
+
+        Returns:
+            List of config dictionaries, newest first.
+            Returns empty list if component not found or deleted.
+        """
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
+                return []
+
+            with self.Session() as sess:
+                # Verify component exists and is not deleted
+                exists = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+
+                if exists is None:
+                    return []
+
+                # Select columns based on include_config flag
+                if include_config:
+                    stmt = select(configs_table)
+                else:
+                    stmt = select(
+                        configs_table.c.component_id,
+                        configs_table.c.version,
+                        configs_table.c.label,
+                        configs_table.c.stage,
+                        configs_table.c.notes,
+                        configs_table.c.created_at,
+                        configs_table.c.updated_at,
+                    )
+
+                stmt = stmt.where(configs_table.c.component_id == component_id).order_by(configs_table.c.version.desc())
+
+                results = sess.execute(stmt).mappings().all()
+                return [dict(row) for row in results]
+
+        except Exception as e:
+            log_error(f"Error listing configs: {str(e)}")
+            raise
+
+    def set_current_version(
+        self,
+        component_id: str,
+        version: int,
+    ) -> bool:
+        """Set a specific published version as current.
+
+        Only published configs can be set as current. This is used for
+        rollback scenarios where you want to switch to a previous
+        published version.
+
+        Args:
+            component_id: The component ID.
+            version: The version to set as current (must be published).
+
+        Returns:
+            True if successful, False if component or version not found.
+
+        Raises:
+            ValueError: If attempting to set a draft config as current.
+        """
+        try:
+            configs_table = self._get_table(table_type="component_configs")
+            components_table = self._get_table(table_type="components")
+
+            if configs_table is None or components_table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                # Verify component exists and is not deleted
+                component_exists = sess.execute(
+                    select(components_table.c.component_id).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+
+                if component_exists is None:
+                    return False
+
+                # Verify version exists and get stage
+                stage = sess.execute(
+                    select(configs_table.c.stage).where(
+                        configs_table.c.component_id == component_id,
+                        configs_table.c.version == version,
+                    )
+                ).scalar_one_or_none()
+
+                if stage is None:
+                    return False
+
+                # Only published configs can be set as current
+                if stage != "published":
+                    raise ValueError(
+                        f"Cannot set draft config {component_id} v{version} as current. "
+                        "Only published configs can be current."
+                    )
+
+                # Update pointer
+                result = sess.execute(
+                    components_table.update()
+                    .where(components_table.c.component_id == component_id)
+                    .values(current_version=version, updated_at=int(time.time()))
+                )
+
+                if result.rowcount == 0:
+                    return False
+
+            log_debug(f"Set {component_id} current version to {version}")
+            return True
+
+        except Exception as e:
+            log_error(f"Error setting current version: {str(e)}")
+            raise
+
+    # --- Component Links ---
+    def get_links(
+        self,
+        component_id: str,
+        version: int,
+        link_kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get links for a config version.
+
+        Args:
+            component_id: The component ID.
+            version: The config version.
+            link_kind: Optional filter by link kind (member|step).
+
+        Returns:
+            List of link dictionaries, ordered by position.
+        """
+        try:
+            table = self._get_table(table_type="component_links")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = (
+                    select(table)
+                    .where(
+                        table.c.parent_component_id == component_id,
+                        table.c.parent_version == version,
+                    )
+                    .order_by(table.c.position)
+                )
+                if link_kind is not None:
+                    stmt = stmt.where(table.c.link_kind == link_kind)
+
+                rows = sess.execute(stmt).mappings().all()
+                return [dict(r) for r in rows]
+
+        except Exception as e:
+            log_error(f"Error getting links: {str(e)}")
+            raise
+
+    def get_dependents(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Find all components that reference this component.
+
+        Args:
+            component_id: The component ID to find dependents of.
+            version: Optional specific version. If None, finds links to any version.
+
+        Returns:
+            List of link dictionaries showing what depends on this component.
+        """
+        try:
+            table = self._get_table(table_type="component_links")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.child_component_id == component_id)
+                if version is not None:
+                    stmt = stmt.where(table.c.child_version == version)
+
+                rows = sess.execute(stmt).mappings().all()
+                return [dict(r) for r in rows]
+
+        except Exception as e:
+            log_error(f"Error getting dependents: {str(e)}")
+            raise
+
+    def _resolve_version(
+        self,
+        component_id: str,
+        version: Optional[int],
+    ) -> Optional[int]:
+        """Resolve a version number, handling None as 'current'.
+
+        Args:
+            component_id: The component ID.
+            version: Version number or None for current.
+
+        Returns:
+            Resolved version number, or None if component missing/deleted or no current.
+        """
+        if version is not None:
+            return version
+
+        try:
+            components_table = self._get_table(table_type="components")
+            if components_table is None:
+                return None
+
+            with self.Session() as sess:
+                return sess.execute(
+                    select(components_table.c.current_version).where(
+                        components_table.c.component_id == component_id,
+                        components_table.c.deleted_at.is_(None),
+                    )
+                ).scalar_one_or_none()
+
+        except Exception as e:
+            log_error(f"Error resolving version: {str(e)}")
+            raise
+
+    def load_component_graph(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        *,
+        _visited: Optional[Set[Tuple[str, int]]] = None,
+        _max_depth: int = 50,
+    ) -> Optional[Dict[str, Any]]:
+        """Load a component with its full resolved graph.
+
+        Handles cycles by returning a stub with cycle_detected=True.
+        Has a max depth guard to prevent stack overflow.
+
+        Args:
+            component_id: The component ID.
+            version: Specific version or None for current.
+            label: Optional label of the component.
+            _visited: Internal cycle tracking (do not pass).
+            _max_depth: Internal depth limit (do not pass).
+
+        Returns:
+            Dictionary with component, config, children, and resolved_versions.
+            Returns None if component not found or depth exceeded.
+        """
+        try:
+            if _max_depth <= 0:
+                return None
+
+            component = self.get_component(component_id)
+            if component is None:
+                return None
+
+            resolved_version = self._resolve_version(component_id, version)
+            if resolved_version is None:
+                return None
+
+            # Cycle detection
+            if _visited is None:
+                _visited = set()
+
+            node_key = (component_id, resolved_version)
+            if node_key in _visited:
+                return {
+                    "component": component,
+                    "config": self.get_config(component_id, version=resolved_version),
+                    "children": [],
+                    "resolved_versions": {component_id: resolved_version},
+                    "cycle_detected": True,
+                }
+            _visited.add(node_key)
+
+            config = self.get_config(component_id, version=resolved_version)
+            if config is None:
+                return None
+
+            links = self.get_links(component_id, resolved_version)
+
+            children: List[Dict[str, Any]] = []
+            resolved_versions: Dict[str, Optional[int]] = {component_id: resolved_version}
+
+            for link in links:
+                child_id = link["child_component_id"]
+                child_ver = link.get("child_version")
+
+                resolved_child_ver = self._resolve_version(child_id, child_ver)
+                resolved_versions[child_id] = resolved_child_ver
+
+                if resolved_child_ver is None:
+                    children.append(
+                        {
+                            "link": link,
+                            "graph": None,
+                            "error": "child_version_unresolvable",
+                        }
+                    )
+                    continue
+
+                child_graph = self.load_component_graph(
+                    child_id,
+                    version=resolved_child_ver,
+                    _visited=_visited,
+                    _max_depth=_max_depth - 1,
+                )
+
+                if child_graph:
+                    resolved_versions.update(child_graph.get("resolved_versions", {}))
+
+                children.append({"link": link, "graph": child_graph})
+
+            return {
+                "component": component,
+                "config": config,
+                "children": children,
+                "resolved_versions": resolved_versions,
+            }
+
+        except Exception as e:
+            log_error(f"Error loading component graph: {str(e)}")
+            raise
+
+    # -- Learning methods --
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve a learning record.
+
+        Args:
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+
+        Returns:
+            Dict with 'content' key containing the learning data, or None.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.learning_type == learning_type)
+
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                row = dict(result._mapping)
+                return {"content": row.get("content")}
+
+        except Exception as e:
+            log_debug(f"Error retrieving learning: {e}")
+            return None
+
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Insert or update a learning record.
+
+        Args:
+            id: Unique identifier for the learning.
+            learning_type: Type of learning ('user_profile', 'session_context', etc.)
+            content: The learning content as a dict.
+            user_id: Associated user ID.
+            agent_id: Associated agent ID.
+            team_id: Associated team ID.
+            workflow_id: Associated workflow ID.
+            session_id: Associated session ID.
+            namespace: Namespace for scoping ('user', 'global', or custom).
+            entity_id: Associated entity ID (for entity-specific learnings).
+            entity_type: Entity type ('person', 'company', etc.).
+            metadata: Optional metadata.
+        """
+        try:
+            table = self._get_table(table_type="learnings", create_table_if_not_found=True)
+            if table is None:
+                return
+
+            current_time = int(time.time())
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    learning_id=id,
+                    learning_type=learning_type,
+                    namespace=namespace,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    workflow_id=workflow_id,
+                    session_id=session_id,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    content=content,
+                    metadata=metadata,
+                    created_at=current_time,
+                    updated_at=current_time,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["learning_id"],
+                    set_=dict(
+                        content=content,
+                        metadata=metadata,
+                        updated_at=current_time,
+                    ),
+                )
+                sess.execute(stmt)
+
+            log_debug(f"Upserted learning: {id}")
+
+        except Exception as e:
+            log_debug(f"Error upserting learning: {e}")
+
+    def delete_learning(self, id: str) -> bool:
+        """Delete a learning record.
+
+        Args:
+            id: The learning ID to delete.
+
+        Returns:
+            True if deleted, False otherwise.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.learning_id == id)
+                result = sess.execute(stmt)
+                return result.rowcount > 0
+
+        except Exception as e:
+            log_debug(f"Error deleting learning: {e}")
+            return False
+
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get multiple learning records.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace ('user', 'global', or custom).
+            entity_id: Filter by entity ID (for entity-specific learnings).
+            entity_type: Filter by entity type ('person', 'company', etc.).
+            limit: Maximum number of records to return.
+
+        Returns:
+            List of learning records.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                stmt = stmt.order_by(table.c.updated_at.desc())
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in result]
+
+        except Exception as e:
+            log_debug(f"Error getting learnings: {e}")
+            return []
+
+    # -- Schedule methods --
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if enabled is not None:
+                    base_query = base_query.where(table.c.enabled == enabled)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedules table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**schedule_data))
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
+            return self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            runs_table = self._get_table(table_type="schedule_runs")
+            with self.Session() as sess, sess.begin():
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
+                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            with self.Session() as sess, sess.begin():
+                # Atomic UPDATE...RETURNING with subquery for TOCTOU safety
+                subq = (
+                    select(table.c.id)
+                    .where(
+                        table.c.enabled == True,  # noqa: E712
+                        table.c.next_run_at <= now,
+                        or_(
+                            table.c.locked_by.is_(None),
+                            table.c.locked_at <= stale_lock_threshold,
+                        ),
+                    )
+                    .order_by(table.c.next_run_at.asc())
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                    .scalar_subquery()
+                )
+                stmt = (
+                    update(table)
+                    .where(table.c.id == subq)
+                    .values(locked_by=worker_id, locked_at=now)
+                    .returning(*table.c)
+                )
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedule_runs table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**run_data))
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Get total count
+                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = (
+                    select(table)
+                    .where(table.c.schedule_id == schedule_id)
+                    .order_by(table.c.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
+
+    # -- Approval methods --
+
+    def create_approval(self, approval_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="approvals", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create approvals table")
+            data = {**approval_data}
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data.setdefault("updated_at", now)
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**data))
+            return data
+        except Exception as e:
+            log_error(f"Error creating approval: {str(e)}")
+            raise
+
+    def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == approval_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting approval: {e}")
+            return None
+
+    def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                stmt = select(table)
+                count_stmt = select(func.count()).select_from(table)
+                if status is not None:
+                    stmt = stmt.where(table.c.status == status)
+                    count_stmt = count_stmt.where(table.c.status == status)
+                if source_type is not None:
+                    stmt = stmt.where(table.c.source_type == source_type)
+                    count_stmt = count_stmt.where(table.c.source_type == source_type)
+                if approval_type is not None:
+                    stmt = stmt.where(table.c.approval_type == approval_type)
+                    count_stmt = count_stmt.where(table.c.approval_type == approval_type)
+                if pause_type is not None:
+                    stmt = stmt.where(table.c.pause_type == pause_type)
+                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                    count_stmt = count_stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                    count_stmt = count_stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                    count_stmt = count_stmt.where(table.c.workflow_id == workflow_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                    count_stmt = count_stmt.where(table.c.user_id == user_id)
+                if schedule_id is not None:
+                    stmt = stmt.where(table.c.schedule_id == schedule_id)
+                    count_stmt = count_stmt.where(table.c.schedule_id == schedule_id)
+                if run_id is not None:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                    count_stmt = count_stmt.where(table.c.run_id == run_id)
+                total = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total
+        except Exception as e:
+            log_debug(f"Error listing approvals: {e}")
+            return [], 0
+
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == approval_id)
+                if expected_status is not None:
+                    stmt = stmt.where(table.c.status == expected_status)
+                result = sess.execute(stmt.values(**kwargs))
+                if result.rowcount == 0:
+                    return None
+            return self.get_approval(approval_id)
+        except Exception as e:
+            log_debug(f"Error updating approval: {e}")
+            return None
+
+    def delete_approval(self, approval_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == approval_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting approval: {e}")
+            return False
+
+    def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                stmt = select(func.count()).select_from(table).where(table.c.status == "pending")
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                return sess.execute(stmt).scalar() or 0
+        except Exception as e:
+            log_debug(f"Error counting approvals: {e}")
+            return 0
+
+    def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == run_id)
+                    .values(run_status=run_status.value, updated_at=int(time.time()))
+                )
+                result = sess.execute(stmt)
+                return result.rowcount
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
+            return 0

@@ -1,6 +1,6 @@
 import base64
 import json
-import os
+from os import getenv
 from typing import Any, Dict, Optional, Union
 
 import requests
@@ -21,9 +21,9 @@ class BitbucketTools(Toolkit):
         api_version: str = "2.0",
         **kwargs,
     ):
-        self.username = username or os.getenv("BITBUCKET_USERNAME")
-        self.password = password or os.getenv("BITBUCKET_PASSWORD")
-        self.token = token or os.getenv("BITBUCKET_TOKEN")
+        self.username = username or getenv("BITBUCKET_USERNAME")
+        self.password = password or getenv("BITBUCKET_PASSWORD")
+        self.token = token or getenv("BITBUCKET_TOKEN")
         self.auth_password = self.token or self.password
         self.server_url = server_url or "api.bitbucket.org"
         self.api_version = api_version or "2.0"
@@ -106,7 +106,7 @@ class BitbucketTools(Toolkit):
 
             return json.dumps(repo, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving repository list for workspace {self.workspace}: {str(e)}")
+            logger.exception(f"Error retrieving repository list for workspace {self.workspace}")
             return json.dumps({"error": str(e)})
 
     def get_repository_details(self) -> str:
@@ -121,7 +121,7 @@ class BitbucketTools(Toolkit):
             repo = self._make_request("GET", f"/repositories/{self.workspace}/{self.repo_slug}")
             return json.dumps(repo, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving repository information for {self.repo_slug}: {str(e)}")
+            logger.exception(f"Error retrieving repository information for {self.repo_slug}")
             return json.dumps({"error": str(e)})
 
     def create_repository(
@@ -164,7 +164,7 @@ class BitbucketTools(Toolkit):
             repo = self._make_request("POST", f"/repositories/{self.workspace}/{self.repo_slug}", data=payload)
             return json.dumps(repo, indent=2)
         except Exception as e:
-            logger.error(f"Error creating repository {self.repo_slug} for {self.workspace}: {str(e)}")
+            logger.exception(f"Error creating repository {self.repo_slug} for {self.workspace}")
             return json.dumps({"error": str(e)})
 
     def list_repository_commits(self, count: int = 10) -> str:
@@ -202,7 +202,7 @@ class BitbucketTools(Toolkit):
 
             return json.dumps(commits, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving commits for {self.repo_slug}: {str(e)}")
+            logger.exception(f"Error retrieving commits for {self.repo_slug}")
             return json.dumps({"error": str(e)})
 
     def list_all_pull_requests(self, state: str = "OPEN") -> str:
@@ -228,7 +228,7 @@ class BitbucketTools(Toolkit):
 
             return json.dumps(pull_requests, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving pull requests for {self.repo_slug}: {str(e)}")
+            logger.exception(f"Error retrieving pull requests for {self.repo_slug}")
             return json.dumps({"error": str(e)})
 
     def get_pull_request_details(self, pull_request_id: int) -> str:
@@ -246,7 +246,7 @@ class BitbucketTools(Toolkit):
             )
             return json.dumps(pull_request, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving pull requests for {self.repo_slug}: {str(e)}")
+            logger.exception(f"Error retrieving pull requests for {self.repo_slug}")
             return json.dumps({"error": str(e)})
 
     def get_pull_request_changes(self, pull_request_id: int) -> str:
@@ -267,7 +267,7 @@ class BitbucketTools(Toolkit):
                 return json.dumps(diff, indent=2)
             return diff
         except Exception as e:
-            logger.error(f"Error retrieving changes for pull request {pull_request_id} in {self.repo_slug}: {str(e)}")
+            logger.exception(f"Error retrieving changes for pull request {pull_request_id} in {self.repo_slug}")
             return json.dumps({"error": str(e)})
 
     def list_issues(self, count: int = 10) -> str:
@@ -288,5 +288,5 @@ class BitbucketTools(Toolkit):
 
             return json.dumps(issues, indent=2)
         except Exception as e:
-            logger.error(f"Error retrieving issues for {self.repo_slug}: {str(e)}")
+            logger.exception(f"Error retrieving issues for {self.repo_slug}")
             return json.dumps({"error": str(e)})

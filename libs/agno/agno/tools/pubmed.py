@@ -14,6 +14,8 @@ class PubmedTools(Toolkit):
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
         results_expanded: bool = False,
+        enable_search_pubmed: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.max_results: Optional[int] = max_results
@@ -21,7 +23,8 @@ class PubmedTools(Toolkit):
         self.results_expanded: bool = results_expanded
 
         tools: List[Any] = []
-        tools.append(self.search_pubmed)
+        if enable_search_pubmed or all:
+            tools.append(self.search_pubmed)
 
         super().__init__(name="pubmed", tools=tools, **kwargs)
 

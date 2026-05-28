@@ -9,10 +9,11 @@ try:
 except ImportError:
     raise ImportError("The `pymilvus` package is not installed. Please install it via `pip install pymilvus`.")
 
-from agno.document import Document
-from agno.embedder import Embedder
-from agno.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.filters import FilterExpr
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
+from agno.knowledge.reranker.base import Reranker
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -28,6 +29,9 @@ class Milvus(VectorDb):
     def __init__(
         self,
         collection: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        id: Optional[str] = None,
         embedder: Optional[Embedder] = None,
         distance: Distance = Distance.cosine,
         uri: str = "http://localhost:19530",
@@ -42,6 +46,8 @@ class Milvus(VectorDb):
 
         Args:
             collection (str): Name of the Milvus collection.
+            name (Optional[str]): Name of the vector database.
+            description (Optional[str]): Description of the vector database.
             embedder (Embedder): Embedder to use for embedding documents.
             distance (Distance): Distance metric to use for vector similarity.
             uri (Optional[str]): URI of the Milvus server.
@@ -63,13 +69,27 @@ class Milvus(VectorDb):
             reranker (Optional[Reranker]): Reranker to use for hybrid search results
             **kwargs: Additional keyword arguments to pass to the MilvusClient.
         """
+        # Validate required parameters
+        if not collection:
+            raise ValueError("Collection name must be provided.")
+
+        # Dynamic ID generation based on unique identifiers
+        if id is None:
+            from agno.utils.string import generate_id
+
+            seed = f"{uri or 'milvus'}#{collection}"
+            id = generate_id(seed)
+
+        # Initialize base class with name, description, and generated ID
+        super().__init__(id=id, name=name, description=description)
+
         self.collection: str = collection
 
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -153,7 +173,9 @@ class Milvus(VectorDb):
             ("id", DataType.VARCHAR, 128, True),  # (name, type, max_length, is_primary)
             ("name", DataType.VARCHAR, 1000, False),
             ("content", DataType.VARCHAR, 65535, False),
-            ("text", DataType.VARCHAR, 1000, False),
+            ("content_id", DataType.VARCHAR, 1000, False),
+            ("content_hash", DataType.VARCHAR, 1000, False),
+            ("text", DataType.VARCHAR, 65535, False),
             ("meta_data", DataType.VARCHAR, 65535, False),
             ("usage", DataType.VARCHAR, 65535, False),
         ]
@@ -192,7 +214,7 @@ class Milvus(VectorDb):
         return index_params
 
     def _prepare_document_data(
-        self, document: Document, include_vectors: bool = True
+        self, content_hash: str, document: Document, include_vectors: bool = True
     ) -> Dict[str, Union[str, List[float], Dict[int, float], None]]:
         """
         Prepare document data for insertion.
@@ -205,14 +227,11 @@ class Milvus(VectorDb):
             Dictionary with document data where values can be strings, vectors (List[float]),
             sparse vectors (Dict[int, float]), or None
         """
-        # Ensure document is embedded if vectors are needed
-        if include_vectors and document.embedding is None:
-            document.embed(embedder=self.embedder)
-            if document.embedding is None:
-                raise ValueError(f"Failed to embed document: {document.name}")
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode()).hexdigest()
+        # Include content_hash in ID to ensure uniqueness across different content hashes
+        base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
         # Convert dictionary fields to JSON strings
         meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
@@ -222,9 +241,11 @@ class Milvus(VectorDb):
             "id": doc_id,
             "text": cleaned_content,
             "name": document.name,
+            "content_id": document.content_id or "",
             "meta_data": meta_data_str,
             "content": cleaned_content,
             "usage": usage_str,
+            "content_hash": content_hash,
         }
 
         if include_vectors:
@@ -298,36 +319,6 @@ class Milvus(VectorDb):
                     max_length=65_535,
                 )
 
-    def doc_exists(self, document: Document) -> bool:
-        """
-        Validating if the document exists or not
-
-        Args:
-            document (Document): Document to validate
-        """
-        if self.client:
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
-            collection_points = self.client.get(
-                collection_name=self.collection,
-                ids=[doc_id],
-            )
-            return len(collection_points) > 0
-        return False
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """
-        Check if document exists asynchronously.
-        AsyncMilvusClient supports get().
-        """
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode()).hexdigest()
-        collection_points = await self.async_client.get(
-            collection_name=self.collection,
-            ids=[doc_id],
-        )
-        return len(collection_points) > 0
-
     def name_exists(self, name: str) -> bool:
         """
         Validates if a document with the given name exists in the collection.
@@ -343,9 +334,10 @@ class Milvus(VectorDb):
             scroll_result = self.client.query(
                 collection_name=self.collection,
                 filter=expr,
+                output_fields=["id"],
                 limit=1,
             )
-            return len(scroll_result[0]) > 0
+            return len(scroll_result) > 0 and len(scroll_result[0]) > 0
         return False
 
     def id_exists(self, id: str) -> bool:
@@ -357,19 +349,57 @@ class Milvus(VectorDb):
             return len(collection_points) > 0
         return False
 
-    def _insert_hybrid_document(self, document: Document) -> None:
-        """Insert a document with both dense and sparse vectors."""
-        data = self._prepare_document_data(document, include_vectors=True)
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """
+        Check if a document with the given content hash exists.
 
+        Args:
+            content_hash (str): The content hash to check.
+
+        Returns:
+            bool: True if a document with the given content hash exists, False otherwise.
+        """
+        if self.client:
+            expr = f'content_hash == "{content_hash}"'
+            scroll_result = self.client.query(
+                collection_name=self.collection,
+                filter=expr,
+                output_fields=["id"],
+                limit=1,
+            )
+            return len(scroll_result) > 0 and len(scroll_result[0]) > 0
+        return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """
+        Delete documents by content hash.
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if documents were deleted, False otherwise.
+        """
+        if self.client:
+            expr = f'content_hash == "{content_hash}"'
+            self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
+            return True
+        return False
+
+    def _insert_hybrid_document(self, content_hash: str, document: Document) -> None:
+        """Insert a document with both dense and sparse vectors."""
+        data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+        document.embed(embedder=self.embedder)
         self.client.insert(
             collection_name=self.collection,
             data=data,
         )
         log_debug(f"Inserted hybrid document: {document.name} ({document.meta_data})")
 
-    async def _async_insert_hybrid_document(self, document: Document) -> None:
+    async def _async_insert_hybrid_document(self, content_hash: str, document: Document) -> None:
         """Insert a document with both dense and sparse vectors asynchronously."""
-        data = self._prepare_document_data(document, include_vectors=True)
+        data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
 
         await self.async_client.insert(
             collection_name=self.collection,
@@ -377,16 +407,19 @@ class Milvus(VectorDb):
         )
         log_debug(f"Inserted hybrid document asynchronously: {document.name} ({document.meta_data})")
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents based on search type."""
         log_debug(f"Inserting {len(documents)} documents")
 
         if self.search_type == SearchType.hybrid:
             for document in documents:
-                self._insert_hybrid_document(document)
+                self._insert_hybrid_document(content_hash=content_hash, document=document)
         else:
             for document in documents:
                 document.embed(embedder=self.embedder)
+                if not document.embedding:
+                    log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
+                    continue
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 doc_id = md5(cleaned_content.encode()).hexdigest()
 
@@ -398,9 +431,11 @@ class Milvus(VectorDb):
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
-                    "meta_data": meta_data,
+                    "content_id": document.content_id or "",
+                    "meta_data": json.dumps(meta_data),
                     "content": cleaned_content,
-                    "usage": document.usage,
+                    "usage": json.dumps(document.usage) if document.usage else "{}",
+                    "content_hash": content_hash,
                 }
                 self.client.insert(
                     collection_name=self.collection,
@@ -410,18 +445,66 @@ class Milvus(VectorDb):
 
         log_info(f"Inserted {len(documents)} documents")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously based on search type."""
-        log_debug(f"Inserting {len(documents)} documents asynchronously")
+        log_info(f"Inserting {len(documents)} documents asynchronously")
+
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
+
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
+                    raise e
+                else:
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         if self.search_type == SearchType.hybrid:
-            await asyncio.gather(*[self._async_insert_hybrid_document(doc) for doc in documents])
+            await asyncio.gather(
+                *[self._async_insert_hybrid_document(content_hash=content_hash, document=doc) for doc in documents]
+            )
         else:
 
             async def process_document(document):
                 document.embed(embedder=self.embedder)
+                if not document.embedding:
+                    log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
+                    return None
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
 
                 meta_data = document.meta_data or {}
                 if filters:
@@ -431,9 +514,11 @@ class Milvus(VectorDb):
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
-                    "meta_data": meta_data,
+                    "content_id": document.content_id or "",
+                    "meta_data": json.dumps(meta_data),
                     "content": cleaned_content,
-                    "usage": document.usage,
+                    "usage": json.dumps(document.usage) if document.usage else "{}",
+                    "content_hash": content_hash,
                 }
                 await self.async_client.insert(
                     collection_name=self.collection,
@@ -455,7 +540,7 @@ class Milvus(VectorDb):
         """
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into the database.
 
@@ -464,48 +549,126 @@ class Milvus(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents")
-        for document in documents:
-            document.embed(embedder=self.embedder)
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
-            data = {
-                "id": doc_id,
-                "vector": document.embedding,
-                "name": document.name,
-                "meta_data": document.meta_data,
-                "content": cleaned_content,
-                "usage": document.usage,
-            }
-            self.client.upsert(
-                collection_name=self.collection,
-                data=data,
-            )
-            log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        if self.search_type == SearchType.hybrid:
+            for document in documents:
+                document.embed(embedder=self.embedder)
+                data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+                self.client.upsert(
+                    collection_name=self.collection,
+                    data=data,
+                )
+                log_debug(f"Upserted hybrid document: {document.name} ({document.meta_data})")
+        else:
+            for document in documents:
+                document.embed(embedder=self.embedder)
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                doc_id = md5(cleaned_content.encode()).hexdigest()
+
+                meta_data = document.meta_data or {}
+                if filters:
+                    meta_data.update(filters)
+
+                data = {
+                    "id": doc_id,
+                    "vector": document.embedding,
+                    "name": document.name,
+                    "content_id": document.content_id or "",
+                    "meta_data": json.dumps(meta_data),
+                    "content": cleaned_content,
+                    "usage": json.dumps(document.usage) if document.usage else "{}",
+                    "content_hash": content_hash,
+                }
+                self.client.upsert(
+                    collection_name=self.collection,
+                    data=data,
+                )
+                log_debug(f"Upserted document: {document.name} ({document.meta_data})")
+
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
-        async def process_document(document):
-            document.embed(embedder=self.embedder)
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            doc_id = md5(cleaned_content.encode()).hexdigest()
-            data = {
-                "id": doc_id,
-                "vector": document.embedding,
-                "name": document.name,
-                "meta_data": document.meta_data,
-                "content": cleaned_content,
-                "usage": document.usage,
-            }
-            await self.async_client.upsert(
-                collection_name=self.collection,
-                data=data,
-            )
-            log_debug(f"Upserted document asynchronously: {document.name} ({document.meta_data})")
-            return data
+        if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
+            # Use batch embedding when enabled and supported
+            try:
+                # Extract content from all documents
+                doc_contents = [doc.content for doc in documents]
 
-        # Process all documents in parallel
-        await asyncio.gather(*[process_document(doc) for doc in documents])
+                # Get batch embeddings and usage
+                embeddings, usages = await self.embedder.async_get_embeddings_batch_and_usage(doc_contents)
+
+                # Process documents with pre-computed embeddings
+                for j, doc in enumerate(documents):
+                    try:
+                        if j < len(embeddings):
+                            doc.embedding = embeddings[j]
+                            doc.usage = usages[j] if j < len(usages) else None
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
+
+            except Exception as e:
+                # Check if this is a rate limit error - don't fall back as it would make things worse
+                error_str = str(e).lower()
+                is_rate_limit = any(
+                    phrase in error_str
+                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                )
+
+                if is_rate_limit:
+                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
+                    raise e
+                else:
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
+                    # Fall back to individual embedding
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+        else:
+            # Use individual embedding
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+        if self.search_type == SearchType.hybrid:
+
+            async def process_hybrid_document(document):
+                data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+                await self.async_client.upsert(
+                    collection_name=self.collection,
+                    data=data,
+                )
+                log_debug(f"Upserted hybrid document asynchronously: {document.name} ({document.meta_data})")
+                return data
+
+            await asyncio.gather(*[process_hybrid_document(doc) for doc in documents])
+        else:
+
+            async def process_document(document):
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                doc_id = md5(cleaned_content.encode()).hexdigest()
+
+                meta_data = document.meta_data or {}
+                if filters:
+                    meta_data.update(filters)
+
+                data = {
+                    "id": doc_id,
+                    "vector": document.embedding,
+                    "name": document.name,
+                    "content_id": document.content_id or "",
+                    "meta_data": json.dumps(meta_data),
+                    "content": cleaned_content,
+                    "usage": json.dumps(document.usage) if document.usage else "{}",
+                    "content_hash": content_hash,
+                }
+                await self.async_client.upsert(
+                    collection_name=self.collection,
+                    data=data,
+                )
+                log_debug(f"Upserted document asynchronously: {document.name} ({document.meta_data})")
+                return data
+
+            await asyncio.gather(*[process_document(doc) for doc in documents])
 
         log_debug(f"Upserted {len(documents)} documents asynchronously in parallel")
 
@@ -518,7 +681,13 @@ class Milvus(VectorDb):
         """
         return MILVUS_DISTANCE_MAP.get(self.distance, "COSINE")
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
         """
         Search for documents matching the query.
 
@@ -526,16 +695,23 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Milvus search parameters including:
+                - radius (float): Minimum similarity threshold for range search
+                - range_filter (float): Maximum similarity threshold for range search
+                - params (dict): Index-specific search params (e.g., nprobe, ef)
 
         Returns:
             List[Document]: List of matching documents
         """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         results = self.client.search(
@@ -544,35 +720,67 @@ class Milvus(VectorDb):
             filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
+            search_params=search_params,
         )
 
         # Build search results
         search_results: List[Document] = []
         for result in results[0]:
+            entity = result["entity"]
+            meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+            usage = self._decode_json_field(entity.get("usage"), default=None)
             search_results.append(
                 Document(
                     id=result["id"],
-                    name=result["entity"].get("name", None),
-                    meta_data=result["entity"].get("meta_data", {}),
-                    content=result["entity"].get("content", ""),
+                    name=entity.get("name", None),
+                    meta_data=meta_data,
+                    content=entity.get("content", ""),
+                    content_id=entity.get("content_id", None),
                     embedder=self.embedder,
-                    embedding=result["entity"].get("vector", None),
-                    usage=result["entity"].get("usage", None),
+                    embedding=entity.get("vector", None),
+                    usage=usage,
                 )
             )
+
+        # Apply reranker if available
+        if self.reranker and search_results:
+            search_results = self.reranker.rerank(query=query, documents=search_results)
+            search_results = search_results[:limit]
 
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
+        """
+        Asynchronously search for documents matching the query.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            search_params (Optional[Dict[str, Any]]): Milvus search parameters including:
+                - radius (float): Minimum similarity threshold for range search
+                - range_filter (float): Maximum similarity threshold for range search
+                - params (dict): Index-specific search params (e.g., nprobe, ef)
+
+        Returns:
+            List[Document]: List of matching documents
+        """
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
+            filters = None
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit, filters)
+            return await self.async_hybrid_search(query, limit, filters)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         results = await self.async_client.search(
@@ -581,27 +789,34 @@ class Milvus(VectorDb):
             filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
+            search_params=search_params,
         )
 
         # Build search results
         search_results: List[Document] = []
         for result in results[0]:
+            entity = result["entity"]
+            meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+            usage = self._decode_json_field(entity.get("usage"), default=None)
             search_results.append(
                 Document(
                     id=result["id"],
-                    name=result["entity"].get("name", None),
-                    meta_data=result["entity"].get("meta_data", {}),
-                    content=result["entity"].get("content", ""),
+                    name=entity.get("name", None),
+                    meta_data=meta_data,
+                    content=entity.get("content", ""),
+                    content_id=entity.get("content_id", None),
                     embedder=self.embedder,
-                    embedding=result["entity"].get("vector", None),
-                    usage=result["entity"].get("usage", None),
+                    embedding=entity.get("vector", None),
+                    usage=usage,
                 )
             )
 
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
-    def hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
         """
         Perform a hybrid search combining dense and sparse vector similarity.
 
@@ -620,11 +835,11 @@ class Milvus(VectorDb):
         sparse_vector = self._get_sparse_vector(query)
 
         if dense_vector is None:
-            logger.error(f"Error getting dense embedding for Query: {query}")
+            log_error(f"Error getting dense embedding for Query: {query}")
             return []
 
         if self._client is None:
-            logger.error("Milvus client not initialized")
+            log_error("Milvus client not initialized")
             return []
 
         try:
@@ -665,8 +880,8 @@ class Milvus(VectorDb):
             for hits in results:
                 for hit in hits:
                     entity = hit.get("entity", {})
-                    meta_data = json.loads(entity.get("meta_data", "{}")) if entity.get("meta_data") else {}
-                    usage = json.loads(entity.get("usage", "{}")) if entity.get("usage") else None
+                    meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+                    usage = self._decode_json_field(entity.get("usage"), default=None)
 
                     search_results.append(
                         Document(
@@ -674,6 +889,7 @@ class Milvus(VectorDb):
                             name=entity.get("name", None),
                             meta_data=meta_data,  # Now a dictionary
                             content=entity.get("content", ""),
+                            content_id=entity.get("content_id", None),
                             embedder=self.embedder,
                             embedding=entity.get("dense_vector", None),
                             usage=usage,  # Now a dictionary or None
@@ -688,7 +904,96 @@ class Milvus(VectorDb):
             return search_results
 
         except Exception as e:
-            logger.error(f"Error during hybrid search: {e}")
+            log_error(f"Error during hybrid search: {str(e)}")
+            return []
+
+    async def async_hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+    ) -> List[Document]:
+        """
+        Perform an asynchronous hybrid search combining dense and sparse vector similarity.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+
+        Returns:
+            List[Document]: List of matching documents
+        """
+        from pymilvus import AnnSearchRequest, RRFRanker
+
+        # Get query embeddings
+        dense_vector = self.embedder.get_embedding(query)
+        sparse_vector = self._get_sparse_vector(query)
+
+        if dense_vector is None:
+            log_error(f"Error getting dense embedding for Query: {query}")
+            return []
+
+        try:
+            # Refer to docs for details- https://milvus.io/docs/multi-vector-search.md
+
+            # Create search request for dense vectors
+            dense_search_param = {
+                "data": [dense_vector],
+                "anns_field": "dense_vector",
+                "param": {"metric_type": self._get_metric_type(), "params": {"nprobe": 10}},
+                "limit": limit
+                * 2,  # Fetch more candidates for better reranking quality - each vector search returns 2x results which are then merged and reranked
+            }
+
+            # Create search request for sparse vectors
+            sparse_search_param = {
+                "data": [sparse_vector],
+                "anns_field": "sparse_vector",
+                "param": {"metric_type": "IP", "params": {"drop_ratio_build": 0.2}},
+                "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
+            }
+
+            # Create search requests
+            dense_request = AnnSearchRequest(**dense_search_param)
+            sparse_request = AnnSearchRequest(**sparse_search_param)
+            reqs = [dense_request, sparse_request]
+
+            # Use RRFRanker for balanced importance between vectors
+            ranker = RRFRanker(60)  # Default k=60
+
+            log_info("Performing async hybrid search")
+            results = await self.async_client.hybrid_search(
+                collection_name=self.collection, reqs=reqs, ranker=ranker, limit=limit, output_fields=["*"]
+            )
+
+            # Build search results
+            search_results: List[Document] = []
+            for hits in results:
+                for hit in hits:
+                    entity = hit.get("entity", {})
+                    meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+                    usage = self._decode_json_field(entity.get("usage"), default=None)
+
+                    search_results.append(
+                        Document(
+                            id=hit.get("id"),
+                            name=entity.get("name", None),
+                            meta_data=meta_data,  # Now a dictionary
+                            content=entity.get("content", ""),
+                            content_id=entity.get("content_id", None),
+                            embedder=self.embedder,
+                            embedding=entity.get("dense_vector", None),
+                            usage=usage,  # Now a dictionary or None
+                        )
+                    )
+
+            # Apply additional reranking if custom reranker is provided
+            if self.reranker and search_results:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+            return search_results
+
+        except Exception as e:
+            log_error(f"Error during async hybrid search: {str(e)}")
             return []
 
     def drop(self) -> None:
@@ -730,6 +1035,114 @@ class Milvus(VectorDb):
             return True
         return False
 
+    def delete_by_id(self, id: str) -> bool:
+        """
+        Delete a document by its ID.
+
+        Args:
+            id (str): The document ID to delete
+
+        Returns:
+            bool: True if document was deleted, False otherwise
+        """
+        try:
+            log_debug(f"Milvus VectorDB : Deleting document with ID {id}")
+            if not self.id_exists(id):
+                return False
+
+            # Delete by ID using Milvus delete operation
+            self.client.delete(collection_name=self.collection, ids=[id])
+            log_info(f"Deleted document with ID '{id}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting document with ID {id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """
+        Delete documents by name.
+
+        Args:
+            name (str): The document name to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Milvus VectorDB : Deleting documents with name {name}")
+            if not self.name_exists(name):
+                return False
+
+            # Delete by name using Milvus delete operation with filter
+            expr = f'name == "{name}"'
+            self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """
+        Delete documents by metadata.
+
+        Args:
+            metadata (Dict[str, Any]): The metadata to match for deletion
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Milvus VectorDB : Deleting documents with metadata {metadata}")
+
+            # Build filter expression for metadata matching
+            expr = self._build_expr(metadata)
+            if not expr:
+                return False
+
+            # Delete by metadata using Milvus delete operation with filter
+            self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """
+        Delete documents by content ID.
+
+        Args:
+            content_id (str): The content ID to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Milvus VectorDB : Deleting documents with content_id {content_id}")
+
+            # Delete by content_id using Milvus delete operation with filter
+            expr = f'content_id == "{content_id}"'
+            self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
+            return True
+        except Exception as e:
+            log_info(f"Error deleting documents with content_id {content_id}: {e}")
+            return False
+
+    @staticmethod
+    def _decode_json_field(value: Any, default: Any) -> Any:
+        """Decode a Milvus VARCHAR field that stores JSON."""
+        if value is None or value == "":
+            return default
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (ValueError, TypeError) as e:
+                log_debug(f"Failed to decode JSON field, returning default: {e}")
+                return default
+        return value
+
     def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
         """Build Milvus expression from filters."""
         if not filters:
@@ -740,7 +1153,7 @@ class Milvus(VectorDb):
             if isinstance(v, (list, tuple)):
                 # For array values, use json_contains_any
                 values_str = json.dumps(v)
-                expr = f'json_contains_any(meta_data, {values_str}, "{k}")'
+                expr = f'json_contains_any(meta_data["{k}"], {values_str})'
             elif isinstance(v, str):
                 # For string values
                 expr = f'meta_data["{k}"] == "{v}"'
@@ -765,3 +1178,67 @@ class Milvus(VectorDb):
 
     def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Fetch the full row so we can do a complete upsert. Milvus only supports
+            # partial-field upsert from 2.6.2+, so we read every field and rewrite it.
+            # Vector fields are listed explicitly because some Milvus versions exclude
+            # them from output_fields=["*"].
+            search_expr = f'content_id == "{content_id}"'
+            output_fields = ["*", "dense_vector", "sparse_vector"] if self.search_type == SearchType.hybrid else ["*", "vector"]
+            results = self.client.query(
+                collection_name=self.collection,
+                filter=search_expr,
+                output_fields=output_fields,
+            )
+
+            if not results:
+                log_debug(f"No documents found with content_id: {content_id}")
+                return
+
+            updated_count = 0
+            for row in results:
+                current_metadata = self._decode_json_field(row.get("meta_data"), default={})
+                if not isinstance(current_metadata, dict):
+                    current_metadata = {}
+
+                updated_metadata = {**current_metadata, **metadata}
+
+                # Rebuild the full row
+                new_row: Dict[str, Any] = dict(row)
+                new_row["meta_data"] = json.dumps(updated_metadata)
+                if "filters" in row:
+                    current_filters = self._decode_json_field(row.get("filters"), default={})
+                    if not isinstance(current_filters, dict):
+                        current_filters = {}
+                    new_row["filters"] = json.dumps({**current_filters, **metadata})
+
+                usage_value = row.get("usage")
+                if isinstance(usage_value, (dict, list)):
+                    new_row["usage"] = json.dumps(usage_value)
+                elif usage_value is None:
+                    new_row["usage"] = "{}"
+
+                self.client.upsert(
+                    collection_name=self.collection,
+                    data=[new_row],
+                )
+                updated_count += 1
+
+            log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
+            raise
+
+    def get_supported_search_types(self) -> List[str]:
+        """Get the supported search types for this vector database."""
+        return [SearchType.vector, SearchType.hybrid]

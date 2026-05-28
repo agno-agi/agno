@@ -1,7 +1,7 @@
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 
 class EmailTools(Toolkit):
@@ -11,6 +11,8 @@ class EmailTools(Toolkit):
         sender_name: Optional[str] = None,
         sender_email: Optional[str] = None,
         sender_passkey: Optional[str] = None,
+        enable_email_user: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.receiver_email: Optional[str] = receiver_email
@@ -19,7 +21,8 @@ class EmailTools(Toolkit):
         self.sender_passkey: Optional[str] = sender_passkey
 
         tools = []
-        tools.append(self.email_user)
+        if all or enable_email_user:
+            tools.append(self.email_user)
 
         # Call superclass with tools list
         super().__init__(name="email_tools", tools=tools, **kwargs)
@@ -34,8 +37,8 @@ class EmailTools(Toolkit):
         try:
             import smtplib
             from email.message import EmailMessage
-        except ImportError:
-            logger.error("`smtplib` not installed")
+        except ImportError as e:
+            log_error(f"`smtplib` not installed: {str(e)}")
             raise
 
         if not self.receiver_email:
@@ -59,6 +62,6 @@ class EmailTools(Toolkit):
                 smtp.login(self.sender_email, self.sender_passkey)
                 smtp.send_message(msg)
         except Exception as e:
-            logger.error(f"Error sending email: {e}")
+            logger.exception("Error sending email")
             return f"error: {e}"
         return "email sent successfully"

@@ -1,59 +1,1019 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from time import time
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from agno.utils.log import log_error
+from agno.media import Audio, File, Image, Video
+from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
+from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
+from agno.utils.log import log_warning
+from agno.utils.media import (
+    reconstruct_audio_list,
+    reconstruct_files,
+    reconstruct_images,
+    reconstruct_response_audio,
+    reconstruct_videos,
+)
+
+if TYPE_CHECKING:
+    from agno.workflow.types import (
+        ErrorRequirement,
+        ExecutorType,
+        PauseKind,
+        StepOutput,
+        StepRequirement,
+        WorkflowMetrics,
+    )
+else:
+    StepOutput = Any
+    StepRequirement = Any
+    ErrorRequirement = Any
+    WorkflowMetrics = Any
+    ExecutorType = Any
+    PauseKind = Any
 
 
-class RunEvent(str, Enum):
-    """Events that can be sent by the run() functions"""
+class WorkflowRunEvent(str, Enum):
+    """Events that can be sent by workflow execution"""
 
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
+    workflow_cancelled = "WorkflowCancelled"
+    workflow_error = "WorkflowError"
+
+    workflow_agent_started = "WorkflowAgentStarted"
+    workflow_agent_completed = "WorkflowAgentCompleted"
+
+    step_started = "StepStarted"
+    step_completed = "StepCompleted"
+    step_paused = "StepPaused"
+    step_continued = "StepContinued"
+    step_executor_paused = "StepExecutorPaused"
+    step_executor_continued = "StepExecutorContinued"
+    step_output_review = "StepOutputReview"
+    step_error = "StepError"
+
+    loop_execution_started = "LoopExecutionStarted"
+    loop_iteration_started = "LoopIterationStarted"
+    loop_iteration_completed = "LoopIterationCompleted"
+    loop_execution_completed = "LoopExecutionCompleted"
+
+    parallel_execution_started = "ParallelExecutionStarted"
+    parallel_execution_completed = "ParallelExecutionCompleted"
+
+    condition_execution_started = "ConditionExecutionStarted"
+    condition_execution_completed = "ConditionExecutionCompleted"
+    condition_paused = "ConditionPaused"
+
+    router_execution_started = "RouterExecutionStarted"
+    router_execution_completed = "RouterExecutionCompleted"
+    router_paused = "RouterPaused"
+
+    steps_execution_started = "StepsExecutionStarted"
+    steps_execution_completed = "StepsExecutionCompleted"
+
+    step_output = "StepOutput"
+
+    custom_event = "CustomEvent"
 
 
 @dataclass
-class BaseWorkflowRunResponseEvent:
-    run_id: str
+class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
+    """Base class for all workflow run response events"""
+
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
 
-    # For backwards compatibility
-    content: Optional[Any] = None
+    # Workflow-specific fields
+    workflow_id: Optional[str] = None
+    workflow_name: Optional[str] = None
+    session_id: Optional[str] = None
+    run_id: Optional[str] = None
+    step_id: Optional[str] = None
+    parent_step_id: Optional[str] = None
+
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {k: v for k, v in asdict(self).items() if v is not None}
+        # Temporarily clear run_output before asdict() to avoid infinite recursion:
+        # WorkflowCompletedEvent.run_output -> WorkflowRunOutput.events -> WorkflowCompletedEvent.run_output -> ...
+        # asdict() recursively traverses all fields before we can filter, so we must clear it first.
+        saved_run_output = getattr(self, "run_output", None)
+        if saved_run_output is not None:
+            object.__setattr__(self, "run_output", None)
+        try:
+            _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "run_output"}
+        finally:
+            if saved_run_output is not None:
+                object.__setattr__(self, "run_output", saved_run_output)
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
+        # Handle StepOutput fields that contain Message objects
+        if hasattr(self, "step_results") and self.step_results is not None:
+            _dict["step_results"] = [step.to_dict() if hasattr(step, "to_dict") else step for step in self.step_results]
+
+        if hasattr(self, "step_response") and self.step_response is not None:
+            _dict["step_response"] = (
+                self.step_response.to_dict() if hasattr(self.step_response, "to_dict") else self.step_response
+            )
+
+        if hasattr(self, "iteration_results") and self.iteration_results is not None:
+            _dict["iteration_results"] = [
+                step.to_dict() if hasattr(step, "to_dict") else step for step in self.iteration_results
+            ]
+
+        if hasattr(self, "all_results") and self.all_results is not None:
+            _dict["all_results"] = [
+                [step.to_dict() if hasattr(step, "to_dict") else step for step in iteration]
+                for iteration in self.all_results
+            ]
+
         return _dict
 
-    def to_json(self) -> str:
-        import json
+    @property
+    def is_cancelled(self):
+        return False
 
-        try:
-            _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
-            raise
+    @property
+    def is_error(self):
+        return False
 
-        return json.dumps(_dict, indent=2)
+    @property
+    def status(self):
+        status = "Completed"
+        if self.is_error:
+            status = "Error"
+        if self.is_cancelled:
+            status = "Cancelled"
+
+        return status
 
 
 @dataclass
-class WorkflowRunResponseStartedEvent(BaseWorkflowRunResponseEvent):
-    event: str = RunEvent.workflow_started.value
+class WorkflowStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow execution starts"""
+
+    event: str = WorkflowRunEvent.workflow_started.value
 
 
 @dataclass
-class WorkflowCompletedEvent(BaseWorkflowRunResponseEvent):
-    event: str = RunEvent.workflow_completed.value
+class WorkflowAgentStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent starts (before deciding to run workflow or answer directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_started.value
+
+
+@dataclass
+class WorkflowAgentCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow agent completes (after running workflow or answering directly)"""
+
+    event: str = WorkflowRunEvent.workflow_agent_completed.value
+    content: Optional[Any] = None
+
+
+@dataclass
+class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow execution completes"""
+
+    event: str = WorkflowRunEvent.workflow_completed.value
     content: Optional[Any] = None
     content_type: str = "str"
 
+    # Store actual step execution results as StepOutput objects
+    step_results: List[StepOutput] = field(default_factory=list)
+    metadata: Optional[Dict[str, Any]] = None
 
-WorkflowRunResponseEvent = Union[WorkflowRunResponseStartedEvent, WorkflowCompletedEvent]
+    # Full workflow run output for nested workflows
+    run_output: Optional["WorkflowRunOutput"] = None
+
+
+@dataclass
+class WorkflowErrorEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow execution fails"""
+
+    event: str = WorkflowRunEvent.workflow_error.value
+    error: Optional[str] = None
+
+    # From exceptions
+    error_type: Optional[str] = None
+    error_id: Optional[str] = None
+    additional_data: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class WorkflowCancelledEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow execution is cancelled"""
+
+    event: str = WorkflowRunEvent.workflow_cancelled.value
+    reason: Optional[str] = None
+
+    @property
+    def is_cancelled(self):
+        return True
+
+
+@dataclass
+class StepStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step execution starts"""
+
+    event: str = WorkflowRunEvent.step_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+
+
+@dataclass
+class StepCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step execution completes"""
+
+    event: str = WorkflowRunEvent.step_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+
+    content: Optional[Any] = None
+    content_type: str = "str"
+
+    # Media content fields
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audio: Optional[List[Audio]] = None
+    response_audio: Optional[Audio] = None
+
+    # Store actual step execution results as StepOutput objects
+    step_response: Optional[StepOutput] = None
+
+
+@dataclass
+class StepPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step execution is paused (e.g., requires user confirmation or user input)"""
+
+    event: str = WorkflowRunEvent.step_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Confirmation fields
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
+
+    # User input fields
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
+
+
+@dataclass
+class StepContinuedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a paused step resumes execution after step-level HITL is resolved"""
+
+    event: str = WorkflowRunEvent.step_continued.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+
+@dataclass
+class StepExecutorPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a step's executor (agent/team) is paused for tool-level HITL"""
+
+    event: str = WorkflowRunEvent.step_executor_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Executor context
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
+    executor_run_id: Optional[str] = None
+    executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
+    executor_requirements: Optional[List[Any]] = None
+
+
+@dataclass
+class StepExecutorContinuedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a paused executor resumes after executor-level HITL is resolved"""
+
+    event: str = WorkflowRunEvent.step_executor_continued.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Executor context
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
+    executor_run_id: Optional[str] = None
+    executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
+
+
+@dataclass
+class StepOutputReviewEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step output requires human review before continuing."""
+
+    event: str = WorkflowRunEvent.step_output_review.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Output review fields
+    output_review_message: Optional[str] = None
+    requires_output_review: bool = True
+
+
+@dataclass
+class StepErrorEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step execution fails"""
+
+    event: str = WorkflowRunEvent.step_error.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class LoopExecutionStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when loop execution starts"""
+
+    event: str = WorkflowRunEvent.loop_execution_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    max_iterations: Optional[int] = None
+
+
+@dataclass
+class LoopIterationStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when loop iteration starts"""
+
+    event: str = WorkflowRunEvent.loop_iteration_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    iteration: int = 0
+    max_iterations: Optional[int] = None
+
+
+@dataclass
+class LoopIterationCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when loop iteration completes"""
+
+    event: str = WorkflowRunEvent.loop_iteration_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    iteration: int = 0
+    max_iterations: Optional[int] = None
+    iteration_results: List[StepOutput] = field(default_factory=list)
+    should_continue: bool = True
+
+
+@dataclass
+class LoopExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when loop execution completes"""
+
+    event: str = WorkflowRunEvent.loop_execution_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    total_iterations: int = 0
+    max_iterations: Optional[int] = None
+    all_results: List[List[StepOutput]] = field(default_factory=list)
+
+
+@dataclass
+class ParallelExecutionStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when parallel step execution starts"""
+
+    event: str = WorkflowRunEvent.parallel_execution_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    parallel_step_count: Optional[int] = None
+
+
+@dataclass
+class ParallelExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when parallel step execution completes"""
+
+    event: str = WorkflowRunEvent.parallel_execution_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    parallel_step_count: Optional[int] = None
+
+    # Results from all parallel steps
+    step_results: List[StepOutput] = field(default_factory=list)
+
+
+@dataclass
+class ConditionExecutionStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when condition step execution starts"""
+
+    event: str = WorkflowRunEvent.condition_execution_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    condition_result: Optional[bool] = None
+
+
+@dataclass
+class ConditionExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when condition step execution completes"""
+
+    event: str = WorkflowRunEvent.condition_execution_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    condition_result: Optional[bool] = None
+    executed_steps: Optional[int] = None
+
+    # Which branch was executed: "if", "else", or None (condition false with no else_steps)
+    branch: Optional[str] = None
+
+    # Results from executed steps
+    step_results: List[StepOutput] = field(default_factory=list)
+
+
+@dataclass
+class RouterExecutionStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when router step execution starts"""
+
+    event: str = WorkflowRunEvent.router_execution_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    # Names of steps selected by router
+    selected_steps: List[str] = field(default_factory=list)
+
+
+@dataclass
+class RouterExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when router step execution completes"""
+
+    event: str = WorkflowRunEvent.router_execution_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    # Names of steps that were selected
+    selected_steps: List[str] = field(default_factory=list)
+    executed_steps: Optional[int] = None
+
+    # Results from executed steps
+    step_results: List[StepOutput] = field(default_factory=list)
+
+
+@dataclass
+class RouterPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when router pauses for user input (HITL)"""
+
+    event: str = WorkflowRunEvent.router_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    # Available choices for user to select from
+    available_choices: List[str] = field(default_factory=list)
+    # Message to display to user
+    user_input_message: Optional[str] = None
+    # Whether multiple selections are allowed
+    allow_multiple_selections: bool = False
+
+
+@dataclass
+class StepsExecutionStartedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when steps execution starts"""
+
+    event: str = WorkflowRunEvent.steps_execution_started.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    steps_count: Optional[int] = None
+
+
+@dataclass
+class StepsExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when steps execution completes"""
+
+    event: str = WorkflowRunEvent.steps_execution_completed.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    steps_count: Optional[int] = None
+    executed_steps: Optional[int] = None
+
+    # Results from executed steps
+    step_results: List[StepOutput] = field(default_factory=list)
+
+
+@dataclass
+class StepOutputEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a step produces output - replaces direct StepOutput yielding"""
+
+    event: str = "StepOutput"
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+
+    # Store actual step execution result as StepOutput object
+    step_output: Optional[StepOutput] = None
+
+    # Properties for backward compatibility
+    @property
+    def content(self) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]]:
+        return self.step_output.content if self.step_output else None
+
+    @property
+    def images(self) -> Optional[List[Image]]:
+        return self.step_output.images if self.step_output else None
+
+    @property
+    def videos(self) -> Optional[List[Video]]:
+        return self.step_output.videos if self.step_output else None
+
+    @property
+    def audio(self) -> Optional[List[Audio]]:
+        return self.step_output.audio if self.step_output else None
+
+    @property
+    def success(self) -> bool:
+        return self.step_output.success if self.step_output else True
+
+    @property
+    def error(self) -> Optional[str]:
+        return self.step_output.error if self.step_output else None
+
+    @property
+    def stop(self) -> bool:
+        return self.step_output.stop if self.step_output else False
+
+
+@dataclass
+class CustomEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a custom event is produced"""
+
+    event: str = WorkflowRunEvent.custom_event.value
+
+    def __init__(self, **kwargs):
+        # Store arbitrary attributes directly on the instance
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+
+# Union type for all workflow run response events
+WorkflowRunOutputEvent = Union[
+    WorkflowStartedEvent,
+    WorkflowAgentStartedEvent,
+    WorkflowAgentCompletedEvent,
+    WorkflowCompletedEvent,
+    WorkflowErrorEvent,
+    WorkflowCancelledEvent,
+    StepStartedEvent,
+    StepCompletedEvent,
+    StepPausedEvent,
+    StepContinuedEvent,
+    StepExecutorPausedEvent,
+    StepExecutorContinuedEvent,
+    StepOutputReviewEvent,
+    StepErrorEvent,
+    LoopExecutionStartedEvent,
+    LoopIterationStartedEvent,
+    LoopIterationCompletedEvent,
+    LoopExecutionCompletedEvent,
+    ParallelExecutionStartedEvent,
+    ParallelExecutionCompletedEvent,
+    ConditionExecutionStartedEvent,
+    ConditionExecutionCompletedEvent,
+    RouterExecutionStartedEvent,
+    RouterExecutionCompletedEvent,
+    RouterPausedEvent,
+    StepsExecutionStartedEvent,
+    StepsExecutionCompletedEvent,
+    StepOutputEvent,
+    CustomEvent,
+]
+
+# Map event string to dataclass for workflow events
+WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
+    WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
+    WorkflowRunEvent.workflow_agent_started.value: WorkflowAgentStartedEvent,
+    WorkflowRunEvent.workflow_agent_completed.value: WorkflowAgentCompletedEvent,
+    WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
+    WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
+    WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
+    WorkflowRunEvent.step_started.value: StepStartedEvent,
+    WorkflowRunEvent.step_completed.value: StepCompletedEvent,
+    WorkflowRunEvent.step_paused.value: StepPausedEvent,
+    WorkflowRunEvent.step_continued.value: StepContinuedEvent,
+    WorkflowRunEvent.step_executor_paused.value: StepExecutorPausedEvent,
+    WorkflowRunEvent.step_executor_continued.value: StepExecutorContinuedEvent,
+    WorkflowRunEvent.step_output_review.value: StepOutputReviewEvent,
+    WorkflowRunEvent.step_error.value: StepErrorEvent,
+    WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
+    WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
+    WorkflowRunEvent.loop_iteration_completed.value: LoopIterationCompletedEvent,
+    WorkflowRunEvent.loop_execution_completed.value: LoopExecutionCompletedEvent,
+    WorkflowRunEvent.parallel_execution_started.value: ParallelExecutionStartedEvent,
+    WorkflowRunEvent.parallel_execution_completed.value: ParallelExecutionCompletedEvent,
+    WorkflowRunEvent.condition_execution_started.value: ConditionExecutionStartedEvent,
+    WorkflowRunEvent.condition_execution_completed.value: ConditionExecutionCompletedEvent,
+    WorkflowRunEvent.router_execution_started.value: RouterExecutionStartedEvent,
+    WorkflowRunEvent.router_execution_completed.value: RouterExecutionCompletedEvent,
+    WorkflowRunEvent.router_paused.value: RouterPausedEvent,
+    WorkflowRunEvent.steps_execution_started.value: StepsExecutionStartedEvent,
+    WorkflowRunEvent.steps_execution_completed.value: StepsExecutionCompletedEvent,
+    WorkflowRunEvent.step_output.value: StepOutputEvent,
+    WorkflowRunEvent.custom_event.value: CustomEvent,
+}
+
+
+def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEvent:
+    event_type = data.get("event", "")
+    if event_type in {e.value for e in RunEvent}:
+        return run_output_event_from_dict(data)  # type: ignore
+    elif event_type in {e.value for e in TeamRunEvent}:
+        return team_run_output_event_from_dict(data)  # type: ignore
+    else:
+        event_class = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not event_class:
+        raise ValueError(f"Unknown workflow event type: {event_type}")
+    return event_class.from_dict(data)  # type: ignore
+
+
+@dataclass
+class WorkflowRunOutput:
+    """Response returned by Workflow.run() functions - kept for backwards compatibility"""
+
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
+    content_type: str = "str"
+
+    # Workflow-specific fields
+    workflow_id: Optional[str] = None
+    workflow_name: Optional[str] = None
+
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+    # For nested workflows: parent workflow run ID and step ID
+    parent_run_id: Optional[str] = None
+    workflow_step_id: Optional[str] = None
+
+    # Media content fields
+    images: Optional[List[Image]] = None
+    videos: Optional[List[Video]] = None
+    audio: Optional[List[Audio]] = None
+    files: Optional[List[File]] = None
+    response_audio: Optional[Audio] = None
+
+    # Store actual step execution results as StepOutput objects
+    step_results: List[Union[StepOutput, List[StepOutput]]] = field(default_factory=list)
+
+    # Store agent/team/workflow responses separately with parent_run_id references
+    # Includes nested WorkflowRunOutput for workflow-as-step execution
+    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
+
+    # Workflow agent run - stores the full agent RunOutput when workflow agent is used
+    # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
+    workflow_agent_run: Optional[RunOutput] = None
+
+    # Store events from workflow execution
+    events: Optional[List[WorkflowRunOutputEvent]] = None
+
+    # Workflow metrics aggregated from all steps
+    metrics: Optional[WorkflowMetrics] = None
+
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: int = field(default_factory=lambda: int(time()))
+
+    status: RunStatus = RunStatus.pending
+
+    # Unified HITL requirements to continue a paused workflow
+    # Handles all HITL types: confirmation, user input, and route selection
+    step_requirements: Optional[List["StepRequirement"]] = None
+
+    # Error-level HITL requirements for handling step failures
+    error_requirements: Optional[List["ErrorRequirement"]] = None
+
+    # Track the paused step for resumption and debugging
+    paused_step_index: Optional[int] = None
+    paused_step_name: Optional[str] = None
+
+    # Kind of pause currently active: "step" or "executor". None when not paused.
+    pause_kind: Optional[Union[PauseKind, str]] = None
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if the workflow is paused waiting for step confirmation or router selection"""
+        return self.status == RunStatus.paused
+
+    @property
+    def is_cancelled(self):
+        return self.status == RunStatus.cancelled
+
+    @property
+    def active_step_requirements(self) -> List["StepRequirement"]:
+        """Get step requirements that still need to be resolved"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if not req.is_resolved]
+
+    @property
+    def steps_requiring_confirmation(self) -> List["StepRequirement"]:
+        """Get step requirements that need user confirmation"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_confirmation]
+
+    @property
+    def steps_requiring_output_review(self) -> List["StepRequirement"]:
+        """Get step requirements that need output review"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_output_review]
+
+    @property
+    def steps_requiring_user_input(self) -> List["StepRequirement"]:
+        """Get step requirements that need user input (custom fields, not route selection)"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_user_input]
+
+    @property
+    def steps_requiring_route(self) -> List["StepRequirement"]:
+        """Get step requirements that need route selection (Router HITL)"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_route_selection]
+
+    @property
+    def steps_requiring_executor_resolution(self) -> List["StepRequirement"]:
+        """Get step requirements that need executor (agent/team) HITL resolution"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_executor_resolution]
+
+    @property
+    def active_error_requirements(self) -> List["ErrorRequirement"]:
+        """Get error requirements that still need user decision"""
+        if not self.error_requirements:
+            return []
+        return [req for req in self.error_requirements if not req.is_resolved]
+
+    @property
+    def steps_with_errors(self) -> List["ErrorRequirement"]:
+        """Get error requirements that need user decision (retry or skip)"""
+        if not self.error_requirements:
+            return []
+        return [req for req in self.error_requirements if req.needs_decision]
+
+    def to_dict(self) -> Dict[str, Any]:
+        # Note: we avoid asdict(self) here because it recursively walks ALL dataclass
+        # fields including step_requirements/step_results which may contain deep or
+        # circular references (e.g., StepRequirement.step_output with nested StepOutputs).
+        # Instead, we manually build the dict from field values.
+        _skip_fields = {
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "step_results",
+            "step_executor_runs",
+            "events",
+            "metrics",
+            "workflow_agent_run",
+            "step_requirements",
+            "error_requirements",
+        }
+        _dict = {}
+        for f in fields(self):
+            if f.name in _skip_fields:
+                continue
+            v = getattr(self, f.name)
+            if v is not None:
+                _dict[f.name] = v
+
+        if self.status is not None:
+            _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.pause_kind is not None:
+            # Local import to avoid circular import at module load
+            from agno.workflow.types import PauseKind as _PauseKind
+
+            _dict["pause_kind"] = self.pause_kind.value if isinstance(self.pause_kind, _PauseKind) else self.pause_kind
+
+        if self.metadata is not None:
+            _dict["metadata"] = self.metadata
+
+        if self.images is not None:
+            _dict["images"] = [img.to_dict() if hasattr(img, "to_dict") else img for img in self.images]
+
+        if self.videos is not None:
+            _dict["videos"] = [vid.to_dict() if hasattr(vid, "to_dict") else vid for vid in self.videos]
+
+        if self.audio is not None:
+            _dict["audio"] = [aud.to_dict() if hasattr(aud, "to_dict") else aud for aud in self.audio]
+
+        if self.files is not None:
+            _dict["files"] = [f.to_dict() if hasattr(f, "to_dict") else f for f in self.files]
+
+        if self.response_audio is not None:
+            _dict["response_audio"] = (
+                self.response_audio.to_dict() if hasattr(self.response_audio, "to_dict") else self.response_audio
+            )
+
+        if self.step_results:
+            flattened_responses = []
+            for step_response in self.step_results:
+                if isinstance(step_response, list):
+                    # Handle List[StepOutput] from workflow components like Steps
+                    flattened_responses.extend([s.to_dict() if hasattr(s, "to_dict") else s for s in step_response])
+                elif hasattr(step_response, "to_dict"):
+                    # Handle single StepOutput
+                    flattened_responses.append(step_response.to_dict())
+                else:
+                    # Already a dict
+                    flattened_responses.append(step_response)
+            _dict["step_results"] = flattened_responses
+
+        if self.step_executor_runs:
+            _dict["step_executor_runs"] = [
+                run.to_dict() if hasattr(run, "to_dict") else run for run in self.step_executor_runs
+            ]
+
+        if self.workflow_agent_run is not None:
+            _dict["workflow_agent_run"] = (
+                self.workflow_agent_run.to_dict()
+                if hasattr(self.workflow_agent_run, "to_dict")
+                else self.workflow_agent_run
+            )
+
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics
+
+        if self.input is not None:
+            if isinstance(self.input, BaseModel):
+                _dict["input"] = self.input.model_dump(exclude_none=True)
+            else:
+                _dict["input"] = self.input
+
+        if self.content and isinstance(self.content, BaseModel):
+            _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
+
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() if hasattr(e, "to_dict") else e for e in self.events]
+
+        if self.step_requirements is not None:
+            _dict["step_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in self.step_requirements
+            ]
+
+        if self.error_requirements is not None:
+            _dict["error_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in self.error_requirements
+            ]
+
+        return _dict
+
+    _MAX_NESTED_DEPTH = 10
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], _depth: int = 0) -> "WorkflowRunOutput":
+        # Import here to avoid circular import
+        from agno.workflow.step import StepOutput
+
+        workflow_metrics_dict = data.pop("metrics", {})
+        workflow_metrics = None
+        if workflow_metrics_dict:
+            from agno.workflow.workflow import WorkflowMetrics
+
+            workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics_dict)
+
+        step_results = data.pop("step_results", [])
+        parsed_step_results: List[Union[StepOutput, List[StepOutput]]] = []
+        if step_results:
+            for step_output_dict in step_results:
+                # Reconstruct StepOutput from dict
+                parsed_step_results.append(StepOutput.from_dict(step_output_dict))
+
+        # Parse step_executor_runs
+        step_executor_runs_data = data.pop("step_executor_runs", [])
+        step_executor_runs: List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]] = []
+        if step_executor_runs_data:
+            for run_data in step_executor_runs_data:
+                # Check for team first (team_id is unique to TeamRunOutput)
+                if "team_id" in run_data or "team_name" in run_data:
+                    step_executor_runs.append(TeamRunOutput.from_dict(run_data))
+                # Check for agent (agent_id is unique to RunOutput; RunOutput also has workflow_id
+                # when used as a workflow agent, so we must check agent_id before workflow_name)
+                elif "agent_id" in run_data or "agent_name" in run_data:
+                    step_executor_runs.append(RunOutput.from_dict(run_data))
+                # Nested workflow run (workflow_name is unique to WorkflowRunOutput)
+                elif "workflow_name" in run_data and "parent_run_id" in run_data:
+                    if _depth >= cls._MAX_NESTED_DEPTH:
+                        log_warning(
+                            f"Max nested workflow deserialization depth ({cls._MAX_NESTED_DEPTH}) reached, "
+                            f"skipping nested workflow '{run_data.get('workflow_name')}'"
+                        )
+                    else:
+                        step_executor_runs.append(cls.from_dict(run_data, _depth=_depth + 1))
+                else:
+                    # Default to RunOutput for backwards compatibility
+                    step_executor_runs.append(RunOutput.from_dict(run_data))
+
+        workflow_agent_run_data = data.pop("workflow_agent_run", None)
+        workflow_agent_run = None
+        if workflow_agent_run_data:
+            if isinstance(workflow_agent_run_data, dict):
+                workflow_agent_run = RunOutput.from_dict(workflow_agent_run_data)
+            elif isinstance(workflow_agent_run_data, RunOutput):
+                workflow_agent_run = workflow_agent_run_data
+
+        metadata = data.pop("metadata", None)
+
+        images = reconstruct_images(data.pop("images", []))
+        videos = reconstruct_videos(data.pop("videos", []))
+        audio = reconstruct_audio_list(data.pop("audio", []))
+        files = reconstruct_files(data.pop("files", []))
+        response_audio = reconstruct_response_audio(data.pop("response_audio", None))
+
+        events_data = data.pop("events", [])
+        final_events = []
+        for event in events_data or []:
+            if "agent_id" in event:
+                # Agent event from agent step
+                from agno.run.agent import run_output_event_from_dict
+
+                event = run_output_event_from_dict(event)
+            elif "team_id" in event:
+                # Team event from team step
+                from agno.run.team import team_run_output_event_from_dict
+
+                event = team_run_output_event_from_dict(event)
+            else:
+                # Pure workflow event
+                event = workflow_run_output_event_from_dict(event)
+            final_events.append(event)
+        events = final_events
+
+        # Parse step_requirements
+        step_requirements_data = data.pop("step_requirements", None)
+        step_requirements = None
+        if step_requirements_data:
+            from agno.workflow.types import StepRequirement
+
+            step_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
+
+        # Handle legacy router_requirements by converting to step_requirements
+        router_requirements_data = data.pop("router_requirements", None)
+        if router_requirements_data:
+            from agno.workflow.types import StepRequirement as StepReq
+
+            # Convert legacy router_requirements to step_requirements with requires_route_selection=True
+            router_as_step_reqs = [StepReq.from_dict(req) for req in router_requirements_data]
+            if step_requirements is None:
+                step_requirements = router_as_step_reqs
+            else:
+                step_requirements.extend(router_as_step_reqs)
+
+        # Parse error_requirements
+        error_requirements_data = data.pop("error_requirements", None)
+        error_requirements = None
+        if error_requirements_data:
+            from agno.workflow.types import ErrorRequirement
+
+            error_requirements = [ErrorRequirement.from_dict(req) for req in error_requirements_data]
+
+        input_data = data.pop("input", None)
+
+        # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
+        from dataclasses import fields
+
+        supported_fields = {f.name for f in fields(cls)}
+        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+
+        result = cls(
+            step_results=parsed_step_results,
+            workflow_agent_run=workflow_agent_run,
+            metadata=metadata,
+            images=images,
+            videos=videos,
+            audio=audio,
+            files=files,
+            response_audio=response_audio,
+            events=events,
+            metrics=workflow_metrics,
+            step_executor_runs=step_executor_runs,
+            step_requirements=step_requirements,
+            error_requirements=error_requirements,
+            input=input_data,
+            **filtered_data,
+        )
+        return result
+
+    def get_content_as_string(self, **kwargs) -> str:
+        import json
+
+        from pydantic import BaseModel
+
+        if isinstance(self.content, str):
+            return self.content
+        elif isinstance(self.content, BaseModel):
+            return self.content.model_dump_json(exclude_none=True, **kwargs)
+        else:
+            return json.dumps(self.content, **kwargs)
+
+    def has_completed(self) -> bool:
+        """Check if the workflow run is completed (either successfully or with error)"""
+        return self.status in [RunStatus.completed, RunStatus.error]

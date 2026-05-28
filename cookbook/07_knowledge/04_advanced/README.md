@@ -1,0 +1,31 @@
+# Advanced Patterns
+
+Advanced knowledge patterns for power users and custom integrations.
+
+## Prerequisites
+
+1. Run Qdrant: `./cookbook/scripts/run_qdrant.sh`
+2. Run PgVector (for prefix search): `./cookbook/scripts/run_pgvector.sh`
+3. Set `OPENAI_API_KEY` environment variable
+4. For Graph RAG: `pip install lightrag-agno`
+
+## Examples
+
+| File | What It Shows |
+|------|---------------|
+| [01_custom_retriever.py](./01_custom_retriever.py) | Custom retrieval function bypassing Knowledge class |
+| [02_custom_chunking.py](./02_custom_chunking.py) | Implementing a custom chunking strategy |
+| [03_graph_rag.py](./03_graph_rag.py) | LightRAG knowledge graph integration |
+| [04_knowledge_tools.py](./04_knowledge_tools.py) | KnowledgeTools: think, search, analyze |
+| [05_knowledge_protocol.py](./05_knowledge_protocol.py) | Custom KnowledgeProtocol implementation |
+| [06_prefix_search.py](./06_prefix_search.py) | PgVector prefix matching for search-as-you-type |
+
+## Running
+
+```bash
+.venvs/demo/bin/python cookbook/07_knowledge/04_advanced/01_custom_retriever.py
+```
+
+## Further Reading
+
+- [Knowledge Overview](https://docs.agno.com/knowledge/overview)

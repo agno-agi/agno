@@ -18,20 +18,22 @@ class OpenWeatherTools(Toolkit):
     Args:
         api_key (Optional[str]): OpenWeatherMap API key. If not provided, will try to get from OPENWEATHER_API_KEY env var.
         units (str): Units of measurement. Options are 'standard', 'metric', and 'imperial'. Default is 'metric'.
-        current_weather (bool): Enable current weather function. Default is True.
-        forecast (bool): Enable forecast function. Default is True.
-        air_pollution (bool): Enable air pollution function. Default is True.
-        geocoding (bool): Enable geocoding function. Default is True.
+        enable_current_weather (bool): Enable current weather function. Default is True.
+        enable_forecast (bool): Enable forecast function. Default is True.
+        enable_air_pollution (bool): Enable air pollution function. Default is True.
+        enable_geocoding (bool): Enable geocoding function. Default is True.
+        all (bool): Enable all functions. Default is False.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         units: str = "metric",
-        current_weather: bool = True,
-        forecast: bool = True,
-        air_pollution: bool = True,
-        geocoding: bool = True,
+        enable_current_weather: bool = True,
+        enable_forecast: bool = True,
+        enable_air_pollution: bool = True,
+        enable_geocoding: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("OPENWEATHER_API_KEY")
@@ -45,13 +47,13 @@ class OpenWeatherTools(Toolkit):
         self.geo_url = "https://api.openweathermap.org/geo/1.0"
 
         tools: List[Any] = []
-        if current_weather:
+        if enable_current_weather or all:
             tools.append(self.get_current_weather)
-        if forecast:
+        if enable_forecast or all:
             tools.append(self.get_forecast)
-        if air_pollution:
+        if enable_air_pollution or all:
             tools.append(self.get_air_pollution)
-        if geocoding:
+        if enable_geocoding or all:
             tools.append(self.geocode_location)
 
         super().__init__(name="openweather_tools", tools=tools, **kwargs)
@@ -72,7 +74,7 @@ class OpenWeatherTools(Toolkit):
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error making request to {url}: {e}")
+            logger.exception(f"Error making request to {url}")
             return {"error": str(e)}
 
     def geocode_location(self, location: str, limit: int = 1) -> str:
@@ -100,7 +102,7 @@ class OpenWeatherTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            logger.error(f"Error geocoding location: {e}")
+            logger.exception("Error geocoding location")
             return json.dumps({"error": str(e)})
 
     def get_current_weather(self, location: str) -> str:
@@ -140,7 +142,7 @@ class OpenWeatherTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            logger.error(f"Error getting current weather: {e}")
+            logger.exception("Error getting current weather")
             return json.dumps({"error": str(e)})
 
     def get_forecast(self, location: str, days: int = 5) -> str:
@@ -187,7 +189,7 @@ class OpenWeatherTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            logger.error(f"Error getting forecast: {e}")
+            logger.exception("Error getting forecast")
             return json.dumps({"error": str(e)})
 
     def get_air_pollution(self, location: str) -> str:
@@ -227,5 +229,5 @@ class OpenWeatherTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            logger.error(f"Error getting air pollution data: {e}")
+            logger.exception("Error getting air pollution data")
             return json.dumps({"error": str(e)})

@@ -5,8 +5,9 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.media import ImageArtifact
+from agno.media import Image
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -16,15 +17,32 @@ except ImportError:
 
 
 class BrightDataTools(Toolkit):
+    """
+    BrightData is a toolkit for web scraping, screenshots, search engines, and web data feeds.
+
+    Args:
+        api_key (Optional[str]): Bright Data API key. Retrieved from BRIGHT_DATA_API_KEY env variable if not provided.
+        enable_scrape_markdown (bool): Enable webpage scraping as Markdown. Default is True.
+        enable_screenshot (bool): Enable website screenshot capture. Default is True.
+        enable_search_engine (bool): Enable search engine functionality. Default is True.
+        enable_web_data_feed (bool): Enable web data feed retrieval. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        serp_zone (str): SERP zone for search operations. Default is "serp_api".
+        web_unlocker_zone (str): Web unlocker zone for scraping operations. Default is "web_unlocker1".
+        verbose (bool): Enable verbose logging. Default is False.
+        timeout (int): Timeout in seconds for operations. Default is 600.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
+        enable_scrape_markdown: bool = True,
+        enable_screenshot: bool = True,
+        enable_search_engine: bool = True,
+        enable_web_data_feed: bool = True,
+        all: bool = False,
         serp_zone: str = "serp_api",
         web_unlocker_zone: str = "web_unlocker1",
-        scrape_as_markdown: bool = True,
-        get_screenshot: bool = False,
-        search_engine: bool = True,
-        web_data_feed: bool = True,
         verbose: bool = False,
         timeout: int = 600,
         **kwargs,
@@ -47,14 +65,13 @@ class BrightDataTools(Toolkit):
         self.timeout = timeout
 
         tools: List[Any] = []
-
-        if scrape_as_markdown:
+        if all or enable_scrape_markdown:
             tools.append(self.scrape_as_markdown)
-        if get_screenshot:
+        if all or enable_screenshot:
             tools.append(self.get_screenshot)
-        if search_engine:
+        if all or enable_search_engine:
             tools.append(self.search_engine)
-        if web_data_feed:
+        if all or enable_web_data_feed:
             tools.append(self.web_data_feed)
 
         super().__init__(name="brightdata_tools", tools=tools, **kwargs)
@@ -104,21 +121,22 @@ class BrightDataTools(Toolkit):
         except Exception as e:
             return f"Error scraping URL {url}: {e}"
 
-    def get_screenshot(self, agent: Agent, url: str, output_path: str = "screenshot.png") -> str:
+    def get_screenshot(self, agent: Agent, url: str, output_path: str = "screenshot.png") -> ToolResult:
         """
         Capture a screenshot of a webpage
 
         Args:
             url (str): URL to screenshot
+            output_path (str): Output path for the screenshot (not used, kept for compatibility)
 
         Returns:
-            str: A message indicating success (including media ID) or failure.
+            ToolResult: Contains the screenshot image or error message.
         """
         try:
             if not self.api_key:
-                return "Please provide a Bright Data API key"
+                return ToolResult(content="Please provide a Bright Data API key")
             if not url:
-                return "Please provide a URL to screenshot"
+                return ToolResult(content="Please provide a URL to screenshot")
 
             log_info(f"Taking screenshot of: {url}")
 
@@ -140,18 +158,20 @@ class BrightDataTools(Toolkit):
 
             media_id = str(uuid4())
 
-            agent.add_image(
-                ImageArtifact(
-                    id=media_id,
-                    content=base64_encoded_image.encode("utf-8"),
-                    mime_type="image/png",
-                    original_prompt=f"Screenshot of {url}",
-                )
+            # Create Image for the screenshot
+            image_artifact = Image(
+                id=media_id,
+                content=base64_encoded_image.encode("utf-8"),
+                mime_type="image/png",
+                original_prompt=f"Screenshot of {url}",
             )
+
             log_debug(f"Screenshot captured and added as artifact with ID: {media_id}")
-            return f"Screenshot captured and added as artifact with ID: {media_id}"
+            return ToolResult(
+                content=f"Screenshot captured and added as artifact with ID: {media_id}", images=[image_artifact]
+            )
         except Exception as e:
-            return f"Error taking screenshot of {url}: {e}"
+            return ToolResult(content=f"Error taking screenshot of {url}: {e}")
 
     def search_engine(
         self,

@@ -2,20 +2,23 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
+import httpx
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
-from agno.utils.log import log_debug, log_error
+from agno.run.agent import RunOutput
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.cohere import format_messages
 
 try:
     from cohere import AsyncClientV2 as CohereAsyncClient
     from cohere import ClientV2 as CohereClient
-    from cohere.types.chat_response import ChatResponse
-    from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
+    from cohere.v2.types.v2chat_response import V2ChatResponse
+    from cohere.v2.types.v2chat_stream_response import V2ChatStreamResponse
 except ImportError:
     raise ImportError("`cohere` not installed. Please install using `pip install cohere`")
 
@@ -28,7 +31,7 @@ class Cohere(Model):
     For more information, see: https://docs.cohere.com/docs/chat-api
     """
 
-    id: str = "command-r-plus"
+    id: str = "command-a-03-2025"
     name: str = "cohere"
     provider: str = "Cohere"
 
@@ -48,6 +51,7 @@ class Cohere(Model):
     # -*- Client parameters
     api_key: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     # -*- Provide the Cohere client manually
     client: Optional[CohereClient] = None
     async_client: Optional[CohereAsyncClient] = None
@@ -64,6 +68,15 @@ class Cohere(Model):
 
         _client_params["api_key"] = self.api_key
 
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                _client_params["httpx_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.client = CohereClient(**_client_params)
         return self.client  # type: ignore
 
@@ -76,12 +89,50 @@ class Cohere(Model):
         self.api_key = self.api_key or getenv("CO_API_KEY")
 
         if not self.api_key:
-            log_error("CO_API_KEY not set. Please set the CO_API_KEY environment variable.")
+            raise ModelProviderError(
+                message="CO_API_KEY not set. Please set the CO_API_KEY environment variable.",
+                model_name=self.name,
+                model_id=self.id,
+            )
 
         _client_params["api_key"] = self.api_key
 
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                _client_params["httpx_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.async_client = CohereAsyncClient(**_client_params)
         return self.async_client  # type: ignore
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert the model to a dictionary.
+
+        Returns:
+            Dict[str, Any]: The dictionary representation of the model.
+        """
+        model_dict = super().to_dict()
+        model_dict.update(
+            {
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "top_k": self.top_k,
+                "top_p": self.top_p,
+                "seed": self.seed,
+                "frequency_penalty": self.frequency_penalty,
+                "presence_penalty": self.presence_penalty,
+                "logprobs": self.logprobs,
+                "strict_tools": self.strict_tools,
+                "add_chat_history": self.add_chat_history,
+            }
+        )
+        cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
+        return cleaned_dict
 
     def get_request_params(
         self,
@@ -148,18 +199,31 @@ class Cohere(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> ChatResponse:
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> ModelResponse:
         """
         Invoke a non-streamed chat response from the Cohere API.
         """
-
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            return self.get_client().chat(model=self.id, messages=format_messages(messages), **request_kwargs)  # type: ignore
+            assistant_message.metrics.start_timer()
+            provider_response = self.get_client().chat(
+                model=self.id,
+                messages=format_messages(messages, compress_tool_results),  # type: ignore
+                **request_kwargs,
+            )  # type: ignore
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -167,21 +231,33 @@ class Cohere(Model):
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[StreamedChatResponseV2]:
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> Iterator[ModelResponse]:
         """
         Invoke a streamed chat response from the Cohere API.
         """
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            return self.get_client().chat_stream(
+            tool_use: Dict[str, Any] = {}
+
+            assistant_message.metrics.start_timer()
+
+            for response in self.get_client().chat_stream(
                 model=self.id,
-                messages=format_messages(messages),  # type: ignore
+                messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
-            )
+            ):
+                model_response, tool_use = self._parse_provider_response_delta(response, tool_use=tool_use)
+                yield model_response
+
+            assistant_message.metrics.stop_timer()
+
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -189,21 +265,31 @@ class Cohere(Model):
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> ChatResponse:
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> ModelResponse:
         """
         Asynchronously invoke a non-streamed chat response from the Cohere API.
         """
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
-            return await self.get_async_client().chat(
+            assistant_message.metrics.start_timer()
+            provider_response = await self.get_async_client().chat(
                 model=self.id,
-                messages=format_messages(messages),  # type: ignore
+                messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
             )
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -211,32 +297,43 @@ class Cohere(Model):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[StreamedChatResponseV2]:
+        run_response: Optional[RunOutput] = None,
+        compress_tool_results: bool = False,
+    ) -> AsyncIterator[ModelResponse]:
         """
         Asynchronously invoke a streamed chat response from the Cohere API.
         """
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
+            tool_use: Dict[str, Any] = {}
+
+            assistant_message.metrics.start_timer()
+
             async for response in self.get_async_client().chat_stream(
                 model=self.id,
-                messages=format_messages(messages),  # type: ignore
+                messages=format_messages(messages, compress_tool_results),  # type: ignore
                 **request_kwargs,
             ):
-                yield response
+                model_response, tool_use = self._parse_provider_response_delta(response, tool_use=tool_use)
+                yield model_response
+
+            assistant_message.metrics.stop_timer()
+
         except Exception as e:
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: V2ChatResponse, **kwargs) -> ModelResponse:
         """
         Parse the model provider response.
 
         Args:
-            response (ChatResponse): The response from the Cohere API.
+            response (V2ChatResponse): The response from the Cohere API.
         """
         model_response = ModelResponse()
 
@@ -246,136 +343,88 @@ class Cohere(Model):
         if response_message.content is not None:
             full_content = ""
             for item in response_message.content:
-                full_content += item.text
+                if hasattr(item, "text") and item.text is not None:  # type: ignore
+                    full_content += item.text  # type: ignore
             model_response.content = full_content
 
         if response_message.tool_calls is not None:
             model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
 
-        if response.usage is not None and response.usage.tokens is not None:
-            model_response.response_usage = {
-                "input_tokens": int(response.usage.tokens.input_tokens) or 0,  # type: ignore
-                "output_tokens": int(response.usage.tokens.output_tokens) or 0,  # type: ignore
-                "total_tokens": int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,  # type: ignore
-            }
+        if response.usage is not None:
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
-    def _process_stream_response(
-        self,
-        response: StreamedChatResponseV2,
-        assistant_message: Message,
-        stream_data: MessageData,
-        tool_use: Dict[str, Any],
-    ) -> Tuple[Optional[ModelResponse], Dict[str, Any]]:
+    def _parse_provider_response_delta(
+        self, response: V2ChatStreamResponse, tool_use: Dict[str, Any]
+    ) -> Tuple[ModelResponse, Dict[str, Any]]:  # type: ignore
         """
-        Common handler for processing stream responses from Cohere.
+        Parse the streaming response from the model provider into ModelResponse objects.
 
         Args:
-            response: The streamed response from Cohere
-            assistant_message: The assistant message being built
-            stream_data: Data accumulated during streaming
-            tool_use: Current tool use data being built
+            response: Raw response chunk from the model provider
 
         Returns:
-            Tuple containing the ModelResponse to yield and updated tool_use dict
+            ModelResponse: Parsed response delta
         """
-        model_response = None
+        model_response = ModelResponse()
 
+        # 1. Add content
         if (
             response.type == "content-delta"
             and response.delta is not None
             and response.delta.message is not None
             and response.delta.message.content is not None
+            and response.delta.message.content.text is not None
         ):
-            # Update metrics
-            assistant_message.metrics.completion_tokens += 1
-            if not assistant_message.metrics.time_to_first_token:
-                assistant_message.metrics.set_time_to_first_token()
+            model_response.content = response.delta.message.content.text
 
-            # Update provider response content
-            stream_data.response_content += response.delta.message.content.text
-            model_response = ModelResponse(content=response.delta.message.content.text)
+        # 2. Add tool calls information
 
+        # 2.1 Add starting tool call
         elif response.type == "tool-call-start" and response.delta is not None:
             if response.delta.message is not None and response.delta.message.tool_calls is not None:
                 tool_use = response.delta.message.tool_calls.model_dump()
 
+        # 2.2 Add tool call delta
         elif response.type == "tool-call-delta" and response.delta is not None:
             if (
                 response.delta.message is not None
                 and response.delta.message.tool_calls is not None
                 and response.delta.message.tool_calls.function is not None
+                and response.delta.message.tool_calls.function.arguments is not None
             ):
                 tool_use["function"]["arguments"] += response.delta.message.tool_calls.function.arguments
 
+        # 2.3 Add ending tool call
         elif response.type == "tool-call-end":
-            if assistant_message.tool_calls is None:
-                assistant_message.tool_calls = []
-            assistant_message.tool_calls.append(tool_use)
-            tool_use = {}
+            model_response.tool_calls = [tool_use]
 
+        # 3. Add metrics
         elif (
             response.type == "message-end"
             and response.delta is not None
             and response.delta.usage is not None
             and response.delta.usage.tokens is not None
         ):
-            _add_usage_metrics_to_assistant_message(
-                assistant_message=assistant_message,
-                response_usage={
-                    "input_tokens": int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore
-                    "output_tokens": int(response.delta.usage.tokens.output_tokens) or 0,  # type: ignore
-                    "total_tokens": int(
-                        response.delta.usage.tokens.input_tokens + response.delta.usage.tokens.output_tokens  # type: ignore
-                    )
-                    or 0,
-                },
-            )
+            model_response.response_usage = self._get_metrics(response.delta.usage)  # type: ignore
 
         return model_response, tool_use
 
-    def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
-        tool_use: Dict[str, Any] = {}
+    def _get_metrics(self, response_usage) -> MessageMetrics:
+        """
+        Parse the given Cohere usage into an Agno MessageMetrics object.
 
-        for response in self.invoke_stream(
-            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
-        ):
-            model_response, tool_use = self._process_stream_response(
-                response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
-            )
-            if model_response is not None:
-                yield model_response
+        Args:
+            response_usage: Usage data from Cohere
 
-    async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[ModelResponse]:
-        """Process the asynchronous response stream."""
-        tool_use: Dict[str, Any] = {}
+        Returns:
+            MessageMetrics: Parsed metrics data
+        """
+        metrics = MessageMetrics()
 
-        async for response in self.ainvoke_stream(
-            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
-        ):
-            model_response, tool_use = self._process_stream_response(
-                response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
-            )
-            if model_response is not None:
-                yield model_response
+        metrics.input_tokens = response_usage.tokens.input_tokens or 0
+        metrics.output_tokens = response_usage.tokens.output_tokens or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
-    def parse_provider_response_delta(self, response: Any) -> ModelResponse:  # type: ignore
-        pass
+        return metrics

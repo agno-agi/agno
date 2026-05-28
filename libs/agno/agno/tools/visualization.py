@@ -9,29 +9,21 @@ from agno.utils.log import log_info, logger
 class VisualizationTools(Toolkit):
     def __init__(
         self,
-        bar_chart: bool = True,
-        line_chart: bool = True,
-        pie_chart: bool = True,
-        scatter_plot: bool = True,
-        histogram: bool = True,
-        enable_all: bool = False,
         output_dir: str = "charts",
+        enable_create_bar_chart: bool = True,
+        enable_create_line_chart: bool = True,
+        enable_create_pie_chart: bool = True,
+        enable_create_scatter_plot: bool = True,
+        enable_create_histogram: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """
         Initialize the VisualizationTools toolkit.
 
         Args:
-            bar_chart (bool): Enable bar chart creation. Default is True.
-            line_chart (bool): Enable line chart creation. Default is True.
-            pie_chart (bool): Enable pie chart creation. Default is True.
-            scatter_plot (bool): Enable scatter plot creation. Default is True.
-            histogram (bool): Enable histogram creation. Default is True.
-            enable_all (bool): Enable all chart types. Default is False.
             output_dir (str): Directory to save charts. Default is "charts".
         """
-        super().__init__(**kwargs)
-
         # Check if matplotlib is available
         try:
             import matplotlib
@@ -47,20 +39,19 @@ class VisualizationTools(Toolkit):
 
         self.output_dir = output_dir
 
-        # Register functions based on enabled chart types
-        if enable_all:
-            bar_chart = line_chart = pie_chart = scatter_plot = histogram = True
+        tools: List[Any] = []
+        if enable_create_bar_chart or all:
+            tools.append(self.create_bar_chart)
+        if enable_create_line_chart or all:
+            tools.append(self.create_line_chart)
+        if enable_create_pie_chart or all:
+            tools.append(self.create_pie_chart)
+        if enable_create_scatter_plot or all:
+            tools.append(self.create_scatter_plot)
+        if enable_create_histogram or all:
+            tools.append(self.create_histogram)
 
-        if bar_chart:
-            self.register(self.create_bar_chart)
-        if line_chart:
-            self.register(self.create_line_chart)
-        if pie_chart:
-            self.register(self.create_pie_chart)
-        if scatter_plot:
-            self.register(self.create_scatter_plot)
-        if histogram:
-            self.register(self.create_histogram)
+        super().__init__(name="visualization_tools", tools=tools, **kwargs)
 
     def _normalize_data_for_charts(
         self, data: Union[Dict[str, Any], List[Dict[str, Any]], List[Any], str]
@@ -170,7 +161,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating bar chart: {str(e)}")
+            logger.exception("Error creating bar chart")
             return json.dumps({"chart_type": "bar_chart", "error": str(e), "status": "error"})
 
     def create_line_chart(
@@ -243,7 +234,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating line chart: {str(e)}")
+            logger.exception("Error creating line chart")
             return json.dumps({"chart_type": "line_chart", "error": str(e), "status": "error"})
 
     def create_pie_chart(
@@ -308,7 +299,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating pie chart: {str(e)}")
+            logger.exception("Error creating pie chart")
             return json.dumps({"chart_type": "pie_chart", "error": str(e), "status": "error"})
 
     def create_scatter_plot(
@@ -397,7 +388,7 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating scatter plot: {str(e)}")
+            logger.exception("Error creating scatter plot")
             return json.dumps({"chart_type": "scatter_plot", "error": str(e), "status": "error"})
 
     def create_histogram(
@@ -472,5 +463,5 @@ class VisualizationTools(Toolkit):
             )
 
         except Exception as e:
-            logger.error(f"Error creating histogram: {str(e)}")
+            logger.exception("Error creating histogram")
             return json.dumps({"chart_type": "histogram", "error": str(e), "status": "error"})

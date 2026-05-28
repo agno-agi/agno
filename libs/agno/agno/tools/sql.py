@@ -25,9 +25,10 @@ class SQLTools(Toolkit):
         schema: Optional[str] = None,
         dialect: Optional[str] = None,
         tables: Optional[Dict[str, Any]] = None,
-        list_tables: bool = True,
-        describe_table: bool = True,
-        run_sql_query: bool = True,
+        enable_list_tables: bool = True,
+        enable_describe_table: bool = True,
+        enable_run_sql_query: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         # Get the database engine
@@ -53,11 +54,11 @@ class SQLTools(Toolkit):
         self.tables: Optional[Dict[str, Any]] = tables
 
         tools: List[Any] = []
-        if list_tables:
+        if enable_list_tables or all:
             tools.append(self.list_tables)
-        if describe_table:
+        if enable_describe_table or all:
             tools.append(self.describe_table)
-        if run_sql_query:
+        if enable_run_sql_query or all:
             tools.append(self.run_sql_query)
 
         super().__init__(name="sql_tools", tools=tools, **kwargs)
@@ -81,7 +82,7 @@ class SQLTools(Toolkit):
             log_debug(f"table_names: {table_names}")
             return json.dumps(table_names)
         except Exception as e:
-            logger.error(f"Error getting tables: {e}")
+            logger.exception("Error getting tables")
             return f"Error getting tables: {e}"
 
     def describe_table(self, table_name: str) -> str:
@@ -100,12 +101,17 @@ class SQLTools(Toolkit):
             table_schema = inspector.get_columns(table_name, schema=self.schema)
             return json.dumps(
                 [
-                    {"name": column["name"], "type": str(column["type"]), "nullable": column["nullable"]}
+                    {
+                        "name": column["name"],
+                        "type": str(column["type"]),
+                        "nullable": column["nullable"],
+                        "default": column.get("default"),
+                    }
                     for column in table_schema
                 ]
             )
         except Exception as e:
-            logger.error(f"Error getting table schema: {e}")
+            logger.exception("Error getting table schema")
             return f"Error getting table schema: {e}"
 
     def run_sql_query(self, query: str, limit: Optional[int] = 10) -> str:
@@ -123,7 +129,7 @@ class SQLTools(Toolkit):
         try:
             return json.dumps(self.run_sql(sql=query, limit=limit), default=str)
         except Exception as e:
-            logger.error(f"Error running query: {e}")
+            logger.exception("Error running query")
             return f"Error running query: {e}"
 
     def run_sql(self, sql: str, limit: Optional[int] = None) -> List[dict]:
@@ -141,13 +147,18 @@ class SQLTools(Toolkit):
         with self.Session() as sess, sess.begin():
             result = sess.execute(text(sql))
 
-            # Check if the operation has returned rows.
+            # DML (INSERT/UPDATE/DELETE) and DDL don't return rows — don't
+            # try to fetch. The `sess.begin()` context still commits on
+            # clean exit.
+            if not result.returns_rows:
+                return []
+
             try:
                 if limit:
                     rows = result.fetchmany(limit)
                 else:
                     rows = result.fetchall()
                 return [row._asdict() for row in rows]
-            except Exception as e:
-                logger.error(f"Error while executing SQL: {e}")
+            except Exception:
+                logger.exception("Error while executing SQL")
                 return []

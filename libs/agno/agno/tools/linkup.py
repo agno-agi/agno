@@ -2,7 +2,7 @@ from os import getenv
 from typing import Any, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error
 
 try:
     from linkup import LinkupClient
@@ -16,17 +16,21 @@ class LinkupTools(Toolkit):
         api_key: Optional[str] = None,
         depth: Literal["standard", "deep"] = "standard",
         output_type: Literal["sourcedAnswer", "searchResults"] = "searchResults",
+        enable_web_search_with_linkup: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("LINKUP_API_KEY")
         if not self.api_key:
-            logger.error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")
+            log_error("LINKUP_API_KEY not set. Please set the LINKUP_API_KEY environment variable.")
 
         self.linkup = LinkupClient(api_key=api_key)
         self.depth = depth
         self.output_type = output_type
 
-        tools: List[Any] = [self.web_search_with_linkup]
+        tools: List[Any] = []
+        if all or enable_web_search_with_linkup:
+            tools.append(self.web_search_with_linkup)
 
         super().__init__(name="linkup_tools", tools=tools, **kwargs)
 

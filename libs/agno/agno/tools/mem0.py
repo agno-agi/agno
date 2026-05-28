@@ -1,9 +1,9 @@
 import json
 from os import getenv
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
-from agno.agent import Agent
-from agno.tools.toolkit import Toolkit
+from agno.run import RunContext
+from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -22,18 +22,24 @@ class Mem0Tools(Toolkit):
         org_id: Optional[str] = None,
         project_id: Optional[str] = None,
         infer: bool = True,
+        enable_add_memory: bool = True,
+        enable_search_memory: bool = True,
+        enable_get_all_memories: bool = True,
+        enable_delete_all_memories: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(
-            name="mem0_tools",
-            tools=[
-                self.add_memory,
-                self.search_memory,
-                self.get_all_memories,
-                self.delete_all_memories,
-            ],
-            **kwargs,
-        )
+        tools: List[Any] = []
+        if enable_add_memory or all:
+            tools.append(self.add_memory)
+        if enable_search_memory or all:
+            tools.append(self.search_memory)
+        if enable_get_all_memories or all:
+            tools.append(self.get_all_memories)
+        if enable_delete_all_memories or all:
+            tools.append(self.delete_all_memories)
+
+        super().__init__(name="mem0_tools", tools=tools, **kwargs)
         self.api_key = api_key or getenv("MEM0_API_KEY")
         self.user_id = user_id
         self.org_id = org_id or getenv("MEM0_ORG_ID")
@@ -57,21 +63,19 @@ class Mem0Tools(Toolkit):
                 log_debug("Initializing Mem0 with default settings.")
                 self.client = Memory()
         except Exception as e:
-            log_error(f"Failed to initialize Mem0 client: {e}")
+            log_error(f"Failed to initialize Mem0 client: {str(e)}")
             raise ConnectionError("Failed to initialize Mem0 client. Ensure API keys/config are set.") from e
 
     def _get_user_id(
         self,
         method_name: str,
-        agent: Optional[Agent] = None,
+        run_context: RunContext,
     ) -> str:
         """Resolve the user ID"""
         resolved_user_id = self.user_id
-        if not resolved_user_id and agent is not None:
+        if not resolved_user_id:
             try:
-                session_state = getattr(agent, "session_state", None)
-                if isinstance(session_state, dict):
-                    resolved_user_id = session_state.get("current_user_id")
+                resolved_user_id = run_context.user_id
             except Exception:
                 pass
         if not resolved_user_id:
@@ -82,7 +86,7 @@ class Mem0Tools(Toolkit):
 
     def add_memory(
         self,
-        agent: Agent,
+        run_context: RunContext,
         content: Union[str, Dict[str, str]],
     ) -> str:
         """Add facts to the user's memory.
@@ -95,7 +99,7 @@ class Mem0Tools(Toolkit):
             str: JSON-encoded Mem0 response or an error message.
         """
 
-        resolved_user_id = self._get_user_id("add_memory", agent=agent)
+        resolved_user_id = self._get_user_id("add_memory", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory:"):
             return resolved_user_id
         try:
@@ -110,28 +114,26 @@ class Mem0Tools(Toolkit):
                 messages_list,
                 user_id=resolved_user_id,
                 infer=self.infer,
-                output_format="v1.1",
             )
             return json.dumps(result)
         except Exception as e:
-            log_error(f"Error adding memory: {e}")
+            log_error(f"Error adding memory: {str(e)}")
             return f"Error adding memory: {e}"
 
     def search_memory(
         self,
-        agent: Agent,
+        run_context: RunContext,
         query: str,
     ) -> str:
         """Semantic search for *query* across the user's stored memories."""
 
-        resolved_user_id = self._get_user_id("search_memory", agent=agent)
+        resolved_user_id = self._get_user_id("search_memory", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in search_memory:"):
             return resolved_user_id
         try:
             results = self.client.search(
                 query=query,
                 user_id=resolved_user_id,
-                output_format="v1.1",
             )
 
             if isinstance(results, dict) and "results" in results:
@@ -147,19 +149,18 @@ class Mem0Tools(Toolkit):
             log_error(str(ve))
             return str(ve)
         except Exception as e:
-            log_error(f"Error searching memory: {e}")
+            log_error(f"Error searching memory: {str(e)}")
             return f"Error searching memory: {e}"
 
-    def get_all_memories(self, agent: Agent) -> str:
+    def get_all_memories(self, run_context: RunContext) -> str:
         """Return **all** memories for the current user as a JSON string."""
 
-        resolved_user_id = self._get_user_id("get_all_memories", agent=agent)
+        resolved_user_id = self._get_user_id("get_all_memories", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in get_all_memories:"):
             return resolved_user_id
         try:
             results = self.client.get_all(
                 user_id=resolved_user_id,
-                output_format="v1.1",
             )
 
             if isinstance(results, dict) and "results" in results:
@@ -174,13 +175,13 @@ class Mem0Tools(Toolkit):
             log_error(str(ve))
             return str(ve)
         except Exception as e:
-            log_error(f"Error getting all memories: {e}")
+            log_error(f"Error getting all memories: {str(e)}")
             return f"Error getting all memories: {e}"
 
-    def delete_all_memories(self, agent: Agent) -> str:
+    def delete_all_memories(self, run_context: RunContext) -> str:
         """Delete *all* memories associated with the current user"""
 
-        resolved_user_id = self._get_user_id("delete_all_memories", agent=agent)
+        resolved_user_id = self._get_user_id("delete_all_memories", run_context=run_context)
         if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in delete_all_memories:"):
             error_msg = resolved_user_id
             log_error(error_msg)
@@ -189,5 +190,5 @@ class Mem0Tools(Toolkit):
             self.client.delete_all(user_id=resolved_user_id)
             return f"Successfully deleted all memories for user_id: {resolved_user_id}."
         except Exception as e:
-            log_error(f"Error deleting all memories: {e}")
+            log_error(f"Error deleting all memories: {str(e)}")
             return f"Error deleting all memories: {e}"

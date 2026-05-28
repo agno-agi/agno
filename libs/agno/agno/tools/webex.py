@@ -1,32 +1,38 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional
 
-from agno.tools.toolkit import Toolkit
-from agno.utils.log import logger
+from agno.tools import Toolkit
+from agno.utils.log import log_error, logger
 
 try:
     from webexpythonsdk import WebexAPI
     from webexpythonsdk.exceptions import ApiError
-except ImportError:
-    logger.error("Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.")
+except ImportError as e:
+    log_error(
+        f"Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.: {str(e)}"
+    )
 
 
 class WebexTools(Toolkit):
     def __init__(
-        self, send_message: bool = True, list_rooms: bool = True, access_token: Optional[str] = None, **kwargs
+        self,
+        enable_send_message: bool = True,
+        enable_list_rooms: bool = True,
+        all: bool = False,
+        access_token: Optional[str] = None,
+        **kwargs,
     ):
-        if access_token is None:
-            access_token = os.getenv("WEBEX_ACCESS_TOKEN")
+        access_token = access_token or getenv("WEBEX_ACCESS_TOKEN")
         if access_token is None:
             raise ValueError("Webex access token is not set. Please set the WEBEX_ACCESS_TOKEN environment variable.")
 
         self.client = WebexAPI(access_token=access_token)
 
         tools: List[Any] = []
-        if send_message:
+        if all or enable_send_message:
             tools.append(self.send_message)
-        if list_rooms:
+        if all or enable_list_rooms:
             tools.append(self.list_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)
@@ -44,7 +50,7 @@ class WebexTools(Toolkit):
             response = self.client.messages.create(roomId=room_id, text=text)
             return json.dumps(response.json_data)
         except ApiError as e:
-            logger.error(f"Error sending message: {e} in room: {room_id}")
+            logger.exception(f"Error sending message in room: {room_id}")
             return json.dumps({"error": str(e)})
 
     def list_rooms(self) -> str:
@@ -68,5 +74,5 @@ class WebexTools(Toolkit):
 
             return json.dumps({"rooms": rooms_list}, indent=4)
         except ApiError as e:
-            logger.error(f"Error listing rooms: {e}")
+            logger.exception("Error listing rooms")
             return json.dumps({"error": str(e)})
