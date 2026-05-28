@@ -110,6 +110,32 @@ class InvisiblePlaywrightTools(Toolkit):
             return text[: self._max_length] + "..."
         return text
 
+    @staticmethod
+    def _collect_results(
+        page,
+        result_selector: str,
+        title_selector: str,
+        snippet_selector: str,
+        limit: int,
+    ) -> List[Dict[str, str]]:
+        """Extract search result items via Playwright element methods only.
+
+        Avoids in-page eval so CSP-restricted SERPs (DuckDuckGo, others)
+        don't reject the extraction.
+        """
+        items: List[Dict[str, str]] = []
+        for el in page.query_selector_all(result_selector)[:limit]:
+            title_el = el.query_selector(title_selector)
+            snippet_el = el.query_selector(snippet_selector)
+            items.append(
+                {
+                    "title": (title_el.inner_text() if title_el else "").strip(),
+                    "url": (title_el.get_attribute("href") if title_el else "") or "",
+                    "snippet": (snippet_el.inner_text() if snippet_el else "").strip(),
+                }
+            )
+        return items
+
     def scrape_url(self, url: str, wait_for_selector: Optional[str] = None) -> str:
         """Fetch the rendered HTML of a URL using a patched stealth Firefox.
 
@@ -181,11 +207,17 @@ class InvisiblePlaywrightTools(Toolkit):
                         continue
                     if depth >= depth_cap:
                         continue
-                    hrefs = page.eval_on_selector_all(
-                        "a[href]", "elements => elements.map(e => e.href)"
-                    )
-                    for href in hrefs:
-                        if not href or href in seen:
+                    # query_selector_all + get_attribute avoids in-page eval() which
+                    # some sites block via CSP (e.g. DuckDuckGo).
+                    anchors = page.query_selector_all("a[href]")
+                    for anchor in anchors:
+                        href = anchor.get_attribute("href") or ""
+                        if not href:
+                            continue
+                        # resolve relative links against the current page url
+                        if href.startswith(("/", "?", "#")):
+                            href = urljoin(current, href)
+                        if href in seen:
                             continue
                         if urlparse(href).netloc != origin:
                             continue
@@ -220,24 +252,22 @@ class InvisiblePlaywrightTools(Toolkit):
                 if engine == "duckduckgo":
                     page.goto(f"https://duckduckgo.com/html/?q={query}")
                     page.wait_for_selector(".result__title a", timeout=10000)
-                    items = page.eval_on_selector_all(
-                        ".result",
-                        """elements => elements.slice(0, %d).map(e => ({
-                            title: (e.querySelector('.result__title a') || {}).innerText || '',
-                            url: (e.querySelector('.result__title a') || {}).href || '',
-                            snippet: (e.querySelector('.result__snippet') || {}).innerText || ''
-                        }))""" % n,
+                    items = self._collect_results(
+                        page,
+                        result_selector=".result",
+                        title_selector=".result__title a",
+                        snippet_selector=".result__snippet",
+                        limit=n,
                     )
                 elif engine == "bing":
                     page.goto(f"https://www.bing.com/search?q={query}")
                     page.wait_for_selector("li.b_algo", timeout=10000)
-                    items = page.eval_on_selector_all(
-                        "li.b_algo",
-                        """elements => elements.slice(0, %d).map(e => ({
-                            title: (e.querySelector('h2 a') || {}).innerText || '',
-                            url: (e.querySelector('h2 a') || {}).href || '',
-                            snippet: (e.querySelector('.b_caption p') || {}).innerText || ''
-                        }))""" % n,
+                    items = self._collect_results(
+                        page,
+                        result_selector="li.b_algo",
+                        title_selector="h2 a",
+                        snippet_selector=".b_caption p",
+                        limit=n,
                     )
                 else:
                     return f"Error: unsupported search engine '{engine}'. Use 'duckduckgo' or 'bing'."
