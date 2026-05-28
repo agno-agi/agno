@@ -66,70 +66,92 @@ class MockModelWithStopReason(Model):
         return self._mock_response
 
 
-def test_stop_reason_end_turn_sync():
+def test_stop_reason_end_turn_propagates_to_run_output():
     """stop_reason='end_turn' should propagate to RunOutput."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="end_turn"))
+
     result = agent.run("Test message")
 
     assert result.stop_reason == "end_turn"
 
 
-def test_stop_reason_max_tokens_sync():
+def test_stop_reason_max_tokens_propagates_to_run_output():
     """stop_reason='max_tokens' should propagate to RunOutput."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
+
     result = agent.run("Test message")
 
     assert result.stop_reason == "max_tokens"
 
 
-def test_stop_reason_tool_use_sync():
+def test_stop_reason_tool_use_propagates_to_run_output():
     """stop_reason='tool_use' should propagate to RunOutput."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="tool_use"))
+
     result = agent.run("Test message")
 
     assert result.stop_reason == "tool_use"
 
 
 @pytest.mark.asyncio
-async def test_stop_reason_end_turn_async():
-    """stop_reason='end_turn' should propagate to RunOutput in async."""
-    agent = Agent(model=MockModelWithStopReason(stop_reason="end_turn"))
-    result = await agent.arun("Test message")
-
-    assert result.stop_reason == "end_turn"
-
-
-@pytest.mark.asyncio
-async def test_stop_reason_max_tokens_async():
-    """stop_reason='max_tokens' should propagate to RunOutput in async."""
+async def test_stop_reason_propagates_to_run_output_async():
+    """stop_reason should propagate to RunOutput in async mode."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
+
     result = await agent.arun("Test message")
 
     assert result.stop_reason == "max_tokens"
 
 
-def test_stop_reason_streaming_sync():
-    """stop_reason should propagate in streaming mode."""
+def test_stop_reason_streaming_with_yield_run_output():
+    """stop_reason should propagate in streaming mode with yield_run_output."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
 
-    final_output = None
+    run_output = None
     for chunk in agent.run("Test message", stream=True, yield_run_output=True):
         if isinstance(chunk, RunOutput):
-            final_output = chunk
+            run_output = chunk
 
-    assert final_output is not None
-    assert final_output.stop_reason == "max_tokens"
+    assert run_output is not None
+    assert run_output.stop_reason == "max_tokens"
+
+
+def test_stop_reason_streaming_with_stream_events():
+    """stop_reason should propagate to RunCompletedEvent with stream_events."""
+    agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
+
+    completed_event = None
+    for chunk in agent.run("Test message", stream=True, stream_events=True):
+        if isinstance(chunk, RunCompletedEvent):
+            completed_event = chunk
+
+    assert completed_event is not None
+    assert completed_event.stop_reason == "max_tokens"
 
 
 @pytest.mark.asyncio
-async def test_stop_reason_streaming_async():
-    """stop_reason should propagate in async streaming mode."""
+async def test_stop_reason_async_streaming_with_yield_run_output():
+    """stop_reason should propagate in async streaming mode with yield_run_output."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
 
-    final_output = None
+    run_output = None
     async for chunk in agent.arun("Test message", stream=True, yield_run_output=True):
         if isinstance(chunk, RunOutput):
-            final_output = chunk
+            run_output = chunk
 
-    assert final_output is not None
-    assert final_output.stop_reason == "max_tokens"
+    assert run_output is not None
+    assert run_output.stop_reason == "max_tokens"
+
+
+@pytest.mark.asyncio
+async def test_stop_reason_async_streaming_with_stream_events():
+    """stop_reason should propagate to RunCompletedEvent in async streaming mode."""
+    agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
+
+    completed_event = None
+    async for chunk in agent.arun("Test message", stream=True, stream_events=True):
+        if isinstance(chunk, RunCompletedEvent):
+            completed_event = chunk
+
+    assert completed_event is not None
+    assert completed_event.stop_reason == "max_tokens"
