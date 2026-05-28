@@ -67,7 +67,6 @@ class MockModelWithStopReason(Model):
 
 
 def test_stop_reason_end_turn_propagates_to_run_output():
-    """stop_reason='end_turn' should propagate to RunOutput."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="end_turn"))
 
     result = agent.run("Test message")
@@ -76,7 +75,6 @@ def test_stop_reason_end_turn_propagates_to_run_output():
 
 
 def test_stop_reason_max_tokens_propagates_to_run_output():
-    """stop_reason='max_tokens' should propagate to RunOutput."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
 
     result = agent.run("Test message")
@@ -85,7 +83,6 @@ def test_stop_reason_max_tokens_propagates_to_run_output():
 
 
 def test_stop_reason_tool_use_propagates_to_run_output():
-    """stop_reason='tool_use' should propagate to RunOutput."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="tool_use"))
 
     result = agent.run("Test message")
@@ -95,7 +92,6 @@ def test_stop_reason_tool_use_propagates_to_run_output():
 
 @pytest.mark.asyncio
 async def test_stop_reason_propagates_to_run_output_async():
-    """stop_reason should propagate to RunOutput in async mode."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
 
     result = await agent.arun("Test message")
@@ -104,7 +100,6 @@ async def test_stop_reason_propagates_to_run_output_async():
 
 
 def test_stop_reason_streaming_with_yield_run_output():
-    """stop_reason should propagate in streaming mode with yield_run_output."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
 
     run_output = None
@@ -117,7 +112,6 @@ def test_stop_reason_streaming_with_yield_run_output():
 
 
 def test_stop_reason_streaming_with_stream_events():
-    """stop_reason should propagate to RunCompletedEvent with stream_events."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
 
     completed_event = None
@@ -131,7 +125,6 @@ def test_stop_reason_streaming_with_stream_events():
 
 @pytest.mark.asyncio
 async def test_stop_reason_async_streaming_with_yield_run_output():
-    """stop_reason should propagate in async streaming mode with yield_run_output."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
 
     run_output = None
@@ -145,7 +138,6 @@ async def test_stop_reason_async_streaming_with_yield_run_output():
 
 @pytest.mark.asyncio
 async def test_stop_reason_async_streaming_with_stream_events():
-    """stop_reason should propagate to RunCompletedEvent in async streaming mode."""
     agent = Agent(model=MockModelWithStopReason(stop_reason="max_tokens"))
 
     completed_event = None
