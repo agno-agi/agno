@@ -192,7 +192,7 @@ class ParallelTools(Toolkit):
             return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_error(f"Error searching Parallel for objective '{objective}': {e}")
+            log_error(f"Error searching Parallel for objective '{objective}': {str(e)}")
             return json.dumps({"error": f"Search failed: {str(e)}"}, indent=2)
 
     def parallel_extract(
@@ -303,5 +303,5 @@ class ParallelTools(Toolkit):
             return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_error(f"Error extracting from Parallel: {e}")
+            log_error(f"Error extracting from Parallel: {str(e)}")
             return json.dumps({"error": f"Extract failed: {str(e)}"}, indent=2)

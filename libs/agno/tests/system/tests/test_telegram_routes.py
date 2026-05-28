@@ -236,7 +236,7 @@ class TestTelegramWebhookProcessing:
 
     def test_no_message_returns_ignored(self, client: httpx.Client, telegram_secret_token: str):
         """Test that updates without a message field are ignored."""
-        body = {"update_id": 12345}
+        body = {"update_id": uuid.uuid4().int % 10**9}
         response = post_telegram_webhook(client, "/telegram/local/webhook", body, telegram_secret_token)
 
         assert response.status_code == 200
@@ -244,7 +244,7 @@ class TestTelegramWebhookProcessing:
 
     def test_callback_query_ignored(self, client: httpx.Client, telegram_secret_token: str):
         """Test that callback queries are ignored."""
-        body = {"update_id": 12345, "callback_query": {"id": "123", "data": "action"}}
+        body = {"update_id": uuid.uuid4().int % 10**9, "callback_query": {"id": "123", "data": "action"}}
         response = post_telegram_webhook(client, "/telegram/local/webhook", body, telegram_secret_token)
 
         assert response.status_code == 200

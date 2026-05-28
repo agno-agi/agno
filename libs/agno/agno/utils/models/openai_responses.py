@@ -3,37 +3,44 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from agno.media import Image
 from agno.utils.log import logger
+from agno.utils.media import resolve_image_mime_type
 
 
-def _process_bytes_image(image: bytes) -> Dict[str, Any]:
+def _process_bytes_image(
+    image: bytes, mime_type: Optional[str] = None, image_format: Optional[str] = None
+) -> Dict[str, Any]:
     """Process bytes image data."""
     import base64
 
     base64_image = base64.b64encode(image).decode("utf-8")
-    image_url = f"data:image/jpeg;base64,{base64_image}"
+    resolved_mime = resolve_image_mime_type(mime_type=mime_type, image_format=image_format, image_bytes=image)
+    image_url = f"data:{resolved_mime};base64,{base64_image}"
     return {"type": "input_image", "image_url": image_url}
 
 
-def _process_image_path(image_path: Union[Path, str]) -> Dict[str, Any]:
-    """Process image ( file path)."""
-    # Process local file image
+def _process_image_path(
+    image_path: Union[Path, str], mime_type: Optional[str] = None, image_format: Optional[str] = None
+) -> Dict[str, Any]:
+    """Process image from file path."""
     import base64
-    import mimetypes
 
     path = image_path if isinstance(image_path, Path) else Path(image_path)
     if not path.exists():
         raise FileNotFoundError(f"Image file not found: {image_path}")
 
-    mime_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
     with open(path, "rb") as image_file:
-        base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-        image_url = f"data:{mime_type};base64,{base64_image}"
-        return {"type": "input_image", "image_url": image_url}
+        image_data = image_file.read()
+
+    base64_image = base64.b64encode(image_data).decode("utf-8")
+    resolved_mime = resolve_image_mime_type(
+        mime_type=mime_type, image_format=image_format, file_path=path, image_bytes=image_data
+    )
+    image_url = f"data:{resolved_mime};base64,{base64_image}"
+    return {"type": "input_image", "image_url": image_url}
 
 
 def _process_image_url(image_url: str) -> Dict[str, Any]:
     """Process image (base64 or URL)."""
-
     if image_url.startswith("data:image") or image_url.startswith(("http://", "https://")):
         return {"type": "input_image", "image_url": image_url}
     else:
@@ -42,22 +49,22 @@ def _process_image_url(image_url: str) -> Dict[str, Any]:
 
 def _process_image(image: Image) -> Optional[Dict[str, Any]]:
     """Process an image based on the format."""
-
     if image.url is not None:
         image_payload = _process_image_url(image.url)
 
     elif image.filepath is not None:
-        image_payload = _process_image_path(image.filepath)
+        image_payload = _process_image_path(image.filepath, mime_type=image.mime_type, image_format=image.format)
 
     elif image.content is not None:
-        image_payload = _process_bytes_image(image.content)
+        image_payload = _process_bytes_image(image.content, mime_type=image.mime_type, image_format=image.format)
 
     else:
         logger.warning(f"Unsupported image format: {image}")
         return None
 
-    if image.detail:
-        image_payload["image_url"]["detail"] = image.detail
+    # Responses API puts detail at top level, not nested under image_url like Chat API
+    if image_payload and image.detail:
+        image_payload["detail"] = image.detail
 
     return image_payload
 
@@ -86,8 +93,8 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             image_data = _process_image(image)
             if image_data:
                 image_messages.append(image_data)
-        except Exception as e:
-            logger.error(f"Failed to process image: {str(e)}")
+        except Exception:
+            logger.exception("Failed to process image")
             continue
 
     return image_messages

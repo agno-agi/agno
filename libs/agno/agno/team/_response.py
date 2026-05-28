@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio
 from agno.models.base import Model
+from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
@@ -145,7 +146,11 @@ def process_parser_response(
 
 
 def parse_response_with_parser_model(
-    team: "Team", model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    team: "Team",
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> None:
     """Parse the model response using the parser model."""
     from agno.team._messages import _get_messages_for_parser_model
@@ -165,13 +170,29 @@ def parse_response_with_parser_model(
             messages=messages_for_parser_model,
             response_format=parser_response_format,
         )
+
+        # Accumulate parser model metrics
+        if run_response is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(
+                parser_model_response,
+                team.parser_model,
+                ModelType.PARSER_MODEL,
+                run_response.metrics,
+            )
+
         process_parser_response(team, model_response, run_messages, parser_model_response, messages_for_parser_model)
     else:
         log_warning("A response model is required to parse the response with a parser model")
 
 
 async def aparse_response_with_parser_model(
-    team: "Team", model_response: ModelResponse, run_messages: RunMessages, run_context: Optional[RunContext] = None
+    team: "Team",
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> None:
     """Parse the model response using the parser model."""
     from agno.team._messages import _get_messages_for_parser_model
@@ -191,6 +212,18 @@ async def aparse_response_with_parser_model(
             messages=messages_for_parser_model,
             response_format=parser_response_format,
         )
+
+        # Accumulate parser model metrics
+        if run_response is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(
+                parser_model_response,
+                team.parser_model,
+                ModelType.PARSER_MODEL,
+                run_response.metrics,
+            )
+
         process_parser_response(team, model_response, run_messages, parser_model_response, messages_for_parser_model)
     else:
         log_warning("A response model is required to parse the response with a parser model")
@@ -229,6 +262,7 @@ def parse_response_with_parser_model_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
+                run_response=run_response,
             ):
                 yield from _handle_model_response_chunk(
                     team,
@@ -299,6 +333,7 @@ async def aparse_response_with_parser_model_stream(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
                 stream_model_response=False,
+                run_response=run_response,
             )
             async for model_response_event in model_response_stream:  # type: ignore
                 for event in _handle_model_response_chunk(
@@ -342,7 +377,12 @@ async def aparse_response_with_parser_model_stream(
 # ---------------------------------------------------------------------------
 
 
-def parse_response_with_output_model(team: "Team", model_response: ModelResponse, run_messages: RunMessages) -> None:
+def parse_response_with_output_model(
+    team: "Team",
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_response: Optional[TeamRunOutput] = None,
+) -> None:
     """Parse the model response using the output model."""
     from agno.team._messages import _get_messages_for_output_model
 
@@ -351,6 +391,18 @@ def parse_response_with_output_model(team: "Team", model_response: ModelResponse
 
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     output_model_response: ModelResponse = team.output_model.response(messages=messages_for_output_model)
+
+    # Accumulate output model metrics
+    if run_response is not None:
+        from agno.metrics import ModelType, accumulate_model_metrics
+
+        accumulate_model_metrics(
+            output_model_response,
+            team.output_model,
+            ModelType.OUTPUT_MODEL,
+            run_response.metrics,
+        )
+
     model_response.content = output_model_response.content
 
 
@@ -382,7 +434,9 @@ def generate_response_with_output_model_stream(
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     model_response = ModelResponse(content="")
 
-    for model_response_event in team.output_model.response_stream(messages=messages_for_output_model):
+    for model_response_event in team.output_model.response_stream(
+        messages=messages_for_output_model, run_response=run_response
+    ):
         yield from _handle_model_response_chunk(
             team,
             session=session,
@@ -409,7 +463,10 @@ def generate_response_with_output_model_stream(
 
 
 async def agenerate_response_with_output_model(
-    team: "Team", model_response: ModelResponse, run_messages: RunMessages
+    team: "Team",
+    model_response: ModelResponse,
+    run_messages: RunMessages,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> None:
     """Parse the model response using the output model stream."""
     from agno.team._messages import _get_messages_for_output_model
@@ -419,6 +476,18 @@ async def agenerate_response_with_output_model(
 
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     output_model_response: ModelResponse = await team.output_model.aresponse(messages=messages_for_output_model)
+
+    # Accumulate output model metrics
+    if run_response is not None:
+        from agno.metrics import ModelType, accumulate_model_metrics
+
+        accumulate_model_metrics(
+            output_model_response,
+            team.output_model,
+            ModelType.OUTPUT_MODEL,
+            run_response.metrics,
+        )
+
     model_response.content = output_model_response.content
 
 
@@ -450,7 +519,9 @@ async def agenerate_response_with_output_model_stream(
     messages_for_output_model = _get_messages_for_output_model(team, run_messages.messages)
     model_response = ModelResponse(content="")
 
-    async for model_response_event in team.output_model.aresponse_stream(messages=messages_for_output_model):
+    async for model_response_event in team.output_model.aresponse_stream(
+        messages=messages_for_output_model, run_response=run_response
+    ):
         for event in _handle_model_response_chunk(
             team,
             session=session,
@@ -945,7 +1016,9 @@ def _handle_model_response_stream(
         stream_model_response = False
 
     full_model_response = ModelResponse()
-    for model_response_event in team.model.response_stream(
+    for model_response_event in call_model_stream_with_fallback(
+        team.model,
+        team.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1097,7 +1170,9 @@ async def _ahandle_model_response_stream(
         stream_model_response = False
 
     full_model_response = ModelResponse()
-    model_stream = team.model.aresponse_stream(
+    model_stream = acall_model_stream_with_fallback(
+        team.model,
+        team.fallback_config,
         messages=run_messages.messages,
         response_format=response_format,
         tools=tools,
@@ -1261,6 +1336,13 @@ def _handle_model_response_chunk(
             return
     else:
         model_response_event = cast(ModelResponse, model_response_event)
+        # If a fallback model was activated, reset accumulated content
+        if model_response_event.event == ModelResponseEvent.fallback_model_activated.value:
+            full_model_response.content = None
+            full_model_response.reasoning_content = None
+            run_response.content = None
+            run_response.reasoning_content = None
+            return
         # If the model response is an assistant_response, yield a RunOutput
         if model_response_event.event == ModelResponseEvent.assistant_response.value:
             content_type = "str"
@@ -1590,7 +1672,7 @@ def _convert_response_to_structured_format(
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    log_warning(f"Failed to convert response to output model: {str(e)}")
             else:
                 log_warning("Something went wrong. Team run response content is not a string")
     elif team._member_response_model is not None:
@@ -1623,7 +1705,7 @@ def _convert_response_to_structured_format(
                     else:
                         log_warning("Failed to convert response to output_schema")
                 except Exception as e:
-                    log_warning(f"Failed to convert response to output model: {e}")
+                    log_warning(f"Failed to convert response to output model: {str(e)}")
             else:
                 log_warning("Something went wrong. Member run response content is not a string")
 
@@ -1660,7 +1742,7 @@ def generate_team_followups(
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
     except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+        log_warning(f"Error generating followups: {str(e)}")
 
 
 async def agenerate_team_followups(
@@ -1690,7 +1772,7 @@ async def agenerate_team_followups(
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
     except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+        log_warning(f"Error generating followups: {str(e)}")
 
 
 def generate_team_followups_stream(
@@ -1729,7 +1811,7 @@ def generate_team_followups_stream(
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
     except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+        log_warning(f"Error generating followups: {str(e)}")
 
     if stream_events:
         yield handle_event(
@@ -1776,7 +1858,7 @@ async def agenerate_team_followups_stream(
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
     except Exception as e:
-        log_warning(f"Error generating followups: {e}")
+        log_warning(f"Error generating followups: {str(e)}")
 
     if stream_events:
         yield handle_event(
