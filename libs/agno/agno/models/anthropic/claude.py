@@ -1060,7 +1060,7 @@ class Claude(Model):
         if response.stop_reason is not None:
             model_response.stop_reason = response.stop_reason
             if response.stop_reason == "max_tokens":
-                log_warning("Response stopped: max_tokens limit reached")
+                log_warning(f"Model '{self.id}' response truncated: max_tokens limit reached. Increase max_tokens for complete response.")
 
         # Capture context management information if present
         if self.context_management is not None and hasattr(response, "context_management"):
@@ -1277,7 +1277,7 @@ class Claude(Model):
             if stop_reason is not None:
                 model_response.stop_reason = stop_reason
                 if stop_reason == "max_tokens":
-                    log_warning("Response stopped: max_tokens limit reached")
+                    log_warning(f"Model '{self.id}' response truncated: max_tokens limit reached. Increase max_tokens for complete response.")
 
         # Capture the Beta response
         try:
