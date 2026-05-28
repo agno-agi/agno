@@ -6328,6 +6328,135 @@ def _continue_run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+async def _acontinue_run_background_stream(
+    team: "Team",
+    run_response: Optional[TeamRunOutput],
+    run_context: RunContext,
+    session_id: str,
+    run_id: str,
+    requirements: Optional[List[Any]] = None,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Any]] = None,
+    stream_events: bool = False,
+    yield_run_output: bool = False,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming continue-run that survives client disconnections.
+
+    Mirrors _arun_background_stream but drives _acontinue_run_stream instead of
+    _arun_stream, so that acontinue_run(background=True, stream=True) yields
+    pre-formatted SSE strings — not raw event objects.
+
+    Without this, team_resumable_continue_response_streamer would receive raw
+    TeamRunOutputEvent / RunContinuedEvent objects and yield them straight to
+    FastAPI's StreamingResponse, which calls .encode() and raises::
+
+        AttributeError: 'RunContinuedEvent' object has no attribute 'encode'
+
+    See https://github.com/agno-agi/agno/issues/8134
+    """
+    from agno.os.managers import event_buffer, sse_subscriber_manager
+    from agno.os.utils import format_sse_event_with_index
+    from agno.team._session import asave_session
+    from agno.team._storage import _aread_or_create_session, _update_metadata
+
+    effective_run_id = (run_response.run_id if run_response else None) or run_id
+    if not effective_run_id:
+        raise ValueError("run_id is required for background streaming continue-run")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    if run_response is not None:
+        run_response.status = RunStatus.running
+        team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+        _update_metadata(team, session=team_session)
+        team_session.upsert_run(run_response=run_response)
+        await asave_session(team, session=team_session)
+
+    # 2. Create queue for forwarding SSE strings to the original client
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        try:
+            async for event in _acontinue_run_stream(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                requirements=requirements,
+                run_id=effective_run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                if isinstance(event, TeamRunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(effective_run_id, event)
+                except Exception:
+                    pass
+
+                # Format as SSE and push to primary queue
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=effective_run_id)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    pass
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        effective_run_id,
+                        event_index if event_index is not None else -1,
+                        sse_data,
+                    )
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+        finally:
+            # Signal primary queue — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                pass
+
+            # Mark run completed in event buffer
+            try:
+                status = (run_response.status if run_response else None) or RunStatus.completed
+                event_buffer.set_run_completed(effective_run_id, status)
+            except Exception:
+                pass
+
+            # Signal SSE subscribers that run is done
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(effective_run_id))
+            except (Exception, asyncio.CancelledError):
+                pass
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
+
+
 def acontinue_run_dispatch(  # type: ignore
     team: "Team",
     run_response: Optional[TeamRunOutput] = None,
@@ -6365,6 +6494,15 @@ def acontinue_run_dispatch(  # type: ignore
         from fastapi import BackgroundTasks
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+    # Pop `background` so it does not leak into _acontinue_run_stream's **kwargs.
+    # When background=True and stream=True we route to _acontinue_run_background_stream
+    # which yields pre-formatted SSE strings.  Without this, team_resumable_continue_
+    # response_streamer receives raw TeamRunOutputEvent objects and yields them directly
+    # to FastAPI's StreamingResponse, which calls .encode() and raises
+    #   AttributeError: 'RunContinuedEvent' object has no attribute 'encode'
+    # See https://github.com/agno-agi/agno/issues/8134
+    background: bool = kwargs.pop("background", False)
 
     session_id_resolved = run_response.session_id if run_response else session_id
     run_id_resolved: str = run_response.run_id if run_response else run_id  # type: ignore
@@ -6410,6 +6548,22 @@ def acontinue_run_dispatch(  # type: ignore
 
     response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
 
+    if opts.stream and background:
+        return _acontinue_run_background_stream(  # type: ignore[return-value]
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            requirements=requirements,
+            run_id=run_id_resolved,
+            user_id=user_id,
+            session_id=session_id_resolved,
+            response_format=response_format,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
     if opts.stream:
         return _acontinue_run_stream(
             team,
