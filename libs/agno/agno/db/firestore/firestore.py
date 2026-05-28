@@ -786,8 +786,11 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self, create_collection_if_not_found: Optional[bool] = True) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: The topics.
@@ -800,13 +803,18 @@ class FirestoreDb(BaseDb):
             if collection_ref is None:
                 return []
 
-            docs = collection_ref.stream()
+            query = (
+                collection_ref
+                if user_id is None
+                else collection_ref.where(filter=FieldFilter("user_id", "==", user_id))
+            )
+            docs = query.stream()
 
-            all_topics = set()
+            all_topics: set[str] = set()
             for doc in docs:
                 data = doc.to_dict()
                 topics = data.get("topics", [])
-                if topics:
+                if topics and isinstance(topics, list):
                     all_topics.update(topics)
 
             return [topic for topic in all_topics if topic]
@@ -1942,18 +1950,21 @@ class FirestoreDb(BaseDb):
                 if should_update_name:
                     update_values["name"] = trace.name
 
-                # Update context fields only if new value is not None
-                if trace.run_id is not None:
+                # Preserve existing non-null context values: only fill in fields
+                # that the existing row left blank. Otherwise a later upsert from
+                # a child span (e.g. a post-hook agent's run with a different
+                # session_id) would overwrite the trace's already-correct context.
+                if existing_data.get("run_id") is None and trace.run_id is not None:
                     update_values["run_id"] = trace.run_id
-                if trace.session_id is not None:
+                if existing_data.get("session_id") is None and trace.session_id is not None:
                     update_values["session_id"] = trace.session_id
-                if trace.user_id is not None:
+                if existing_data.get("user_id") is None and trace.user_id is not None:
                     update_values["user_id"] = trace.user_id
-                if trace.agent_id is not None:
+                if existing_data.get("agent_id") is None and trace.agent_id is not None:
                     update_values["agent_id"] = trace.agent_id
-                if trace.team_id is not None:
+                if existing_data.get("team_id") is None and trace.team_id is not None:
                     update_values["team_id"] = trace.team_id
-                if trace.workflow_id is not None:
+                if existing_data.get("workflow_id") is None and trace.workflow_id is not None:
                     update_values["workflow_id"] = trace.workflow_id
 
                 existing_doc.reference.update(update_values)

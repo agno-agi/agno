@@ -263,9 +263,12 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
 
 def delete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
     """Delete the current session and save to storage"""
+    from agno.agent import _init
+
     if agent.db is None:
         return
-
+    if _init.has_async_db(agent):
+        raise ValueError("Cannot use sync delete_session() with an async database. Use adelete_session() instead.")
     agent.db.delete_session(session_id=session_id, user_id=user_id)
 
 
