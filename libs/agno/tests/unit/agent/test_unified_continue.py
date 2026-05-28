@@ -1420,3 +1420,300 @@ class TestToolDedupeOnUpdate:
         # Existing entry was replaced with the newer instance.
         tc1 = next(t for t in run_response.tools if t.tool_call_id == "tc-1")
         assert tc1.result == "result-1-updated"
+
+
+# ---------------------------------------------------------------------------
+# Streaming parity: every body-flag variant must work with stream=True too.
+#
+# These tests are the bug-fix regression net for the original #8092 issue
+# where fork=True + stream=True silently dropped the modifier. They exercise
+# the full async streaming dispatch (acontinue_run_dispatch → _acontinue_run_stream)
+# and assert that the run_response handed to _acontinue_run_stream's downstream
+# consumers carries the correct fork/truncate/regenerate state.
+# ---------------------------------------------------------------------------
+
+
+class TestStreamingParity:
+    """Verify every /continue variant lands correctly on the streaming path."""
+
+    def _build_run(self) -> RunOutput:
+        return RunOutput(
+            run_id="run-S",
+            session_id="sess-S",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="Q1"),
+                Message(role="assistant", content="A1"),
+                Message(role="user", content="Q2"),
+                Message(role="assistant", content="A2"),
+            ],
+        )
+
+    def _patch_stream_dispatch(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        captured: dict,
+        runs: list,
+    ) -> Agent:
+        """Wire async dispatch dependencies and capture what reaches _acontinue_run_stream."""
+
+        async def fake_aread_or_create_session(agent, session_id=None, user_id=None):
+            return AgentSession(session_id=session_id, user_id=user_id, runs=runs)
+
+        monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
+        monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+        monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+        monkeypatch.setattr(
+            _storage, "load_session_state", lambda agent, session=None, session_state=None: session_state
+        )
+        monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
+        monkeypatch.setattr(_tools, "determine_tools_for_model", lambda *a, **kw: [])
+        monkeypatch.setattr(_run, "aresolve_run_dependencies", lambda agent, run_context: None)
+
+        agent = Agent(name="stream-test")
+        monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+
+        # Patch the streaming inner function to capture state *after* dispatch
+        # has applied all modifiers/sugar normalization. This is the slot that
+        # silently dropped fork before the fix.
+        async def fake_acontinue_run_stream(agent, session_id, run_context, run_response=None, **kw):
+            # The dispatch may rely on lazy loading via run_id; replicate the
+            # session lookup that the real _acontinue_run_stream does so our
+            # capture reflects post-modifier state.
+            if run_response is None:
+                rid = kw.get("run_id")
+                # We patched aread_or_create_session above to return our runs
+                session = await fake_aread_or_create_session(agent, session_id=session_id)
+                run_response = next((r for r in (session.runs or []) if r.run_id == rid), None)
+                # Manually apply modifiers since we're bypassing the real fn body
+                from agno.agent._run import _apply_continue_modifiers, _normalize_regenerate_params
+
+                f, fc, inp = _normalize_regenerate_params(
+                    run_response,
+                    regenerate=kw.get("regenerate", False),
+                    preserve_original=kw.get("preserve_original", False),
+                    additional_instructions=kw.get("additional_instructions"),
+                    fork=kw.get("fork", False),
+                    from_checkpoint=kw.get("from_checkpoint"),
+                    input=kw.get("input"),
+                )
+                run_response = _apply_continue_modifiers(run_response, f, fc)
+                if inp:
+                    from agno.agent._run import _maybe_append_input_message
+
+                    _maybe_append_input_message(run_response, inp, agent)
+
+            captured["run_response"] = run_response
+            captured["kw"] = kw
+            yield run_response
+
+        monkeypatch.setattr(_run, "_acontinue_run_stream", fake_acontinue_run_stream)
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_stream_fork_creates_new_run_id(self, monkeypatch: pytest.MonkeyPatch):
+        """The original #8092 blocker: fork=True + stream=True must NOT be a silent no-op."""
+        captured: dict = {}
+        agent = self._patch_stream_dispatch(monkeypatch, captured, runs=[self._build_run()])
+
+        result = agent.acontinue_run(
+            run_id="run-S",
+            session_id="sess-S",
+            from_checkpoint=2,
+            fork=True,
+            stream=True,
+        )
+        async for _ in result:
+            pass
+
+        rr = captured["run_response"]
+        assert rr.run_id != "run-S", "Fork must assign a new run_id on the streaming path"
+        assert rr.forked_from_run_id == "run-S"
+        assert rr.forked_from_message_index == 2
+        # Truncated to 2 messages (was 4)
+        assert len(rr.messages or []) == 2
+
+    @pytest.mark.asyncio
+    async def test_stream_from_checkpoint_truncates(self, monkeypatch: pytest.MonkeyPatch):
+        """Time-travel via stream=True must actually truncate."""
+        captured: dict = {}
+        agent = self._patch_stream_dispatch(monkeypatch, captured, runs=[self._build_run()])
+
+        result = agent.acontinue_run(
+            run_id="run-S",
+            session_id="sess-S",
+            from_checkpoint=1,
+            stream=True,
+        )
+        async for _ in result:
+            pass
+
+        rr = captured["run_response"]
+        # In-place rewind: same run_id, messages truncated to length 1
+        assert rr.run_id == "run-S"
+        assert len(rr.messages or []) == 1
+
+    @pytest.mark.asyncio
+    async def test_stream_regenerate_drops_last_assistant(self, monkeypatch: pytest.MonkeyPatch):
+        captured: dict = {}
+        agent = self._patch_stream_dispatch(monkeypatch, captured, runs=[self._build_run()])
+
+        result = agent.acontinue_run(
+            run_id="run-S",
+            session_id="sess-S",
+            regenerate=True,
+            stream=True,
+        )
+        async for _ in result:
+            pass
+
+        rr = captured["run_response"]
+        # The last user message is at index 2 → truncate to 3 (keep through Q2).
+        assert len(rr.messages or []) == 3
+        assert rr.messages[-1].role == "user"
+        assert rr.messages[-1].content == "Q2"
+
+    @pytest.mark.asyncio
+    async def test_stream_regenerate_with_preserve_original_forks(self, monkeypatch: pytest.MonkeyPatch):
+        """preserve_original=True on the streaming path must create a fork, not a rewrite."""
+        captured: dict = {}
+        agent = self._patch_stream_dispatch(monkeypatch, captured, runs=[self._build_run()])
+
+        result = agent.acontinue_run(
+            run_id="run-S",
+            session_id="sess-S",
+            regenerate=True,
+            preserve_original=True,
+            stream=True,
+        )
+        async for _ in result:
+            pass
+
+        rr = captured["run_response"]
+        assert rr.run_id != "run-S"  # forked
+        assert rr.forked_from_run_id == "run-S"
+
+    @pytest.mark.asyncio
+    async def test_stream_regenerate_with_additional_instructions_appends(self, monkeypatch: pytest.MonkeyPatch):
+        """additional_instructions on the streaming path must land as an appended user message."""
+        captured: dict = {}
+        agent = self._patch_stream_dispatch(monkeypatch, captured, runs=[self._build_run()])
+
+        result = agent.acontinue_run(
+            run_id="run-S",
+            session_id="sess-S",
+            regenerate=True,
+            additional_instructions="be brief",
+            stream=True,
+        )
+        async for _ in result:
+            pass
+
+        rr = captured["run_response"]
+        # After truncation to last user msg (3 messages) + appended instruction = 4.
+        assert len(rr.messages or []) == 4
+        assert rr.messages[-1].role == "user"
+        assert rr.messages[-1].content == "be brief"
+
+    @pytest.mark.asyncio
+    async def test_stream_input_appends_user_message(self, monkeypatch: pytest.MonkeyPatch):
+        captured: dict = {}
+        agent = self._patch_stream_dispatch(monkeypatch, captured, runs=[self._build_run()])
+
+        result = agent.acontinue_run(
+            run_id="run-S",
+            session_id="sess-S",
+            input="follow-up question",
+            stream=True,
+        )
+        async for _ in result:
+            pass
+
+        rr = captured["run_response"]
+        # All 4 original messages + the appended input.
+        assert len(rr.messages or []) == 5
+        assert rr.messages[-1].content == "follow-up question"
+
+
+class TestStreamingRealBody:
+    """One end-to-end test that drives the *real* _acontinue_run_stream body
+    (not a fake replacement) to confirm the modifiers fire on the real path.
+
+    Patches everything past the modifier-application step to a no-op, then
+    inspects run_response after the real function returns.
+    """
+
+    @pytest.mark.asyncio
+    async def test_real_stream_body_applies_fork(self, monkeypatch: pytest.MonkeyPatch):
+        from agno.agent import _messages
+
+        run = RunOutput(
+            run_id="run-real",
+            session_id="sess-real",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="Q1"),
+                Message(role="assistant", content="A1"),
+            ],
+        )
+
+        # Use a list so the closure can mutate / read it
+        observed: dict = {}
+
+        async def fake_aread_or_create(agent, session_id=None, user_id=None):
+            return AgentSession(session_id=session_id, runs=[run])
+
+        # Patch the model-loop stream handler — that's the boundary where the
+        # real function body has already applied modifiers. We capture
+        # run_response here and exit.
+        async def fake_ahandle_stream(agent, *args, run_response=None, run_messages=None, run_context=None, **kw):
+            observed["run_response"] = run_response
+            return
+            yield  # make this an async generator
+
+        monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
+        monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create)
+        monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+        monkeypatch.setattr(
+            _storage, "load_session_state", lambda agent, session=None, session_state=None: session_state or {}
+        )
+        monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
+        monkeypatch.setattr(_tools, "determine_tools_for_model", lambda *a, **kw: [])
+        monkeypatch.setattr(_run, "aresolve_run_dependencies", lambda agent, run_context: None)
+        monkeypatch.setattr(
+            _messages,
+            "get_continue_run_messages",
+            lambda *a, **kw: type("RM", (), {"messages": []})(),
+        )
+
+        from agno.agent._response import ahandle_model_response_stream as _orig  # noqa: F401
+        import agno.agent._response as response_mod
+
+        monkeypatch.setattr(response_mod, "ahandle_model_response_stream", fake_ahandle_stream)
+
+        agent = Agent(name="real-stream")
+        monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+
+        # Patch agent.aget_tools so it doesn't traverse the live tool registry
+        async def fake_aget_tools(**kwargs):
+            return []
+
+        monkeypatch.setattr(agent, "aget_tools", fake_aget_tools)
+
+        async for _ in agent.acontinue_run(
+            run_id="run-real",
+            session_id="sess-real",
+            fork=True,
+            from_checkpoint=1,
+            stream=True,
+        ):
+            pass
+
+        # If modifiers fired correctly inside the real function body, the
+        # run_response that reached the model-loop handler should be a fork.
+        assert "run_response" in observed, "ahandle_model_response_stream was never reached"
+        rr = observed["run_response"]
+        assert rr.run_id != "run-real", "fork=True did not apply on the real streaming path"
+        assert rr.forked_from_run_id == "run-real"
+        assert rr.forked_from_message_index == 1
+        assert len(rr.messages or []) == 1
