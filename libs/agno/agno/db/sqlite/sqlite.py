@@ -70,8 +70,6 @@ class SqliteDb(BaseDb):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
-        store_auth_tokens: bool = False,
-        encrypt_auth_tokens: bool = True,
         id: Optional[str] = None,
     ):
         """
@@ -131,8 +129,6 @@ class SqliteDb(BaseDb):
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
-            store_auth_tokens=store_auth_tokens,
-            encrypt_auth_tokens=encrypt_auth_tokens,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -4871,7 +4867,7 @@ class SqliteDb(BaseDb):
             service: Service name (e.g., "gmail", "calendar")
 
         Returns:
-            Token dict with decrypted token_data, or None if not found.
+            Token dict (raw), or None if not found.
         """
         try:
             table = self._get_table(table_type="auth_tokens")
@@ -4882,9 +4878,7 @@ class SqliteDb(BaseDb):
                 result = sess.execute(select(table).where(table.c.id == token_id)).fetchone()
                 if not result:
                     return None
-                row = dict(result._mapping)
-                row["token_data"] = self._decrypt_token_data(row["token_data"])
-                return row
+                return dict(result._mapping)
         except Exception as e:
             log_debug(f"Error getting auth token: {e}")
             return None
@@ -4908,7 +4902,6 @@ class SqliteDb(BaseDb):
             if table is None:
                 raise RuntimeError("Failed to get or create auth_tokens table")
             data = {**token}
-            data["token_data"] = self._encrypt_token_data(data["token_data"])
             data["id"] = self._auth_token_id(data["provider"], data.get("user_id"), data["service"])
             now = int(time.time())
             data.setdefault("created_at", now)

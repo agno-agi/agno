@@ -12,7 +12,7 @@ Setup:
   4. pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
 Note: Token encryption is disabled for simpler local dev. For production,
-remove `encrypt_auth_tokens=False` and set AGNO_ENCRYPTION_KEY.
+remove `encrypt_tokens=False` and set AGNO_ENCRYPTION_KEY.
 
 Run:
   .venvs/demo/bin/python cookbook/91_tools/google/gmail_with_db.py
@@ -21,16 +21,21 @@ Run:
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
+from agno.tools.google import GoogleAuthManager
 from agno.tools.google.gmail import GmailTools
+
+# encrypt_tokens=False for simpler local dev (no AGNO_ENCRYPTION_KEY needed)
+auth_config = GoogleAuthManager(encrypt_tokens=False)
 
 agent = Agent(
     name="Gmail Agent",
     model=OpenAIResponses(id="gpt-5.4"),
-    # encrypt_auth_tokens=False for simpler local dev (no AGNO_ENCRYPTION_KEY needed)
-    db=SqliteDb(db_file="tmp/gmail_tokens.db", encrypt_auth_tokens=False),
+    db=SqliteDb(db_file="tmp/gmail_tokens.db"),
     tools=[
         GmailTools(
-            include_tools=["get_latest_emails", "search_emails"], store_token_in_db=True
+            auth_config=auth_config,
+            include_tools=["get_latest_emails", "search_emails"],
+            store_token_in_db=True,
         )
     ],
     instructions="You are a Gmail assistant. Show sender, subject, and brief preview for each email.",

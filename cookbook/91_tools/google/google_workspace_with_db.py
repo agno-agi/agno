@@ -29,7 +29,7 @@ from os import getenv
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuthConfig
+from agno.tools.google.auth import GoogleAuthManager
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -37,23 +37,19 @@ from agno.tools.google.gmail import GmailTools
 # ---------------------------------------------------------------------------
 # Database for Token Storage
 # ---------------------------------------------------------------------------
-# store_auth_tokens=True enables the auth_tokens table
-# encrypt_auth_tokens=True would encrypt tokens at rest (recommended for prod)
 
-db = SqliteDb(
-    db_file="tmp/google_workspace.db",
-    store_auth_tokens=True,
-    encrypt_auth_tokens=False,
-)
+db = SqliteDb(db_file="tmp/google_workspace.db")
 
 # ---------------------------------------------------------------------------
 # Shared Auth Config
 # ---------------------------------------------------------------------------
 # Pass the same instance to all Google toolkits for combined OAuth consent.
+# encrypt_tokens=True would encrypt tokens at rest (recommended for prod)
 
-auth = GoogleAuthConfig(
+auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+    encrypt_tokens=False,
 )
 
 agent = Agent(

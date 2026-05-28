@@ -30,8 +30,11 @@ from agno.tools.google.gmail import GmailTools
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
-    db=SqliteDb(db_file="app.db", store_auth_tokens=True),
-    tools=[GmailTools(), GoogleCalendarTools()],
+    db=SqliteDb(db_file="app.db"),
+    tools=[
+        GmailTools(store_token_in_db=True),
+        GoogleCalendarTools(),
+    ],
 )
 
 agent.print_response("Show my emails and calendar", user_id="user-1")

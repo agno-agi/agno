@@ -30,24 +30,21 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.google.auth import GoogleAuthConfig
+from agno.tools.google.auth import GoogleAuthManager
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
-db = SqliteDb(
-    db_file="tmp/slack_gmail_calendar.db",
-    store_auth_tokens=True,
-    encrypt_auth_tokens=False,
-)
+db = SqliteDb(db_file="tmp/slack_gmail_calendar.db")
 
 # Shared auth config — single OAuth consent covers Gmail + Calendar
 # All parameters read from env vars if not passed explicitly
-auth = GoogleAuthConfig(
+auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     redirect_uri=getenv("GOOGLE_REDIRECT_URI"),
     state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+    encrypt_tokens=False,
 )
 
 agent = Agent(

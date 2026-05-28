@@ -32,7 +32,7 @@ from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.tools.google.auth import GoogleAuthConfig
+from agno.tools.google.auth import GoogleAuthManager
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
@@ -40,20 +40,17 @@ from agno.tools.google.oauth_tools import GoogleOAuthTools
 # Database for Token Storage
 # ---------------------------------------------------------------------------
 
-db = SqliteDb(
-    db_file="tmp/google_oauth_server.db",
-    store_auth_tokens=True,
-    encrypt_auth_tokens=False,
-)
+db = SqliteDb(db_file="tmp/google_oauth_server.db")
 
 # ---------------------------------------------------------------------------
 # Shared Auth Config
 # ---------------------------------------------------------------------------
 
-auth = GoogleAuthConfig(
+auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+    encrypt_tokens=False,
 )
 
 # ---------------------------------------------------------------------------

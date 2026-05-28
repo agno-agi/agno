@@ -30,7 +30,7 @@ from os import getenv
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuthConfig
+from agno.tools.google.auth import GoogleAuthManager
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
@@ -40,16 +40,17 @@ from agno.tools.google.oauth_tools import GoogleOAuthTools
 # ---------------------------------------------------------------------------
 # hosted_domain restricts OAuth to users from this domain only.
 
-auth = GoogleAuthConfig(
+auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     hosted_domain="agno.com",  # Only @agno.com users can authenticate
+    encrypt_tokens=False,
 )
 
 agent = Agent(
     name="Enterprise OAuth Agent",
     model=OpenAIResponses(id="gpt-5.4"),
-    db=SqliteDb(db_file="tmp/enterprise_oauth.db", encrypt_auth_tokens=False),
+    db=SqliteDb(db_file="tmp/enterprise_oauth.db"),
     tools=[
         GoogleOAuthTools(auth_config=auth, store_token_in_db=True),
         GmailTools(

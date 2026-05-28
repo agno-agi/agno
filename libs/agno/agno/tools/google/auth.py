@@ -35,6 +35,35 @@ _google_creds: ContextVar[Any] = ContextVar("google_creds", default=None)
 _google_user_id: ContextVar[Optional[str]] = ContextVar("google_user_id", default=None)
 
 
+def _encode_token_for_storage(
+    token_data: Dict[str, Any],
+    auth_config: Optional["GoogleAuthManager"] = None,
+) -> Dict[str, Any]:
+    """Encrypt token_data before DB storage if encryption is enabled."""
+    if auth_config is None or not auth_config._encrypt_tokens:
+        return token_data
+
+    from agno.utils.encryption import encrypt_dict
+
+    return encrypt_dict(token_data, key=auth_config._token_encryption_key)
+
+
+def _decode_token_from_storage(
+    token_data: Dict[str, Any],
+    auth_config: Optional["GoogleAuthManager"] = None,
+) -> Dict[str, Any]:
+    """Decrypt token_data from DB storage if encrypted."""
+    from agno.utils.encryption import is_encrypted
+
+    if not is_encrypted(token_data):
+        return token_data
+
+    from agno.utils.encryption import decrypt_dict
+
+    key = auth_config._token_encryption_key if auth_config else None
+    return decrypt_dict(token_data, key=key)
+
+
 def google_authenticate(service_name: str):
     """Shared auth decorator for all Google toolkits.
 
@@ -131,6 +160,7 @@ def _persist_google_token(
     creds: Any,
     user_id: Optional[str],
     services_registry: Optional[Dict[str, List[str]]] = None,
+    auth_config: Optional["GoogleAuthManager"] = None,
 ) -> bool:
     """Upsert a Google credentials row.
 
@@ -138,7 +168,7 @@ def _persist_google_token(
     so multiple toolkits sharing one GoogleAuth consent agree on scope.
     Otherwise falls back to whatever scopes creds.to_json() reports.
 
-    Encryption is handled by the DB layer (encrypt_auth_tokens param or env var).
+    auth_config: if provided, handles token encryption before storage.
     """
     if db is None:
         return False
@@ -154,7 +184,7 @@ def _persist_google_token(
                 "provider": "google",
                 "user_id": user_id,
                 "service": "google",
-                "token_data": token_data,
+                "token_data": _encode_token_for_storage(token_data, auth_config),
                 "granted_scopes": granted_scopes,
                 "pkce_verifier": None,
                 "pkce_state_id": None,
@@ -250,12 +280,9 @@ def load_token(
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
-        # Decrypt token_data if encrypted (uses AGNO_ENCRYPTION_KEY env var)
-        token_data = row["token_data"]
-        if isinstance(token_data, dict) and "encrypted" in token_data:
-            from agno.utils.encryption import decrypt_dict
-
-            token_data = decrypt_dict(token_data)
+        # Decrypt token_data if encrypted
+        auth_config = getattr(toolkit, "auth_config", None)
+        token_data = _decode_token_from_storage(row["token_data"], auth_config)
 
         # Prefer stored granted_scopes (the full consent union) over the caller's
         # required scopes — a single-service toolkit must not narrow a shared token.
@@ -287,16 +314,17 @@ def save_token(
     agent: Optional[Any] = None,
 ) -> bool:
     """Persist credentials to DB. Returns True on success."""
-    ga = getattr(toolkit, "auth_config", None)
+    auth_config = getattr(toolkit, "auth_config", None)
     return _persist_google_token(
         db=get_token_db(toolkit, agent=agent),
         creds=creds,
         user_id=user_id,
-        services_registry=ga._services if ga else None,
+        services_registry=auth_config._services if auth_config else None,
+        auth_config=auth_config,
     )
 
 
-class GoogleAuthConfig:
+class GoogleAuthManager:
     """OAuth coordinator for Google toolkits — NOT a Toolkit itself.
 
     Handles:
@@ -308,7 +336,7 @@ class GoogleAuthConfig:
         gmail = GmailTools()
 
     Usage (interface — client-side OAuth, opt-in):
-        auth_config = GoogleAuthConfig(hosted_domain="mycompany.com")
+        auth_config = GoogleAuthManager(hosted_domain="mycompany.com")
         agent = Agent(
             db=db,
             tools=[
@@ -337,6 +365,9 @@ class GoogleAuthConfig:
         # Service account authentication (alternative to OAuth)
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
+        # Token storage encryption (moved from DB layer)
+        encrypt_tokens: bool = False,
+        token_encryption_key: Optional[str] = None,
     ):
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
@@ -364,6 +395,9 @@ class GoogleAuthConfig:
         # Service account auth (when set, OAuth is skipped)
         self._service_account_path = service_account_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._delegated_user = delegated_user or os.getenv("GOOGLE_DELEGATED_USER")
+        # Token encryption config
+        self._encrypt_tokens = encrypt_tokens
+        self._token_encryption_key = token_encryption_key
 
     def register_service(self, service: str, scopes: List[str]) -> None:
         # Union scopes if service already registered (multiple toolkits, different scopes)
@@ -493,6 +527,7 @@ class GoogleAuthConfig:
             creds=creds,
             user_id=user_id,
             services_registry=self._services,
+            auth_config=self,
         )
         if not stored:
             log_error(f"Token obtained but DB persistence failed for user={user_id}")
@@ -521,7 +556,7 @@ class GoogleAuthConfig:
         if not self._state_secret:
             raise RuntimeError(
                 "GOOGLE_OAUTH_STATE_SECRET is required for OAuth callback security. "
-                "Set it via environment variable or GoogleAuthConfig(state_secret=...)."
+                "Set it via environment variable or GoogleAuthManager(state_secret=...)."
             )
 
         # Resolve db: explicit param > GoogleAuth(db=...) > fail

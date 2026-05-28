@@ -28,7 +28,7 @@ from os import getenv
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuthConfig
+from agno.tools.google.auth import GoogleAuthManager
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -39,7 +39,7 @@ from agno.tools.google.sheets import GoogleSheetsTools
 # ---------------------------------------------------------------------------
 # No OAuth consent needed — credentials come from the JSON key file.
 
-auth = GoogleAuthConfig(
+auth = GoogleAuthManager(
     service_account_path=getenv("GOOGLE_SERVICE_ACCOUNT_FILE"),
     delegated_user=getenv("GOOGLE_DELEGATED_USER"),
 )

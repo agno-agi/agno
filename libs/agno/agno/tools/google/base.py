@@ -7,7 +7,7 @@ from agno.tools.google.auth import _persist_google_token, get_current_service, g
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth import GoogleAuthConfig
+    from agno.tools.google.auth import GoogleAuthManager
 
 
 class GoogleToolkit(Toolkit):
@@ -48,7 +48,7 @@ class GoogleToolkit(Toolkit):
         credentials_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        auth_config: Optional["GoogleAuthConfig"] = None,
+        auth_config: Optional["GoogleAuthManager"] = None,
         store_token_in_db: bool = False,
         oauth_port: Optional[int] = 0,
         login_hint: Optional[str] = None,
@@ -115,6 +115,8 @@ class GoogleToolkit(Toolkit):
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
+        from agno.tools.google.auth import _decode_token_from_storage
+
         try:
             row = db.get_auth_token("google", user_id, "google")
         except (NotImplementedError, Exception):
@@ -133,8 +135,8 @@ class GoogleToolkit(Toolkit):
             )
 
         try:
-            # DB layer handles decryption — token_data is already plaintext
-            token_data = row["token_data"]
+            auth_config = getattr(self, "auth_config", None)
+            token_data = _decode_token_from_storage(row["token_data"], auth_config)
             effective_scopes = row.get("granted_scopes") or self.scopes
             creds = Credentials.from_authorized_user_info(token_data, effective_scopes)
         except (ValueError, KeyError):
@@ -144,12 +146,12 @@ class GoogleToolkit(Toolkit):
             try:
                 creds.refresh(Request())
                 # Use db directly — no need to re-lookup via get_token_db
-                ga = getattr(self, "auth_config", None)
                 _persist_google_token(
                     db=db,
                     creds=creds,
                     user_id=user_id,
-                    services_registry=ga._services if ga else None,
+                    services_registry=auth_config._services if auth_config else None,
+                    auth_config=auth_config,
                 )
             except Exception:
                 return None

@@ -17,7 +17,7 @@ Usage (env defaults — zero config):
     )
 
 Usage (custom config):
-    auth_config = GoogleAuthConfig(hosted_domain="acme.com")
+    auth_config = GoogleAuthManager(hosted_domain="acme.com")
     agent = Agent(
         db=db,
         tools=[
@@ -36,7 +36,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth import GoogleAuthConfig
+    from agno.tools.google.auth import GoogleAuthManager
 
 
 class GoogleOAuthTools(Toolkit):
@@ -47,17 +47,17 @@ class GoogleOAuthTools(Toolkit):
     where the LLM needs to recover from authentication errors.
 
     When no auth_config is provided, the framework auto-wires a shared
-    GoogleAuthConfig from env vars (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, etc.)
+    GoogleAuthManager from env vars (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, etc.)
     across all Google toolkits.
 
     Attributes:
-        auth_config: The GoogleAuthConfig coordinator that holds OAuth config
+        auth_config: The GoogleAuthManager coordinator that holds OAuth config
             (client_id, hosted_domain, etc.) and manages scope consolidation.
     """
 
     def __init__(
         self,
-        auth_config: Optional["GoogleAuthConfig"] = None,
+        auth_config: Optional["GoogleAuthManager"] = None,
         store_token_in_db: bool = False,
         name: str = "google_oauth_tools",
         **kwargs: Any,
@@ -90,7 +90,7 @@ class GoogleOAuthTools(Toolkit):
         """
         ga = self.auth_config
         if ga is None:
-            return json.dumps({"error": "GoogleAuthConfig coordinator not configured."})
+            return json.dumps({"error": "GoogleAuthManager coordinator not configured."})
 
         if not ga._services:
             return json.dumps(
@@ -106,7 +106,7 @@ class GoogleOAuthTools(Toolkit):
             return json.dumps(
                 {
                     "error": "GOOGLE_OAUTH_STATE_SECRET is required for secure OAuth. "
-                    "Set it via environment variable or GoogleAuthConfig(state_secret=...)."
+                    "Set it via environment variable or GoogleAuthManager(state_secret=...)."
                 }
             )
 
@@ -118,8 +118,8 @@ class GoogleOAuthTools(Toolkit):
         if db is None:
             return json.dumps(
                 {
-                    "error": "GoogleAuthConfig requires a database for PKCE state storage. "
-                    "Pass db= to GoogleAuthConfig or ensure agent.db is configured."
+                    "error": "GoogleAuthManager requires a database for PKCE state storage. "
+                    "Pass db= to GoogleAuthManager or ensure agent.db is configured."
                 }
             )
 
@@ -168,7 +168,7 @@ class GoogleOAuthTools(Toolkit):
 
         if not ga.client_id or not ga.redirect_uri:
             return json.dumps(
-                {"error": "GoogleAuthConfig requires client_id and redirect_uri. Set via constructor or env vars."}
+                {"error": "GoogleAuthManager requires client_id and redirect_uri. Set via constructor or env vars."}
             )
 
         params: Dict[str, str] = {

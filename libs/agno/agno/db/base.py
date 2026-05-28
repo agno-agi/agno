@@ -52,9 +52,6 @@ class BaseDb(ABC):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
-        store_auth_tokens: bool = False,
-        encrypt_auth_tokens: bool = True,
-        auth_token_encryption_key: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -75,9 +72,6 @@ class BaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
-        self.store_auth_tokens = store_auth_tokens
-        self.encrypt_auth_tokens = encrypt_auth_tokens
-        self.auth_token_encryption_key = auth_token_encryption_key
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -102,8 +96,6 @@ class BaseDb(ABC):
             "schedule_runs_table": self.schedule_runs_table_name,
             "approvals_table": self.approvals_table_name,
             "auth_tokens_table": self.auth_tokens_table_name,
-            "encrypt_auth_tokens": self.encrypt_auth_tokens,
-            "auth_token_encryption_key": self.auth_token_encryption_key,
         }
 
     @classmethod
@@ -129,8 +121,6 @@ class BaseDb(ABC):
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
-            encrypt_auth_tokens=data.get("encrypt_auth_tokens", True),
-            auth_token_encryption_key=data.get("auth_token_encryption_key"),
             id=data.get("id"),
         )
 
@@ -1123,25 +1113,6 @@ class BaseDb(ABC):
             raise ValueError(f"Auth token missing required fields: {sorted(missing)}")
         if not isinstance(token["token_data"], dict):
             raise ValueError("Auth token 'token_data' must be a dict")
-
-    def _should_encrypt_auth_tokens(self) -> bool:
-        """Check if auth token encryption is enabled (default: True)."""
-        return self.encrypt_auth_tokens
-
-    def _encrypt_token_data(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Encrypt token_data if encryption is enabled."""
-        if not self._should_encrypt_auth_tokens():
-            return token_data
-
-        from agno.utils.encryption import encrypt_dict
-
-        return encrypt_dict(token_data, key=self.auth_token_encryption_key)
-
-    def _decrypt_token_data(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Decrypt token_data if encrypted (passes through if plaintext)."""
-        from agno.utils.encryption import decrypt_dict
-
-        return decrypt_dict(token_data, key=self.auth_token_encryption_key)
 
     def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError

@@ -2,12 +2,12 @@
 Google Workspace Agent (Gmail + Calendar + Drive)
 =================================================
 
-Multi-toolkit agent with Gmail, Calendar, and Drive. Uses shared GoogleAuthConfig
+Multi-toolkit agent with Gmail, Calendar, and Drive. Uses shared GoogleAuthManager
 so all three APIs are authorized in ONE OAuth consent flow.
 
-Why GoogleAuthConfig?
+Why GoogleAuthManager?
   When using multiple Google toolkits, each needs different OAuth scopes.
-  GoogleAuthConfig consolidates them into a single consent screen.
+  GoogleAuthManager consolidates them into a single consent screen.
   Without it, you'd get separate OAuth prompts for each toolkit.
 
 Authentication (env vars):
@@ -30,7 +30,7 @@ from os import getenv
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuthConfig
+from agno.tools.google.auth import GoogleAuthManager
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -40,7 +40,7 @@ from agno.tools.google.gmail import GmailTools
 # ---------------------------------------------------------------------------
 # Pass the same instance to all Google toolkits for combined OAuth consent.
 
-auth = GoogleAuthConfig(
+auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
 )
