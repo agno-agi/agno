@@ -226,26 +226,20 @@ def _valid_auth_token_db(db: Any) -> Any:
 def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
     """Resolve the DB to use for token storage. Returns None if no DB available.
 
-    Priority: agent.db (framework-injected) > explicit db on auth_config/toolkit.
+    Storage is opt-in via either:
+    - toolkit.store_token_in_db=True (simple single-toolkit pattern)
+    - auth_config._store_tokens=True (multi-toolkit pattern via manager)
+
+    DB comes from agent.db (set by framework when agent has a db configured).
     """
-    # Primary: agent.db (the modern pattern)
-    agent_db = _valid_auth_token_db(getattr(agent, "db", None))
-    if agent_db:
-        return agent_db
-
-    # Fallback: explicit db on auth_config with store_tokens=True
     ga = getattr(toolkit, "auth_config", None)
-    if ga is not None:
-        if getattr(ga, "_store_tokens", False):
-            explicit_db = _valid_auth_token_db(getattr(ga, "_db", None))
-            if explicit_db:
-                return explicit_db
+    manager_wants_db = ga is not None and getattr(ga, "_store_tokens", False)
+    toolkit_wants_db = getattr(toolkit, "store_token_in_db", False)
 
-    # Fallback: store_token_in_db=True on toolkit (simple pattern)
-    if getattr(toolkit, "store_token_in_db", False):
-        return _valid_auth_token_db(getattr(toolkit, "_db", None))
+    if not manager_wants_db and not toolkit_wants_db:
+        return None
 
-    return None
+    return _valid_auth_token_db(getattr(agent, "db", None))
 
 
 def load_token(

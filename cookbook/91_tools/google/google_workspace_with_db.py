@@ -49,7 +49,7 @@ db = SqliteDb(db_file="tmp/google_workspace.db")
 auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
-    encrypt_tokens=False,
+    store_tokens=True,
 )
 
 agent = Agent(
@@ -59,19 +59,16 @@ agent = Agent(
     tools=[
         GmailTools(
             auth_config=auth,
-            store_token_in_db=True,
             include_tools=["get_latest_emails", "search_emails"],
         ),
         GoogleCalendarTools(
             auth_config=auth,
-            store_token_in_db=True,
             create_event=False,
             update_event=False,
             delete_event=False,
         ),
         GoogleDriveTools(
             auth_config=auth,
-            store_token_in_db=True,
             include_tools=["list_files", "search_files"],
         ),
     ],
