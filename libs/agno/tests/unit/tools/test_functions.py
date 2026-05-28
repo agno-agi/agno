@@ -642,11 +642,13 @@ async def test_function_call_async_with_tool_hooks():
 
 @pytest.mark.asyncio
 async def test_function_call_async_with_empty_tool_hooks():
-    """Test async function call execution with empty tool_hooks list.
+    """Async coroutine entrypoint with tool_hooks=[] executes correctly.
 
-    Regression test: when tool_hooks is an empty list (not None), the async
-    execution chain should still use the async entrypoint, not fall back
-    to the sync entrypoint.
+    Sanity check for the no-hooks branch of _build_nested_execution_chain_async.
+    Note: a regular async coroutine returned through the (pre-fix) sync
+    fallback was still awaited at the outer call site in aexecute, so this
+    case did not break on main — it is kept as a symmetry check alongside the
+    async-generator regression test below.
     """
 
     async def async_func(param1: str) -> str:
@@ -661,6 +663,40 @@ async def test_function_call_async_with_empty_tool_hooks():
     assert result.status == "success"
     assert result.result == "async-value1"
     assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_generator_with_empty_tool_hooks():
+    """Async generator entrypoint with tool_hooks=[] must not crash.
+
+    Regression test for the actual failure surfaced by the fix for #7716:
+    on main, `_build_nested_execution_chain_async` returned the sync
+    `execute_entrypoint` when `tool_hooks=[]`. For an async generator, that
+    returned the generator object, which the outer ``await execution_chain(...)``
+    in ``aexecute`` then tried to await — raising::
+
+        TypeError: object async_generator can't be used in 'await' expression
+
+    With the fix (returning `execute_entrypoint_async`), the async generator
+    is preserved without being awaited, and the caller can iterate it.
+    """
+
+    async def async_gen(param1: str):
+        yield f"chunk-1-{param1}"
+        yield f"chunk-2-{param1}"
+
+    func = Function(name="async_gen", entrypoint=async_gen, tool_hooks=[])
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+
+    result = await call.aexecute()
+    assert result.status == "success", f"unexpected failure: {result.error}"
+    assert result.error is None
+
+    # The result must be a live async generator the caller can iterate.
+    chunks = [chunk async for chunk in result.result]
+    assert chunks == ["chunk-1-value1", "chunk-2-value1"]
 
 
 def test_tool_decorator_basic():
