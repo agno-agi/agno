@@ -361,6 +361,9 @@ async def _resume_stream_generator(
     """
     buffer_status = event_buffer.get_run_status(run_id)
 
+    def _status_value(status: Any) -> str:
+        return status.value if hasattr(status, "value") else str(status or "unknown")
+
     if buffer_status is None:
         # PATH 3: Not in buffer -- fall back to database
         if session_id and not isinstance(agent, RemoteAgent):
@@ -374,7 +377,7 @@ async def _resume_stream_generator(
                 meta: dict = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": _status_value(run_output.status),
                     "total_events": len(run_output.events),
                     "message": "Run completed. Replaying all events from database.",
                 }
@@ -392,7 +395,7 @@ async def _resume_stream_generator(
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": _status_value(run_output.status),
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
