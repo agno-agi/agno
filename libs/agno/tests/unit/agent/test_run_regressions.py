@@ -1108,3 +1108,84 @@ def test_continue_run_dispatch_syncs_requirements_with_updated_tools(monkeypatch
     assert rr.requirements[0].tool_execution is new_tool, (
         "Requirement should reference the updated ToolExecution object, not the stale one from the session."
     )
+
+
+def test_continue_run_dispatch_skips_response_format_when_parser_model_set(monkeypatch: pytest.MonkeyPatch):
+    """Regression for #8101: continue_run_dispatch must pass response_format=None
+    when agent.parser_model is set, mirroring run_dispatch's guard."""
+    agent = _make_precedence_test_agent()
+    agent.parser_model = object()  # truthy non-None sentinel
+    _patch_continue_dispatch_dependencies(agent, monkeypatch)
+
+    # Override get_response_format to return a non-None sentinel that should be
+    # discarded by the parser_model guard.
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: {"type": "json_object"})
+
+    captured: dict[str, Any] = {}
+
+    def fake_continue_run_impl(
+        agent: Agent,
+        run_response,
+        run_messages,
+        run_context,
+        tools,
+        user_id: Optional[str] = None,
+        session=None,
+        response_format: Optional[Any] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ):
+        captured["response_format"] = response_format
+        return run_response
+
+    monkeypatch.setattr(_run, "_continue_run", fake_continue_run_impl)
+
+    _run.continue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="cont-parser-1", session_id="session-1", messages=[]),
+        stream=False,
+    )
+
+    assert captured["response_format"] is None
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_dispatch_skips_response_format_when_parser_model_set(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression for #8101: acontinue_run_dispatch must pass response_format=None
+    when agent.parser_model is set, mirroring arun_dispatch's guard."""
+    agent = _make_precedence_test_agent()
+    agent.parser_model = object()
+    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: {"type": "json_object"})
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acontinue_run(
+        agent: Agent,
+        session_id: str,
+        run_context,
+        run_response: Optional[RunOutput] = None,
+        updated_tools=None,
+        requirements=None,
+        run_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        response_format: Optional[Any] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> RunOutput:
+        captured["response_format"] = response_format
+        return run_response if run_response is not None else RunOutput(run_id=run_id, session_id=session_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_run, "_acontinue_run", fake_acontinue_run)
+
+    await _run.acontinue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="acont-parser-1", session_id="session-1", messages=[]),
+        stream=False,
+    )
+
+    assert captured["response_format"] is None

@@ -9,7 +9,6 @@ to route low-confidence labels to a human queue or to a stronger model.
 from typing import Literal
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -41,7 +40,7 @@ Classify the sentiment of the input text. Report a confidence level:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=Classification,
 )
