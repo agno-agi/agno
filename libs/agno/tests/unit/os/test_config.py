@@ -1,13 +1,19 @@
 """Tests for AgentOS config schemas, focused on the Manifest field."""
 
 import json
+import tempfile
+from pathlib import Path
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from agno.agent.agent import Agent
+from agno.os import AgentOS
 from agno.os.config import AgentOSConfig, ChatConfig, Manifest
 from agno.os.schema import ConfigResponse
+from agno.os.utils import load_yaml_config
 
 
 class TestManifest:
@@ -194,3 +200,79 @@ class TestConfigResponseExposesManifest:
         rebuilt = ConfigResponse(**json.loads(resp.model_dump_json()))
         assert rebuilt.manifest["support-team"].labels == {"env": "prod", "team": "growth"}
         assert rebuilt.manifest["marketing-agent"].labels == ["beta"]
+
+
+class TestLoadYamlConfig:
+    def test_load_yaml_config_parses_manifest(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(
+                """
+                manifest:
+                  marketing-agent:
+                    description: "Plans campaigns."
+                    labels: ["beta", "marketing"]
+                    quick_prompts:
+                      - "What can you do?"
+                  support-team:
+                    labels:
+                      env: "prod"
+                      team: "growth"
+                """
+            )
+            path = f.name
+        try:
+            cfg = load_yaml_config(path)
+            assert cfg.manifest["marketing-agent"].description == "Plans campaigns."
+            assert cfg.manifest["marketing-agent"].labels == ["beta", "marketing"]
+            assert cfg.manifest["support-team"].labels == {"env": "prod", "team": "growth"}
+        finally:
+            Path(path).unlink()
+
+
+class TestConfigEndpointSerialization:
+    """End-to-end test: spin up AgentOS, hit /config, assert manifest comes back over HTTP."""
+
+    def _build_client(self, manifest):
+        agent = Agent(name="Marketing Agent", id="marketing-agent", telemetry=False)
+        os_instance = AgentOS(
+            agents=[agent],
+            telemetry=False,
+            config=AgentOSConfig(manifest=manifest),
+        )
+        return TestClient(os_instance.get_app())
+
+    def test_manifest_serialized_with_list_labels(self):
+        client = self._build_client(
+            {
+                "marketing-agent": Manifest(
+                    description="Plans campaigns.",
+                    labels=["beta", "marketing"],
+                    quick_prompts=["What can you do?"],
+                ),
+            }
+        )
+        resp = client.get("/config")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "manifest" in body
+        assert body["manifest"]["marketing-agent"] == {
+            "description": "Plans campaigns.",
+            "labels": ["beta", "marketing"],
+            "quick_prompts": ["What can you do?"],
+        }
+
+    def test_manifest_serialized_with_dict_labels(self):
+        client = self._build_client({"marketing-agent": Manifest(labels={"env": "prod", "team": "growth"})})
+        resp = client.get("/config")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["manifest"]["marketing-agent"]["labels"] == {"env": "prod", "team": "growth"}
+
+    def test_manifest_absent_from_response_when_unset(self):
+        agent = Agent(name="Marketing Agent", id="marketing-agent", telemetry=False)
+        os_instance = AgentOS(agents=[agent], telemetry=False)
+        client = TestClient(os_instance.get_app())
+        resp = client.get("/config")
+        assert resp.status_code == 200
+        # response_model_exclude_none=True on the route - so None manifest is omitted.
+        assert "manifest" not in resp.json()
