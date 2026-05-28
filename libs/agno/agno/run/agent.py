@@ -900,6 +900,10 @@ class RunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
+        # Restore the persisted status string to the RunStatus enum (see RunStatus.coerce).
+        if "status" in data:
+            data["status"] = RunStatus.coerce(data["status"])
+
         # Filter data to only include fields that are actually defined in the RunOutput dataclass
         from dataclasses import fields
 

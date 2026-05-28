@@ -319,3 +319,24 @@ class RunStatus(str, Enum):
     paused = "PAUSED"
     cancelled = "CANCELLED"
     error = "ERROR"
+
+    @classmethod
+    def coerce(cls, value: Any) -> Any:
+        """Restore a persisted status value to a ``RunStatus`` member.
+
+        ``RunOutput.to_dict()`` serializes ``status`` as the enum's string value;
+        ``from_dict()`` must call this so the reconstructed dataclass matches its
+        declared ``status: RunStatus`` annotation and downstream consumers can rely
+        on ``status.value`` / ``status == RunStatus.completed``.
+
+        Unknown strings (legacy data or forward-compat values that don't map to a
+        current member) are returned unchanged rather than coerced to an arbitrary
+        default, preserving no-data-loss. Non-string and already-coerced values are
+        returned as-is.
+        """
+        if isinstance(value, str) and not isinstance(value, RunStatus):
+            try:
+                return cls(value)
+            except ValueError:
+                return value
+        return value

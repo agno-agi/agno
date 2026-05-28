@@ -1027,6 +1027,10 @@ class WorkflowRunOutput:
 
         input_data = data.pop("input", None)
 
+        # Restore the persisted status string to the RunStatus enum (see RunStatus.coerce).
+        if "status" in data:
+            data["status"] = RunStatus.coerce(data["status"])
+
         # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
         from dataclasses import fields
 

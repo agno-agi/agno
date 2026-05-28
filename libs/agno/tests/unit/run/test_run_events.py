@@ -435,3 +435,95 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
     assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
     assert reconstructed.requirements[0].needs_confirmation is True
+
+
+def test_run_output_from_dict_coerces_string_status_to_enum():
+    """RunOutput.to_dict() emits status as a string but from_dict() previously
+    left it as a string, breaking downstream callers that relied on the typed
+    shape (e.g. ``status.value``). from_dict() must restore the enum."""
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+
+    run_output = RunOutput(run_id="run_123", agent_id="agent_456", status=RunStatus.completed)
+    run_dict = run_output.to_dict()
+    assert run_dict["status"] == "COMPLETED"  # serialized as string
+
+    reconstructed = RunOutput.from_dict(run_dict)
+    assert reconstructed.status == RunStatus.completed
+    assert isinstance(reconstructed.status, RunStatus)
+    # The original bug: this attribute access would raise AttributeError when
+    # ``status`` came back as a plain string from the database.
+    assert reconstructed.status.value == "COMPLETED"
+
+
+def test_run_output_from_dict_status_round_trips_for_every_enum_member():
+    """Every RunStatus value should survive the to_dict / from_dict round trip."""
+    from agno.run.agent import RunOutput
+    from agno.run.base import RunStatus
+
+    for status in RunStatus:
+        run_output = RunOutput(run_id=f"run_{status.value}", status=status)
+        reconstructed = RunOutput.from_dict(run_output.to_dict())
+        assert reconstructed.status == status
+        assert isinstance(reconstructed.status, RunStatus)
+
+
+def test_run_output_from_dict_preserves_unknown_status_string():
+    """Unknown status strings (legacy data, forward-compat) must not crash
+    from_dict — the value is preserved as-is so callers can decide how to
+    cope."""
+    from agno.run.agent import RunOutput
+
+    reconstructed = RunOutput.from_dict({"run_id": "run_123", "status": "MYSTERY"})
+    # Field stays a string rather than being coerced into an arbitrary enum
+    # member or being silently dropped.
+    assert reconstructed.status == "MYSTERY"
+
+
+def test_team_run_output_from_dict_coerces_string_status_to_enum():
+    from agno.run.base import RunStatus
+    from agno.run.team import TeamRunOutput
+
+    team_output = TeamRunOutput(run_id="team_123", team_id="team_456", status=RunStatus.cancelled)
+    team_dict = team_output.to_dict()
+    assert team_dict["status"] == "CANCELLED"
+
+    reconstructed = TeamRunOutput.from_dict(team_dict)
+    assert reconstructed.status == RunStatus.cancelled
+    assert isinstance(reconstructed.status, RunStatus)
+    assert reconstructed.status.value == "CANCELLED"
+
+
+def test_workflow_run_output_from_dict_coerces_string_status_to_enum():
+    from agno.run.base import RunStatus
+    from agno.run.workflow import WorkflowRunOutput
+
+    workflow_output = WorkflowRunOutput(run_id="wf_123", workflow_name="test", status=RunStatus.error)
+    workflow_dict = workflow_output.to_dict()
+    assert workflow_dict["status"] == "ERROR"
+
+    reconstructed = WorkflowRunOutput.from_dict(workflow_dict)
+    assert reconstructed.status == RunStatus.error
+    assert isinstance(reconstructed.status, RunStatus)
+    assert reconstructed.status.value == "ERROR"
+
+
+def test_run_status_coerce_helper():
+    """RunStatus.coerce centralizes the from_dict status handling shared by the
+    three RunOutput classes; verify each branch in isolation."""
+    from agno.run.base import RunStatus
+
+    # Known string -> enum member
+    coerced = RunStatus.coerce("COMPLETED")
+    assert coerced is RunStatus.completed
+    assert isinstance(coerced, RunStatus)
+
+    # Already a RunStatus -> returned unchanged
+    assert RunStatus.coerce(RunStatus.error) is RunStatus.error
+
+    # Unknown string -> preserved as-is (no-data-loss, no arbitrary default)
+    assert RunStatus.coerce("MYSTERY") == "MYSTERY"
+    assert not isinstance(RunStatus.coerce("MYSTERY"), RunStatus)
+
+    # Non-string (e.g. missing/None) -> returned unchanged
+    assert RunStatus.coerce(None) is None

@@ -979,6 +979,10 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
+        # Restore the persisted status string to the RunStatus enum (see RunStatus.coerce).
+        if "status" in data:
+            data["status"] = RunStatus.coerce(data["status"])
+
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
 
