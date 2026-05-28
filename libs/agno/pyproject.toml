@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.6.7"
+version = "2.6.9"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -169,7 +169,7 @@ mysql = ["pymysql", "asyncmy"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb>=0.26.0", "tantivy"]
+lancedb = ["lancedb>=0.26.0"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
@@ -192,7 +192,7 @@ csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
 chonkie = [
-    "chonkie[semantic,code]>=1.6.6",
+    "chonkie[semantic,code]>=1.6.7",
 ]
 
 # Dependencies for AG-UI integration
@@ -561,7 +561,6 @@ module = [
   "sqlalchemy.*",
   "starlette.*",
   "streamlit.*",
-  "tantivy.*",
   "tavily.*",
   "telebot.*",
   "textract.*",
