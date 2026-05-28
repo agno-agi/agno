@@ -998,6 +998,10 @@ def update_run_response(
     if model_response.provider_data is not None:
         run_response.model_provider_data = model_response.provider_data
 
+    # Update stop_reason to surface why the model stopped generating
+    if model_response.stop_reason is not None:
+        run_response.stop_reason = model_response.stop_reason
+
     # Update the run_response tools with the model response tool_executions
     if model_response.tool_executions is not None:
         if run_response.tools is None:
@@ -1417,6 +1421,10 @@ def handle_model_response_chunk(
             # Handle provider data (one chunk)
             if model_response_event.provider_data is not None:
                 run_response.model_provider_data = model_response_event.provider_data
+
+            # Handle stop_reason (from final streaming event)
+            if model_response_event.stop_reason is not None:
+                run_response.stop_reason = model_response_event.stop_reason
 
             # Handle citations (one chunk)
             if model_response_event.citations is not None:

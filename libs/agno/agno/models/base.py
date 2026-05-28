@@ -76,6 +76,9 @@ class MessageData:
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
 
+    # Why the model stopped generating
+    response_stop_reason: Optional[str] = None
+
     extra: Optional[Dict[str, Any]] = None
 
 
@@ -1158,6 +1161,8 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        if provider_response.stop_reason is not None:
+            model_response.stop_reason = provider_response.stop_reason
         # Providers (e.g. GeminiInteractions on the agent path) can produce
         # already-executed ToolExecution records server-side; carry them
         # through so run_response.tools / AgentOS UI sees the audit.
@@ -1228,6 +1233,8 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        if provider_response.stop_reason is not None:
+            model_response.stop_reason = provider_response.stop_reason
         # Providers (e.g. GeminiInteractions on the agent path) can produce
         # already-executed ToolExecution records server-side; carry them
         # through so run_response.tools / AgentOS UI sees the audit.
@@ -1959,6 +1966,10 @@ class Model(ABC):
                     existing.extend(value)
                 else:
                     stream_data.response_provider_data[key] = value
+
+        # Capture stop_reason from the final streaming event
+        if model_response_delta.stop_reason is not None:
+            stream_data.response_stop_reason = model_response_delta.stop_reason
 
         # Update stream_data tool calls
         if model_response_delta.tool_calls is not None:

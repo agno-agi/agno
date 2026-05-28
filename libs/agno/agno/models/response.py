@@ -143,6 +143,9 @@ class ModelResponse:
 
     response_usage: Optional[MessageMetrics] = None
 
+    # Why the model stopped generating (e.g., "end_turn", "max_tokens", "tool_use", "stop_sequence")
+    stop_reason: Optional[str] = None
+
     created_at: int = int(time())
 
     extra: Optional[Dict[str, Any]] = None

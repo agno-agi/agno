@@ -1056,6 +1056,12 @@ class Claude(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        # Capture stop_reason to surface why the model stopped generating
+        if response.stop_reason is not None:
+            model_response.stop_reason = response.stop_reason
+            if response.stop_reason == "max_tokens":
+                log_debug("Response stopped: max_tokens limit reached")
+
         # Capture context management information if present
         if self.context_management is not None and hasattr(response, "context_management"):
             if response.context_management is not None:  # type: ignore
@@ -1264,6 +1270,14 @@ class Claude(Model):
             and response.message.usage is not None  # type: ignore
         ):
             model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
+
+        # Capture stop_reason from streaming MessageStopEvent
+        if isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent)) and hasattr(response, "message"):
+            stop_reason = getattr(response.message, "stop_reason", None)
+            if stop_reason is not None:
+                model_response.stop_reason = stop_reason
+                if stop_reason == "max_tokens":
+                    log_debug("Response stopped: max_tokens limit reached")
 
         # Capture the Beta response
         try:
