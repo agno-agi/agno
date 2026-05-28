@@ -1,31 +1,27 @@
-"""Run `uv pip install ddgs` to install dependencies."""
+"""
+MiniMax Tool Use
+================
 
-import asyncio
+Cookbook example for `minimax/tool_use.py`.
+"""
 
 from agno.agent import Agent
-from agno.models.deepseek import DeepSeek
+from agno.models.minimax import MiniMax
 from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
-"""
-DeepSeek V4 models support tool calls in both thinking and non-thinking modes.
-"""
-
 agent = Agent(
-    model=DeepSeek(id="deepseek-v4-flash"),
-    tools=[WebSearchTools()],
+    model=MiniMax(id="MiniMax-M2.7"),
     markdown=True,
+    tools=[WebSearchTools()],
 )
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # --- Sync ---
-    agent.print_response("Whats happening in France?")
 
-    # --- Async + Streaming ---
-    asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))
+if __name__ == "__main__":
+    agent.print_response("What is happening in France?", stream=True)

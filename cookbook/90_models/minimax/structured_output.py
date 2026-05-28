@@ -1,15 +1,16 @@
 """
-Deepseek Structured Output
-==========================
+MiniMax Structured Output
+=========================
 
-Cookbook example for `deepseek/structured_output.py`.
+Cookbook example for `minimax/structured_output.py`.
 """
 
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.deepseek import DeepSeek
+from agno.models.minimax import MiniMax
 from pydantic import BaseModel, Field
+from rich.pretty import pprint  # noqa
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -35,28 +36,24 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses JSON mode (recommended for DeepSeek).
-# DeepSeek supports JSON mode (response_format={"type": "json_object"}) but not
-# native/json_schema structured outputs, so use_json_mode=True is the reliable path.
-json_mode_agent = Agent(
-    model=DeepSeek(id="deepseek-v4-flash"),
-    description="You help people write movie scripts.",
+# MiniMax does not implement OpenAI-style native `response_format` /
+# `json_schema`, so we drive structured output through JSON mode.
+agent = Agent(
+    model=MiniMax(id="MiniMax-M2.7"),
+    description="You write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,
 )
 
-# Agent that uses native structured outputs (output_schema without JSON mode).
-structured_output_agent = Agent(
-    model=DeepSeek(id="deepseek-v4-flash"),
-    description="You help people write movie scripts.",
-    output_schema=MovieScript,
-)
+# Get the response in a variable
+# response: RunOutput = agent.run("New York")
+# pprint(response.content)
+
+agent.print_response("New York")
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    json_mode_agent.print_response("New York")
-
-    structured_output_agent.print_response("New York")
+    pass
