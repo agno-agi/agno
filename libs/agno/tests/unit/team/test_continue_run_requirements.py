@@ -578,6 +578,58 @@ class TestMemberRunResponseCleanup:
         assert run_response.requirements[0]._member_run_response is member_run_response
 
 
+class TestMemberRunOutputResolution:
+    """Verify member HITL resume can recover runs after in-memory state is lost."""
+
+    def test_prefers_in_memory_member_run_response(self):
+        from agno.run.agent import RunOutput
+        from agno.session import TeamSession
+        from agno.team._run import _resolve_member_run_output
+
+        req = _make_requirement(requires_confirmation=True)
+        req.member_run_id = "member-run-1"
+        in_memory_run = RunOutput(run_id="member-run-1", session_id="session-1")
+        req._member_run_response = in_memory_run
+
+        run_response = TeamRunOutput(run_id="team-run-1", session_id="session-1")
+        session = TeamSession(
+            session_id="session-1",
+            runs=[RunOutput(run_id="member-run-1", session_id="session-1")],
+        )
+
+        assert _resolve_member_run_output([req], run_response, session) is in_memory_run
+
+    def test_falls_back_to_member_responses(self):
+        from agno.run.agent import RunOutput
+        from agno.session import TeamSession
+        from agno.team._run import _resolve_member_run_output
+
+        req = _make_requirement(requires_confirmation=True)
+        req.member_run_id = "member-run-1"
+        member_response = RunOutput(run_id="member-run-1", session_id="session-1")
+        run_response = TeamRunOutput(
+            run_id="team-run-1",
+            session_id="session-1",
+            member_responses=[member_response],
+        )
+        session = TeamSession(session_id="session-1", runs=[])
+
+        assert _resolve_member_run_output([req], run_response, session) is member_response
+
+    def test_falls_back_to_persisted_team_session_run(self):
+        from agno.run.agent import RunOutput
+        from agno.session import TeamSession
+        from agno.team._run import _resolve_member_run_output
+
+        req = _make_requirement(requires_confirmation=True)
+        req.member_run_id = "member-run-1"
+        persisted_member_run = RunOutput(run_id="member-run-1", session_id="session-1")
+        run_response = TeamRunOutput(run_id="team-run-1", session_id="session-1")
+        session = TeamSession(session_id="session-1", runs=[persisted_member_run])
+
+        assert _resolve_member_run_output([req], run_response, session) is persisted_member_run
+
+
 # ===========================================================================
 # 10. Unresolved team-level requirements guard
 # ===========================================================================
