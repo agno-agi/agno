@@ -44,7 +44,7 @@ auth = GoogleAuthManager(
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     redirect_uri=getenv("GOOGLE_REDIRECT_URI"),
     state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
-    encrypt_tokens=False,
+    store_tokens=True,
 )
 
 agent = Agent(

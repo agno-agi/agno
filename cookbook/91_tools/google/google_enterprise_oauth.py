@@ -44,7 +44,7 @@ auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     hosted_domain="agno.com",  # Only @agno.com users can authenticate
-    encrypt_tokens=False,
+    store_tokens=True,
 )
 
 agent = Agent(
@@ -52,7 +52,7 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     db=SqliteDb(db_file="tmp/enterprise_oauth.db"),
     tools=[
-        GoogleOAuthTools(auth_config=auth, store_token_in_db=True),
+        GoogleOAuthTools(auth_config=auth),
         GmailTools(
             auth_config=auth, include_tools=["get_latest_emails", "search_emails"]
         ),

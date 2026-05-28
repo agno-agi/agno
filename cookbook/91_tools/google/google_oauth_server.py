@@ -50,7 +50,7 @@ auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
-    encrypt_tokens=False,
+    store_tokens=True,
 )
 
 # ---------------------------------------------------------------------------
