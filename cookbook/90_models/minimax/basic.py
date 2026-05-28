@@ -5,6 +5,8 @@ MiniMax Basic
 Cookbook example for `minimax/basic.py`.
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.models.minimax import MiniMax
 
@@ -23,3 +25,9 @@ if __name__ == "__main__":
 
     # --- Sync + Streaming ---
     agent.print_response("Share a 2 sentence horror story.", stream=True)
+
+    # --- Async ---
+    asyncio.run(agent.aprint_response("Share a 2 sentence horror story."))
+
+    # --- Async + Streaming ---
+    asyncio.run(agent.aprint_response("Share a 2 sentence horror story.", stream=True))
