@@ -26,6 +26,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
 from agno.run.team import (
+    RunPausedEvent,
     TaskCreatedEvent,
     TaskUpdatedEvent,
     TeamRunOutput,
@@ -432,6 +433,9 @@ def _get_task_management_tools(
                         member_run_response = event
                         continue
                     check_if_run_cancelled(event)
+                    # Don't bubble sub-team/member pause events to parent; parent handles pause via _propagate_member_pause
+                    if isinstance(event, RunPausedEvent):
+                        continue
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
             else:
@@ -576,6 +580,9 @@ def _get_task_management_tools(
                         member_run_response = event
                         continue
                     check_if_run_cancelled(event)
+                    # Don't bubble sub-team/member pause events to parent; parent handles pause via _propagate_member_pause
+                    if isinstance(event, RunPausedEvent):
+                        continue
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
             else:

@@ -52,6 +52,7 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
+    RunPausedEvent,
     TaskData,
     TeamRunInput,
     TeamRunOutput,
@@ -5195,6 +5196,10 @@ async def _aroute_requirements_to_members_stream(
 
             # Set parent_run_id on member events (same as adelegate_task_to_member)
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
+
+            # Don't bubble sub-team/member pause events to parent; parent handles pause via _propagate_member_pause
+            if isinstance(event, RunPausedEvent):
+                continue
 
             # Store event and yield (same as _handle_model_response_chunk for member events)
             if stream_events or team.stream_member_events:

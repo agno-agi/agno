@@ -34,6 +34,7 @@ from agno.models.message import Message, MessageReferences
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.team import (
+    RunPausedEvent,
     TeamRunOutput,
     TeamRunOutputEvent,
 )
@@ -593,6 +594,10 @@ def _get_delegate_task_function(
                 # Check if the run is cancelled
                 check_if_run_cancelled(member_agent_run_output_event)
 
+                # Don't bubble sub-team/member pause events to parent; parent handles pause via _propagate_member_pause
+                if isinstance(member_agent_run_output_event, RunPausedEvent):
+                    continue
+
                 # Yield the member event directly
                 member_agent_run_output_event.parent_run_id = (
                     member_agent_run_output_event.parent_run_id or run_response.run_id
@@ -733,6 +738,10 @@ def _get_delegate_task_function(
                 # Check if the run is cancelled
                 check_if_run_cancelled(member_agent_run_response_event)
 
+                # Don't bubble sub-team/member pause events to parent; parent handles pause via _propagate_member_pause
+                if isinstance(member_agent_run_response_event, RunPausedEvent):
+                    continue
+
                 # Yield the member event directly
                 member_agent_run_response_event.parent_run_id = getattr(
                     member_agent_run_response_event, "parent_run_id", None
@@ -861,6 +870,10 @@ def _get_delegate_task_function(
 
                     # Check if the run is cancelled
                     check_if_run_cancelled(member_agent_run_response_chunk)
+
+                    # Don't bubble sub-team/member pause events to parent; parent handles pause via _propagate_member_pause
+                    if isinstance(member_agent_run_response_chunk, RunPausedEvent):
+                        continue
 
                     # Yield the member event directly
                     member_agent_run_response_chunk.parent_run_id = member_agent_run_response_chunk.parent_run_id or (
@@ -991,6 +1004,9 @@ def _get_delegate_task_function(
                                 continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                             check_if_run_cancelled(member_agent_run_output_event)
+                            # Don't bubble sub-team/member pause events to parent; parent handles pause via _propagate_member_pause
+                            if isinstance(member_agent_run_output_event, RunPausedEvent):
+                                continue
                             member_agent_run_output_event.parent_run_id = (
                                 member_agent_run_output_event.parent_run_id
                                 or (run_response.run_id if run_response is not None else None)
