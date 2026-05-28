@@ -5,6 +5,7 @@ from agno.culture.manager import CultureManager
 from agno.knowledge.chunking.agentic import AgenticChunking
 from agno.memory.manager import MemoryManager
 from agno.models.anthropic import Claude
+from agno.models.cloudflare import Cloudflare
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.n1n import N1N
@@ -45,6 +46,20 @@ def test_get_model_parses_anthropic_string():
     model = get_model("anthropic:claude-3-5-sonnet-20241022")
     assert isinstance(model, Claude)
     assert model.id == "claude-3-5-sonnet-20241022"
+
+
+def test_get_model_parses_cloudflare_string():
+    """Test get_model() parses Cloudflare AI Gateway model string (Workers AI id after first colon)."""
+    model = get_model("cloudflare:workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast")
+    assert isinstance(model, Cloudflare)
+    assert model.id == "workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+
+
+def test_get_model_parses_cloudflare_workers_ai_catalog_binding():
+    """Workers AI catalog ids (@cf/...) are normalized to workers-ai/@cf/... for the gateway."""
+    model = get_model("cloudflare:@cf/google/gemma-4-26b-a4b-it")
+    assert isinstance(model, Cloudflare)
+    assert model.id == "workers-ai/@cf/google/gemma-4-26b-a4b-it"
 
 
 def test_get_model_parses_n1n_string():
