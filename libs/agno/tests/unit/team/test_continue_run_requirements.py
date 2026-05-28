@@ -1066,8 +1066,6 @@ class TestRoutingForwardsRunContextToMembers:
     """
 
     def _make_run_response_with_member_req(self):
-        from agno.run.requirement import RunRequirement
-
         run_response = MagicMock()
         run_response.run_id = "team-run-1"
         run_response.member_responses = []
