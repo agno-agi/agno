@@ -40,9 +40,7 @@ def test_initialization_all_flag():
 
 def test_initialization_individual_flags():
     """Each enable_* flag registers its method."""
-    tools = InvisiblePlaywrightTools(
-        enable_scrape=False, enable_crawl=True, enable_search=True
-    )
+    tools = InvisiblePlaywrightTools(enable_scrape=False, enable_crawl=True, enable_search=True)
     fn_names = [f.name for f in tools.functions.values()]
     assert "scrape_url" not in fn_names
     assert "crawl_site" in fn_names
@@ -220,6 +218,7 @@ def _make_result(title: str, url: str, snippet: str):
     title_el.get_attribute.return_value = url
     snippet_el = MagicMock()
     snippet_el.inner_text.return_value = snippet
+
     # query_selector dispatches by selector substring
     def qs(sel):
         if "title" in sel or "h2" in sel:
@@ -227,6 +226,7 @@ def _make_result(title: str, url: str, snippet: str):
         if "snippet" in sel or "caption" in sel:
             return snippet_el
         return None
+
     result_el.query_selector.side_effect = qs
     return result_el
 
@@ -250,9 +250,7 @@ def test_search_web_duckduckgo(mock_invisible):
 
 def test_search_web_bing(mock_invisible):
     """Bing engine sends query to bing.com."""
-    mock_invisible["page"].query_selector_all.return_value = [
-        _make_result("Bing A", "https://a.com", "s")
-    ]
+    mock_invisible["page"].query_selector_all.return_value = [_make_result("Bing A", "https://a.com", "s")]
     tools = InvisiblePlaywrightTools(enable_search=True, search_engine="bing", num_results=1)
     tools.search_web("python")
     mock_invisible["page"].goto.assert_called_with("https://www.bing.com/search?q=python")

@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error
 
 try:
     from invisible_playwright import InvisiblePlaywright

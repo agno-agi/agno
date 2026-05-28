@@ -77,6 +77,4 @@ agent_proxy = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent_scrape.print_response(
-        "Read https://bot.sannysoft.com and tell me which automation checks pass."
-    )
+    agent_scrape.print_response("Read https://bot.sannysoft.com and tell me which automation checks pass.")

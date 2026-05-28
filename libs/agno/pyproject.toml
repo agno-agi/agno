@@ -506,6 +506,7 @@ module = [
   "ibm_watsonx_ai.*",
   "imghdr.*",
   "infinity_client.*",
+  "invisible_playwright.*",
   "jira.*",
   "jwt.*",
   "kubernetes.*",
