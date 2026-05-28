@@ -252,6 +252,7 @@ class SessionSchema(BaseModel):
     metrics: Optional[dict] = Field(None, description="Session metrics")
     total_tokens: Optional[int] = Field(None, description="Total tokens used in this session")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
+    branched_from: Optional[str] = Field(None, description="Source session ID this session was branched from (if any)")
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
@@ -290,6 +291,7 @@ class SessionSchema(BaseModel):
             metrics=metrics,
             total_tokens=total_tokens,
             metadata=session.get("metadata"),
+            branched_from=session_data.get("branched_from"),
         )
 
 
@@ -462,6 +464,12 @@ class RunSchema(BaseModel):
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    branched_from: Optional[str] = Field(
+        None, description="Source session ID this run was originally created in (if copied from a branched session)"
+    )
+    regenerated_from: Optional[str] = Field(
+        None, description="Immediate predecessor run ID when this run was generated via regeneration"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -495,6 +503,8 @@ class RunSchema(BaseModel):
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
             created_at=to_utc_datetime(run_dict.get("created_at")),
+            branched_from=run_dict.get("branched_from"),
+            regenerated_from=run_dict.get("regenerated_from"),
         )
 
 
@@ -526,6 +536,12 @@ class TeamRunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    branched_from: Optional[str] = Field(
+        None, description="Source session ID this run was originally created in (if copied from a branched session)"
+    )
+    regenerated_from: Optional[str] = Field(
+        None, description="Immediate predecessor run ID when this run was generated via regeneration"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -557,6 +573,8 @@ class TeamRunSchema(BaseModel):
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
+            branched_from=run_dict.get("branched_from"),
+            regenerated_from=run_dict.get("regenerated_from"),
         )
 
 

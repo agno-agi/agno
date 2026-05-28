@@ -319,3 +319,4 @@ class RunStatus(str, Enum):
     paused = "PAUSED"
     cancelled = "CANCELLED"
     error = "ERROR"
+    regenerated = "REGENERATED"

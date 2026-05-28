@@ -763,6 +763,10 @@ class TeamRunOutput:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
 
+    # Branching lineage: the source session_id this run was originally created in
+    # (set when a session is branched; preserved across nested branches).
+    branched_from: Optional[str] = None
+
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
