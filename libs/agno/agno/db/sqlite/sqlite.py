@@ -4907,11 +4907,12 @@ class SqliteDb(BaseDb):
             data["updated_at"] = now
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(**data)
-                set_dict: Dict[str, Any] = {
-                    "token_data": stmt.excluded.token_data,
-                    "granted_scopes": stmt.excluded.granted_scopes,
-                    "updated_at": stmt.excluded.updated_at,
-                }
+                set_dict: Dict[str, Any] = {"updated_at": stmt.excluded.updated_at}
+                # Only update token_data/granted_scopes if non-empty (empty = preserve existing)
+                if token.get("token_data") != {}:
+                    set_dict["token_data"] = stmt.excluded.token_data
+                if token.get("granted_scopes") not in (None, []):
+                    set_dict["granted_scopes"] = stmt.excluded.granted_scopes
                 if "pkce_verifier" in token:
                     set_dict["pkce_verifier"] = stmt.excluded.pkce_verifier
                     set_dict["pkce_state_id"] = stmt.excluded.pkce_state_id

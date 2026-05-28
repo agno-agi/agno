@@ -70,30 +70,18 @@ def store_pkce_state(
 ) -> bool:
     """Store PKCE state for OAuth flow, preserving existing token_data.
 
-    Uses get_auth_token + upsert_auth_token to keep OAuth utilities
-    provider-agnostic while preserving credentials during re-auth flows.
+    Passes token_data={} and granted_scopes=[] to signal upsert_auth_token
+    to preserve existing values on conflict, avoiding read-modify-write races.
     """
     if db is None:
         return False
-
-    try:
-        existing = db.get_auth_token(provider, user_id, service)
-    except NotImplementedError:
-        log_debug("DB does not support auth token storage")
-        return False
-    except Exception as e:
-        log_error(f"Failed to load existing auth token for PKCE state: {e}")
-        return False
-
-    token_data = (existing or {}).get("token_data") or {}
-    existing_scopes = (existing or {}).get("granted_scopes")
 
     token: Dict[str, Any] = {
         "provider": provider,
         "user_id": user_id,
         "service": service,
-        "token_data": token_data,
-        "granted_scopes": scopes if scopes is not None else existing_scopes,
+        "token_data": {},  # Empty = preserve existing on conflict
+        "granted_scopes": scopes if scopes else [],  # Empty = preserve existing on conflict
         "pkce_verifier": code_verifier,
         "pkce_state_id": state_id,
         "pkce_expires_at": expires_at,
