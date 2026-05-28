@@ -2,9 +2,12 @@
 Stop Reason
 =============================
 
-Demonstrates how to check stop_reason to understand why the model stopped generating.
+Demonstrates the stop_reason field which tells you why the model stopped generating.
 
-stop_reason tells you WHY the model stopped:
+When max_tokens is reached, Agno automatically logs a warning:
+  WARNING  Model 'claude-sonnet-4-20250514' response truncated: max_tokens limit reached.
+
+Possible stop_reason values (Claude):
 - "end_turn": Normal completion
 - "max_tokens": Hit the output token limit (response may be truncated)
 - "tool_use": Model wants to call a tool
@@ -27,10 +30,4 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    response = agent.run("Write a detailed essay about climate change.")
-
-    print(f"Content: {response.content}")
-    print(f"Stop reason: {response.stop_reason}")
-
-    if response.stop_reason == "max_tokens":
-        print("\nWarning: Response was truncated due to max_tokens limit.")
+    agent.print_response("Write a detailed essay about climate change.")
