@@ -149,6 +149,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Llama(id=model_id)
 
+    elif model_provider == "minimax":
+        from agno.models.minimax import MiniMax
+
+        return MiniMax(id=model_id)
+
     elif model_provider == "mistral":
         from agno.models.mistral import MistralChat
 
