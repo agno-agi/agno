@@ -4897,7 +4897,6 @@ class SqliteDb(BaseDb):
             RuntimeError: If table creation fails.
         """
         try:
-            self._validate_auth_token_payload(token)
             table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
             if table is None:
                 raise RuntimeError("Failed to get or create auth_tokens table")
@@ -4923,89 +4922,3 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting auth token: {e}")
             raise
-
-    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
-        """
-        Delete an OAuth token from the database.
-
-        Args:
-            provider: OAuth provider name (e.g., "google")
-            user_id: User identifier, or None for single-user mode
-            service: Service name (e.g., "gmail", "calendar")
-
-        Returns:
-            True if a token was deleted, False otherwise.
-        """
-        try:
-            table = self._get_table(table_type="auth_tokens")
-            if table is None:
-                return False
-            token_id = self._auth_token_id(provider, user_id, service)
-            with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.id == token_id))
-                return result.rowcount > 0
-        except Exception as e:
-            log_debug(f"Error deleting auth token: {e}")
-            return False
-
-    def set_pkce_state(
-        self,
-        provider: str,
-        user_id: Optional[str],
-        service: str,
-        verifier: str,
-        state_id: str,
-        expires_at: int,
-        scopes: Optional[list] = None,
-    ) -> bool:
-        """
-        Store PKCE state for an in-progress OAuth flow.
-
-        Args:
-            provider: OAuth provider name (e.g., "google")
-            user_id: User identifier, or None for single-user mode
-            service: Service name (e.g., "gmail", "calendar")
-            verifier: PKCE code verifier
-            state_id: State parameter for callback validation
-            expires_at: Unix timestamp when this PKCE state expires
-            scopes: Requested OAuth scopes
-
-        Returns:
-            True if state was stored successfully.
-        """
-        try:
-            table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
-            if table is None:
-                return False
-            token_id = self._auth_token_id(provider, user_id, service)
-            now = int(time.time())
-            data: dict[str, Any] = {
-                "id": token_id,
-                "provider": provider,
-                "user_id": user_id,
-                "service": service,
-                "token_data": {},
-                "granted_scopes": scopes,
-                "pkce_verifier": verifier,
-                "pkce_state_id": state_id,
-                "pkce_expires_at": expires_at,
-                "created_at": now,
-                "updated_at": now,
-            }
-            with self.Session() as sess, sess.begin():
-                stmt = sqlite.insert(table).values(**data)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["id"],
-                    set_={
-                        "pkce_verifier": stmt.excluded.pkce_verifier,
-                        "pkce_state_id": stmt.excluded.pkce_state_id,
-                        "pkce_expires_at": stmt.excluded.pkce_expires_at,
-                        "granted_scopes": stmt.excluded.granted_scopes,
-                        "updated_at": stmt.excluded.updated_at,
-                    },
-                )
-                sess.execute(stmt)
-            return True
-        except Exception as e:
-            log_error(f"Error setting PKCE state: {e}")
-            return False

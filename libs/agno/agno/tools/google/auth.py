@@ -1,9 +1,6 @@
-import base64
-import hashlib
 import inspect
 import json
 import os
-import secrets
 from contextvars import ContextVar
 from functools import wraps
 from typing import Any, Dict, List, Optional
@@ -11,57 +8,10 @@ from typing import Any, Dict, List, Optional
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.oauth_state import verify_state
 
-
-def generate_pkce_pair() -> tuple[str, str]:
-    """Generate PKCE code_verifier and code_challenge (S256).
-
-    Returns:
-        (code_verifier, code_challenge) tuple.
-
-    code_verifier: 64-char random string (A-Z, a-z, 0-9, -._~)
-    code_challenge: Base64URL(SHA256(code_verifier)), no padding
-    """
-    # 48 bytes → 64 chars base64url (within 43-128 char spec)
-    code_verifier = secrets.token_urlsafe(48)
-    # S256: SHA256 hash, base64url encoded, no padding
-    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-    return code_verifier, code_challenge
-
-
 # Per-call service, creds, and user_id storage for stateless toolkit access
 _google_service: ContextVar[Any] = ContextVar("google_service", default=None)
 _google_creds: ContextVar[Any] = ContextVar("google_creds", default=None)
 _google_user_id: ContextVar[Optional[str]] = ContextVar("google_user_id", default=None)
-
-
-def _encode_token_for_storage(
-    token_data: Dict[str, Any],
-    auth_config: Optional["GoogleAuthManager"] = None,
-) -> Dict[str, Any]:
-    """Encrypt token_data before DB storage if encryption is enabled."""
-    if auth_config is None or not auth_config._encrypt_tokens:
-        return token_data
-
-    from agno.utils.encryption import encrypt_dict
-
-    return encrypt_dict(token_data, key=auth_config._token_encryption_key)
-
-
-def _decode_token_from_storage(
-    token_data: Dict[str, Any],
-    auth_config: Optional["GoogleAuthManager"] = None,
-) -> Dict[str, Any]:
-    """Decrypt token_data from DB storage if encrypted."""
-    from agno.utils.encryption import is_encrypted
-
-    if not is_encrypted(token_data):
-        return token_data
-
-    from agno.utils.encryption import decrypt_dict
-
-    key = auth_config._token_encryption_key if auth_config else None
-    return decrypt_dict(token_data, key=key)
 
 
 def google_authenticate(service_name: str):
@@ -179,12 +129,17 @@ def _persist_google_token(
         else:
             granted_scopes = token_data.get("scopes", [])
 
+        if auth_config and auth_config._encrypt_tokens:
+            from agno.utils.encryption import encrypt_dict
+
+            token_data = encrypt_dict(token_data, key=auth_config._token_encryption_key)
+
         db.upsert_auth_token(
             {
                 "provider": "google",
                 "user_id": user_id,
                 "service": "google",
-                "token_data": _encode_token_for_storage(token_data, auth_config),
+                "token_data": token_data,
                 "granted_scopes": granted_scopes,
                 "pkce_verifier": None,
                 "pkce_state_id": None,
@@ -275,9 +230,13 @@ def load_token(
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
-        # Decrypt token_data if encrypted
-        auth_config = getattr(toolkit, "auth_config", None)
-        token_data = _decode_token_from_storage(row["token_data"], auth_config)
+        from agno.utils.encryption import decrypt_dict, is_encrypted
+
+        token_data = row["token_data"]
+        if is_encrypted(token_data):
+            auth_config = getattr(toolkit, "auth_config", None)
+            key = auth_config._token_encryption_key if auth_config else None
+            token_data = decrypt_dict(token_data, key=key)
 
         # Prefer stored granted_scopes (the full consent union) over the caller's
         # required scopes — a single-service toolkit must not narrow a shared token.

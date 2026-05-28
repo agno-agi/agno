@@ -1100,27 +1100,10 @@ class BaseDb(ABC):
 
     # --- Auth Tokens (Optional) ---
 
-    @staticmethod
-    def _validate_auth_token_payload(token: Dict[str, Any]) -> None:
-        """Fail fast with a readable message when the token dict is missing required fields.
-
-        Without this, missing fields surface as opaque SQLAlchemy IntegrityErrors
-        (NOT NULL violations) that don't name the missing column.
-        """
-        required = {"provider", "service", "token_data"}
-        missing = required - set(token)
-        if missing:
-            raise ValueError(f"Auth token missing required fields: {sorted(missing)}")
-        if not isinstance(token["token_data"], dict):
-            raise ValueError("Auth token 'token_data' must be a dict")
-
     def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
         raise NotImplementedError
 
     def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError
-
-    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
         raise NotImplementedError
 
 

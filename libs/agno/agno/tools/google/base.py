@@ -115,7 +115,7 @@ class GoogleToolkit(Toolkit):
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
-        from agno.tools.google.auth import _decode_token_from_storage
+        from agno.utils.encryption import decrypt_dict, is_encrypted
 
         try:
             row = db.get_auth_token("google", user_id, "google")
@@ -135,11 +135,14 @@ class GoogleToolkit(Toolkit):
             )
 
         try:
-            auth_config = getattr(self, "auth_config", None)
-            token_data = _decode_token_from_storage(row["token_data"], auth_config)
+            token_data = row["token_data"]
+            if is_encrypted(token_data):
+                auth_config = getattr(self, "auth_config", None)
+                key = auth_config._token_encryption_key if auth_config else None
+                token_data = decrypt_dict(token_data, key=key)
             effective_scopes = row.get("granted_scopes") or self.scopes
             creds = Credentials.from_authorized_user_info(token_data, effective_scopes)
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, ImportError):
             return None
 
         if creds.expired and creds.refresh_token:

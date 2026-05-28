@@ -29,11 +29,12 @@ Usage (custom config):
 
 import json
 import secrets
+import time
 from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
     from agno.tools.google.auth import GoogleAuthManager
@@ -124,7 +125,7 @@ class GoogleOAuthTools(Toolkit):
             )
 
         # PKCE: generate code_verifier and code_challenge
-        from agno.tools.google.auth import generate_pkce_pair
+        from agno.utils.oauth_state import generate_pkce_pair, store_pkce_state
 
         code_verifier, code_challenge = generate_pkce_pair()
         state_id = secrets.token_urlsafe(16)
@@ -148,23 +149,18 @@ class GoogleOAuthTools(Toolkit):
             )
 
         # Store PKCE state in DB (preserves existing token_data if present)
-        try:
-            import time
-
-            expires_at = int(time.time()) + ga._state_ttl_seconds
-            if not db.set_pkce_state(
-                provider="google",
-                user_id=user_id,
-                service="google",
-                verifier=code_verifier,
-                state_id=state_id,
-                expires_at=expires_at,
-                scopes=list(scopes),
-            ):
-                return json.dumps({"error": "Failed to store PKCE state"})
-        except Exception as e:
-            log_error(f"Failed to store PKCE state: {e}")
-            return json.dumps({"error": f"Failed to initialize OAuth flow: {e}"})
+        expires_at = int(time.time()) + ga._state_ttl_seconds
+        if not store_pkce_state(
+            db=db,
+            provider="google",
+            user_id=user_id,
+            service="google",
+            code_verifier=code_verifier,
+            state_id=state_id,
+            expires_at=expires_at,
+            scopes=list(scopes),
+        ):
+            return json.dumps({"error": "Failed to store PKCE state"})
 
         if not ga.client_id or not ga.redirect_uri:
             return json.dumps(

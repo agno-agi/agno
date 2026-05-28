@@ -242,7 +242,6 @@ class PostgresDb(BaseDb):
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
         ]
-        # auth_tokens is opt-in via store_token_in_db=True — created lazily on first write
 
         for table_name, table_type in tables_to_create:
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
@@ -5016,7 +5015,6 @@ class PostgresDb(BaseDb):
 
     def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
-            self._validate_auth_token_payload(token)
             table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
             if table is None:
                 raise RuntimeError("Failed to get or create auth_tokens table")
@@ -5042,63 +5040,3 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting auth token: {e}")
             raise
-
-    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
-        try:
-            table = self._get_table(table_type="auth_tokens")
-            if table is None:
-                return False
-            token_id = self._auth_token_id(provider, user_id, service)
-            with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.id == token_id))
-                return result.rowcount > 0
-        except Exception as e:
-            log_debug(f"Error deleting auth token: {e}")
-            return False
-
-    def set_pkce_state(
-        self,
-        provider: str,
-        user_id: Optional[str],
-        service: str,
-        verifier: str,
-        state_id: str,
-        expires_at: int,
-        scopes: Optional[list] = None,
-    ) -> bool:
-        try:
-            table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
-            if table is None:
-                return False
-            token_id = self._auth_token_id(provider, user_id, service)
-            now = int(time.time())
-            data: dict[str, Any] = {
-                "id": token_id,
-                "provider": provider,
-                "user_id": user_id,
-                "service": service,
-                "token_data": {},
-                "granted_scopes": scopes,
-                "pkce_verifier": verifier,
-                "pkce_state_id": state_id,
-                "pkce_expires_at": expires_at,
-                "created_at": now,
-                "updated_at": now,
-            }
-            with self.Session() as sess, sess.begin():
-                stmt = postgresql.insert(table).values(**data)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["id"],
-                    set_={
-                        "pkce_verifier": stmt.excluded.pkce_verifier,
-                        "pkce_state_id": stmt.excluded.pkce_state_id,
-                        "pkce_expires_at": stmt.excluded.pkce_expires_at,
-                        "granted_scopes": stmt.excluded.granted_scopes,
-                        "updated_at": stmt.excluded.updated_at,
-                    },
-                )
-                sess.execute(stmt)
-            return True
-        except Exception as e:
-            log_error(f"Error setting PKCE state: {e}")
-            return False
