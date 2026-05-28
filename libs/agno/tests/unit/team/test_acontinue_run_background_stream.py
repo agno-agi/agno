@@ -132,8 +132,7 @@ class TestAcontinueRunBackgroundStream:
         assert collected, "background stream must yield at least one chunk"
         for chunk in collected:
             assert isinstance(chunk, str), (
-                f"_acontinue_run_background_stream must yield str (for StreamingResponse.encode()), "
-                f"got {type(chunk)!r}"
+                f"_acontinue_run_background_stream must yield str (for StreamingResponse.encode()), got {type(chunk)!r}"
             )
         assert fake_event in format_sse_seen, "raw events must go through format_sse_event_with_index"
 
