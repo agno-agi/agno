@@ -393,6 +393,13 @@ class File(BaseModel):
     external: Optional[Any] = None
     format: Optional[str] = None  # E.g. `pdf`, `txt`, `csv`, `xml`, etc.
     name: Optional[str] = None  # Name of the file, mandatory for AWS Bedrock document input
+    # Anthropic-only: per-file citation preference. Ignored by other providers.
+    #   None  = follow the caller default (Claude enables citations unless the request
+    #           would also send output_format, in which case they are suppressed).
+    #   False = do not attach citations to this file.
+    #   True  = attach citations when the caller allows it; ignored (with a warning)
+    #           when the caller has disabled citations for the request.
+    citations: Optional[bool] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -414,11 +421,24 @@ class File(BaseModel):
 
     @classmethod
     def valid_mime_types(cls) -> List[str]:
+        # NOTE: Keep this in sync with `DOCUMENT_MIME_TYPES` in agno.os.utils. Every MIME type
+        # the upload routers accept must be valid here, otherwise FileMedia construction fails
+        # and the file is silently dropped. Not all of these are accepted by every model
+        # provider (e.g. Anthropic/Gemini reject Office binary formats); those fail at the
+        # model with a provider error rather than being dropped at upload.
         return [
             "application/pdf",
             "application/json",
             "application/x-javascript",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            # Office Open XML (modern Office formats)
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+            # Legacy binary Office formats
+            "application/msword",  # .doc
+            "application/vnd.ms-powerpoint",  # .ppt
+            "application/vnd.ms-excel",  # .xls
+            "application/vnd.ms-outlook",  # .msg
             "text/javascript",
             "application/x-python",
             "text/x-python",
@@ -474,8 +494,8 @@ class File(BaseModel):
                 content = response.content
                 mime_type = response.headers.get("Content-Type", "").split(";")[0]
                 return content, mime_type
-            except Exception:
-                log_error(f"Failed to download file from {self.url}")
+            except Exception as e:
+                log_error(f"Failed to download file from {self.url}: {str(e)}")
                 return None
         else:
             return None

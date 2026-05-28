@@ -923,11 +923,15 @@ class Agent:
     ) -> bool:
         return _storage.delete(self, db=db, hard_delete=hard_delete)
 
-    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return _storage.get_run_output(self, run_id=run_id, session_id=session_id)
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
+        return _storage.get_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
 
-    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id)
+    async def aget_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
+        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
         return _storage.get_last_run_output(self, session_id=session_id)
@@ -1621,6 +1625,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
+        background: bool = False,
         **kwargs,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         return _run.acontinue_run_dispatch(
@@ -1639,6 +1644,7 @@ class Agent:
             metadata=metadata,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
+            background=background,
             **kwargs,
         )
 
@@ -1688,7 +1694,7 @@ def get_agent_by_id(
         return agent
 
     except Exception as e:
-        log_error(f"Error loading Agent {id} from database: {e}")
+        log_error(f"Error loading Agent {id} from database: {str(e)}")
         return None
 
 
@@ -1725,5 +1731,5 @@ def get_agents(
         return agents
 
     except Exception as e:
-        log_error(f"Error loading Agents from database: {e}")
+        log_error(f"Error loading Agents from database: {str(e)}")
         return []

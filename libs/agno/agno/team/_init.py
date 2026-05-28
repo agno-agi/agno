@@ -43,6 +43,7 @@ from agno.run.team import (
     TeamRunEvent,
 )
 from agno.session import SessionSummaryManager, TeamSession
+from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -127,6 +128,7 @@ def __init__(
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
     max_tool_calls_from_history: Optional[int] = None,
+    skills: Optional[Skills] = None,
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
     tool_call_limit: Optional[int] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -299,6 +301,8 @@ def __init__(
     team.store_history_messages = store_history_messages
     team.send_media_to_model = send_media_to_model
 
+    team.skills = skills
+
     if tools is None:
         team.tools = None
     elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
@@ -369,6 +373,7 @@ def __init__(
         team.events_to_skip = [
             RunEvent.run_content,
             TeamRunEvent.run_content,
+            TeamRunEvent.run_intermediate_content,
         ]
     team.stream_member_events = stream_member_events
 
@@ -538,7 +543,7 @@ def _set_default_model(team: "Team") -> None:
     # Set the default model
     if team.model is None:
         try:
-            from agno.models.openai import OpenAIChat
+            from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError as e:
             log_exception(e)
             log_error(
@@ -546,8 +551,8 @@ def _set_default_model(team: "Team") -> None:
             )
             exit(1)
 
-        log_info("Setting default model to OpenAI Chat")
-        team.model = OpenAIChat(id="gpt-4o")
+        log_info("Setting default model to OpenAI Responses")
+        team.model = OpenAIResponses(id="gpt-5.4")
 
 
 def _set_memory_manager(team: "Team") -> None:
@@ -627,6 +632,10 @@ def _set_learning_machine(team: "Team") -> None:
         if team.learning.model is None:
             team.learning.model = team.model
         team._learning = team.learning
+
+        # PROPOSE/HITL modes need chat history for multi-turn confirmation
+        if team._learning.requires_history and not team.add_history_to_context:
+            team.add_history_to_context = True
 
 
 def _initialize_session(

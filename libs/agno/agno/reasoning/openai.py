@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -22,12 +22,13 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
             ("o4" in reasoning_model.id)
             or ("o3" in reasoning_model.id)
             or ("o1" in reasoning_model.id)
-            or ("4.1" in reasoning_model.id)
-            or ("4.5" in reasoning_model.id)
             or ("5.1" in reasoning_model.id)
             or ("5.2" in reasoning_model.id)
         )
-    ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
+    ) or (
+        isinstance(reasoning_model, OpenAILike)
+        and ("deepseek-r1" in reasoning_model.id.lower() or "minimax-m2" in reasoning_model.id.lower())
+    )
 
 
 def get_openai_reasoning(
@@ -43,7 +44,7 @@ def get_openai_reasoning(
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -82,7 +83,7 @@ async def aget_openai_reasoning(
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -150,7 +151,7 @@ def get_openai_reasoning_stream(
                             reasoning_content = event.reasoning_content
                             yield (event.reasoning_content, None)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return
 
     # Yield final message
@@ -206,7 +207,7 @@ async def aget_openai_reasoning_stream(
                             reasoning_content = event.reasoning_content
                             yield (event.reasoning_content, None)
     except Exception as e:
-        logger.warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return
 
     # Yield final message

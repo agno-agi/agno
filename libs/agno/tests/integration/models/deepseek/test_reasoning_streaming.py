@@ -17,8 +17,8 @@ from agno.run.agent import RunEvent
 def _get_reasoning_streaming_agent(**kwargs):
     """Create an agent with DeepSeek reasoning_model for streaming reasoning tests."""
     default_config = {
-        "model": DeepSeek(id="deepseek-chat"),
-        "reasoning_model": DeepSeek(id="deepseek-reasoner"),
+        "model": DeepSeek(id="deepseek-v4-flash"),
+        "reasoning_model": DeepSeek(id="deepseek-v4-pro"),
         "instructions": "You are an expert problem-solving assistant. Think step by step.",
         "markdown": True,
         "telemetry": False,

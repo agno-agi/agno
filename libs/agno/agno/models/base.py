@@ -116,7 +116,7 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
                 try:
                     additional_input.append(Message(**m))
                 except Exception as e:
-                    log_warning(f"Failed to convert dict to Message: {e}")
+                    log_warning(f"Failed to convert dict to Message: {str(e)}")
 
     if a_exc.stop_execution:
         for m in additional_input:
@@ -242,17 +242,18 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s..."
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
                     )
+
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -289,17 +290,18 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s..."
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
                     )
+
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -338,18 +340,19 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. "
-                        f"Retrying in {delay}s..."
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
+                        f"Retrying in {delay}s...: {e}",
                     )
+
                     sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -390,18 +393,19 @@ class Model(ABC):
                 last_exception = self.classify_error(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
-                    log_error(f"Non-retryable model provider error: {last_exception}")
+                    log_error(f"Non-retryable model provider error: {str(e)}")
                     raise last_exception from e
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. "
-                        f"Retrying in {delay}s..."
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
+                        f"Retrying in {delay}s...: {e}",
                     )
+
                     await asyncio.sleep(delay)
                 else:
                     if self.retries > 0:
-                        log_error(f"Model provider error after {self.retries + 1} attempts: {last_exception}")
+                        log_error(f"Model provider error after {self.retries + 1} attempts: {str(e)}")
             except RetryableModelProviderError as e:
                 current_count = retries_with_guidance_count
                 if current_count >= self.retry_with_guidance_limit:
@@ -583,6 +587,14 @@ class Model(ABC):
         """
         pass
 
+    @staticmethod
+    def _tool_name(t: Dict[str, Any]) -> str:
+        """Extract a tool's name for deterministic sorting."""
+        fn = t.get("function")
+        if isinstance(fn, dict):
+            return str(fn.get("name", ""))
+        return str(t.get("name", ""))
+
     def _format_tools(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
         _tool_dicts = []
         for tool in tools or []:
@@ -591,6 +603,10 @@ class Model(ABC):
             else:
                 # If a dict is passed, it is a builtin tool
                 _tool_dicts.append(tool)
+        # Deterministic ordering so prompt caching gets consistent cache hits.
+        # Applies across providers — Anthropic, OpenAI, and Gemini prompt/context
+        # caching all require stable request prefixes.
+        _tool_dicts.sort(key=self._tool_name)
         return _tool_dicts
 
     def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
@@ -851,10 +867,10 @@ class Model(ABC):
                 try:
                     self.client.close()  # type: ignore
                     self.client = None
-                except AttributeError:
+                except AttributeError as e:
                     log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
+                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
                     )
 
         return model_response
@@ -1072,10 +1088,10 @@ class Model(ABC):
                 try:
                     await self.client.aio.aclose()  # type: ignore
                     self.client = None
-                except AttributeError:
+                except AttributeError as e:
                     log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
+                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
                     )
 
         return model_response
@@ -1142,6 +1158,13 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Providers (e.g. GeminiInteractions on the agent path) can produce
+        # already-executed ToolExecution records server-side; carry them
+        # through so run_response.tools / AgentOS UI sees the audit.
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     async def _aprocess_model_response(
         self,
@@ -1205,6 +1228,13 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Providers (e.g. GeminiInteractions on the agent path) can produce
+        # already-executed ToolExecution records server-side; carry them
+        # through so run_response.tools / AgentOS UI sees the audit.
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     def _populate_assistant_message(
         self,
@@ -1561,10 +1591,10 @@ class Model(ABC):
                 try:
                     self.client.close()  # type: ignore
                     self.client = None
-                except AttributeError:
+                except AttributeError as e:
                     log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
+                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
                     )
 
     async def aprocess_response_stream(
@@ -1838,10 +1868,10 @@ class Model(ABC):
                 try:
                     await self.client.aio.aclose()  # type: ignore
                     self.client = None
-                except AttributeError:
+                except AttributeError as e:
                     log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai"
+                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
+                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
                     )
 
     def _populate_assistant_message_from_stream_data(
@@ -2127,7 +2157,7 @@ class Model(ABC):
                 stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
         except Exception as e:
-            log_error(f"Error executing function {function_call.function.name}: {e}")
+            log_error(f"Error executing function {function_call.function.name}: {str(e)}")
             raise e
 
         function_call_success = function_execution_result.status == "success"
@@ -2180,7 +2210,9 @@ class Model(ABC):
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             except Exception as e:
-                log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
+                log_error(
+                    f"Error while iterating function result generator for {function_call.function.name}: {str(e)}"
+                )
                 function_call.error = str(e)
                 function_call_success = False
 
@@ -2448,7 +2480,7 @@ class Model(ABC):
         except AgentRunException as e:
             success = e
         except Exception as e:
-            log_error(f"Error executing function {function_call.function.name}: {e}")
+            log_error(f"Error executing function {function_call.function.name}: {str(e)}")
             success = False
             raise e
 
@@ -2743,7 +2775,7 @@ class Model(ABC):
                 yield event
 
             except Exception as e:
-                log_error(f"Error processing async generator event: {e}")
+                log_error(f"Error processing async generator event: {str(e)}")
                 break
 
         # Now process all results (non-async generators and completed async generators)
@@ -2832,7 +2864,9 @@ class Model(ABC):
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
                 except Exception as e:
-                    log_error(f"Error while iterating function result generator for {function_call.function.name}: {e}")
+                    log_error(
+                        f"Error while iterating function result generator for {function_call.function.name}: {str(e)}"
+                    )
                     function_call.error = str(e)
                     function_call_success = False
 

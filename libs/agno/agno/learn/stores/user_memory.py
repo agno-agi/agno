@@ -972,7 +972,7 @@ class UserMemoryStore(LearningStore):
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
 
@@ -1178,7 +1178,7 @@ class UserMemoryStore(LearningStore):
                     log_debug(f"Memory added: {memory[:50]}...")
                     return f"Memory saved: {memory}"
                 except Exception as e:
-                    log_warning(f"Error adding memory: {e}")
+                    log_warning(f"Error adding memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(add_memory)
@@ -1220,7 +1220,7 @@ class UserMemoryStore(LearningStore):
 
                     return "No memories field"
                 except Exception as e:
-                    log_warning(f"Error updating memory: {e}")
+                    log_warning(f"Error updating memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(update_memory)
@@ -1261,7 +1261,7 @@ class UserMemoryStore(LearningStore):
 
                     return "No memories field"
                 except Exception as e:
-                    log_warning(f"Error deleting memory: {e}")
+                    log_warning(f"Error deleting memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(delete_memory)
@@ -1279,7 +1279,7 @@ class UserMemoryStore(LearningStore):
                     log_debug("All memories cleared")
                     return "All memories cleared"
                 except Exception as e:
-                    log_warning(f"Error clearing memories: {e}")
+                    log_warning(f"Error clearing memories: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(clear_all_memories)
@@ -1335,7 +1335,7 @@ class UserMemoryStore(LearningStore):
                     log_debug(f"Memory added: {memory[:50]}...")
                     return f"Memory saved: {memory}"
                 except Exception as e:
-                    log_warning(f"Error adding memory: {e}")
+                    log_warning(f"Error adding memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(add_memory)
@@ -1379,7 +1379,7 @@ class UserMemoryStore(LearningStore):
 
                     return "No memories field"
                 except Exception as e:
-                    log_warning(f"Error updating memory: {e}")
+                    log_warning(f"Error updating memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(update_memory)
@@ -1422,7 +1422,7 @@ class UserMemoryStore(LearningStore):
 
                     return "No memories field"
                 except Exception as e:
-                    log_warning(f"Error deleting memory: {e}")
+                    log_warning(f"Error deleting memory: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(delete_memory)
@@ -1440,7 +1440,7 @@ class UserMemoryStore(LearningStore):
                     log_debug("All memories cleared")
                     return "All memories cleared"
                 except Exception as e:
-                    log_warning(f"Error clearing memories: {e}")
+                    log_warning(f"Error clearing memories: {str(e)}")
                     return f"Error: {e}"
 
             functions.append(clear_all_memories)

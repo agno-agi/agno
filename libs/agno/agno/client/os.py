@@ -395,12 +395,12 @@ class AgentOSClient:
                     event = event_parser(event_dict)
                     yield event
 
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse SSE JSON: {line[:100]}... | Error: {e}")
+                except json.JSONDecodeError:
+                    logger.exception(f"Failed to parse SSE JSON: {line[:100]}...")
                     continue  # Skip bad events, continue stream
 
-                except ValueError as e:
-                    logger.error(f"Unknown event type: {line[:100]}... | Error: {e}")
+                except ValueError:
+                    logger.exception(f"Unknown event type: {line[:100]}...")
                     continue  # Skip unknown events, continue stream
 
     # Discovery & Configuration Operations
@@ -943,6 +943,115 @@ class AgentOSClient:
         """
         await self._apost(f"/teams/{team_id}/runs/{run_id}/cancel", headers=headers)
 
+    async def continue_team_run(
+        self,
+        team_id: str,
+        run_id: str,
+        requirements: List[Any],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput:
+        """Continue a paused team run with requirements.
+
+        Args:
+            team_id: ID of the team
+            run_id: ID of the run to continue
+            requirements: List of RunRequirement objects with tool results
+            session_id: Optional session ID
+            user_id: Optional user ID
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            TeamRunOutput: The continued run response
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        from agno.run.requirement import RunRequirement
+
+        endpoint = f"/teams/{team_id}/runs/{run_id}/continue"
+        # Serialize requirements - handle both RunRequirement objects and dicts
+        serialized_requirements = []
+        for req in requirements:
+            if isinstance(req, RunRequirement):
+                serialized_requirements.append(req.to_dict())
+            elif hasattr(req, "to_dict"):
+                serialized_requirements.append(req.to_dict())
+            else:
+                serialized_requirements.append(req)
+
+        data: Dict[str, Any] = {"requirements": json.dumps(serialized_requirements), "stream": "false"}
+        if session_id is not None:
+            data["session_id"] = session_id
+        if user_id is not None:
+            data["user_id"] = user_id
+
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
+
+        response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
+        return TeamRunOutput.from_dict(response_data)
+
+    async def continue_team_run_stream(
+        self,
+        team_id: str,
+        run_id: str,
+        requirements: List[Any],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[TeamRunOutputEvent]:
+        """Stream a continued team run response.
+
+        Args:
+            team_id: ID of the team
+            run_id: ID of the run to continue
+            requirements: List of RunRequirement objects with tool results
+            session_id: Optional session ID
+            user_id: Optional user ID
+            headers: HTTP headers to include in the request (optional)
+
+        Yields:
+            TeamRunOutputEvent: Typed event objects (team and agent events)
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        from agno.run.requirement import RunRequirement
+
+        endpoint = f"/teams/{team_id}/runs/{run_id}/continue"
+        # Serialize requirements - handle both RunRequirement objects and dicts
+        serialized_requirements = []
+        for req in requirements:
+            if isinstance(req, RunRequirement):
+                serialized_requirements.append(req.to_dict())
+            elif hasattr(req, "to_dict"):
+                serialized_requirements.append(req.to_dict())
+            else:
+                serialized_requirements.append(req)
+
+        data: Dict[str, Any] = {"requirements": json.dumps(serialized_requirements), "stream": "true"}
+        if session_id is not None:
+            data["session_id"] = session_id
+        if user_id is not None:
+            data["user_id"] = user_id
+
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
+
+        raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
+        async for event in self._parse_sse_events(raw_stream, team_run_output_event_from_dict):
+            yield event
+
     async def list_workflows(self, headers: Optional[Dict[str, str]] = None) -> List[WorkflowSummaryResponse]:
         """List all workflows configured in the AgentOS instance.
 
@@ -1121,6 +1230,107 @@ class AgentOSClient:
         data = {k: v for k, v in data.items() if v is not None}
 
         # Get raw SSE stream and parse into typed events
+        raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
+        async for event in self._parse_sse_events(raw_stream, workflow_run_output_event_from_dict):
+            yield event
+
+    async def continue_workflow_run(
+        self,
+        workflow_id: str,
+        run_id: str,
+        requirements: List[Any],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunOutput:
+        """Continue a paused workflow run with resolved requirements.
+
+        Args:
+            workflow_id: ID of the workflow
+            run_id: ID of the run to continue
+            requirements: List of resolved StepRequirement dicts
+            session_id: Optional session ID
+            user_id: Optional user ID
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            WorkflowRunOutput: The continued run response
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        endpoint = f"/workflows/{workflow_id}/runs/{run_id}/continue"
+        serialized = []
+        for req in requirements:
+            if hasattr(req, "to_dict"):
+                serialized.append(req.to_dict())
+            elif isinstance(req, dict):
+                serialized.append(req)
+            else:
+                serialized.append(req)
+        data: Dict[str, Any] = {"step_requirements": json.dumps(serialized), "stream": "false"}
+        if session_id is not None:
+            data["session_id"] = session_id
+        if user_id is not None:
+            data["user_id"] = user_id
+
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
+
+        response_data = await self._apost(endpoint, data, headers=headers, as_form=True)
+        return WorkflowRunOutput.from_dict(response_data)
+
+    async def continue_workflow_run_stream(
+        self,
+        workflow_id: str,
+        run_id: str,
+        requirements: List[Any],
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[WorkflowRunOutputEvent]:
+        """Stream a continued workflow run response.
+
+        Args:
+            workflow_id: ID of the workflow
+            run_id: ID of the run to continue
+            requirements: List of resolved StepRequirement dicts
+            session_id: Optional session ID
+            user_id: Optional user ID
+            headers: HTTP headers to include in the request (optional)
+
+        Yields:
+            WorkflowRunOutputEvent: Typed event objects
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        endpoint = f"/workflows/{workflow_id}/runs/{run_id}/continue"
+        serialized = []
+        for req in requirements:
+            if hasattr(req, "to_dict"):
+                serialized.append(req.to_dict())
+            elif isinstance(req, dict):
+                serialized.append(req)
+            else:
+                serialized.append(req)
+        data: Dict[str, Any] = {"step_requirements": json.dumps(serialized), "stream": "true"}
+        if session_id is not None:
+            data["session_id"] = session_id
+        if user_id is not None:
+            data["user_id"] = user_id
+
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                data[key] = json.dumps(value)
+            else:
+                data[key] = value
+
         raw_stream = self._astream_post_form_data(endpoint, data, headers=headers)
         async for event in self._parse_sse_events(raw_stream, workflow_run_output_event_from_dict):
             yield event
@@ -1354,6 +1564,8 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> List[str]:
         """Get all unique memory topics.
 
@@ -1361,6 +1573,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID to filter topics for (keyword-only)
 
         Returns:
             List[str]: List of unique topic names
@@ -1368,7 +1581,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {"db_id": db_id, "table": table}
+        params = {"user_id": user_id, "db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
         return await self._aget("/memory_topics", params=params, headers=headers)
@@ -1380,6 +1593,8 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> PaginatedResponse[UserStatsSchema]:
         """Get user memory statistics.
 
@@ -1389,6 +1604,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID to filter statistics for (keyword-only)
 
         Returns:
             PaginatedResponse[UserStatsSchema]: Paginated user statistics
@@ -1396,7 +1612,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"limit": limit, "page": page, "db_id": db_id, "table": table}
+        params: Dict[str, Any] = {"user_id": user_id, "limit": limit, "page": page, "db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/user_memory_stats", params=params, headers=headers)
@@ -1492,8 +1708,10 @@ class AgentOSClient:
             return AgentSessionDetailSchema.model_validate(data)
         elif session_type == SessionType.TEAM:
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW:
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Invalid session type: {session_type}")
 
     async def get_sessions(
         self,
@@ -1509,7 +1727,7 @@ class AgentOSClient:
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[SessionSchema]:
-        """Get a specific session by ID.
+        """Get a paginated list of sessions.
 
         Args:
             session_type: Type of session (agent, team, or workflow)
@@ -1553,7 +1771,7 @@ class AgentOSClient:
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
@@ -1563,7 +1781,7 @@ class AgentOSClient:
 
         Args:
             session_id: ID of the session to retrieve
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
@@ -1576,7 +1794,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -1585,17 +1803,20 @@ class AgentOSClient:
 
         data = await self._aget(f"/sessions/{session_id}", params=params, headers=headers)
 
-        if session_type == SessionType.AGENT:
+        # Pick the right schema based on type or response fields
+        if session_type == SessionType.AGENT or (session_type is None and data.get("agent_id") is not None):
             return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
+        elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     async def get_session_runs(
         self,
         session_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         created_after: Optional[int] = None,
         created_before: Optional[int] = None,
@@ -1607,7 +1828,7 @@ class AgentOSClient:
 
         Args:
             session_id: ID of the session
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             created_after: Filter runs created after this Unix timestamp
             created_before: Filter runs created before this Unix timestamp
@@ -1622,7 +1843,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "created_after": created_after,
             "created_before": created_before,
@@ -1648,7 +1869,7 @@ class AgentOSClient:
         self,
         session_id: str,
         run_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
@@ -1659,7 +1880,7 @@ class AgentOSClient:
         Args:
             session_id: ID of the session
             run_id: ID of the run to retrieve
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
@@ -1672,7 +1893,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -1755,7 +1976,7 @@ class AgentOSClient:
         self,
         session_id: str,
         session_name: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
@@ -1766,7 +1987,7 @@ class AgentOSClient:
         Args:
             session_id: ID of the session to rename
             session_name: New name for the session
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
@@ -1778,7 +1999,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -1788,17 +2009,20 @@ class AgentOSClient:
         payload = {"session_name": session_name}
         data = await self._apost(f"/sessions/{session_id}/rename", payload, params=params, headers=headers)
 
-        if session_type == SessionType.AGENT:
+        # Pick the right schema based on type or response fields
+        if session_type == SessionType.AGENT or (session_type is None and data.get("agent_id") is not None):
             return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
+        elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     async def update_session(
         self,
         session_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -1812,7 +2036,7 @@ class AgentOSClient:
 
         Args:
             session_id: ID of the session to update
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             session_name: Optional new session name
             session_state: Optional new session state
             metadata: Optional new metadata
@@ -1829,7 +2053,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -1848,12 +2072,15 @@ class AgentOSClient:
             f"/sessions/{session_id}", payload.model_dump(exclude_none=True), params=params, headers=headers
         )
 
-        if session_type == SessionType.AGENT:
+        # Pick the right schema based on type or response fields
+        if session_type == SessionType.AGENT or (session_type is None and data.get("agent_id") is not None):
             return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
+        elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     # Eval Operations
 
