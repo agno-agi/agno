@@ -500,6 +500,163 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     return input_media
 
 
+# Supported MIME types per media category, used to route uploaded files to the
+# correct processor. Keep these aligned with `File.valid_mime_types()` in agno.media
+# for document types.
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/tif",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+}
+
+AUDIO_MIME_TYPES = {
+    "audio/wav",
+    "audio/wave",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/mp4",
+    "audio/m4a",
+    "audio/aac",
+    "audio/flac",
+}
+
+VIDEO_MIME_TYPES = {
+    "video/x-flv",
+    "video/quicktime",
+    "video/mpeg",
+    "video/mpegs",
+    "video/mpgs",
+    "video/mpg",
+    "video/mp4",
+    "video/webm",
+    "video/wmv",
+    "video/3gpp",
+}
+
+# NOTE: Keep this in sync with `File.valid_mime_types()` in agno.media. Every type here must
+# be valid there, or the upload returns 200 but the file is silently dropped during FileMedia
+# construction. Office binary/OOXML formats (.doc, .docx, .ppt, .pptx, .xls, .xlsx) are accepted
+# at upload, but not all model providers support them as raw input - Anthropic and Gemini, for
+# example, 400 on PowerPoint. Those uploads succeed here and fail later with a provider error.
+DOCUMENT_MIME_TYPES = {
+    "application/pdf",
+    "application/json",
+    "application/x-javascript",
+    # Office Open XML (modern Office formats)
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+    # Legacy binary Office formats
+    "application/msword",  # .doc
+    "application/vnd.ms-powerpoint",  # .ppt
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.ms-outlook",  # .msg
+    "text/javascript",
+    "application/x-python",
+    "text/x-python",
+    "text/plain",
+    "text/html",
+    "text/css",
+    "text/markdown",
+    "text/csv",
+    "text/xml",
+    "text/rtf",
+}
+
+# Fallback mapping from file extension to media category. Used when the browser sends a
+# missing or ambiguous content type (e.g. `application/octet-stream` or empty for `.md`
+# and `.pptx`, which are not in every OS MIME registry).
+EXTENSION_CATEGORY: Dict[str, str] = {
+    # documents
+    "pdf": "document",
+    "json": "document",
+    "js": "document",
+    "docx": "document",
+    "doc": "document",
+    "pptx": "document",
+    "ppt": "document",
+    "xlsx": "document",
+    "xls": "document",
+    "msg": "document",
+    "py": "document",
+    "txt": "document",
+    "html": "document",
+    "htm": "document",
+    "css": "document",
+    "md": "document",
+    "markdown": "document",
+    "csv": "document",
+    "xml": "document",
+    "rtf": "document",
+    # images
+    "png": "image",
+    "jpg": "image",
+    "jpeg": "image",
+    "gif": "image",
+    "webp": "image",
+    "bmp": "image",
+    "tiff": "image",
+    "tif": "image",
+    "avif": "image",
+    "heic": "image",
+    "heif": "image",
+    # audio
+    "wav": "audio",
+    "mp3": "audio",
+    "ogg": "audio",
+    "m4a": "audio",
+    "aac": "audio",
+    "flac": "audio",
+    # video
+    "flv": "video",
+    "mov": "video",
+    "mpeg": "video",
+    "mpg": "video",
+    "mp4": "video",
+    "webm": "video",
+    "wmv": "video",
+    "3gp": "video",
+}
+
+# Content types that are too generic to classify on their own; fall back to the
+# file extension for these.
+_AMBIGUOUS_CONTENT_TYPES = {None, "", "application/octet-stream"}
+
+
+def classify_upload_file(file: UploadFile) -> Optional[str]:
+    """Classify an uploaded file into one of: image, audio, video, document.
+
+    Routes primarily by `content_type`. When the content type is missing or too generic
+    to be useful (common for `.md` and `.pptx` uploaded from browsers), falls back to the
+    filename extension. Returns None if the file type is not supported.
+    """
+    content_type = file.content_type
+    if content_type in IMAGE_MIME_TYPES:
+        return "image"
+    if content_type in AUDIO_MIME_TYPES:
+        return "audio"
+    if content_type in VIDEO_MIME_TYPES:
+        return "video"
+    if content_type in DOCUMENT_MIME_TYPES:
+        return "document"
+
+    # Fall back to the file extension for ambiguous/missing content types.
+    if content_type in _AMBIGUOUS_CONTENT_TYPES and file.filename and "." in file.filename:
+        extension = file.filename.rsplit(".", 1)[-1].lower()
+        return EXTENSION_CATEGORY.get(extension)
+
+    return None
+
+
 def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
@@ -521,17 +678,60 @@ def process_video(file: UploadFile) -> Video:
     return Video(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
+# Map document file extensions to their canonical MIME type, used to recover a valid
+# mime_type when the browser sends a missing or generic content type (e.g. `.md`).
+_DOCUMENT_EXTENSION_MIME: Dict[str, str] = {
+    "pdf": "application/pdf",
+    "json": "application/json",
+    "js": "text/javascript",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "ppt": "application/vnd.ms-powerpoint",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "msg": "application/vnd.ms-outlook",
+    "py": "text/x-python",
+    "txt": "text/plain",
+    "html": "text/html",
+    "htm": "text/html",
+    "css": "text/css",
+    "md": "text/markdown",
+    "markdown": "text/markdown",
+    "csv": "text/csv",
+    "xml": "text/xml",
+    "rtf": "text/rtf",
+}
+
+
+def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
+    """Resolve a valid document MIME type for an upload.
+
+    Prefers a usable `content_type`; otherwise derives it from the file extension so
+    documents with ambiguous content types (e.g. `.md` sent as octet-stream) still get a
+    mime_type accepted by `FileMedia`.
+    """
+    if file.content_type and file.content_type in DOCUMENT_MIME_TYPES:
+        return file.content_type
+    if file.filename and "." in file.filename:
+        extension = file.filename.rsplit(".", 1)[-1].lower()
+        return _DOCUMENT_EXTENSION_MIME.get(extension)
+    return file.content_type
+
+
 def process_document(file: UploadFile) -> Optional[FileMedia]:
-    try:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        return FileMedia(
-            content=content, filename=file.filename, format=extract_format(file), mime_type=file.content_type
-        )
-    except Exception:
-        logger.exception(f"Error processing document {file.filename}")
-        return None
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+    # FileMedia construction validates the mime_type against File.valid_mime_types(). Every
+    # type in DOCUMENT_MIME_TYPES must also be valid there, otherwise the file is silently
+    # dropped here (the upload still returns 200). The unit tests assert the two stay in sync.
+    return FileMedia(
+        content=content,
+        filename=file.filename,
+        format=extract_format(file),
+        mime_type=_resolve_document_mime_type(file),
+    )
 
 
 def extract_format(file: UploadFile) -> Optional[str]:
