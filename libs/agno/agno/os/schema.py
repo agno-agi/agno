@@ -14,6 +14,7 @@ from agno.os.config import (
     ChatConfig,
     EvalsConfig,
     KnowledgeConfig,
+    Manifest,
     MemoryConfig,
     MetricsConfig,
     SessionConfig,
@@ -205,6 +206,10 @@ class ConfigResponse(BaseModel):
     os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
     databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
+    manifest: Optional[Dict[str, Manifest]] = Field(
+        None,
+        description="Per-entity UI metadata keyed by agent/team/workflow id",
+    )
 
     session: Optional[SessionConfig] = Field(None, description="Session configuration")
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
