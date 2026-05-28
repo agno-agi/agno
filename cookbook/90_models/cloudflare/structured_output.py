@@ -1,15 +1,16 @@
 """
-Deepseek Structured Output
-==========================
+Cloudflare Structured Output
+============================
 
-Cookbook example for `deepseek/structured_output.py`.
+Cookbook example for `cloudflare/structured_output.py`.
 """
 
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.deepseek import DeepSeek
+from agno.models.cloudflare import Cloudflare
 from pydantic import BaseModel, Field
+from rich.pretty import pprint  # noqa
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -35,28 +36,33 @@ class MovieScript(BaseModel):
     )
 
 
-# Agent that uses JSON mode (recommended for DeepSeek).
-# DeepSeek supports JSON mode (response_format={"type": "json_object"}) but not
-# native/json_schema structured outputs, so use_json_mode=True is the reliable path.
+# Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=DeepSeek(id="deepseek-v4-flash"),
-    description="You help people write movie scripts.",
+    model=Cloudflare(id="@cf/google/gemma-4-26b-a4b-it"),
+    description="You write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,
 )
 
-# Agent that uses native structured outputs (output_schema without JSON mode).
+# Agent that uses structured outputs
 structured_output_agent = Agent(
-    model=DeepSeek(id="deepseek-v4-flash"),
-    description="You help people write movie scripts.",
+    model=Cloudflare(id="@cf/google/gemma-4-26b-a4b-it"),
+    description="You write movie scripts.",
     output_schema=MovieScript,
 )
+
+# Get the response in a variable
+# json_mode_response: RunOutput = json_mode_agent.run("New York")
+# pprint(json_mode_response.content)
+# structured_output_response: RunOutput = structured_output_agent.run("New York")
+# pprint(structured_output_response.content)
+
+json_mode_agent.print_response("New York")
+structured_output_agent.print_response("New York")
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    json_mode_agent.print_response("New York")
-
-    structured_output_agent.print_response("New York")
+    pass
