@@ -77,6 +77,8 @@ class WorkflowRunEvent(str, Enum):
 
     step_output = "StepOutput"
 
+    step_spawned = "StepSpawned"
+
     custom_event = "CustomEvent"
 
 
@@ -275,6 +277,21 @@ class StepContinuedEvent(BaseWorkflowRunOutputEvent):
     step_name: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
     step_id: Optional[str] = None
+
+
+@dataclass
+class StepSpawnedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a dynamic workflow driver invents and spawns a new step at runtime"""
+
+    event: str = WorkflowRunEvent.step_spawned.value
+    iteration: Optional[int] = None
+    role: Optional[str] = None
+    instructions: Optional[str] = None
+    input: Optional[str] = None
+    # Use tool_names (not "tools") to avoid collision with BaseRunOutputEvent.from_dict,
+    # which assumes any `tools` field on an event is List[ToolExecution] (dicts).
+    tool_names: Optional[List[str]] = None
+    model_tier: Optional[str] = None
 
 
 @dataclass
@@ -560,6 +577,7 @@ WorkflowRunOutputEvent = Union[
     StepCompletedEvent,
     StepPausedEvent,
     StepContinuedEvent,
+    StepSpawnedEvent,
     StepExecutorPausedEvent,
     StepExecutorContinuedEvent,
     StepOutputReviewEvent,
@@ -593,6 +611,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
     WorkflowRunEvent.step_continued.value: StepContinuedEvent,
+    WorkflowRunEvent.step_spawned.value: StepSpawnedEvent,
     WorkflowRunEvent.step_executor_paused.value: StepExecutorPausedEvent,
     WorkflowRunEvent.step_executor_continued.value: StepExecutorContinuedEvent,
     WorkflowRunEvent.step_output_review.value: StepOutputReviewEvent,
@@ -629,6 +648,33 @@ def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEven
 
 
 @dataclass
+class ExecutedStepRecord:
+    """A record of one step that a dynamic workflow driver invented and executed at runtime.
+
+    Populated by DynamicWorkflowDriver as the driver spawns agents. The list of these on
+    WorkflowRunOutput.executed_steps is the canonical trail of "what the workflow actually ran"
+    for a dynamic workflow.
+    """
+
+    iteration: int = 0
+    role: str = ""
+    instructions: str = ""
+    input: str = ""
+    output_content: str = ""
+    tools: Optional[List[str]] = None
+    model_tier: Optional[str] = None
+    step_id: Optional[str] = None
+    parent_id: Optional[str] = None  # Reserved for v0.1 nested spawns; always None in v0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExecutedStepRecord":
+        return cls(**{k: v for k, v in data.items() if k in {f.name for f in fields(cls)}})
+
+
+@dataclass
 class WorkflowRunOutput:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
@@ -657,6 +703,10 @@ class WorkflowRunOutput:
 
     # Store actual step execution results as StepOutput objects
     step_results: List[Union[StepOutput, List[StepOutput]]] = field(default_factory=list)
+
+    # For dynamic workflows: the trail of steps the driver invented and ran at runtime.
+    # Empty for static workflows.
+    executed_steps: List[ExecutedStepRecord] = field(default_factory=list)
 
     # Store agent/team/workflow responses separately with parent_run_id references
     # Includes nested WorkflowRunOutput for workflow-as-step execution
@@ -769,6 +819,7 @@ class WorkflowRunOutput:
             "files",
             "response_audio",
             "step_results",
+            "executed_steps",
             "step_executor_runs",
             "events",
             "metrics",
@@ -831,6 +882,9 @@ class WorkflowRunOutput:
             _dict["step_executor_runs"] = [
                 run.to_dict() if hasattr(run, "to_dict") else run for run in self.step_executor_runs
             ]
+
+        if self.executed_steps:
+            _dict["executed_steps"] = [rec.to_dict() for rec in self.executed_steps]
 
         if self.workflow_agent_run is not None:
             _dict["workflow_agent_run"] = (
@@ -977,6 +1031,16 @@ class WorkflowRunOutput:
 
         input_data = data.pop("input", None)
 
+        # Parse executed_steps (dynamic-workflow trail)
+        executed_steps_data = data.pop("executed_steps", [])
+        executed_steps: List[ExecutedStepRecord] = []
+        if executed_steps_data:
+            for rec in executed_steps_data:
+                if isinstance(rec, ExecutedStepRecord):
+                    executed_steps.append(rec)
+                elif isinstance(rec, dict):
+                    executed_steps.append(ExecutedStepRecord.from_dict(rec))
+
         # Filter data to only include fields that are actually defined in the WorkflowRunOutput dataclass
         from dataclasses import fields
 
@@ -985,6 +1049,7 @@ class WorkflowRunOutput:
 
         result = cls(
             step_results=parsed_step_results,
+            executed_steps=executed_steps,
             workflow_agent_run=workflow_agent_run,
             metadata=metadata,
             images=images,

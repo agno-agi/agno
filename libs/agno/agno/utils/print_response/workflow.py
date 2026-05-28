@@ -22,6 +22,7 @@ from agno.run.workflow import (
     RouterExecutionStartedEvent,
     StepCompletedEvent,
     StepOutputEvent,
+    StepSpawnedEvent,
     StepsExecutionCompletedEvent,
     StepsExecutionStartedEvent,
     StepStartedEvent,
@@ -39,6 +40,46 @@ from agno.workflow.types import StepOutput
 
 if TYPE_CHECKING:
     from agno.workflow.workflow import Workflow
+
+
+def _render_dynamic_plan_panel(run_output: "WorkflowRunOutput", markdown: bool, console: Any) -> None:
+    """Render the trail of agents a DynamicWorkflowDriver spawned during a run.
+
+    No-op when the run isn't a dynamic workflow (executed_steps empty).
+    """
+    records = getattr(run_output, "executed_steps", None) or []
+    if not records:
+        return
+
+    lines = []
+    for rec in records:
+        role = rec.role or "?"
+        iteration = rec.iteration if rec.iteration is not None else "?"
+        instructions = (rec.instructions or "").strip().replace("\n", " ")
+        if len(instructions) > 80:
+            instructions = instructions[:77] + "..."
+        input_preview = (rec.input or "").strip().replace("\n", " ")
+        if len(input_preview) > 60:
+            input_preview = input_preview[:57] + "..."
+        output_preview = (rec.output_content or "").strip().replace("\n", " ")
+        if len(output_preview) > 80:
+            output_preview = output_preview[:77] + "..."
+
+        lines.append(f"- **[{iteration}] `{role}`**")
+        if instructions:
+            lines.append(f"    - instructions: {instructions}")
+        if input_preview:
+            lines.append(f"    - input: {input_preview}")
+        if output_preview:
+            lines.append(f"    - output: {output_preview}")
+
+    body = "\n".join(lines)
+    panel = create_panel(
+        content=Markdown(body) if markdown else body,
+        title=f"Dynamic Plan ({len(records)} spawn{'' if len(records) == 1 else 's'})",
+        border_style="medium_purple3",
+    )
+    console.print(panel)
 
 
 def print_response(
@@ -158,6 +199,11 @@ def print_response(
                     border_style="orange3",
                 )
                 console.print(step_panel)  # type: ignore
+
+            # Dynamic workflow: show the trail of spawned specialists (what the driver
+            # actually invented this run). Skipped when there's nothing to show.
+            if show_step_details and workflow_response.executed_steps:
+                _render_dynamic_plan_panel(workflow_response, markdown, console)
 
             # Show final summary
             if workflow_response.metadata:
@@ -358,6 +404,41 @@ def print_response_stream(
                     status.update("Workflow agent completed")
                     live_log.update(status)
                     continue
+
+                elif isinstance(response, StepSpawnedEvent):
+                    # Dynamic workflow: the driver invented a new specialist agent.
+                    # Render the spawn decision before the inner StepStarted/Completed
+                    # so the reader sees "what the driver decided" alongside the result.
+                    iteration = response.iteration if response.iteration is not None else "?"
+                    role = response.role or "?"
+                    tool_names = response.tool_names or []
+                    tier = response.model_tier
+                    instructions_preview = (response.instructions or "").strip().replace("\n", " ")
+                    if len(instructions_preview) > 80:
+                        instructions_preview = instructions_preview[:77] + "..."
+                    input_preview = (response.input or "").strip().replace("\n", " ")
+                    if len(input_preview) > 80:
+                        input_preview = input_preview[:77] + "..."
+
+                    body_lines = [f"**role:** `{role}`"]
+                    if instructions_preview:
+                        body_lines.append(f"**instructions:** {instructions_preview}")
+                    if input_preview:
+                        body_lines.append(f"**input:** {input_preview}")
+                    if tool_names:
+                        body_lines.append(f"**tools:** `{', '.join(tool_names)}`")
+                    if tier:
+                        body_lines.append(f"**model tier:** `{tier}`")
+                    spawn_body = "\n\n".join(body_lines)
+
+                    spawn_panel = create_panel(
+                        content=Markdown(spawn_body) if markdown else spawn_body,
+                        title=f"Spawned step [{iteration}]",
+                        border_style="medium_purple3",
+                    )
+                    console.print(spawn_panel)  # type: ignore
+                    status.update(f"Spawning [{iteration}] {role}...")
+                    live_log.update(status)
 
                 elif isinstance(response, StepStartedEvent):
                     step_name = response.step_name or "Unknown"
@@ -715,6 +796,11 @@ def print_response_stream(
                         )
                         console.print(summary_panel)  # type: ignore
 
+                    # Dynamic workflow trail: print the spawned-specialists summary at end-of-run.
+                    run_output = getattr(response, "run_output", None)
+                    if run_output is not None and getattr(run_output, "executed_steps", None):
+                        _render_dynamic_plan_panel(run_output, markdown, console)
+
                 else:
                     # Handle streaming content
                     if isinstance(response, str):
@@ -997,6 +1083,11 @@ async def aprint_response(
                 )
                 console.print(step_panel)  # type: ignore
 
+            # Dynamic workflow: show the trail of spawned specialists (what the driver
+            # actually invented this run). Skipped when there's nothing to show.
+            if show_step_details and workflow_response.executed_steps:
+                _render_dynamic_plan_panel(workflow_response, markdown, console)
+
             # Show final summary
             if workflow_response.metadata:
                 status = workflow_response.status.value  # type: ignore
@@ -1196,6 +1287,39 @@ async def aprint_response_stream(
                     status.update("Workflow agent completed")
                     live_log.update(status)
                     continue
+
+                elif isinstance(response, StepSpawnedEvent):
+                    # Dynamic workflow: the driver invented a new specialist agent.
+                    iteration = response.iteration if response.iteration is not None else "?"
+                    role = response.role or "?"
+                    tool_names = response.tool_names or []
+                    tier = response.model_tier
+                    instructions_preview = (response.instructions or "").strip().replace("\n", " ")
+                    if len(instructions_preview) > 80:
+                        instructions_preview = instructions_preview[:77] + "..."
+                    input_preview = (response.input or "").strip().replace("\n", " ")
+                    if len(input_preview) > 80:
+                        input_preview = input_preview[:77] + "..."
+
+                    body_lines = [f"**role:** `{role}`"]
+                    if instructions_preview:
+                        body_lines.append(f"**instructions:** {instructions_preview}")
+                    if input_preview:
+                        body_lines.append(f"**input:** {input_preview}")
+                    if tool_names:
+                        body_lines.append(f"**tools:** `{', '.join(tool_names)}`")
+                    if tier:
+                        body_lines.append(f"**model tier:** `{tier}`")
+                    spawn_body = "\n\n".join(body_lines)
+
+                    spawn_panel = create_panel(
+                        content=Markdown(spawn_body) if markdown else spawn_body,
+                        title=f"Spawned step [{iteration}]",
+                        border_style="medium_purple3",
+                    )
+                    console.print(spawn_panel)  # type: ignore
+                    status.update(f"Spawning [{iteration}] {role}...")
+                    live_log.update(status)
 
                 elif isinstance(response, StepStartedEvent):
                     # Skip step events if workflow hasn't started (agent direct response)
@@ -1556,6 +1680,11 @@ async def aprint_response_stream(
                             border_style="blue",
                         )
                         console.print(summary_panel)  # type: ignore
+
+                    # Dynamic workflow trail: print the spawned-specialists summary at end-of-run.
+                    run_output = getattr(response, "run_output", None)
+                    if run_output is not None and getattr(run_output, "executed_steps", None):
+                        _render_dynamic_plan_panel(run_output, markdown, console)
 
                 else:
                     if isinstance(response, str):
