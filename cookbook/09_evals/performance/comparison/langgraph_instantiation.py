@@ -1,4 +1,9 @@
-"""Run `uv pip install langgraph langchain_openai` to install dependencies."""
+"""
+LangGraph Instantiation Performance Evaluation
+==============================================
+
+Demonstrates agent instantiation benchmarking with LangGraph.
+"""
 
 from typing import Literal
 
@@ -8,6 +13,9 @@ from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Tool
+# ---------------------------------------------------------------------------
 @tool
 def get_weather(city: Literal["nyc", "sf"]):
     """Use this to get weather information."""
@@ -22,11 +30,20 @@ def get_weather(city: Literal["nyc", "sf"]):
 tools = [get_weather]
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 def instantiate_agent():
     return create_react_agent(model=ChatOpenAI(model="gpt-4o"), tools=tools)
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 langgraph_instantiation = PerformanceEval(func=instantiate_agent, num_iterations=1000)
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     langgraph_instantiation.run(print_results=True, print_summary=True)

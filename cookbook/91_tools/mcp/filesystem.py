@@ -1,4 +1,4 @@
-"""📁 MCP Filesystem Agent - Your Personal File Explorer!
+"""MCP Filesystem Agent - Your Personal File Explorer!
 
 This example shows how to create a filesystem agent that uses MCP to explore,
 analyze, and provide insights about files and directories. The agent leverages the Model
@@ -22,6 +22,10 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def run_agent(message: str) -> None:
@@ -53,6 +57,10 @@ async def run_agent(message: str) -> None:
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     # Basic example - exploring project license
     asyncio.run(run_agent("What is the license for this project?"))

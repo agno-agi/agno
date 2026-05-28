@@ -1,8 +1,19 @@
+"""
+Perplexity Structured Output
+============================
+
+Cookbook example for `perplexity/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.perplexity import Perplexity
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -39,3 +50,10 @@ json_mode_agent = Agent(
 # pprint(structured_output_response.content)
 
 json_mode_agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -6,6 +6,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.desi_vocal import DesiVocalTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 audio_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[DesiVocalTools()],
@@ -20,6 +25,10 @@ audio_agent = Agent(
     markdown=True,
 )
 
-audio_agent.print_response(
-    "Generate a very small audio of history of french revolution"
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    audio_agent.print_response(
+        "Generate a very small audio of history of french revolution"
+    )

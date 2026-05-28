@@ -7,6 +7,10 @@ from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.tools.seltz import SeltzTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 cwd = Path(__file__).parent.resolve()
 tmp = cwd.joinpath("tmp")
 if not tmp.exists():
@@ -56,3 +60,10 @@ agent = Agent(
     save_response_to_file=str(tmp.joinpath("{message}.md")),
 )
 agent.print_response("Recent advances in AI safety", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

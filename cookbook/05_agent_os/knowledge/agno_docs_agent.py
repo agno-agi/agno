@@ -1,3 +1,10 @@
+"""
+Agno Docs Agent
+===============
+
+Demonstrates agno docs agent.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -7,6 +14,10 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector, SearchType
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -121,6 +132,10 @@ agent_os = AgentOS(
 
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     knowledge.insert(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")

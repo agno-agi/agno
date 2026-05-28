@@ -10,23 +10,32 @@ You can obtain an API key from https://serper.dev/
 from agno.agent import Agent
 from agno.tools.serper import SerperTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     tools=[SerperTools()],
 )
 
-agent.print_response(
-    "Search for the latest news about artificial intelligence developments",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Search for the latest news about artificial intelligence developments",
+        markdown=True,
+    )
 
-# Example 2: Google Scholar Search
-# agent.print_response(
-#     "Find 2 recent academic papers about large language model safety and alignment",
-#     markdown=True,
-# )
+    # Example 2: Google Scholar Search
+    # agent.print_response(
+    #     "Find 2 recent academic papers about large language model safety and alignment",
+    #     markdown=True,
+    # )
 
-# Example 3: Web Scraping
-# agent.print_response(
-#     "Scrape and summarize the main content from this OpenAI blog post: https://openai.com/index/gpt-4/",
-#     markdown=True
-# )
+    # Example 3: Web Scraping
+    # agent.print_response(
+    #     "Scrape and summarize the main content from this OpenAI blog post: https://openai.com/index/gpt-4/",
+    #     markdown=True
+    # )

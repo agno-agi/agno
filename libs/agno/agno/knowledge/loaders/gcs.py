@@ -11,7 +11,8 @@ from typing import Any, Dict, Optional, cast
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
 from agno.knowledge.reader import Reader
-from agno.knowledge.remote_content.config import GcsConfig, RemoteContentConfig
+from agno.knowledge.remote_content.base import BaseStorageConfig
+from agno.knowledge.remote_content.gcs import GcsConfig
 from agno.knowledge.remote_content.remote_content import GCSContent
 from agno.utils.log import log_info, log_warning
 from agno.utils.string import generate_id
@@ -27,7 +28,7 @@ class GCSLoader(BaseLoader):
     def _validate_gcs_config(
         self,
         content: Content,
-        config: Optional[RemoteContentConfig],
+        config: Optional[BaseStorageConfig],
     ) -> Optional[GcsConfig]:
         """Validate and extract GCS config.
 
@@ -86,7 +87,7 @@ class GCSLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from Google Cloud Storage (async).
 
@@ -180,7 +181,7 @@ class GCSLoader(BaseLoader):
         content: Content,
         upsert: bool,
         skip_if_exists: bool,
-        config: Optional[RemoteContentConfig] = None,
+        config: Optional[BaseStorageConfig] = None,
     ):
         """Load content from Google Cloud Storage (sync)."""
         try:

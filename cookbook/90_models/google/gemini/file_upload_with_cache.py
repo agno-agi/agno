@@ -13,6 +13,10 @@ from agno.models.google import Gemini
 from google import genai
 from google.genai.types import UploadFileConfig
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 client = genai.Client()
 
 # Download txt file
@@ -52,7 +56,7 @@ if not txt_file:
 
 # Create a cache with 5min TTL
 cache = client.caches.create(
-    model="gemini-3-flash-preview",
+    model="gemini-3.5-flash",
     config={
         "system_instruction": "You are an expert at analyzing transcripts.",
         "contents": [txt_file],
@@ -60,10 +64,13 @@ cache = client.caches.create(
     },
 )
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent = Agent(
-        model=Gemini(id="gemini-3-flash-preview", cached_content=cache.name),
+        model=Gemini(id="gemini-3.5-flash", cached_content=cache.name),
     )
     run_output = agent.run(
         "Find a lighthearted moment from this transcript",  # No need to pass the txt file

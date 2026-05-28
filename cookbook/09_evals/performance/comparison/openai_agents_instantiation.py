@@ -1,4 +1,9 @@
-"""Run `uv pip install openai-agents` to install dependencies."""
+"""
+OpenAI Agents Instantiation Performance Evaluation
+==================================================
+
+Demonstrates agent instantiation benchmarking with OpenAI Agents SDK.
+"""
 
 from typing import Literal
 
@@ -12,6 +17,9 @@ except ImportError:
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Tool
+# ---------------------------------------------------------------------------
 def get_weather(city: Literal["nyc", "sf"]):
     """Use this to get weather information."""
     if city == "nyc":
@@ -22,6 +30,9 @@ def get_weather(city: Literal["nyc", "sf"]):
         raise AssertionError("Unknown city")
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 def instantiate_agent():
     return Agent(
         name="Haiku agent",
@@ -31,9 +42,15 @@ def instantiate_agent():
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 openai_agents_instantiation = PerformanceEval(
     func=instantiate_agent, num_iterations=1000
 )
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     openai_agents_instantiation.run(print_results=True, print_summary=True)

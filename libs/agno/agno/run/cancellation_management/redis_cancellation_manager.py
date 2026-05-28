@@ -82,54 +82,96 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         return self.async_redis_client
 
     def register_run(self, run_id: str) -> None:
-        """Register a new run as not cancelled."""
+        """Register a new run as not cancelled.
+
+        Uses NX flag to preserve any existing cancellation intent
+        (cancel-before-start support for background runs).
+        """
         client = self._ensure_sync_client()
         key = self._get_key(run_id)
-        client.set(key, "0", ex=self.ttl_seconds)
+        # NX: only set if key does not exist, preserving cancel-before-start intent
+        client.set(key, "0", ex=self.ttl_seconds, nx=True)
 
     async def aregister_run(self, run_id: str) -> None:
-        """Register a new run as not cancelled (async version)."""
+        """Register a new run as not cancelled (async version).
+
+        Uses NX flag to preserve any existing cancellation intent
+        (cancel-before-start support for background runs).
+        """
         client = self._ensure_async_client()
         key = self._get_key(run_id)
-        await client.set(key, "0", ex=self.ttl_seconds)
+        # NX: only set if key does not exist, preserving cancel-before-start intent
+        await client.set(key, "0", ex=self.ttl_seconds, nx=True)
+
+    def _cancel_via_pipeline(self, client: Union[Redis, RedisCluster], key: str) -> bool:
+        """Cancel a run atomically using a pipeline: EXISTS + SET (+ EXPIRE).
+
+        Returns True if the key already existed (run was registered).
+        """
+        pipe = client.pipeline()
+        pipe.exists(key)
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            pipe.set(key, "1", ex=self.ttl_seconds)
+        else:
+            pipe.set(key, "1")
+        results = pipe.execute()
+        return bool(results[0])
+
+    async def _acancel_via_pipeline(self, client: Union[AsyncRedis, AsyncRedisCluster], key: str) -> bool:
+        """Cancel a run atomically using an async pipeline: EXISTS + SET (+ EXPIRE).
+
+        Returns True if the key already existed (run was registered).
+        """
+        pipe = client.pipeline()
+        pipe.exists(key)
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            pipe.set(key, "1", ex=self.ttl_seconds)
+        else:
+            pipe.set(key, "1")
+        results = await pipe.execute()
+        return bool(results[0])
 
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
 
+        Always stores cancellation intent, even for runs not yet registered
+        (cancel-before-start support for background runs).
+
         Returns:
-            bool: True if run was found and cancelled, False if run not found.
+            bool: True if run was previously registered, False if storing
+            cancellation intent for an unregistered run.
         """
         client = self._ensure_sync_client()
         key = self._get_key(run_id)
 
-        # Atomically set to "1" only if key exists (XX flag)
-        result = client.set(key, "1", ex=self.ttl_seconds, xx=True)
+        was_registered = self._cancel_via_pipeline(client, key)
 
-        if result:
+        if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
-            return True
         else:
-            logger.warning(f"Attempted to cancel unknown run {run_id}")
-            return False
+            logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
+        return was_registered
 
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled (async version).
 
+        Always stores cancellation intent, even for runs not yet registered
+        (cancel-before-start support for background runs).
+
         Returns:
-            bool: True if run was found and cancelled, False if run not found.
+            bool: True if run was previously registered, False if storing
+            cancellation intent for an unregistered run.
         """
         client = self._ensure_async_client()
         key = self._get_key(run_id)
 
-        # Atomically set to "1" only if key exists (XX flag)
-        result = await client.set(key, "1", ex=self.ttl_seconds, xx=True)
+        was_registered = await self._acancel_via_pipeline(client, key)
 
-        if result:
+        if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
-            return True
         else:
-            logger.warning(f"Attempted to cancel unknown run {run_id}")
-            return False
+            logger.info(f"Run {run_id} not yet registered, storing cancellation intent")
+        return was_registered
 
     def is_cancelled(self, run_id: str) -> bool:
         """Check if a run is cancelled."""

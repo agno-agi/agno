@@ -1,3 +1,10 @@
+"""
+Include Exclude Tools Custom Toolkit
+=============================
+
+Demonstrates include exclude tools custom toolkit.
+"""
+
 import asyncio
 import json
 
@@ -5,6 +12,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import Toolkit
 from agno.utils.log import logger
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class CustomerDBTools(Toolkit):
@@ -51,9 +62,13 @@ agent = Agent(
     tools=[CustomerDBTools(include_tools=["retrieve_customer_profile"])],
 )
 
-asyncio.run(
-    agent.aprint_response(
-        "Retrieve the customer profile for customer ID 123 and delete it.",  # The agent shouldn't be able to delete the profile
-        markdown=True,
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    asyncio.run(
+        agent.aprint_response(
+            "Retrieve the customer profile for customer ID 123 and delete it.",  # The agent shouldn't be able to delete the profile
+            markdown=True,
+        )
     )
-)

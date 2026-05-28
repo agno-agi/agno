@@ -1,8 +1,20 @@
+"""
+Agent Os
+=============================
+
+Demonstrates agent os.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.os import AgentOS
 from agno.tools.mcp_toolbox import MCPToolbox
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 url = "http://127.0.0.1:5001"
 
@@ -34,6 +46,10 @@ agent_os = AgentOS(
 )
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="agent_os:app", reload=True)

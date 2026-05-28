@@ -22,6 +22,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import deserialize_session, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -107,7 +108,7 @@ class JsonDb(BaseDb):
             return []
 
         except json.JSONDecodeError as e:
-            log_error(f"Error reading the {file_path} JSON file")
+            log_error(f"Error reading the {file_path} JSON file: {str(e)}")
             raise e
 
     def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
@@ -130,7 +131,7 @@ class JsonDb(BaseDb):
                 json.dump(data, f, indent=2, default=str)
 
         except Exception as e:
-            log_error(f"Error writing to the {file_path} JSON file: {e}")
+            log_error(f"Error writing to the {file_path} JSON file: {str(e)}")
             raise e
 
     def get_latest_schema_version(self):
@@ -143,11 +144,12 @@ class JsonDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from the JSON file.
 
         Args:
             session_id (str): The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -158,7 +160,11 @@ class JsonDb(BaseDb):
         try:
             sessions = self._read_json_file(self.session_table_name)
             original_count = len(sessions)
-            sessions = [s for s in sessions if s.get("session_id") != session_id]
+            sessions = [
+                s
+                for s in sessions
+                if not (s.get("session_id") == session_id and (user_id is None or s.get("user_id") == user_id))
+            ]
 
             if len(sessions) < original_count:
                 self._write_json_file(self.session_table_name, sessions)
@@ -170,32 +176,37 @@ class JsonDb(BaseDb):
                 return False
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from the JSON file.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             sessions = self._read_json_file(self.session_table_name)
-            sessions = [s for s in sessions if s.get("session_id") not in session_ids]
+            sessions = [
+                s
+                for s in sessions
+                if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
+            ]
             self._write_json_file(self.session_table_name, sessions)
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
@@ -203,7 +214,7 @@ class JsonDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to read.
-            session_type (SessionType): The type of the session to read.
+            session_type (Optional[SessionType]): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -226,19 +237,12 @@ class JsonDb(BaseDb):
                     if not deserialize:
                         return session_data
 
-                    if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_data)
-                    elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_data)
-                    elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session_data)
-                    else:
-                        raise ValueError(f"Invalid session type: {session_type}")
+                    return deserialize_session(session_type, session_data)
 
             return None
 
         except Exception as e:
-            log_error(f"Exception reading from session file: {e}")
+            log_error(f"Exception reading from session file: {str(e)}")
             raise e
 
     def get_sessions(
@@ -280,11 +284,11 @@ class JsonDb(BaseDb):
             Exception: If an error occurs while reading the sessions.
         """
         try:
-            sessions = self._read_json_file(self.session_table_name)
+            sessions_raw = self._read_json_file(self.session_table_name)
 
             # Apply filters
             filtered_sessions = []
-            for session_data in sessions:
+            for session_data in sessions_raw:
                 if user_id is not None and session_data.get("user_id") != user_id:
                     continue
                 if component_id is not None:
@@ -294,17 +298,25 @@ class JsonDb(BaseDb):
                         continue
                     elif session_type == SessionType.WORKFLOW and session_data.get("workflow_id") != component_id:
                         continue
-                if start_timestamp is not None and session_data.get("created_at", 0) < start_timestamp:
+                    elif session_type is None:
+                        if (
+                            session_data.get("agent_id") != component_id
+                            and session_data.get("team_id") != component_id
+                            and session_data.get("workflow_id") != component_id
+                        ):
+                            continue
+                if start_timestamp is not None and (session_data.get("created_at") or 0) < start_timestamp:
                     continue
-                if end_timestamp is not None and session_data.get("created_at", 0) > end_timestamp:
+                if end_timestamp is not None and (session_data.get("created_at") or 0) > end_timestamp:
                     continue
                 if session_name is not None:
-                    stored_name = session_data.get("session_data", {}).get("session_name", "")
+                    stored_name = (session_data.get("session_data") or {}).get("session_name", "")
                     if session_name.lower() not in stored_name.lower():
                         continue
-                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                if session_data.get("session_type") != session_type_value:
-                    continue
+                if session_type is not None:
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    if session_data.get("session_type") != session_type_value:
+                        continue
 
                 filtered_sessions.append(session_data)
 
@@ -323,54 +335,50 @@ class JsonDb(BaseDb):
             if not deserialize:
                 return filtered_sessions, total_count
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, filtered_sessions)
 
         except Exception as e:
-            log_error(f"Exception reading from session file: {e}")
+            log_error(f"Exception reading from session file: {str(e)}")
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: Optional[SessionType],
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in the JSON file."""
         try:
             sessions = self._read_json_file(self.session_table_name)
 
             for i, session in enumerate(sessions):
-                if session.get("session_id") == session_id and session.get("session_type") == session_type.value:
-                    # Update session name in session_data
-                    if "session_data" not in session:
-                        session["session_data"] = {}
-                    session["session_data"]["session_name"] = session_name
+                if session.get("session_id") != session_id:
+                    continue
+                if session_type is not None and session.get("session_type") != session_type.value:
+                    continue
+                if user_id is not None and session.get("user_id") != user_id:
+                    continue
+                # Update session name in session_data
+                if "session_data" not in session or session["session_data"] is None:
+                    session["session_data"] = {}
+                session["session_data"]["session_name"] = session_name
 
-                    sessions[i] = session
-                    self._write_json_file(self.session_table_name, sessions)
+                sessions[i] = session
+                self._write_json_file(self.session_table_name, sessions)
 
-                    log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+                log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
-                    if not deserialize:
-                        return session
+                if not deserialize:
+                    return session
 
-                    if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
-                    elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
-                    elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session)
-                    else:
-                        raise ValueError(f"Invalid session type: {session_type}")
+                return deserialize_session(session_type, session)
 
             return None
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             raise e
 
     def upsert_session(
@@ -395,6 +403,9 @@ class JsonDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
+                    existing_uid = existing_session.get("user_id")
+                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                        return None
                     # Update existing session
                     session_dict["updated_at"] = int(time.time())
                     sessions[i] = session_dict
@@ -415,7 +426,7 @@ class JsonDb(BaseDb):
             return session
 
         except Exception as e:
-            log_error(f"Exception upserting session: {e}")
+            log_error(f"Exception upserting session: {str(e)}")
             raise e
 
     def upsert_sessions(
@@ -452,7 +463,7 @@ class JsonDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert: {e}")
+            log_error(f"Exception during bulk session upsert: {str(e)}")
             return []
 
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
@@ -478,7 +489,7 @@ class JsonDb(BaseDb):
             original_count = len(memories)
 
             # If user_id is provided, verify the memory belongs to the user before deleting
-            if user_id:
+            if user_id is not None:
                 memory_to_delete = None
                 for m in memories:
                     if m.get("memory_id") == memory_id:
@@ -498,7 +509,7 @@ class JsonDb(BaseDb):
                 log_debug(f"No memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting memory: {e}")
+            log_error(f"Error deleting memory: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -512,7 +523,7 @@ class JsonDb(BaseDb):
             memories = self._read_json_file(self.memory_table_name)
 
             # If user_id is provided, filter memory_ids to only those belonging to the user
-            if user_id:
+            if user_id is not None:
                 filtered_memory_ids: List[str] = []
                 for memory in memories:
                     if memory.get("memory_id") in memory_ids and memory.get("user_id") == user_id:
@@ -525,11 +536,14 @@ class JsonDb(BaseDb):
             log_debug(f"Successfully deleted {len(memory_ids)} user memories")
 
         except Exception as e:
-            log_error(f"Error deleting memories: {e}")
+            log_error(f"Error deleting memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the JSON file.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of unique memory topics.
@@ -539,13 +553,15 @@ class JsonDb(BaseDb):
 
             topics = set()
             for memory in memories:
+                if user_id is not None and memory.get("user_id") != user_id:
+                    continue
                 memory_topics = memory.get("topics", [])
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)
             return list(topics)
 
         except Exception as e:
-            log_error(f"Exception reading from memory file: {e}")
+            log_error(f"Exception reading from memory file: {str(e)}")
             raise e
 
     def get_user_memory(
@@ -580,7 +596,7 @@ class JsonDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Exception reading from memory file: {e}")
+            log_error(f"Exception reading from memory file: {str(e)}")
             raise e
 
     def get_user_memories(
@@ -638,7 +654,7 @@ class JsonDb(BaseDb):
             return [UserMemory.from_dict(memory) for memory in filtered_memories]
 
         except Exception as e:
-            log_error(f"Exception reading from memory file: {e}")
+            log_error(f"Exception reading from memory file: {str(e)}")
             raise e
 
     def get_user_memory_stats(
@@ -690,7 +706,7 @@ class JsonDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -724,7 +740,7 @@ class JsonDb(BaseDb):
             return UserMemory.from_dict(memory_dict)
 
         except Exception as e:
-            log_warning(f"Exception upserting user memory: {e}")
+            log_warning(f"Exception upserting user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -760,7 +776,7 @@ class JsonDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert: {e}")
+            log_error(f"Exception during bulk memory upsert: {str(e)}")
             return []
 
     def clear_memories(self) -> None:
@@ -774,7 +790,7 @@ class JsonDb(BaseDb):
             self._write_json_file(self.memory_table_name, [])
 
         except Exception as e:
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # -- Metrics methods --
@@ -843,7 +859,7 @@ class JsonDb(BaseDb):
             return results
 
         except Exception as e:
-            log_warning(f"Exception refreshing metrics: {e}")
+            log_warning(f"Exception refreshing metrics: {str(e)}")
             raise e
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
@@ -898,7 +914,7 @@ class JsonDb(BaseDb):
             return filtered_sessions
 
         except Exception as e:
-            log_error(f"Exception reading sessions for metrics: {e}")
+            log_error(f"Exception reading sessions for metrics: {str(e)}")
             raise e
 
     def get_metrics(
@@ -930,7 +946,7 @@ class JsonDb(BaseDb):
             return filtered_metrics, latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+            log_error(f"Exception getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -950,7 +966,7 @@ class JsonDb(BaseDb):
             self._write_json_file(self.knowledge_table_name, knowledge_items)
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -975,7 +991,7 @@ class JsonDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -984,6 +1000,7 @@ class JsonDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -992,6 +1009,7 @@ class JsonDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1001,6 +1019,10 @@ class JsonDb(BaseDb):
         """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
 
             total_count = len(knowledge_items)
 
@@ -1017,7 +1039,7 @@ class JsonDb(BaseDb):
             return [KnowledgeRow.model_validate(item) for item in knowledge_items], total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1052,7 +1074,7 @@ class JsonDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -1075,7 +1097,7 @@ class JsonDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -1092,7 +1114,7 @@ class JsonDb(BaseDb):
                 log_debug(f"No eval run found with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -1110,7 +1132,7 @@ class JsonDb(BaseDb):
                 log_debug(f"No eval runs found with IDs: {eval_run_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise e
 
     def get_eval_run(
@@ -1129,7 +1151,7 @@ class JsonDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -1195,7 +1217,7 @@ class JsonDb(BaseDb):
             return [EvalRunRecord.model_validate(run) for run in filtered_runs]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -1222,7 +1244,7 @@ class JsonDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error renaming eval run {eval_run_id}: {e}")
+            log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Culture methods --
@@ -1232,7 +1254,7 @@ class JsonDb(BaseDb):
         try:
             self._write_json_file(self.culture_table_name, [])
         except Exception as e:
-            log_error(f"Error clearing cultural knowledge: {e}")
+            log_error(f"Error clearing cultural knowledge: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -1242,7 +1264,7 @@ class JsonDb(BaseDb):
             cultural_knowledge = [ck for ck in cultural_knowledge if ck.get("id") != id]
             self._write_json_file(self.culture_table_name, cultural_knowledge)
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -1258,7 +1280,7 @@ class JsonDb(BaseDb):
                     return deserialize_cultural_knowledge_from_db(ck)
             return None
         except Exception as e:
-            log_error(f"Error getting cultural knowledge: {e}")
+            log_error(f"Error getting cultural knowledge: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -1305,7 +1327,7 @@ class JsonDb(BaseDb):
 
             return [deserialize_cultural_knowledge_from_db(ck) for ck in filtered]
         except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {e}")
+            log_error(f"Error getting all cultural knowledge: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -1345,7 +1367,7 @@ class JsonDb(BaseDb):
 
             return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # --- Traces ---
@@ -1407,18 +1429,21 @@ class JsonDb(BaseDb):
                 if should_update_name:
                     existing["name"] = trace.name
 
-                # Update context fields only if new value is not None
-                if trace.run_id is not None:
+                # Preserve existing non-null context values: only fill in fields
+                # that the existing row left blank. Otherwise a later upsert from
+                # a child span (e.g. a post-hook agent's run with a different
+                # session_id) would overwrite the trace's already-correct context.
+                if existing.get("run_id") is None and trace.run_id is not None:
                     existing["run_id"] = trace.run_id
-                if trace.session_id is not None:
+                if existing.get("session_id") is None and trace.session_id is not None:
                     existing["session_id"] = trace.session_id
-                if trace.user_id is not None:
+                if existing.get("user_id") is None and trace.user_id is not None:
                     existing["user_id"] = trace.user_id
-                if trace.agent_id is not None:
+                if existing.get("agent_id") is None and trace.agent_id is not None:
                     existing["agent_id"] = trace.agent_id
-                if trace.team_id is not None:
+                if existing.get("team_id") is None and trace.team_id is not None:
                     existing["team_id"] = trace.team_id
-                if trace.workflow_id is not None:
+                if existing.get("workflow_id") is None and trace.workflow_id is not None:
                     existing["workflow_id"] = trace.workflow_id
 
                 traces[existing_idx] = existing
@@ -1432,7 +1457,7 @@ class JsonDb(BaseDb):
             self._write_json_file(self.trace_table_name, traces)
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
 
     def get_trace(
         self,
@@ -1482,7 +1507,7 @@ class JsonDb(BaseDb):
             return Trace.from_dict(trace_data)
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -1575,7 +1600,7 @@ class JsonDb(BaseDb):
             return result_traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -1674,7 +1699,7 @@ class JsonDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -1690,7 +1715,7 @@ class JsonDb(BaseDb):
             self._write_json_file(self.span_table_name, spans)
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -1708,7 +1733,7 @@ class JsonDb(BaseDb):
             self._write_json_file(self.span_table_name, existing_spans)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -1731,7 +1756,7 @@ class JsonDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -1773,7 +1798,7 @@ class JsonDb(BaseDb):
             return [Span.from_dict(s) for s in filtered]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Learning methods (stubs) --

@@ -8,9 +8,14 @@ from agno.agent import Agent
 from agno.db.sqlite import AsyncSqliteDb
 from agno.tools.websearch import WebSearchTools
 
-# Initialize AsyncSqliteDb
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = AsyncSqliteDb(db_file="tmp/data.db")
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     db=db,
     tools=[WebSearchTools()],
@@ -19,5 +24,13 @@ agent = Agent(
 )
 
 
-asyncio.run(agent.aprint_response("How many people live in Canada?"))
-asyncio.run(agent.aprint_response("What is their national anthem called?"))
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+async def main():
+    await agent.aprint_response("How many people live in Canada?")
+    await agent.aprint_response("What is their national anthem called?")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

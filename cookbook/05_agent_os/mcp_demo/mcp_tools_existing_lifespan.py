@@ -15,6 +15,10 @@ from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_info
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db = SqliteDb(db_file="tmp/agentos.db")
 
@@ -49,6 +53,10 @@ agent_os = AgentOS(
 
 
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

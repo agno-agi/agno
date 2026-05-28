@@ -18,6 +18,7 @@ def team(shared_db):
         db=shared_db,
         instructions="Get the weather for the requested city. Use the get_weather tool.",
         add_history_to_context=True,
+        store_history_messages=True,
         max_tool_calls_from_history=1,
     )
 
@@ -96,6 +97,7 @@ def test_no_filtering(shared_db):
         db=shared_db,
         instructions="Get the weather for the requested city.",
         add_history_to_context=True,
+        store_history_messages=True,
     )
 
     # Run 4 times

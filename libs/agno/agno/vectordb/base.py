@@ -9,19 +9,31 @@ from agno.utils.string import generate_id
 class VectorDb(ABC):
     """Base class for Vector Databases"""
 
-    def __init__(self, *, id: Optional[str] = None, name: Optional[str] = None, description: Optional[str] = None):
+    def __init__(
+        self,
+        *,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        similarity_threshold: Optional[float] = None,
+    ):
         """Initialize base VectorDb.
 
         Args:
             id: Optional custom ID. If not provided, an id will be generated.
             name: Optional name for the vector database.
             description: Optional description for the vector database.
+            similarity_threshold: Minimum similarity (0.0-1.0) to filter results.
         """
+        if similarity_threshold is not None and not (0.0 <= similarity_threshold <= 1.0):
+            raise ValueError("similarity_threshold must be between 0.0 and 1.0")
+
         if name is None:
             name = self.__class__.__name__
 
         self.name = name
         self.description = description
+        self.similarity_threshold = similarity_threshold
         # Last resort fallback to generate id from name if ID not specified
         self.id = id if id else generate_id(name)
 

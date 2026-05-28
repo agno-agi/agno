@@ -26,8 +26,6 @@ from agno.db.surrealdb.models import (
     deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
-    deserialize_session,
-    deserialize_sessions,
     deserialize_user_memories,
     deserialize_user_memory,
     desurrealize_eval_run_record,
@@ -43,6 +41,7 @@ from agno.db.surrealdb.models import (
 )
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
+from agno.db.utils import deserialize_session, deserialize_sessions
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -243,25 +242,36 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
         _ = self.client.delete(table)
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         table = self._get_table(table_type="sessions")
         if table is None:
             return False
+        if user_id is not None:
+            res = self.client.query(
+                f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
+                {"record": RecordID(table, session_id), "user_id": user_id},
+            )
+            return isinstance(res, list) and len(res) > 0
         res = self.client.delete(RecordID(table, session_id))
         return bool(res)
 
-    def delete_sessions(self, session_ids: list[str]) -> None:
+    def delete_sessions(self, session_ids: list[str], user_id: Optional[str] = None) -> None:
         table = self._get_table(table_type="sessions")
         if table is None:
             return
 
         records = [RecordID(table, id) for id in session_ids]
-        self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+        query = f"DELETE FROM {table} WHERE id IN $records"
+        params: Dict[str, Any] = {"records": records}
+        if user_id is not None:
+            query += " AND user_id = $user_id"
+            params["user_id"] = user_id
+        self.client.query(query, params)
 
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -270,9 +280,9 @@ class SurrealDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
-            session_type (SessionType): Type of session to get.
+            session_type (Optional[SessionType]): Type of session to get. If None, the type is inferred.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -299,18 +309,12 @@ class SurrealDb(BaseDb):
         if raw is None:
             return None
 
-        # Verify session type matches
-        if session_type == SessionType.AGENT and raw.get("agent") is None:
-            return None
-        elif session_type == SessionType.TEAM and raw.get("team") is None:
-            return None
-        elif session_type == SessionType.WORKFLOW and raw.get("workflow") is None:
-            return None
+        desurrealized = desurrealize_session(raw)
 
         if not deserialize:
-            return raw
+            return desurrealized
 
-        return deserialize_session(session_type, raw)
+        return deserialize_session(session_type, desurrealized)
 
     def get_sessions(
         self,
@@ -359,6 +363,20 @@ class SurrealDb(BaseDb):
         # -- Filters
         where = WhereClause()
 
+        # session_type — filter by which RecordID link is present
+        if session_type == SessionType.AGENT:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("agent IS NOT NONE")
+        elif session_type == SessionType.TEAM:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("team IS NOT NONE")
+        elif session_type == SessionType.WORKFLOW:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("workflow IS NOT NONE")
+
         # user_id
         if user_id is not None:
             where = where.and_("user_id", user_id)
@@ -371,6 +389,21 @@ class SurrealDb(BaseDb):
                 where = where.and_("team", RecordID(teams_table, component_id))
             elif session_type == SessionType.WORKFLOW:
                 where = where.and_("workflow", RecordID(workflows_table, component_id))
+            elif session_type is None:
+                # Filter by component_id across all session type fields
+                p_a = f"p{where._param_count}"
+                where._params[p_a] = RecordID(agents_table, component_id)
+                where._param_count += 1
+                p_t = f"p{where._param_count}"
+                where._params[p_t] = RecordID(teams_table, component_id)
+                where._param_count += 1
+                p_w = f"p{where._param_count}"
+                where._params[p_w] = RecordID(workflows_table, component_id)
+                where._param_count += 1
+                or_cond = f"(agent = ${p_a} OR team = ${p_t} OR workflow = ${p_w})"
+                if where._conditions:
+                    where._conditions.append("AND")
+                where._conditions.append(or_cond)
 
         # session_name
         if session_name is not None:
@@ -378,11 +411,11 @@ class SurrealDb(BaseDb):
 
         # start_timestamp
         if start_timestamp is not None:
-            where = where.and_("start_timestamp", start_timestamp, ">=")
+            where = where.and_("created_at", start_timestamp, ">=")
 
         # end_timestamp
         if end_timestamp is not None:
-            where = where.and_("end_timestamp", end_timestamp, "<=")
+            where = where.and_("created_at", end_timestamp, "<=")
 
         where_clause, where_vars = where.build()
 
@@ -398,27 +431,30 @@ class SurrealDb(BaseDb):
             {order_limit_start_clause}
         """)
         sessions_raw = self._query(query, where_vars, dict)
-        converted_sessions_raw = [desurrealize_session(session, session_type) for session in sessions_raw]
+        converted_sessions_raw = [desurrealize_session(session) for session in sessions_raw]
 
         if not deserialize:
             return list(converted_sessions_raw), total_count
 
-        if session_type is None:
-            raise ValueError("session_type is required when deserialize=True")
-
-        return deserialize_sessions(session_type, list(sessions_raw))
+        return deserialize_sessions(session_type, converted_sessions_raw)
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: Optional[SessionType],
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
 
         Args:
             session_id (str): The ID of the session to rename.
-            session_type (SessionType): The type of session to rename.
+            session_type (Optional[SessionType]): The type of session to rename.
             session_name (str): The new name for the session.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -429,18 +465,26 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         table = self._get_table("sessions")
-        vars = {"record": RecordID(table, session_id), "name": session_name}
+        vars: Dict[str, Any] = {"record": RecordID(table, session_id), "name": session_name}
 
-        # Query
-        query = dedent("""
-            UPDATE ONLY $record
-            SET session_name = $name
-        """)
-        session_raw = self._query_one(query, vars, dict)
+        # SurrealDB doesn't store session_type as a field — type is inferred from
+        # agent/team/workflow RecordID references. Only filter by user_id here.
+        if user_id is not None:
+            vars["user_id"] = user_id
+            result = self.client.query(
+                f"UPDATE {table} SET session_name = $name WHERE id = $record AND user_id = $user_id",
+                vars,
+            )
+            session_raw = (
+                result[0] if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict) else None
+            )
+        else:
+            session_raw = self._query_one("UPDATE ONLY $record SET session_name = $name", vars, dict)
 
         if session_raw is None or not deserialize:
             return session_raw
-        return deserialize_session(session_type, session_raw)
+        desurrealized = desurrealize_session(session_raw)
+        return deserialize_session(session_type, desurrealized)
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -462,6 +506,16 @@ class SurrealDb(BaseDb):
         """
         session_type = get_session_type(session)
         table = self._get_table("sessions")
+
+        existing = self.client.query(
+            f"SELECT user_id FROM {table} WHERE id = $record",
+            {"record": RecordID(table, session.session_id)},
+        )
+        if isinstance(existing, list) and len(existing) > 0:
+            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            if existing_uid is not None and existing_uid != session.user_id:
+                return None
+
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
@@ -473,7 +527,8 @@ class SurrealDb(BaseDb):
         if session_raw is None or not deserialize:
             return session_raw
 
-        return deserialize_session(session_type, session_raw)
+        desurrealized = desurrealize_session(session_raw)
+        return deserialize_session(session_type, desurrealized)
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
@@ -514,7 +569,8 @@ class SurrealDb(BaseDb):
         # wrapping with list because of:
         # Type "List[Session]" is not assignable to return type "List[Session | Dict[str, Any]]"
         # Consider switching from "list" to "Sequence" which is covariant
-        return list(deserialize_sessions(session_type, sessions_raw))
+        desurrealized = [desurrealize_session(s) for s in sessions_raw]
+        return list(deserialize_sessions(session_type, desurrealized))
 
     # --- Memory ---
     def clear_memories(self) -> None:
@@ -709,11 +765,12 @@ class SurrealDb(BaseDb):
         table = self._get_table("memories")
         records = [RecordID(table, memory_id) for memory_id in memory_ids]
         if user_id is None:
-            _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+            _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})  # type: ignore[dict-item]
         else:
             user_rec_id = RecordID(self._get_table("users"), user_id)
             _ = self.client.query(
-                f"DELETE FROM {table} WHERE id IN $records AND user = $user", {"records": records, "user": user_rec_id}
+                f"DELETE FROM {table} WHERE id IN $records AND user = $user",
+                {"records": records, "user": user_rec_id},  # type: ignore[dict-item]
             )
 
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
@@ -1141,7 +1198,7 @@ class SurrealDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             raise e
 
     # --- Knowledge ---
@@ -1183,6 +1240,7 @@ class SurrealDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1191,6 +1249,7 @@ class SurrealDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1200,6 +1259,11 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("knowledge")
         where = WhereClause()
+
+        # Apply linked_to filter if provided
+        if linked_to is not None:
+            where.and_("linked_to", linked_to)
+
         where_clause, where_vars = where.build()
 
         # Total count
@@ -1271,7 +1335,7 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("evals")
         records = [RecordID(table, id) for id in eval_run_ids]
-        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})  # type: ignore[dict-item]
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -1463,23 +1527,26 @@ class SurrealDb(BaseDb):
                     update_fields.append("name = $name")
                     update_vars["name"] = trace.name
 
-                # Update context fields only if new value is not None
-                if trace.run_id is not None:
+                # Preserve existing non-null context values: only fill in fields
+                # that the existing row left blank. Otherwise a later upsert from
+                # a child span (e.g. a post-hook agent's run with a different
+                # session_id) would overwrite the trace's already-correct context.
+                if existing.get("run_id") is None and trace.run_id is not None:
                     update_fields.append("run_id = $run_id")
                     update_vars["run_id"] = trace.run_id
-                if trace.session_id is not None:
+                if existing.get("session_id") is None and trace.session_id is not None:
                     update_fields.append("session_id = $session_id")
                     update_vars["session_id"] = trace.session_id
-                if trace.user_id is not None:
+                if existing.get("user_id") is None and trace.user_id is not None:
                     update_fields.append("user_id = $user_id")
                     update_vars["user_id"] = trace.user_id
-                if trace.agent_id is not None:
+                if existing.get("agent_id") is None and trace.agent_id is not None:
                     update_fields.append("agent_id = $agent_id")
                     update_vars["agent_id"] = trace.agent_id
-                if trace.team_id is not None:
+                if existing.get("team_id") is None and trace.team_id is not None:
                     update_fields.append("team_id = $team_id")
                     update_vars["team_id"] = trace.team_id
-                if trace.workflow_id is not None:
+                if existing.get("workflow_id") is None and trace.workflow_id is not None:
                     update_fields.append("workflow_id = $workflow_id")
                     update_vars["workflow_id"] = trace.workflow_id
 
@@ -1506,7 +1573,7 @@ class SurrealDb(BaseDb):
                 )
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
 
     def get_trace(
         self,
@@ -1564,7 +1631,7 @@ class SurrealDb(BaseDb):
             return self._deserialize_trace(trace_data)
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -1609,7 +1676,7 @@ class SurrealDb(BaseDb):
                 where.and_("run_id", run_id)
             if session_id:
                 where.and_("session_id", session_id)
-            if user_id:
+            if user_id is not None:
                 where.and_("user_id", user_id)
             if agent_id:
                 where.and_("agent_id", agent_id)
@@ -1657,7 +1724,7 @@ class SurrealDb(BaseDb):
             return result_traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -1694,7 +1761,7 @@ class SurrealDb(BaseDb):
             # Build where clause
             where = WhereClause()
             where.and_("!!session_id", True, "=")  # Ensure session_id is not null
-            if user_id:
+            if user_id is not None:
                 where.and_("user_id", user_id)
             if agent_id:
                 where.and_("agent_id", agent_id)
@@ -1725,16 +1792,16 @@ class SurrealDb(BaseDb):
             query = dedent(f"""
                 SELECT
                     session_id,
-                    user_id,
-                    agent_id,
-                    team_id,
-                    workflow_id,
+                    array::first(user_id) AS user_id,
+                    array::first(agent_id) AS agent_id,
+                    array::first(team_id) AS team_id,
+                    array::first(workflow_id) AS workflow_id,
                     count() AS total_traces,
                     time::min(created_at) AS first_trace_at,
                     time::max(created_at) AS last_trace_at
                 FROM {table}
                 {where_clause}
-                GROUP BY session_id, user_id, agent_id, team_id, workflow_id
+                GROUP BY session_id
                 {order_limit_start_clause}
             """)
             results = self._query(query, where_vars, dict)
@@ -1752,7 +1819,7 @@ class SurrealDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     def _deserialize_trace(self, trace_data: dict) -> "Trace":
@@ -1800,7 +1867,7 @@ class SurrealDb(BaseDb):
             )
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -1833,7 +1900,7 @@ class SurrealDb(BaseDb):
                 )
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -1855,7 +1922,7 @@ class SurrealDb(BaseDb):
             return self._deserialize_span(span_data)
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -1899,7 +1966,7 @@ class SurrealDb(BaseDb):
             return [self._deserialize_span(s) for s in spans_raw]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     def _deserialize_span(self, span_data: dict) -> "Span":

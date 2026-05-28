@@ -1,3 +1,10 @@
+"""
+Qdrant
+=============================
+
+Demonstrates qdrant.
+"""
+
 import asyncio
 from os import getenv
 
@@ -5,6 +12,11 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.mcp import MCPTools
 from agno.utils.pprint import apprint_run_response
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 QDRANT_URL = getenv("QDRANT_URL")
 QDRANT_API_KEY = getenv("QDRANT_API_KEY")
@@ -38,6 +50,10 @@ async def run_agent(message: str) -> None:
         response = await agent.arun(message, stream=True)
         await apprint_run_response(response)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     query = """

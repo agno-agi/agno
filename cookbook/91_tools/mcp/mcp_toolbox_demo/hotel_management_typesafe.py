@@ -1,3 +1,10 @@
+"""
+Hotel Management Typesafe
+=============================
+
+Demonstrates hotel management typesafe.
+"""
+
 import asyncio
 from datetime import date
 from textwrap import dedent
@@ -7,6 +14,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp_toolbox import MCPToolbox
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 url = "http://127.0.0.1:5001"
 
@@ -73,6 +85,10 @@ async def run_agent(hotel_search: HotelSearch) -> None:
         agent.tools = [tools]
         await agent.aprint_response(hotel_search)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     hotel_search = HotelSearch(

@@ -10,7 +10,7 @@ Requirements:
 
 Supported formats: PDF, JSON, HTML, CSS, XML, images (PNG, JPEG, WebP, GIF)
 
-Note: External URL support requires Gemini 3.x models (e.g., gemini-3-flash-preview).
+Note: External URL support requires Gemini 3.x models (e.g., gemini-3.5-flash).
       Gemini 2.0 models do not support this feature.
 """
 
@@ -18,6 +18,10 @@ import boto3
 from agno.agent import Agent
 from agno.media import File
 from agno.models.google import Gemini
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Generate a pre-signed URL for your S3 object
 # Replace with your own bucket and key for private files
@@ -32,7 +36,7 @@ presigned_url = s3_client.generate_presigned_url(
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     markdown=True,
 )
 
@@ -46,3 +50,10 @@ agent.print_response(
         )
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

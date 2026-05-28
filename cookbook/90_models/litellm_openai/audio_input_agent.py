@@ -11,6 +11,10 @@ from agno.agent import Agent, RunResponse  # noqa
 from agno.media import Audio
 from agno.models.litellm import LiteLLMOpenAI
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Fetch the QA audio file and convert it to a base64 encoded string
 url = "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/QA-01.mp3"
 response = requests.get(url)
@@ -26,3 +30,10 @@ agent = Agent(
 agent.print_response(
     "What is in this audio?", audio=[Audio(content=mp3_data, format="mp3")], stream=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

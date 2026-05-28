@@ -258,7 +258,7 @@ def test_returns_scopes_for_sessions(middleware_with_auth):
 def test_returns_scopes_for_config(middleware_with_auth):
     """Test scopes for config endpoint."""
     scopes = middleware_with_auth._get_required_scopes("GET", "/config")
-    assert "system:read" in scopes
+    assert "config:read" in scopes
 
 
 def test_returns_scopes_for_traces(middleware_with_auth):
@@ -548,3 +548,111 @@ def test_token_source_configuration():
 
     assert middleware.token_source == TokenSource.COOKIE
     assert middleware.cookie_name == "my_jwt"
+
+
+# --- user_isolation opt-in flag ---
+
+
+def test_user_isolation_defaults_false():
+    """The opt-in flag must default to False so manual setups stay
+    backwards-compatible with the pre-isolation behavior."""
+    mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256")
+    assert mw.user_isolation is False
+
+
+def test_user_isolation_respects_constructor_arg():
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_isolation=True,
+    )
+    assert mw.user_isolation is True
+
+
+class _FakeState:
+    """Stand-in for Starlette's request.state — supports attribute set/get."""
+
+    def __init__(self):
+        self.__dict__["_attrs"] = {}
+
+    def __setattr__(self, key, value):
+        self._attrs[key] = value
+
+    def __getattr__(self, key):
+        try:
+            return self._attrs[key]
+        except KeyError as e:
+            raise AttributeError(key) from e
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sets_user_isolation_enabled_on_request_state():
+    """Once the middleware processes a JWT, request.state should carry the
+    flag so downstream helpers (get_scoped_user_id, resolve_db_and_scope)
+    can short-circuit when isolation is off."""
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    import jwt
+
+    secret = "user-isolation-flag-test-secret"
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[secret],
+        algorithm="HS256",
+        user_isolation=True,
+        excluded_route_paths=[],
+    )
+
+    request = MagicMock()
+    request.url = SimpleNamespace(path="/some/path")
+    request.method = "GET"
+    request.headers = {
+        "Authorization": f"Bearer {jwt.encode({'sub': 'u', 'scopes': [], 'exp': datetime.now(UTC) + timedelta(minutes=5)}, secret, algorithm='HS256')}",
+        "origin": None,
+    }
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+    request.state = _FakeState()
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    assert request.state.user_isolation_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_keeps_user_isolation_false_when_disabled():
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    import jwt
+
+    secret = "off-by-default-secret"
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[secret],
+        algorithm="HS256",
+        excluded_route_paths=[],
+    )
+
+    request = MagicMock()
+    request.url = SimpleNamespace(path="/some/path")
+    request.method = "GET"
+    request.headers = {
+        "Authorization": f"Bearer {jwt.encode({'sub': 'u', 'scopes': [], 'exp': datetime.now(UTC) + timedelta(minutes=5)}, secret, algorithm='HS256')}",
+        "origin": None,
+    }
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+    request.state = _FakeState()
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await mw.dispatch(request, call_next)
+
+    assert request.state.user_isolation_enabled is False

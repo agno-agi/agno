@@ -46,6 +46,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
+    """Bind user_id to the JWT subject when an authenticated request is in flight."""
+    from fastmcp.server.dependencies import get_http_request
+
+    try:
+        request = get_http_request()
+    except RuntimeError:
+        return caller_user_id
+
+    state_user_id = getattr(getattr(request, "state", None), "user_id", None)
+    if state_user_id is not None:
+        return state_user_id
+    return caller_user_id
+
+
 def get_mcp_server(
     os: "AgentOS",
 ) -> StarletteWithLifespan:
@@ -73,8 +88,8 @@ def get_mcp_server(
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
             traces=os._get_traces_config(),
-            agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
-            teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
+            agents=[AgentSummaryResponse.from_agent(a) for a in os.agents] if os.agents else [],
+            teams=[TeamSummaryResponse.from_team(t) for t in os.teams] if os.teams else [],
             workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
@@ -89,14 +104,14 @@ def get_mcp_server(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
-        return await agent.arun(message)
+        return await agent.arun(message)  # type: ignore[misc]
 
     @mcp.tool(name="run_team", description="Run a team with a message", tags={"core"})  # type: ignore
     async def run_team(team_id: str, message: str) -> TeamRunOutput:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
-        return await team.arun(message)
+        return await team.arun(message)  # type: ignore[misc]
 
     @mcp.tool(name="run_workflow", description="Run a workflow with a message", tags={"core"})  # type: ignore
     async def run_workflow(workflow_id: str, message: str) -> WorkflowRunOutput:
@@ -123,6 +138,7 @@ def get_mcp_server(
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
         if isinstance(db, RemoteDb):
@@ -186,6 +202,7 @@ def get_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -234,6 +251,7 @@ def get_mcp_server(
     ) -> Dict[str, Any]:
         import time
 
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -324,6 +342,7 @@ def get_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -384,6 +403,7 @@ def get_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -440,7 +460,9 @@ def get_mcp_server(
         session_name: str,
         db_id: str,
         session_type: str = "agent",
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -456,12 +478,12 @@ def get_mcp_server(
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.rename_session(
-                session_id=session_id, session_type=session_type_enum, session_name=session_name
+                session_id=session_id, session_type=session_type_enum, session_name=session_name, user_id=user_id
             )
         else:
             db = cast(BaseDb, db)
             session = db.rename_session(
-                session_id=session_id, session_type=session_type_enum, session_name=session_name
+                session_id=session_id, session_type=session_type_enum, session_name=session_name, user_id=user_id
             )
 
         if not session:
@@ -489,6 +511,7 @@ def get_mcp_server(
         summary: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -562,7 +585,9 @@ def get_mcp_server(
     async def delete_session(
         session_id: str,
         db_id: str,
+        user_id: Optional[str] = None,
     ) -> str:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -571,10 +596,10 @@ def get_mcp_server(
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_session(session_id=session_id)
+            await db.delete_session(session_id=session_id, user_id=user_id)
         else:
             db = cast(BaseDb, db)
-            db.delete_session(session_id=session_id)
+            db.delete_session(session_id=session_id, user_id=user_id)
 
         return "Session deleted successfully"
 
@@ -587,7 +612,9 @@ def get_mcp_server(
         session_ids: List[str],
         db_id: str,
         session_types: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> str:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -598,10 +625,10 @@ def get_mcp_server(
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_sessions(session_ids=session_ids)
+            await db.delete_sessions(session_ids=session_ids, user_id=user_id)
         else:
             db = cast(BaseDb, db)
-            db.delete_sessions(session_ids=session_ids)
+            db.delete_sessions(session_ids=session_ids, user_id=user_id)
 
         return "Sessions deleted successfully"
 
@@ -614,6 +641,7 @@ def get_mcp_server(
         user_id: str,
         topics: Optional[List[str]] = None,
     ) -> UserMemorySchema:
+        user_id = _resolve_user_id(user_id) or user_id
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -662,6 +690,7 @@ def get_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
     ) -> UserMemorySchema:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -696,6 +725,7 @@ def get_mcp_server(
         sort_by: str = "updated_at",
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -761,6 +791,7 @@ def get_mcp_server(
         user_id: str,
         topics: Optional[List[str]] = None,
     ) -> UserMemorySchema:
+        user_id = _resolve_user_id(user_id) or user_id
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -806,6 +837,7 @@ def get_mcp_server(
         memory_id: str,
         user_id: Optional[str] = None,
     ) -> str:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -831,6 +863,7 @@ def get_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
     ) -> str:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):

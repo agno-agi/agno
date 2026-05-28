@@ -1,12 +1,26 @@
+"""
+Save Workflow to Database
+=========================
+
+Demonstrates creating a workflow with multiple steps and saving it to the
+database.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Agents
+# ---------------------------------------------------------------------------
 # Define agents
 hackernews_agent = Agent(
     id="hackernews-agent",
@@ -21,6 +35,9 @@ web_agent = Agent(
     role="Search the web for the latest news and trends",
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow Steps
+# ---------------------------------------------------------------------------
 # Define steps
 research_step = Step(
     name="Research Step",
@@ -32,6 +49,9 @@ content_planning_step = Step(
     agent=web_agent,
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 content_creation_workflow = Workflow(
     id="content-creation-workflow",
     name="Content Creation Workflow",
@@ -40,14 +60,18 @@ content_creation_workflow = Workflow(
     steps=[research_step, content_planning_step],
 )
 
-# Save the workflow to the database
-version = content_creation_workflow.save(db=db)
-print(f"Saved workflow as version {version}")
+# ---------------------------------------------------------------------------
+# Run Workflow Save Example
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Save the workflow to the database
+    version = content_creation_workflow.save(db=db)
+    print(f"Saved workflow as version {version}")
 
-# By default, saving a workflow will create a new version of the workflow
+    # By default, saving a workflow will create a new version of the workflow
 
-# Delete the workflow from the database (soft delete by default)
-# content_creation_workflow.delete()
+    # Delete the workflow from the database (soft delete by default)
+    # content_creation_workflow.delete()
 
-# Hard delete (permanently removes from database)
-# content_creation_workflow.delete(hard_delete=True)
+    # Hard delete (permanently removes from database)
+    # content_creation_workflow.delete(hard_delete=True)

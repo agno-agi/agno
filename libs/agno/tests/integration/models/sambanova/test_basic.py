@@ -136,6 +136,7 @@ def test_history():
         model=Sambanova(id="Meta-Llama-3.1-8B-Instruct"),
         db=SqliteDb(db_file="tmp/sambanova/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

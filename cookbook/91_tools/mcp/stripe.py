@@ -1,4 +1,4 @@
-"""💵 Stripe MCP Agent - Manage Your Stripe Operations
+"""Stripe MCP Agent - Manage Your Stripe Operations
 
 This example demonstrates how to create an Agno agent that interacts with the Stripe API via the Model Context Protocol (MCP). This agent can create and manage Stripe objects like customers, products, prices, and payment links using natural language commands.
 
@@ -20,6 +20,10 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_error, log_exception, log_info
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def run_agent(message: str) -> None:
@@ -68,6 +72,10 @@ async def run_agent(message: str) -> None:
     except Exception as e:
         log_exception(f"An unexpected error occurred during agent execution: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     task = "Create a new Stripe product named 'iPhone'. Then create a price of $999.99 USD for it. Finally, create a payment link for that price."

@@ -24,18 +24,18 @@ from agno.models.google import Gemini
 from agno.tools.yfinance import YFinanceTools
 from agno.workflow import Step, Workflow
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Storage Configuration
-# ============================================================================
+# ---------------------------------------------------------------------------
 workflow_db = SqliteDb(db_file="tmp/agents.db")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Step 1: Data Gatherer — Fetches raw market data
-# ============================================================================
+# ---------------------------------------------------------------------------
 data_agent = Agent(
     name="Data Gatherer",
-    model=Gemini(id="gemini-3-flash-preview"),
-    tools=[YFinanceTools()],
+    model=Gemini(id="gemini-3.5-flash"),
+    tools=[YFinanceTools(all=True)],
     instructions="""\
 You are a data gathering agent. Your job is to fetch comprehensive market data.
 
@@ -60,12 +60,12 @@ data_step = Step(
     description="Fetch comprehensive market data for the stock",
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Step 2: Analyst — Interprets the data
-# ============================================================================
+# ---------------------------------------------------------------------------
 analyst_agent = Agent(
     name="Analyst",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions="""\
 You are a financial analyst. You receive raw market data from the data team.
 
@@ -89,12 +89,12 @@ analysis_step = Step(
     description="Analyze the market data and identify key insights",
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Step 3: Report Writer — Produces final output
-# ============================================================================
+# ---------------------------------------------------------------------------
 report_agent = Agent(
     name="Report Writer",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions="""\
 You are a report writer. You receive analysis from the research team.
 
@@ -120,9 +120,9 @@ report_step = Step(
     description="Produce a concise investment brief",
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Create the Workflow
-# ============================================================================
+# ---------------------------------------------------------------------------
 sequential_workflow = Workflow(
     name="Sequential Workflow",
     description="Three-step research pipeline: Data → Analysis → Report",
@@ -133,18 +133,18 @@ sequential_workflow = Workflow(
     ],
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Run the Workflow
-# ============================================================================
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     sequential_workflow.print_response(
         "Analyze NVIDIA (NVDA) for investment",
         stream=True,
     )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # More Examples
-# ============================================================================
+# ---------------------------------------------------------------------------
 """
 Workflow vs Team:
 

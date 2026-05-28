@@ -1,13 +1,17 @@
 """
-1. Run: `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/storage/json_storage/json_storage_for_team.py` to run the team
+Example showing how to use Redis as the database for a team.
+
+Run: `uv pip install ddgs` to install the dependency
 
 We can start Redis locally using docker:
 1. Start Redis container
-docker run --name my-redis -p 6379:6379 -d redis
+`docker run --name my-redis -p 6379:6379 -d redis`
 
 2. Verify container is running
-docker ps
+`docker ps`
+
+3. Run the file
+`python cookbook/06_storage/redis/redis_for_team.py`
 """
 
 from typing import List
@@ -20,9 +24,15 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = RedisDb(db_url="redis://localhost:6379")
 
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 class Article(BaseModel):
     title: str
     summary: str
@@ -60,4 +70,8 @@ hn_team = Team(
     show_members_responses=True,
 )
 
-hn_team.print_response("Write an article about the top 2 stories on hackernews")
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    hn_team.print_response("Write an article about the top 2 stories on hackernews")

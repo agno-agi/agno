@@ -14,6 +14,11 @@ Prerequisites:
 from agno.agent import Agent
 from agno.tools.aws_lambda import AWSLambdaTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All functions enabled (default behavior)
 agent_full = Agent(
     tools=[AWSLambdaTools(region_name="us-east-1")],  # All functions enabled
@@ -35,8 +40,6 @@ agent_basic = Agent(
             region_name="us-east-1",
             enable_list_functions=True,
             enable_invoke_function=True,
-            enable_create_function=False,  # Disable function creation
-            enable_update_function=False,  # Disable function updates
         )
     ],
     name="Lambda Reader Agent",
@@ -69,10 +72,8 @@ agent_tester = Agent(
     tools=[
         AWSLambdaTools(
             region_name="us-east-1",
-            enable_list_functions=True,  # Enable listing for reference
-            enable_invoke_function=True,  # Enable function testing
-            enable_create_function=False,  # Disable creation
-            enable_delete_function=False,  # Disable deletion (safety)
+            enable_list_functions=True,
+            enable_invoke_function=True,
         )
     ],
     name="Lambda Tester Agent",
@@ -87,22 +88,27 @@ agent_tester = Agent(
 )
 
 # Example usage
-print("=== Basic Lambda Operations Example ===")
-agent_basic.print_response(
-    "List all Lambda functions in our AWS account", markdown=True
-)
 
-print("\n=== Function Testing Example ===")
-agent_tester.print_response(
-    "Invoke the 'hello-world' Lambda function with an empty payload and analyze the results",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Basic Lambda Operations Example ===")
+    agent_basic.print_response(
+        "List all Lambda functions in our AWS account", markdown=True
+    )
 
-print("\n=== Comprehensive Management Example ===")
-agent_comprehensive.print_response(
-    "Provide an overview of our Lambda environment including function count, runtimes, and recent activity",
-    markdown=True,
-)
+    print("\n=== Function Testing Example ===")
+    agent_tester.print_response(
+        "Invoke the 'hello-world' Lambda function with an empty payload and analyze the results",
+        markdown=True,
+    )
 
-# Note: Make sure you have the necessary AWS credentials set up in your environment
-# or use AWS CLI's configure command to set them up before running this script.
+    print("\n=== Comprehensive Management Example ===")
+    agent_comprehensive.print_response(
+        "Provide an overview of our Lambda environment including function count, runtimes, and recent activity",
+        markdown=True,
+    )
+
+    # Note: Make sure you have the necessary AWS credentials set up in your environment
+    # or use AWS CLI's configure command to set them up before running this script.

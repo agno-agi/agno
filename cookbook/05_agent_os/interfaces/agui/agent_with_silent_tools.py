@@ -14,6 +14,10 @@ from agno.os.interfaces.agui import AGUI
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 # external_execution_silent=True suppresses "I have tools to execute..." verbose messages
 @tool(external_execution=True, external_execution_silent=True)
@@ -63,6 +67,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

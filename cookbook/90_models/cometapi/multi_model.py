@@ -3,6 +3,10 @@
 from agno.agent import Agent
 from agno.models.cometapi import CometAPI
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 def test_model(
     model_id: str,
@@ -32,7 +36,7 @@ def main():
         ("claude-sonnet-4-20250514", "Claude Sonnet 4"),
         # Google models
         ("gemini-2.5-pro", "Gemini 2.5 Pro"),
-        ("gemini-3-flash-preview", "Gemini 3 Flash Preview"),
+        ("gemini-3.5-flash", "Gemini 3.5 Flash"),
         # DeepSeek models
         ("deepseek-v3", "DeepSeek V3"),
         ("deepseek-chat", "DeepSeek Chat"),
@@ -48,6 +52,10 @@ def main():
     print("\nMulti-model showcase complete!")
     print("Learn more about CometAPI at: https://www.cometapi.com/")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     main()

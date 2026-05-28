@@ -12,13 +12,24 @@ class AuthorizationConfig(BaseModel):
     jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
+    audience: Optional[str] = None
+    admin_scope: Optional[str] = None
+    # Opt-in per-user data isolation. When True, AgentOS:
+    #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
+    #     (sessions, memory, traces) for non-admin callers
+    #   - coerces ``user_id`` on writes (sessions / memories / traces) so a
+    #     non-admin caller cannot persist rows attributed to another user
+    #   - enforces session/run ownership on cancel/resume/continue routes
+    #   - requires session_id (and workflow_id on WS reconnect) for non-admins
+    # When False (default) JWT/RBAC still apply, but routes operate on the
+    # unscoped DB and don't add per-user ownership gates on top of RBAC.
+    user_isolation: bool = False
 
 
 class EvalsDomainConfig(BaseModel):
     """Configuration for the Evals domain of the AgentOS"""
 
     display_name: Optional[str] = None
-    available_models: Optional[List[str]] = None
 
 
 class SessionDomainConfig(BaseModel):
@@ -31,6 +42,16 @@ class KnowledgeDomainConfig(BaseModel):
     """Configuration for the Knowledge domain of the AgentOS"""
 
     display_name: Optional[str] = None
+
+
+class KnowledgeInstanceConfig(BaseModel):
+    """Configuration for a single knowledge instance"""
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    db_id: str
+    table: str
 
 
 class MetricsDomainConfig(BaseModel):
@@ -80,10 +101,19 @@ class MemoryConfig(MemoryDomainConfig):
     dbs: Optional[List[DatabaseConfig[MemoryDomainConfig]]] = None
 
 
+class KnowledgeDatabaseConfig(BaseModel):
+    """Configuration for a knowledge database with its tables"""
+
+    db_id: str
+    domain_config: Optional[KnowledgeDomainConfig] = None
+    tables: List[str] = []
+
+
 class KnowledgeConfig(KnowledgeDomainConfig):
     """Configuration for the Knowledge domain of the AgentOS"""
 
-    dbs: Optional[List[DatabaseConfig[KnowledgeDomainConfig]]] = None
+    dbs: Optional[List[KnowledgeDatabaseConfig]] = None
+    knowledge_instances: Optional[List[KnowledgeInstanceConfig]] = None
 
 
 class MetricsConfig(MetricsDomainConfig):

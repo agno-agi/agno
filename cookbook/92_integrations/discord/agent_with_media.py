@@ -1,10 +1,20 @@
+"""
+Discord Agent With Media
+========================
+
+Runs a Discord bot that can analyze user-provided media.
+"""
+
 from agno.agent import Agent
 from agno.integrations.discord import DiscordClient
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 media_agent = Agent(
     name="Media Agent",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     description="A Media processing agent",
     instructions="Analyze images, audios and videos sent by the user",
     add_history_to_context=True,
@@ -15,5 +25,9 @@ media_agent = Agent(
 
 discord_agent = DiscordClient(media_agent)
 
+
+# ---------------------------------------------------------------------------
+# Run Discord Bot
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     discord_agent.serve()

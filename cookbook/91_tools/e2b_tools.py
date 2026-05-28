@@ -36,6 +36,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.e2b import E2BTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: Include specific E2B functions for basic code execution
 basic_e2b_tools = E2BTools(
     timeout=600,  # 10 minutes timeout (in seconds)
@@ -107,18 +112,21 @@ agent = Agent(
     ],
 )
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Write Python code to generate the first 10 Fibonacci numbers and calculate their sum and average"
+    )
 
-agent.print_response(
-    "Write Python code to generate the first 10 Fibonacci numbers and calculate their sum and average"
-)
-
-# agent.print_response(
-#     " upload file cookbook/90_tools/sample_data.csv and use it to create a matplotlib visualization of total sales by region and provide chart image or its downloaded path or any link  "
-# )
-# agent.print_response(" use dataset sample_data.csv and create a matplotlib visualization of total sales by region and provide chart image")
-# agent.print_response(" run a server and Write a simple fast api web server that displays 'Hello from E2B Sandbox!' and run it , use run_command to get the data from the server and provide the  url of api swagger docs and host link")
-# agent.print_response(
-#     " run server and Create and run a Python script that fetch top 5 latest news from hackernews using hackernews api"
-# )
-# agent.print_response("Extend the sandbox timeout to 20 minutes")
-# agent.print_response("list all sandboxes ")
+    # agent.print_response(
+    #     " upload file cookbook/90_tools/sample_data.csv and use it to create a matplotlib visualization of total sales by region and provide chart image or its downloaded path or any link  "
+    # )
+    # agent.print_response(" use dataset sample_data.csv and create a matplotlib visualization of total sales by region and provide chart image")
+    # agent.print_response(" run a server and Write a simple fast api web server that displays 'Hello from E2B Sandbox!' and run it , use run_command to get the data from the server and provide the  url of api swagger docs and host link")
+    # agent.print_response(
+    #     " run server and Create and run a Python script that fetch top 5 latest news from hackernews using hackernews api"
+    # )
+    # agent.print_response("Extend the sandbox timeout to 20 minutes")
+    # agent.print_response("list all sandboxes ")

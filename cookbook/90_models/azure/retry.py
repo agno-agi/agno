@@ -3,6 +3,10 @@
 from agno.agent import Agent
 from agno.models.azure import AzureAIFoundry
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # We will use a deliberately wrong model ID, to trigger retries.
 wrong_model_id = "azure-wrong-id"
 
@@ -16,3 +20,10 @@ agent = Agent(
 )
 
 agent.print_response("What is the capital of France?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

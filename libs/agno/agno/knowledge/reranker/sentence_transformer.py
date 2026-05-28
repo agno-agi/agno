@@ -14,12 +14,17 @@ class SentenceTransformerReranker(Reranker):
     model: str = "BAAI/bge-reranker-v2-m3"
     model_kwargs: Optional[Dict[str, Any]] = None
     top_n: Optional[int] = None
+    _cross_encoder: Optional[CrossEncoder] = None
+
+    @property
+    def client(self) -> CrossEncoder:
+        if self._cross_encoder is None:
+            self._cross_encoder = CrossEncoder(model_name_or_path=self.model, model_kwargs=self.model_kwargs)
+        return self._cross_encoder
 
     def _rerank(self, query: str, documents: List[Document]) -> List[Document]:
         if not documents:
             return []
-
-        sentence_transformer_client = CrossEncoder(model_name_or_path=self.model, model_kwargs=self.model_kwargs)
 
         top_n = self.top_n
         if top_n and not (0 < top_n):
@@ -30,7 +35,7 @@ class SentenceTransformerReranker(Reranker):
 
         sentence_pairs = [[query, doc.content] for doc in documents]
 
-        scores = sentence_transformer_client.predict(sentence_pairs).tolist()
+        scores = self.client.predict(sentence_pairs).tolist()
         for index, score in enumerate(scores):
             doc = documents[index]
             doc.reranking_score = score
@@ -49,6 +54,6 @@ class SentenceTransformerReranker(Reranker):
     def rerank(self, query: str, documents: List[Document]) -> List[Document]:
         try:
             return self._rerank(query=query, documents=documents)
-        except Exception as e:
-            logger.error(f"Error reranking documents: {e}. Returning original documents")
+        except Exception:
+            logger.exception("Error reranking documents. Returning original documents")
             return documents

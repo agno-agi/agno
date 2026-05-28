@@ -1,7 +1,18 @@
+"""
+Agent With Tools
+================
+
+Demonstrates agent with tools.
+"""
+
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     name="Agent with Tools",
@@ -33,6 +44,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

@@ -4,6 +4,11 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
+try:
+    from pymongo.errors import DuplicateKeyError
+except ImportError:
+    DuplicateKeyError = Exception  # type: ignore[assignment,misc]
+
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
@@ -23,7 +28,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields
+from agno.db.utils import deserialize_session, deserialize_session_json_fields, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -40,8 +45,8 @@ except ImportError:
 
 try:
     from pymongo import AsyncMongoClient  # type: ignore
-    from pymongo.collection import AsyncCollection  # type: ignore
-    from pymongo.database import AsyncDatabase  # type: ignore
+    from pymongo.asynchronous.collection import AsyncCollection  # type: ignore
+    from pymongo.asynchronous.database import AsyncDatabase  # type: ignore
 
     PYMONGO_ASYNC_AVAILABLE = True
 except ImportError:
@@ -138,7 +143,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
     def __init__(
         self,
-        db_client: Optional[Union["AsyncIOMotorClient", "AsyncMongoClient"]] = None,
+        db_client: Optional[AsyncMongoClientType] = None,
         db_name: Optional[str] = None,
         db_url: Optional[str] = None,
         session_collection: Optional[str] = None,
@@ -150,6 +155,8 @@ class AsyncMongoDb(AsyncBaseDb):
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
         learnings_collection: Optional[str] = None,
+        schedules_collection: Optional[str] = None,
+        schedule_runs_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -174,6 +181,8 @@ class AsyncMongoDb(AsyncBaseDb):
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
             learnings_collection (Optional[str]): Name of the collection to store learnings.
+            schedules_collection (Optional[str]): Name of the collection to store schedules.
+            schedule_runs_collection (Optional[str]): Name of the collection to store schedule runs.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -197,6 +206,8 @@ class AsyncMongoDb(AsyncBaseDb):
             traces_table=traces_collection,
             spans_table=spans_collection,
             learnings_table=learnings_collection,
+            schedules_table=schedules_collection,
+            schedule_runs_table=schedule_runs_collection,
         )
 
         # Detect client type if provided
@@ -246,6 +257,8 @@ class AsyncMongoDb(AsyncBaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("schedules", self.schedules_table_name),
+            ("schedule_runs", self.schedule_runs_table_name),
         ]
 
         for collection_type, collection_name in collections_to_create:
@@ -259,7 +272,11 @@ class AsyncMongoDb(AsyncBaseDb):
         all database connections.
         """
         if self._client is not None:
-            self._client.close()
+            import inspect
+
+            close_result = self._client.close()
+            if inspect.isawaitable(close_result):
+                await close_result
             self._client = None
             self._database = None
 
@@ -466,6 +483,28 @@ class AsyncMongoDb(AsyncBaseDb):
                 )
             return self.learnings_collection
 
+        if table_type == "schedules":
+            if reset_cache or not hasattr(self, "schedules_collection"):
+                if self.schedules_table_name is None:
+                    raise ValueError("Schedules collection was not provided on initialization")
+                self.schedules_collection = await self._get_or_create_collection(
+                    collection_name=self.schedules_table_name,
+                    collection_type="schedules",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.schedules_collection
+
+        if table_type == "schedule_runs":
+            if reset_cache or not hasattr(self, "schedule_runs_collection"):
+                if self.schedule_runs_table_name is None:
+                    raise ValueError("Schedule runs collection was not provided on initialization")
+                self.schedule_runs_collection = await self._get_or_create_collection(
+                    collection_name=self.schedule_runs_table_name,
+                    collection_type="schedule_runs",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.schedule_runs_collection
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     async def _get_or_create_collection(
@@ -497,8 +536,17 @@ class AsyncMongoDb(AsyncBaseDb):
             return collection
 
         except Exception as e:
-            log_error(f"Error getting collection {collection_name}: {e}")
+            log_error(f"Error getting collection {collection_name}: {str(e)}")
             raise
+
+    async def _aggregate_to_list(
+        self, collection: AsyncMongoCollectionType, pipeline: List[Dict[str, Any]], length: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Run aggregate for both Motor and PyMongo async clients and return materialized results."""
+        aggregate_cursor_or_coro: Any = collection.aggregate(pipeline)
+        if asyncio.iscoroutine(aggregate_cursor_or_coro):
+            aggregate_cursor_or_coro = await aggregate_cursor_or_coro
+        return await aggregate_cursor_or_coro.to_list(length=length)
 
     def get_latest_schema_version(self):
         """Get the latest version of the database schema."""
@@ -510,11 +558,12 @@ class AsyncMongoDb(AsyncBaseDb):
 
     # -- Session methods --
 
-    async def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from the database.
 
         Args:
             session_id (str): The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -527,7 +576,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return False
 
-            result = await collection.delete_one({"session_id": session_id})
+            query: Dict[str, Any] = {"session_id": session_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.delete_one(query)
             if result.deleted_count == 0:
                 log_debug(f"No session found to delete with session_id: {session_id}")
                 return False
@@ -536,31 +588,35 @@ class AsyncMongoDb(AsyncBaseDb):
                 return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
-    async def delete_sessions(self, session_ids: List[str]) -> None:
+    async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from the database.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
         """
         try:
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return
 
-            result = await collection.delete_many({"session_id": {"$in": session_ids}})
+            query: Dict[str, Any] = {"session_id": {"$in": session_ids}}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.delete_many(query)
             log_debug(f"Successfully deleted {result.deleted_count} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -568,9 +624,9 @@ class AsyncMongoDb(AsyncBaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get. If None, auto-detected from record.
             user_id (Optional[str]): The ID of the user to get the session for.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -588,8 +644,6 @@ class AsyncMongoDb(AsyncBaseDb):
             query = {"session_id": session_id}
             if user_id is not None:
                 query["user_id"] = user_id
-            if session_type is not None:
-                query["session_type"] = session_type
 
             result = await collection.find_one(query)
             if result is None:
@@ -599,17 +653,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
-            log_error(f"Exception reading session: {e}")
+            log_error(f"Exception reading session: {str(e)}")
             raise e
 
     async def get_sessions(
@@ -659,7 +706,7 @@ class AsyncMongoDb(AsyncBaseDb):
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
-                query["session_type"] = session_type
+                query["session_type"] = session_type.value if hasattr(session_type, "value") else session_type
             if component_id is not None:
                 if session_type == SessionType.AGENT:
                     query["agent_id"] = component_id
@@ -667,6 +714,12 @@ class AsyncMongoDb(AsyncBaseDb):
                     query["team_id"] = component_id
                 elif session_type == SessionType.WORKFLOW:
                     query["workflow_id"] = component_id
+                elif session_type is None:
+                    query["$or"] = [
+                        {"agent_id": component_id},
+                        {"team_id": component_id},
+                        {"workflow_id": component_id},
+                    ]
             if start_timestamp is not None:
                 query["created_at"] = {"$gte": start_timestamp}
             if end_timestamp is not None:
@@ -702,37 +755,28 @@ class AsyncMongoDb(AsyncBaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
-            for record in sessions_raw:
-                if session_type == SessionType.AGENT.value:
-                    agent_session = AgentSession.from_dict(record)
-                    if agent_session is not None:
-                        sessions.append(agent_session)
-                elif session_type == SessionType.TEAM.value:
-                    team_session = TeamSession.from_dict(record)
-                    if team_session is not None:
-                        sessions.append(team_session)
-                elif session_type == SessionType.WORKFLOW.value:
-                    workflow_session = WorkflowSession.from_dict(record)
-                    if workflow_session is not None:
-                        sessions.append(workflow_session)
-
-            return sessions
+            return deserialize_sessions(session_type, sessions_raw)
 
         except Exception as e:
-            log_error(f"Exception reading sessions: {e}")
+            log_error(f"Exception reading sessions: {str(e)}")
             raise e
 
     async def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: Optional[SessionType],
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Rename a session in the database.
 
         Args:
             session_id (str): The ID of the session to rename.
-            session_type (SessionType): The type of session to rename.
+            session_type (Optional[SessionType]): The type of session to rename.
             session_name (str): The new name of the session.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -747,9 +791,14 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
+            query: Dict[str, Any] = {"session_id": session_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            if session_type is not None:
+                query["session_type"] = session_type.value
             try:
                 result = await collection.find_one_and_update(
-                    {"session_id": session_id},
+                    query,
                     {"$set": {"session_data.session_name": session_name, "updated_at": int(time.time())}},
                     return_document=ReturnDocument.AFTER,
                     upsert=False,
@@ -757,7 +806,7 @@ class AsyncMongoDb(AsyncBaseDb):
             except OperationFailure:
                 # If the update fails because session_data doesn't contain a session_name yet, we initialize session_data
                 result = await collection.find_one_and_update(
-                    {"session_id": session_id},
+                    query,
                     {"$set": {"session_data": {"session_name": session_name}, "updated_at": int(time.time())}},
                     return_document=ReturnDocument.AFTER,
                     upsert=False,
@@ -770,15 +819,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if not deserialize:
                 return deserialized_session
 
-            if session_type == SessionType.AGENT.value:
-                return AgentSession.from_dict(deserialized_session)
-            elif session_type == SessionType.TEAM.value:
-                return TeamSession.from_dict(deserialized_session)
-            else:
-                return WorkflowSession.from_dict(deserialized_session)
+            return deserialize_session(session_type, deserialized_session)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             raise e
 
     async def upsert_session(
@@ -803,6 +847,19 @@ class AsyncMongoDb(AsyncBaseDb):
 
             session_dict = session.to_dict()
 
+            existing = await collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1})
+            if existing:
+                existing_uid = existing.get("user_id")
+                if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                    return None
+
+            incoming_uid = session_dict.get("user_id")
+            upsert_filter: Dict[str, Any] = {"session_id": session_dict.get("session_id")}
+            if incoming_uid is not None:
+                upsert_filter["$or"] = [{"user_id": incoming_uid}, {"user_id": None}, {"user_id": {"$exists": False}}]
+            else:
+                upsert_filter["$or"] = [{"user_id": None}, {"user_id": {"$exists": False}}]
+
             if isinstance(session, AgentSession):
                 record = {
                     "session_id": session_dict.get("session_id"),
@@ -818,12 +875,15 @@ class AsyncMongoDb(AsyncBaseDb):
                     "updated_at": int(time.time()),
                 }
 
-                result = await collection.find_one_and_replace(
-                    filter={"session_id": session_dict.get("session_id")},
-                    replacement=record,
-                    upsert=True,
-                    return_document=ReturnDocument.AFTER,
-                )
+                try:
+                    result = await collection.find_one_and_replace(
+                        filter=upsert_filter,
+                        replacement=record,
+                        upsert=True,
+                        return_document=ReturnDocument.AFTER,
+                    )
+                except DuplicateKeyError:
+                    return None
                 if not result:
                     return None
 
@@ -849,12 +909,15 @@ class AsyncMongoDb(AsyncBaseDb):
                     "updated_at": int(time.time()),
                 }
 
-                result = await collection.find_one_and_replace(
-                    filter={"session_id": session_dict.get("session_id")},
-                    replacement=record,
-                    upsert=True,
-                    return_document=ReturnDocument.AFTER,
-                )
+                try:
+                    result = await collection.find_one_and_replace(
+                        filter=upsert_filter,
+                        replacement=record,
+                        upsert=True,
+                        return_document=ReturnDocument.AFTER,
+                    )
+                except DuplicateKeyError:
+                    return None
                 if not result:
                     return None
 
@@ -881,12 +944,15 @@ class AsyncMongoDb(AsyncBaseDb):
                     "updated_at": int(time.time()),
                 }
 
-                result = await collection.find_one_and_replace(
-                    filter={"session_id": session_dict.get("session_id")},
-                    replacement=record,
-                    upsert=True,
-                    return_document=ReturnDocument.AFTER,
-                )
+                try:
+                    result = await collection.find_one_and_replace(
+                        filter=upsert_filter,
+                        replacement=record,
+                        upsert=True,
+                        return_document=ReturnDocument.AFTER,
+                    )
+                except DuplicateKeyError:
+                    return None
                 if not result:
                     return None
 
@@ -898,7 +964,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 return WorkflowSession.from_dict(session)  # type: ignore
 
         except Exception as e:
-            log_error(f"Exception upserting session: {e}")
+            log_error(f"Exception upserting session: {str(e)}")
             raise e
 
     async def upsert_sessions(
@@ -1032,7 +1098,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {str(e)}")
 
             # Fallback to individual upserts
             return [
@@ -1076,7 +1142,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 log_debug(f"No memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting memory: {e}")
+            log_error(f"Error deleting memory: {str(e)}")
             raise e
 
     async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1104,7 +1170,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 log_debug(f"No memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting memories: {e}")
+            log_error(f"Error deleting memories: {str(e)}")
             raise e
 
     async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
@@ -1132,7 +1198,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return [topic for topic in topics if topic]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error(f"Exception reading from collection: {str(e)}")
             raise e
 
     async def get_user_memory(
@@ -1171,7 +1237,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return UserMemory.from_dict(result_filtered)
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error(f"Exception reading from collection: {str(e)}")
             raise e
 
     async def get_user_memories(
@@ -1251,7 +1317,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return [UserMemory.from_dict({k: v for k, v in record.items() if k != "_id"}) for record in records]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error(f"Exception reading from collection: {str(e)}")
             raise e
 
     async def get_user_memory_stats(
@@ -1296,7 +1362,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -1305,7 +1371,7 @@ class AsyncMongoDb(AsyncBaseDb):
                     pipeline.append({"$skip": (page - 1) * limit})  # type: ignore
                 pipeline.append({"$limit": limit})  # type: ignore
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
 
             formatted_results = [
                 {
@@ -1319,7 +1385,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return formatted_results, total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             raise e
 
     async def upsert_user_memory(
@@ -1370,7 +1436,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return UserMemory.from_dict(update_doc_filtered)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_error(f"Exception upserting user memory: {str(e)}")
             raise e
 
     async def upsert_memories(
@@ -1455,7 +1521,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {str(e)}")
 
             # Fallback to individual upserts
             return [
@@ -1480,7 +1546,7 @@ class AsyncMongoDb(AsyncBaseDb):
             await collection.delete_many({})
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # -- Cultural Knowledge methods --
@@ -1498,7 +1564,7 @@ class AsyncMongoDb(AsyncBaseDb):
             await collection.delete_many({})
 
         except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {e}")
+            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
             raise e
 
     async def delete_cultural_knowledge(self, id: str) -> None:
@@ -1519,7 +1585,7 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Deleted cultural knowledge with ID: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
             raise e
 
     async def get_cultural_knowledge(
@@ -1555,7 +1621,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return deserialize_cultural_knowledge_from_db(result_filtered)
 
         except Exception as e:
-            log_error(f"Error getting cultural knowledge: {e}")
+            log_error(f"Error getting cultural knowledge: {str(e)}")
             raise e
 
     async def get_all_cultural_knowledge(
@@ -1631,7 +1697,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
 
         except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {e}")
+            log_error(f"Error getting all cultural knowledge: {str(e)}")
             raise e
 
     async def upsert_cultural_knowledge(
@@ -1685,7 +1751,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return deserialize_cultural_knowledge_from_db(doc_filtered)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # -- Metrics methods --
@@ -1720,7 +1786,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception reading from sessions collection: {e}")
+            log_error(f"Exception reading from sessions collection: {str(e)}")
             return []
 
     async def _get_metrics_calculation_starting_date(self, collection: AsyncMongoCollectionType) -> Optional[date]:
@@ -1747,7 +1813,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
         except Exception as e:
-            log_error(f"Exception getting metrics calculation starting date: {e}")
+            log_error(f"Exception getting metrics calculation starting date: {str(e)}")
             return None
 
     async def calculate_metrics(self) -> Optional[list[dict]]:
@@ -1806,7 +1872,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Error calculating metrics: {e}")
+            log_error(f"Error calculating metrics: {str(e)}")
             raise e
 
     async def get_metrics(
@@ -1839,7 +1905,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return records, latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_error(f"Error getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -1863,7 +1929,7 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Deleted knowledge content with id '{id}'")
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
     async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1890,7 +1956,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return KnowledgeRow.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {str(e)}")
             raise e
 
     async def get_knowledge_contents(
@@ -1899,6 +1965,7 @@ class AsyncMongoDb(AsyncBaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1907,6 +1974,7 @@ class AsyncMongoDb(AsyncBaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1920,6 +1988,10 @@ class AsyncMongoDb(AsyncBaseDb):
                 return [], 0
 
             query: Dict[str, Any] = {}
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                query["linked_to"] = linked_to
 
             # Get total count
             total_count = await collection.count_documents(query)
@@ -1944,7 +2016,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {str(e)}")
             raise e
 
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1970,7 +2042,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_error(f"Error upserting knowledge content: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -1994,7 +2066,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     async def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2012,7 +2084,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
     async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2030,7 +2102,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 log_debug(f"Deleted {result.deleted_count} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise e
 
     async def get_eval_run_raw(self, eval_run_id: str) -> Optional[Dict[str, Any]]:
@@ -2044,7 +2116,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     async def get_eval_run(
@@ -2080,7 +2152,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     async def get_eval_runs(
@@ -2174,7 +2246,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return [EvalRunRecord.model_validate(row) for row in records]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     async def rename_eval_run(
@@ -2212,7 +2284,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error updating eval run name {eval_run_id}: {e}")
+            log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
             raise e
 
     # --- Traces ---
@@ -2295,13 +2367,17 @@ class AsyncMongoDb(AsyncBaseDb):
                                 "else": {"$max": ["$end_time", trace_dict.get("end_time")]},
                             }
                         },
-                        # Preserve existing non-null context values using $ifNull
-                        "run_id": {"$ifNull": [trace.run_id, "$run_id"]},
-                        "session_id": {"$ifNull": [trace.session_id, "$session_id"]},
-                        "user_id": {"$ifNull": [trace.user_id, "$user_id"]},
-                        "agent_id": {"$ifNull": [trace.agent_id, "$agent_id"]},
-                        "team_id": {"$ifNull": [trace.team_id, "$team_id"]},
-                        "workflow_id": {"$ifNull": [trace.workflow_id, "$workflow_id"]},
+                        # Preserve existing non-null context values: $ifNull returns
+                        # the first non-null arg, so put the existing field first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": {"$ifNull": ["$run_id", trace.run_id]},
+                        "session_id": {"$ifNull": ["$session_id", trace.session_id]},
+                        "user_id": {"$ifNull": ["$user_id", trace.user_id]},
+                        "agent_id": {"$ifNull": ["$agent_id", trace.agent_id]},
+                        "team_id": {"$ifNull": ["$team_id", trace.team_id]},
+                        "workflow_id": {"$ifNull": ["$workflow_id", trace.workflow_id]},
                     }
                 },
                 {
@@ -2400,7 +2476,7 @@ class AsyncMongoDb(AsyncBaseDb):
             )
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     async def get_trace(
@@ -2461,7 +2537,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     async def get_traces(
@@ -2513,7 +2589,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 query["run_id"] = run_id
             if session_id:
                 query["session_id"] = session_id
-            if user_id:
+            if user_id is not None:
                 query["user_id"] = user_id
             if agent_id:
                 query["agent_id"] = agent_id
@@ -2560,7 +2636,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     async def get_trace_stats(
@@ -2599,7 +2675,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Build match stage
             match_stage: Dict[str, Any] = {"session_id": {"$ne": None}}
-            if user_id:
+            if user_id is not None:
                 match_stage["user_id"] = user_id
             if agent_id:
                 match_stage["agent_id"] = agent_id
@@ -2635,7 +2711,7 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = await collection.aggregate(count_pipeline).to_list(length=1)
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -2643,7 +2719,7 @@ class AsyncMongoDb(AsyncBaseDb):
             pipeline.append({"$skip": skip})
             pipeline.append({"$limit": limit or 20})
 
-            results = await collection.aggregate(pipeline).to_list(length=None)
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
 
             # Convert to list of dicts with datetime objects
             stats_list = []
@@ -2672,7 +2748,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -2690,7 +2766,7 @@ class AsyncMongoDb(AsyncBaseDb):
             await collection.insert_one(span.to_dict())
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     async def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2710,7 +2786,7 @@ class AsyncMongoDb(AsyncBaseDb):
             await collection.insert_many(span_dicts)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     async def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2736,7 +2812,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     async def get_spans(
@@ -2781,8 +2857,224 @@ class AsyncMongoDb(AsyncBaseDb):
             return spans
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
+
+    # -- Scheduler methods --
+    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            result = await collection.find_one({"id": schedule_id})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            result = await collection.find_one({"name": name})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    async def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return [], 0
+
+            query: Dict[str, Any] = {}
+            if enabled is not None:
+                query["enabled"] = enabled
+
+            total_count = await collection.count_documents(query)
+            offset = (page - 1) * limit
+            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            schedules = await cursor.to_list(length=None)
+            for schedule in schedules:
+                schedule.pop("_id", None)
+            return schedules, total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection = await self._get_collection(table_type="schedules", create_collection_if_not_found=True)
+            if collection is None:
+                raise RuntimeError("Failed to get or create schedules collection")
+
+            await collection.insert_one(schedule_data)
+            schedule_data.pop("_id", None)
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {e}")
+            raise e
+
+    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            kwargs["updated_at"] = int(time.time())
+            result = await collection.update_one({"id": schedule_id}, {"$set": kwargs})
+            if result.matched_count == 0:
+                return None
+            return await self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    async def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            schedules_collection = await self._get_collection(table_type="schedules")
+            if schedules_collection is None:
+                return False
+
+            runs_collection = await self._get_collection(table_type="schedule_runs")
+            if runs_collection is not None:
+                await runs_collection.delete_many({"schedule_id": schedule_id})
+
+            result = await schedules_collection.delete_one({"id": schedule_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            result = await collection.find_one_and_update(
+                {
+                    "enabled": True,
+                    "next_run_at": {"$lte": now},
+                    "$or": [
+                        {"locked_by": None},
+                        {"locked_at": {"$lte": stale_lock_threshold}},
+                    ],
+                },
+                {"$set": {"locked_by": worker_id, "locked_at": now}},
+                sort=[("next_run_at", 1)],
+                return_document=ReturnDocument.AFTER,
+            )
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return False
+
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+
+            result = await collection.update_one({"id": schedule_id}, {"$set": updates})
+            return result.matched_count > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection = await self._get_collection(table_type="schedule_runs", create_collection_if_not_found=True)
+            if collection is None:
+                raise RuntimeError("Failed to get or create schedule runs collection")
+
+            await collection.insert_one(run_data)
+            run_data.pop("_id", None)
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {e}")
+            raise e
+
+    async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return None
+
+            result = await collection.update_one({"id": schedule_run_id}, {"$set": kwargs})
+            if result.matched_count == 0:
+                return None
+            return await self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return None
+
+            result = await collection.find_one({"id": run_id})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    async def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return [], 0
+
+            query = {"schedule_id": schedule_id}
+            total_count = await collection.count_documents(query)
+            offset = (page - 1) * limit
+            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            runs = await cursor.to_list(length=None)
+            for run in runs:
+                run.pop("_id", None)
+            return runs, total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
 
     # -- Learning methods --
     async def get_learning(

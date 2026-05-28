@@ -338,15 +338,15 @@ agent.save()
 ./cookbook/scripts/run_pgvector.sh
 
 # Run save examples first
-python cookbook/16_components/save_agent.py
-python cookbook/16_components/save_team.py
-python cookbook/16_components/save_workflow.py
+python cookbook/93_components/save_agent.py
+python cookbook/93_components/save_team.py
+python cookbook/93_components/save_workflow.py
 
 # Then run get examples
-python cookbook/16_components/get_agent.py
-python cookbook/16_components/get_team.py
-python cookbook/16_components/get_workflow.py
+python cookbook/93_components/get_agent.py
+python cookbook/93_components/get_team.py
+python cookbook/93_components/get_workflow.py
 
 # Registry example
-python cookbook/16_components/registry.py
+python cookbook/93_components/registry.py
 ```

@@ -2,7 +2,7 @@ from functools import update_wrapper, wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar, Union, overload
 
 from agno.tools.function import Function, get_entrypoint_docstring
-from agno.utils.log import logger
+from agno.utils.log import log_error
 
 # Type variable for better type hints
 F = TypeVar("F", bound=Callable[..., Any])
@@ -175,9 +175,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                logger.error(
+                log_error(
                     f"Error in tool {func.__name__!r}: {e!r}",
-                    exc_info=True,
                 )
                 raise
 
@@ -186,9 +185,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             try:
                 return await func(*args, **kwargs)
             except Exception as e:
-                logger.error(
+                log_error(
                     f"Error in async tool {func.__name__!r}: {e!r}",
-                    exc_info=True,
                 )
                 raise
 
@@ -197,9 +195,8 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                logger.error(
+                log_error(
                     f"Error in async generator tool {func.__name__!r}: {e!r}",
-                    exc_info=True,
                 )
                 raise
 
@@ -213,6 +210,34 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
 
         # Preserve the original signature and metadata
         update_wrapper(wrapper, func)
+
+        # Detect sentinel from @approval decorator applied below @tool
+        _approval_type = getattr(func, "_agno_approval_type", None)
+        if _approval_type is not None:
+            if _approval_type == "required":
+                kwargs["approval_type"] = "required"
+                if not any(
+                    [
+                        kwargs.get("requires_user_input"),
+                        kwargs.get("requires_confirmation"),
+                        kwargs.get("external_execution"),
+                    ]
+                ):
+                    kwargs["requires_confirmation"] = True
+            elif _approval_type == "audit":
+                kwargs["approval_type"] = "audit"
+                if not any(
+                    [
+                        kwargs.get("requires_user_input"),
+                        kwargs.get("requires_confirmation"),
+                        kwargs.get("external_execution"),
+                    ]
+                ):
+                    raise ValueError(
+                        "@approval(type='audit') requires at least one HITL flag "
+                        "('requires_confirmation', 'requires_user_input', or 'external_execution') "
+                        "to be set on @tool()."
+                    )
 
         if kwargs.get("requires_user_input", True):
             kwargs["user_input_fields"] = kwargs.get("user_input_fields", [])

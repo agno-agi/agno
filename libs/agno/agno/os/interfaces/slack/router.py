@@ -1,25 +1,46 @@
-from typing import Optional, Union
+from __future__ import annotations
+
+import json
+from ssl import SSLContext
+from typing import Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
+
+try:
+    from agno.os.interfaces.slack.event_handler import SlackEventHandler
+    from agno.os.interfaces.slack.helpers import BotNameResolver
+    from agno.os.interfaces.slack.hitl import HITLHandler
+except ImportError as e:
+    raise ImportError("Slack dependencies not installed. Please install using `pip install 'agno[slack]'`") from e
+
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error, log_info
 from agno.workflow import RemoteWorkflow, Workflow
+
+# Slack sends lifecycle events for bots with these subtypes. Without this
+# filter the router would try to process its own messages, causing infinite loops.
+_IGNORED_SUBTYPES = frozenset(
+    {
+        "bot_message",
+        "bot_add",
+        "bot_remove",
+        "bot_enable",
+        "bot_disable",
+        "message_changed",
+        "message_deleted",
+    }
+)
 
 
 class SlackEventResponse(BaseModel):
-    """Response model for Slack event processing"""
-
-    status: str = Field(default="ok", description="Processing status")
+    status: str = Field(default="ok")
 
 
 class SlackChallengeResponse(BaseModel):
-    """Response model for Slack URL verification challenge"""
-
     challenge: str = Field(description="Challenge string to echo back to Slack")
 
 
@@ -29,13 +50,68 @@ def attach_routes(
     team: Optional[Union[Team, RemoteTeam]] = None,
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     reply_to_mentions_only: bool = True,
+    token: Optional[str] = None,
+    signing_secret: Optional[str] = None,
+    streaming: bool = True,
+    loading_messages: Optional[List[str]] = None,
+    task_display_mode: str = "plan",
+    loading_text: str = "Thinking...",
+    suggested_prompts: Optional[List[Dict[str, str]]] = None,
+    ssl: Optional[SSLContext] = None,
+    buffer_size: int = 100,
+    max_file_size: int = 1_073_741_824,  # 1GB
+    resolve_user_identity: bool = False,
 ) -> APIRouter:
-    # Determine entity type for documentation
-    entity_type = "agent" if agent else "team" if team else "workflow" if workflow else "unknown"
+    # Inner functions capture config via closure to keep each instance isolated
+    entity = agent or team or workflow
+    # entity_type drives event dispatch (agent vs team vs workflow events)
+    entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
+    # Member HITL needs member runs embedded on Team run (member_responses).
+    # Without this, continue_run cannot reliably reload member tool state from DB.
+    if team is not None and not isinstance(team, RemoteTeam):
+        team.store_member_responses = True
+    raw_name = getattr(entity, "name", None)
+    # entity_name labels task cards; entity_id namespaces session IDs
+    entity_name = raw_name if isinstance(raw_name, str) else entity_type
+    # Multiple Slack instances can be mounted on one FastAPI app (e.g. /research
+    # and /analyst). op_suffix makes each operation_id unique to avoid collisions.
+    op_suffix = entity_name.lower().replace(" ", "_")
+    entity_id = getattr(entity, "id", None) or entity_name
+
+    slack_tools = SlackTools(token=token, ssl=ssl, max_file_size=max_file_size)
+    bot_name_resolver = BotNameResolver()
+    if entity is None:
+        raise ValueError("attach_routes requires agent, team, or workflow")
+    hitl = HITLHandler(
+        slack_tools=slack_tools,
+        ssl=ssl,
+        entity=entity,
+        entity_id=entity_id,
+        entity_name=entity_name,
+        entity_type=entity_type,
+        task_display_mode=task_display_mode,
+        buffer_size=buffer_size,
+    )
+    event_handler = SlackEventHandler(
+        slack_tools=slack_tools,
+        ssl=ssl,
+        entity=entity,
+        entity_id=entity_id,
+        entity_name=entity_name,
+        entity_type=entity_type,
+        bot_name_resolver=bot_name_resolver,
+        reply_to_mentions_only=reply_to_mentions_only,
+        resolve_user_identity=resolve_user_identity,
+        loading_text=loading_text,
+        loading_messages=loading_messages,
+        task_display_mode=task_display_mode,
+        buffer_size=buffer_size,
+        suggested_prompts=suggested_prompts,
+    )
 
     @router.post(
         "/events",
-        operation_id=f"slack_events_{entity_type}",
+        operation_id=f"slack_events_{op_suffix}",
         name="slack_events",
         description="Process incoming Slack events",
         response_model=Union[SlackChallengeResponse, SlackEventResponse],
@@ -47,6 +123,8 @@ def attach_routes(
         },
     )
     async def slack_events(request: Request, background_tasks: BackgroundTasks):
+        # ACK immediately, process in background. Slack retries after ~3s if it
+        # doesn't get a 200, so long-running agent calls must not block the response.
         body = await request.body()
         timestamp = request.headers.get("X-Slack-Request-Timestamp")
         slack_signature = request.headers.get("X-Slack-Signature", "")
@@ -54,104 +132,100 @@ def attach_routes(
         if not timestamp or not slack_signature:
             raise HTTPException(status_code=400, detail="Missing Slack headers")
 
-        if not verify_slack_signature(body, timestamp, slack_signature):
+        if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
             raise HTTPException(status_code=403, detail="Invalid signature")
+
+        # Slack retries after ~3s if it doesn't get a 200. Since we ACK
+        # immediately and process in background, retries are always duplicates.
+        # Trade-off: if the server crashes mid-processing, the retried event
+        # carrying the same payload won't be reprocessed — acceptable for chat.
+        if request.headers.get("X-Slack-Retry-Num"):
+            return SlackEventResponse(status="ok")
 
         data = await request.json()
 
-        # Handle URL verification
         if data.get("type") == "url_verification":
             return SlackChallengeResponse(challenge=data.get("challenge"))
 
-        # Process other event types (e.g., message events) asynchronously
         if "event" in data:
             event = data["event"]
-            if event.get("bot_id"):
-                log_info("bot event")
+            event_type = event.get("type")
+            # setSuggestedPrompts requires "Agents & AI Apps" mode (streaming UX only)
+            if event_type == "assistant_thread_started" and streaming:
+                background_tasks.add_task(event_handler.handle_thread_started, event)
+            # Bot self-loop prevention: check bot_id at BOTH the top-level event
+            # AND inside message_changed's nested "message" object. Slack puts
+            # bot_id at different nesting levels depending on event shape — the
+            # nested check catches edited bot messages that would otherwise be
+            # reprocessed as new user events.
+            elif (
+                event.get("bot_id")
+                or (event.get("message") or {}).get("bot_id")
+                or event.get("subtype") in _IGNORED_SUBTYPES
+            ):
                 pass
+            elif streaming:
+                background_tasks.add_task(event_handler.handle_streaming, data)
             else:
-                background_tasks.add_task(_process_slack_event, event)
+                background_tasks.add_task(event_handler.handle_non_streaming, data)
 
         return SlackEventResponse(status="ok")
 
-    async def _process_slack_event(event: dict):
-        event_type = event.get("type")
+    @router.post(
+        "/interactions",
+        operation_id=f"slack_interactions_{op_suffix}",
+        name="slack_interactions",
+        description="Handle Slack interactive components (HITL buttons / form submit)",
+        response_model=SlackEventResponse,
+        response_model_exclude_none=True,
+        responses={
+            200: {"description": "Interaction accepted"},
+            400: {"description": "Malformed interaction payload"},
+            403: {"description": "Invalid Slack signature"},
+        },
+    )
+    async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
+        body = await request.body()
+        timestamp = request.headers.get("X-Slack-Request-Timestamp")
+        slack_signature = request.headers.get("X-Slack-Signature", "")
+        if not timestamp or not slack_signature:
+            raise HTTPException(status_code=400, detail="Missing Slack headers")
+        if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
+            raise HTTPException(status_code=403, detail="Invalid signature")
 
-        # Only handle app_mention and message events
-        if event_type not in ("app_mention", "message"):
-            return
+        # Pre-ack retry drop — Slack retries after ~3s if we don't ack. We ACK
+        # below; any retry arriving before that gets the same 200 response.
+        if request.headers.get("X-Slack-Retry-Num"):
+            return SlackEventResponse(status="ok")
 
-        channel_type = event.get("channel_type", "")
+        # Slack sends interactive payloads as application/x-www-form-urlencoded
+        # with a single form field `payload=<URL-encoded JSON>`.
+        form = await request.form()
+        payload_raw = form.get("payload")
+        if not isinstance(payload_raw, str) or not payload_raw:
+            raise HTTPException(status_code=400, detail="Missing payload")
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Malformed payload JSON")
 
-        # Handle duplicate replies
-        if not reply_to_mentions_only and event_type == "app_mention":
-            return
+        # Dispatch by action_id — only block_actions payloads carry HITL clicks.
+        if payload.get("type") != "block_actions":
+            return SlackEventResponse(status="ok")
+        actions = payload.get("actions") or []
+        if not actions:
+            return SlackEventResponse(status="ok")
+        action_id = actions[0].get("action_id", "")
 
-        # If reply_to_mentions_only is True, ignore every message that is not a DM
-        if reply_to_mentions_only and event_type == "message" and channel_type != "im":
-            return
+        if action_id == "row_approve":
+            background_tasks.add_task(hitl.handle_row_approve, payload)
+        elif action_id == "row_reject":
+            background_tasks.add_task(hitl.handle_row_reject, payload)
+        elif action_id == "submit_pause":
+            background_tasks.add_task(hitl.handle_submit, payload)
+        # Silently ignore unknown action_ids — a non-HITL Slack app sharing
+        # the same endpoint might also post interactions here.
 
-        # Extract event data
-        user = None
-        message_text = event.get("text", "")
-        channel_id = event.get("channel", "")
-        user = event.get("user")
-        if event.get("thread_ts"):
-            ts = event.get("thread_ts", "")
-        else:
-            ts = event.get("ts", "")
-
-        # Use the timestamp as the session id, so that each thread is a separate session
-        session_id = ts
-
-        if agent:
-            response = await agent.arun(message_text, user_id=user, session_id=session_id)
-        elif team:
-            response = await team.arun(message_text, user_id=user, session_id=session_id)  # type: ignore
-        elif workflow:
-            response = await workflow.arun(message_text, user_id=user, session_id=session_id)  # type: ignore
-
-        if response:
-            if response.status == "ERROR":
-                log_error(f"Error processing message: {response.content}")
-                _send_slack_message(
-                    channel=channel_id,
-                    message="Sorry, there was an error processing your message. Please try again later.",
-                    thread_ts=ts,
-                )
-                return
-
-            if hasattr(response, "reasoning_content") and response.reasoning_content:
-                _send_slack_message(
-                    channel=channel_id,
-                    message=f"Reasoning: \n{response.reasoning_content}",
-                    thread_ts=ts,
-                    italics=True,
-                )
-
-            _send_slack_message(channel=channel_id, message=response.content or "", thread_ts=ts)
-
-    def _send_slack_message(channel: str, thread_ts: str, message: str, italics: bool = False):
-        if len(message) <= 40000:
-            if italics:
-                # Handle multi-line messages by making each line italic
-                formatted_message = "\n".join([f"_{line}_" for line in message.split("\n")])
-                SlackTools().send_message_thread(channel=channel, text=formatted_message or "", thread_ts=thread_ts)
-            else:
-                SlackTools().send_message_thread(channel=channel, text=message or "", thread_ts=thread_ts)
-            return
-
-        # Split message into batches of 4000 characters (WhatsApp message limit is 4096)
-        message_batches = [message[i : i + 40000] for i in range(0, len(message), 40000)]
-
-        # Add a prefix with the batch number
-        for i, batch in enumerate(message_batches, 1):
-            batch_message = f"[{i}/{len(message_batches)}] {batch}"
-            if italics:
-                # Handle multi-line messages by making each line italic
-                formatted_batch = "\n".join([f"_{line}_" for line in batch_message.split("\n")])
-                SlackTools().send_message_thread(channel=channel, text=formatted_batch or "", thread_ts=thread_ts)
-            else:
-                SlackTools().send_message_thread(channel=channel, text=batch_message or "", thread_ts=thread_ts)
+        return SlackEventResponse(status="ok")
 
     return router

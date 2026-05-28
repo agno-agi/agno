@@ -144,3 +144,221 @@ def test_check_escape():
         assert path.resolve() == base_dir.joinpath(Path("a")).resolve()
         flag, path = f.check_escape("a/b/../../..")
         assert not (flag)
+
+
+def test_search_content_finds_matches():
+    """Test that search_content finds files containing the query string."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "hello.txt").write_text("Hello World, this is a test file")
+        (base_dir / "other.py").write_text("def greet():\n    print('hello')")
+        (base_dir / "nope.txt").write_text("nothing relevant here")
+
+        result = file_tools.search_content(query="hello")
+        data = json.loads(result)
+
+        assert data["query"] == "hello"
+        assert data["matches_found"] == 2
+        file_names = [m["file"] for m in data["files"]]
+        assert "hello.txt" in file_names
+        assert "other.py" in file_names
+
+
+def test_search_content_directory_scoping():
+    """Test that search_content respects directory scoping."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "root.txt").write_text("target text here")
+        subdir = base_dir / "sub"
+        subdir.mkdir()
+        (subdir / "nested.txt").write_text("target text also here")
+
+        result = file_tools.search_content(query="target", directory="sub")
+        data = json.loads(result)
+
+        assert data["matches_found"] == 1
+        assert data["files"][0]["file"] == "sub/nested.txt"
+
+
+def test_search_content_no_matches():
+    """Test that search_content returns zero matches when query is not found."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "file.txt").write_text("some content")
+
+        result = file_tools.search_content(query="nonexistent_string_xyz")
+        data = json.loads(result)
+
+        assert data["matches_found"] == 0
+        assert data["files"] == []
+
+
+def test_search_content_limit():
+    """Test that search_content respects the limit parameter."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        for i in range(5):
+            (base_dir / f"file{i}.txt").write_text("common string in all files")
+
+        result = file_tools.search_content(query="common string", limit=2)
+        data = json.loads(result)
+
+        assert data["matches_found"] == 2
+
+
+def test_default_exclude_patterns_hide_junk():
+    """By default, .venv and similar noise dirs are excluded from results."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        tmp_sub = base_dir / "tmp"
+        tmp_sub.mkdir()
+        (tmp_sub / "foo.txt").write_text("foo")
+        venv_pkg = tmp_sub / ".venv" / "lib" / "site-packages"
+        venv_pkg.mkdir(parents=True)
+        (venv_pkg / "x.py").write_text("print('x')")
+
+        search_result = json.loads(file_tools.search_files(pattern="**/*.py"))
+        assert search_result["matches_found"] == 0
+
+        listed = json.loads(file_tools.list_files(directory="tmp"))
+        assert ".venv" not in [Path(p).name for p in listed]
+        assert "tmp/foo.txt" in listed
+
+
+def test_empty_exclude_patterns_opts_out():
+    """exclude_patterns=[] restores prior behavior: no exclusions."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir, exclude_patterns=[])
+
+        venv_pkg = base_dir / ".venv" / "lib" / "site-packages"
+        venv_pkg.mkdir(parents=True)
+        (venv_pkg / "x.py").write_text("print('x')")
+
+        search_result = json.loads(file_tools.search_files(pattern="**/*.py"))
+        assert search_result["matches_found"] == 1
+        assert any(".venv" in p for p in search_result["files"])
+
+
+def test_custom_exclude_patterns():
+    """Custom patterns replace the default list."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir, exclude_patterns=["node_modules"])
+
+        (base_dir / "node_modules").mkdir()
+        (base_dir / "node_modules" / "a.txt").write_text("a")
+        (base_dir / ".venv").mkdir()
+        (base_dir / ".venv" / "b.txt").write_text("b")
+
+        result = json.loads(file_tools.search_files(pattern="**/*.txt"))
+        files = result["files"]
+        assert not any("node_modules" in p for p in files)
+        assert any(".venv" in p for p in files)
+
+
+def test_exclude_patterns_match_nested_components():
+    """Patterns match on any path component, not just top-level dirs."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir, exclude_patterns=[".git"])
+
+        nested = base_dir / "vendor" / "thing" / ".git"
+        nested.mkdir(parents=True)
+        (nested / "config").write_text("[core]")
+        (base_dir / "vendor" / "thing" / "readme.txt").write_text("hi")
+
+        result = json.loads(file_tools.search_files(pattern="**/*"))
+        files = result["files"]
+        assert not any(".git" in Path(p).parts for p in files)
+        assert "vendor/thing/readme.txt" in files
+
+
+def test_exclude_patterns_support_globs():
+    """Glob patterns like '*.egg-info' are honored."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir, exclude_patterns=["*.egg-info"])
+
+        egg = base_dir / "foo.egg-info"
+        egg.mkdir()
+        (egg / "PKG-INFO").write_text("Name: foo")
+        (base_dir / "keep.txt").write_text("keep")
+
+        result = json.loads(file_tools.search_files(pattern="**/*"))
+        files = result["files"]
+        assert not any("egg-info" in p for p in files)
+        assert "keep.txt" in files
+
+
+def test_default_excludes_env_family():
+    """The '.env*' and '*.env' default patterns together hide both prefix
+    (.env.local) and suffix (local.env) naming conventions for env files."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        # Prefix convention (Next.js / Vite / most modern web frameworks)
+        (base_dir / ".env").write_text("SECRET=1")
+        (base_dir / ".env.local").write_text("SECRET=2")
+        (base_dir / ".env.production").write_text("SECRET=3")
+        (base_dir / ".envrc").write_text("export FOO=bar")
+
+        # Suffix convention (Docker Compose --env-file, shell scripts)
+        (base_dir / "local.env").write_text("SECRET=4")
+        (base_dir / "prod.env").write_text("SECRET=5")
+
+        # Real code that happens to contain "env" - must stay visible
+        (base_dir / "environment.py").write_text("import os")
+        (base_dir / "env.yaml").write_text("key: value")
+        (base_dir / "keep.txt").write_text("visible")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == ["env.yaml", "environment.py", "keep.txt"]
+
+
+def test_default_excludes_agent_scratch_and_plural_venvs():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "real.py").write_text("# TODO: real work")
+        scratch = base_dir / ".context"
+        scratch.mkdir()
+        (scratch / "notes.py").write_text("# TODO: scratch")
+        venvs_pkg = base_dir / ".venvs" / "demo" / "lib"
+        venvs_pkg.mkdir(parents=True)
+        (venvs_pkg / "installed.py").write_text("# TODO: dependency")
+
+        result = json.loads(file_tools.search_content(query="TODO", limit=10))
+        file_names = [m["file"] for m in result["files"]]
+        assert result["matches_found"] == 1
+        assert file_names == ["real.py"]
+
+
+def test_search_content_honors_exclusions():
+    """search_content should not return matches inside excluded directories."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        venv_pkg = base_dir / ".venv" / "lib"
+        venv_pkg.mkdir(parents=True)
+        (venv_pkg / "hit.py").write_text("# TODO: something")
+        (base_dir / "real.py").write_text("# TODO: real work")
+
+        result = json.loads(file_tools.search_content(query="TODO"))
+        file_names = [m["file"] for m in result["files"]]
+        assert result["matches_found"] == 1
+        assert "real.py" in file_names
+        assert not any(".venv" in f for f in file_names)

@@ -1,10 +1,8 @@
 """
-This example shows how to instrument your agno agent with Langtrace.
+Langtrace Integration
+=====================
 
-1. Install dependencies: uv pip install langtrace-python-sdk
-2. Sign up for an account at https://app.langtrace.ai/
-3. Set your Langtrace API key as an environment variables:
-  - export LANGTRACE_API_KEY=<your-key>
+Demonstrates instrumenting an Agno agent with Langtrace.
 """
 
 # Must precede other imports
@@ -13,8 +11,15 @@ from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from langtrace_python_sdk import langtrace  # type: ignore
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 langtrace.init()
 
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Price Agent",
     model=OpenAIChat(id="gpt-5.2"),
@@ -23,4 +28,9 @@ agent = Agent(
     debug_mode=True,
 )
 
-agent.print_response("What is the current price of Tesla?")
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What is the current price of Tesla?")

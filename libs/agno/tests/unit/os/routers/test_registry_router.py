@@ -369,7 +369,7 @@ class TestListRegistryFiltering:
     """Tests for GET /registry endpoint filtering."""
 
     def test_list_registry_filter_by_type(self, settings):
-        """Test list_registry filters by component_type."""
+        """Test list_registry filters by resource_type."""
 
         def my_tool():
             pass
@@ -386,7 +386,7 @@ class TestListRegistryFiltering:
         app.include_router(router)
         client = TestClient(app)
 
-        response = client.get("/registry?component_type=db")
+        response = client.get("/registry?resource_type=db")
 
         assert response.status_code == 200
         data = response.json()

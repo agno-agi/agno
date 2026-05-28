@@ -11,6 +11,10 @@ Supported reasoning models through LiteLLM:
 from agno.agent import Agent
 from agno.models.litellm import LiteLLM
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 task = "9.11 and 9.9 -- which is bigger?"
 
 # Using DeepSeek R1 through LiteLLM
@@ -22,3 +26,10 @@ agent = Agent(
 )
 
 agent.print_response(task, stream=True, stream_events=True, show_reasoning=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

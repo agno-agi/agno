@@ -1,3 +1,10 @@
+"""
+Basic A2A Client
+================
+
+Sends a message to the local A2A server and prints the JSON response.
+"""
+
 from typing import Any
 from uuid import uuid4
 
@@ -10,6 +17,9 @@ from a2a.types import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Create Client Request
+# ---------------------------------------------------------------------------
 async def main() -> None:
     async with httpx.AsyncClient() as httpx_client:
         client = await A2AClient.get_client_from_agent_card_url(
@@ -41,6 +51,9 @@ async def main() -> None:
         #     print(chunk.model_dump(mode='json', exclude_none=True))
 
 
+# ---------------------------------------------------------------------------
+# Run Client
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import asyncio
 

@@ -1,5 +1,16 @@
+"""
+Vertexai Thinking
+=================
+
+Cookbook example for `vertexai/claude/thinking.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.vertexai.claude import Claude
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Claude(
@@ -11,4 +22,13 @@ agent = Agent(
 )
 
 # Print the response in the terminal
-agent.print_response("Share a very scary 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response("Share a very scary 2 sentence horror story")
+
+    # --- Sync + Streaming ---
+    agent.print_response("Share a very scary 2 sentence horror story", stream=True)

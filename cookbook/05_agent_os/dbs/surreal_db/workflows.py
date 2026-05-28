@@ -1,3 +1,10 @@
+"""
+Workflows
+=========
+
+Demonstrates workflows.
+"""
+
 from typing import List
 
 from agno.agent.agent import Agent
@@ -9,6 +16,10 @@ from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 from db import db
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 # ************* Input Schema *************
@@ -77,3 +88,10 @@ research_workflow = Workflow(
     input_schema=ResearchTopic,
 )
 # *******************************
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    raise SystemExit("This module is intended to be imported.")

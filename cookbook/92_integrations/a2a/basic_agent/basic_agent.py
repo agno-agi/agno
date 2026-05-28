@@ -1,3 +1,10 @@
+"""
+Basic A2A Agent Executor
+========================
+
+Implements an A2A executor that routes incoming text to an Agno agent.
+"""
+
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Part, TextPart
@@ -6,13 +13,19 @@ from agno.agent import Agent, Message, RunOutput
 from agno.models.openai import OpenAIChat
 from typing_extensions import override
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(id="gpt-5.2"),
 )
 
 
+# ---------------------------------------------------------------------------
+# Create Executor
+# ---------------------------------------------------------------------------
 class BasicAgentExecutor(AgentExecutor):
-    """Test AgentProxy Implementation."""
+    """Test AgentProxy implementation."""
 
     def __init__(self):
         self.agent = agent
@@ -36,3 +49,12 @@ class BasicAgentExecutor(AgentExecutor):
     @override
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise Exception("Cancel not supported")
+
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print(
+        "Run `python cookbook/92_integrations/a2a/basic_agent/__main__.py` to start the A2A server."
+    )

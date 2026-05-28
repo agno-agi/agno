@@ -2,17 +2,25 @@
 File Generation Tool Example
 This cookbook shows how to use the FileGenerationTool to generate various file types (JSON, CSV, PDF, TXT).
 The tool can generate files from agent responses and make them available for download or further processing.
+
+By default, files are returned as in-memory artifacts only (save_files=False).
+Set save_files=True to also persist files to disk.
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.file_generation import FileGenerationTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+# save_files=True persists generated files to output_directory (defaults to cwd if not set)
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     db=SqliteDb(db_file="tmp/test.db"),
-    tools=[FileGenerationTools(output_directory="tmp")],
+    tools=[FileGenerationTools(output_directory="tmp", save_files=True)],
     description="You are a helpful assistant that can generate files in various formats.",
     instructions=[
         "When asked to create files, use the appropriate file generation tools.",
@@ -82,6 +90,25 @@ def example_text_generation():
                 print(f"File location: {file.url}")
     print()
 
+
+def example_docx_generation():
+    """Example: Generate a DOCX file"""
+    print("=== DOCX File Generation Example ===")
+    response = agent.run(
+        "Create a DOCX report about customer onboarding best practices. Include sections for welcome email, product tour, and success check-ins."
+    )
+    print(response.content)
+    if response.files:
+        for file in response.files:
+            print(f"Generated file: {file.filename} ({file.size} bytes)")
+            if file.url:
+                print(f"File location: {file.url}")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     print("File Generation Tool Cookbook Example")

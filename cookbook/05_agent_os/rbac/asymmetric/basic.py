@@ -26,6 +26,10 @@ from agno.os.config import AuthorizationConfig
 from agno.tools.websearch import WebSearchTools
 from agno.utils.cryptography import generate_rsa_keys
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Keys file path for persistence across reloads
 _KEYS_FILE = "/tmp/agno_rbac_demo_keys.json"
 
@@ -86,6 +90,10 @@ agent_os = AgentOS(
 # Get the app
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """

@@ -16,6 +16,11 @@ from agno.agent import Agent
 from agno.models.google.gemini import Gemini
 from agno.tools.todoist import TodoistTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All functions available (default behavior)
 todoist_agent_all = Agent(
     name="Todoist Agent - All Functions",
@@ -25,7 +30,7 @@ todoist_agent_all = Agent(
         "You can create, read, update, delete tasks and manage projects.",
     ],
     id="todoist-agent-all",
-    model=Gemini("gemini-3-flash-preview"),
+    model=Gemini("gemini-3.5-flash"),
     tools=[TodoistTools()],
     markdown=True,
 )
@@ -40,21 +45,25 @@ todoist_agent = Agent(
         "You have read access to all tasks and projects.",
     ],
     id="todoist-agent-safe",
-    model=Gemini("gemini-3-flash-preview"),
+    model=Gemini("gemini-3.5-flash"),
     tools=[TodoistTools(exclude_tools=["delete_task"])],
     markdown=True,
 )
 
 
 # Example 1: Create a task
-print("\n=== Create a task ===")
-todoist_agent_all.print_response(
-    "Create a todoist task to buy groceries tomorrow at 10am"
-)
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("\n=== Create a task ===")
+    todoist_agent_all.print_response(
+        "Create a todoist task to buy groceries tomorrow at 10am"
+    )
 
-# Example 2: Delete a task
-print("\n=== Delete a task ===")
-todoist_agent.print_response(
-    "Delete the todoist task to buy groceries tomorrow at 10am"
-)
+    # Example 2: Delete a task
+    print("\n=== Delete a task ===")
+    todoist_agent.print_response(
+        "Delete the todoist task to buy groceries tomorrow at 10am"
+    )

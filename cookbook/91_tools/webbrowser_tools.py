@@ -1,7 +1,19 @@
+"""
+Webbrowser Tools
+=============================
+
+Demonstrates webbrowser tools.
+"""
+
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.webbrowser import WebBrowserTools
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 # Example 1: Enable specific WebBrowser functions
 agent = Agent(
@@ -24,4 +36,11 @@ agent_all = Agent(
     ],
     markdown=True,
 )
-agent.print_response("Find an article explaining MCP and open it in the web browser.")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Find an article explaining MCP and open it in the web browser."
+    )

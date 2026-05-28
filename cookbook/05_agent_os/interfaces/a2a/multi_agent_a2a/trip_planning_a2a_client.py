@@ -1,9 +1,20 @@
+"""
+Trip Planning A2A Client
+========================
+
+Demonstrates trip planning a2a client.
+"""
+
 import uuid
 
 import requests
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 
 # --- 1. A2A Helper Function (The Protocol) ---
@@ -100,6 +111,10 @@ agent_os = AgentOS(
     ],
 )
 app = agent_os.get_app()
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     """Run your AgentOS.
     You can run the Agent via A2A protocol:

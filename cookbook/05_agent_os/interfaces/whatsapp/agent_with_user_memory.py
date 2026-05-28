@@ -1,3 +1,10 @@
+"""
+Agent With User Memory
+======================
+
+Demonstrates agent with user memory.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -8,6 +15,10 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
 memory_manager = MemoryManager(
@@ -17,13 +28,13 @@ memory_manager = MemoryManager(
                     Collect Information about the users likes and dislikes,
                     Collect information about what the user is doing with their life right now
                 """,
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-flash-latest"),
 )
 
 
 personal_agent = Agent(
     name="Basic Agent",
-    model=Gemini(id="gemini-2.0-flash"),
+    model=Gemini(id="gemini-flash-latest"),
     tools=[WebSearchTools()],
     add_history_to_context=True,
     num_history_runs=3,
@@ -37,7 +48,6 @@ personal_agent = Agent(
         First introduce yourself and ask for their name then, ask about themeselves, their hobbies, what they like to do and what they like to talk about.
         Use DuckDuckGo search tool to find latest information about things in the conversations
     """),
-    debug_mode=True,
 )
 
 
@@ -49,11 +59,9 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    """Run your AgentOS.
-
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
-
-    """
     agent_os.serve(app="agent_with_user_memory:app", reload=True)

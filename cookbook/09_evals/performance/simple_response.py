@@ -1,10 +1,18 @@
-"""Run `uv pip install openai agno memory_profiler` to install dependencies."""
+"""
+Simple Response Performance Evaluation
+======================================
+
+Demonstrates baseline response performance for a single prompt.
+"""
 
 from agno.agent import Agent
 from agno.eval.performance import PerformanceEval
 from agno.models.openai import OpenAIChat
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 def run_agent():
     agent = Agent(
         model=OpenAIChat(id="gpt-5.2"),
@@ -17,6 +25,9 @@ def run_agent():
     return response
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 simple_response_perf = PerformanceEval(
     name="Simple Performance Evaluation",
     func=run_agent,
@@ -24,5 +35,8 @@ simple_response_perf = PerformanceEval(
     warmup_runs=0,
 )
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     simple_response_perf.run(print_results=True, print_summary=True)

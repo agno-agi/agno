@@ -9,6 +9,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools, MultiMCPTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # This is the URL of the MCP server we want to use.
 server_url = "http://localhost:8000/sse"
 
@@ -47,6 +52,10 @@ async def run_agent_with_multimcp(message: str) -> None:
     await agent.aprint_response(input=message, stream=True, markdown=True)
     await mcp_tools.close()
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_agent("Do I have any birthdays this week?"))

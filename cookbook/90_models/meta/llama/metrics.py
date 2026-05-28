@@ -1,8 +1,19 @@
+"""
+Meta Metrics
+============
+
+Cookbook example for `meta/llama/metrics.py`.
+"""
+
 from agno.agent import Agent, RunOutput
 from agno.models.meta import Llama
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from rich.pretty import pprint
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
@@ -28,3 +39,10 @@ if run_output.messages:
 # Print the metrics
 print("---" * 5, "Collected Metrics", "---" * 5)
 pprint(run_output.metrics)  # type: ignore
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

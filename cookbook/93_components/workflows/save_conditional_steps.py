@@ -1,10 +1,9 @@
 """
-Example: Saving and Loading a Workflow with Condition
+Save Conditional Workflow Steps
+===============================
 
-This example demonstrates how to:
-1. Create a workflow with a Condition that evaluates whether to run steps
-2. Save the workflow to a database
-3. Load the workflow back using a registry to restore the evaluator function
+Demonstrates creating a workflow with conditional steps, saving it to the
+database, and loading it back with a Registry.
 """
 
 from agno.agent import Agent
@@ -17,10 +16,16 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow, get_workflow_by_id
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # Database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
+# ---------------------------------------------------------------------------
+# Create Agents
+# ---------------------------------------------------------------------------
 # Agents
 hackernews_agent = Agent(
     name="HackerNews Researcher",
@@ -40,6 +45,9 @@ content_agent = Agent(
 )
 
 
+# ---------------------------------------------------------------------------
+# Create Registry Components
+# ---------------------------------------------------------------------------
 # Evaluator function (will be serialized by name and restored via registry)
 def is_tech_topic(step_input: StepInput) -> bool:
     """Returns True to execute the conditional steps, False to skip."""
@@ -64,6 +72,9 @@ registry = Registry(
     functions=[is_tech_topic],
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow Steps
+# ---------------------------------------------------------------------------
 # Steps
 research_hackernews_step = Step(
     name="ResearchHackerNews",
@@ -83,6 +94,9 @@ write_step = Step(
     agent=content_agent,
 )
 
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 # Workflow
 workflow = Workflow(
     name="Conditional Research Workflow",
@@ -100,6 +114,9 @@ workflow = Workflow(
     db=db,
 )
 
+# ---------------------------------------------------------------------------
+# Run Workflow Example
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # Save
     print("Saving workflow...")

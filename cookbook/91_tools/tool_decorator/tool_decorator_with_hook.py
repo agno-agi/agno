@@ -9,6 +9,10 @@ from agno.agent import Agent
 from agno.tools import tool
 from agno.utils.log import logger
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 def duration_logger_hook(
     function_name: str, function_call: Callable, arguments: Dict[str, Any]
@@ -52,4 +56,9 @@ agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
 )
-agent.print_response("What are the top hackernews stories?", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("What are the top hackernews stories?", stream=True)

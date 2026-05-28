@@ -1,9 +1,20 @@
+"""
+Weather Agent
+=============
+
+Demonstrates weather agent.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.openweather import OpenWeatherTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 weather_agent = Agent(
     id="weather-reporter-agent",
@@ -31,6 +42,10 @@ agent_os = AgentOS(
     a2a_interface=True,
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

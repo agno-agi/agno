@@ -14,6 +14,10 @@ from agno.agent import Agent
 from agno.models.ollama import OllamaResponses
 from pydantic import BaseModel, Field
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 class MovieScript(BaseModel):
     name: str = Field(..., description="Give a name to this movie")
@@ -41,3 +45,10 @@ agent = Agent(
 )
 
 agent.print_response("New York")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

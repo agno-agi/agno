@@ -17,9 +17,14 @@ from agno.learn import (
 )
 from agno.models.openai import OpenAIResponses
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+db = SqliteDb(db_file="tmp/agents.db")
+
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.2"),
-    db=SqliteDb(db_file="tmp/agents.db"),
+    db=db,
     learning=LearningMachine(
         user_profile=UserProfileConfig(mode=LearningMode.AGENTIC),
         user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
@@ -27,6 +32,9 @@ agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     user_id = "alice2@example.com"
 
@@ -39,7 +47,7 @@ if __name__ == "__main__":
         session_id="session_1",
         stream=True,
     )
-    lm = agent.get_learning_machine()
+    lm = agent.learning_machine
     lm.user_profile_store.print(user_id=user_id)
     lm.user_memory_store.print(user_id=user_id)
 

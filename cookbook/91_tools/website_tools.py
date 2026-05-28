@@ -9,6 +9,11 @@ WebsiteTools is a small tool (<6 functions) so it uses enable_ flags.
 from agno.agent import Agent
 from agno.tools.website import WebsiteTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     tools=[WebsiteTools()],  # All functions enabled by default
     description="You are a comprehensive web scraping specialist with all website analysis capabilities.",
@@ -22,8 +27,13 @@ agent = Agent(
 )
 
 # Example usage
-print("=== Basic Web Content Search Example ===")
-agent.print_response(
-    "Search web page: 'https://docs.agno.com/introduction' and summarize the key concepts",
-    markdown=True,
-)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    print("=== Basic Web Content Search Example ===")
+    agent.print_response(
+        "Search web page: 'https://docs.agno.com/introduction' and summarize the key concepts",
+        markdown=True,
+    )
