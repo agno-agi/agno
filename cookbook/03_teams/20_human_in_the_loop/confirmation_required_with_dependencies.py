@@ -1,8 +1,5 @@
 """Team HITL: dependencies/session_state survive across continue_run.
 
-Reproduces and demonstrates the fix for
-https://github.com/agno-agi/agno/issues/8135
-
 A member tool that requires confirmation also depends on a value the caller
 threaded through `dependencies` (e.g. an auth header). Before the fix, when the
 team paused at the member tool and the caller resumed via `team.acontinue_run`,

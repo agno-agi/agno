@@ -1009,7 +1009,7 @@ class TestContinueRunApprovalResolution:
 
 
 # ===========================================================================
-# 17. Forwarding team run_context state to member.continue_run (issue #8135)
+# 17. Forwarding team run_context state to member.continue_run
 # ===========================================================================
 
 
@@ -1062,9 +1062,7 @@ class TestMemberContinueKwargsFromRunContext:
 class TestRoutingForwardsRunContextToMembers:
     """Routing functions must forward team dependencies to member.continue_run.
 
-    Reproduces and pins the fix for https://github.com/agno-agi/agno/issues/8135 —
-    before the fix, member tools resumed via continue_run lost access to
-    dependencies/session_state set on the team.
+    Forward team run_context state to member.continue_run.
     """
 
     def _make_run_response_with_member_req(self):
