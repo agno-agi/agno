@@ -84,6 +84,10 @@ class ReaderFactory:
             "name": "DoclingReader",
             "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
         },
+        "image": {
+            "name": "ImageReader",
+            "description": "Reads image files and encodes them as base64 for use with multimodal embedders like CLIP",
+        },
     }
 
     @classmethod
@@ -296,6 +300,18 @@ class ReaderFactory:
         return LLMsTxtReader(**config)
 
     @classmethod
+    def _get_image_reader(cls, **kwargs) -> Reader:
+        """Get Image reader instance."""
+        from agno.knowledge.reader.image_reader import ImageReader
+
+        config: Dict[str, Any] = {
+            "name": "Image Reader",
+            "description": "Reads image files and encodes them as base64 for use with multimodal embedders like CLIP",
+        }
+        config.update(kwargs)
+        return ImageReader(**config)
+
+    @classmethod
     def _get_docling_reader(cls, **kwargs) -> Reader:
         """Get Docling reader instance."""
         from agno.knowledge.reader.docling_reader import DoclingReader
@@ -352,6 +368,7 @@ class ReaderFactory:
             "web_search": ("agno.knowledge.reader.web_search_reader", "WebSearchReader"),
             "llms_txt": ("agno.knowledge.reader.llms_txt_reader", "LLMsTxtReader"),
             "docling": ("agno.knowledge.reader.docling_reader", "DoclingReader"),
+            "image": ("agno.knowledge.reader.image_reader", "ImageReader"),
         }
 
         if reader_key not in reader_class_map:
@@ -406,6 +423,8 @@ class ReaderFactory:
             return cls.create_reader("markdown")
         elif extension in [".txt", ".text"]:
             return cls.create_reader("text")
+        elif extension in [".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"]:
+            return cls.create_reader("image")
         else:
             # Default to text reader for unknown extensions
             return cls.create_reader("text")
