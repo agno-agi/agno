@@ -248,7 +248,7 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
+            if self.provider in ["AIMLAPI", "Cloudflare", "Fireworks", "Nvidia", "VLLM"]:
                 for tool in tools:
                     if tool.get("type") == "function":
                         for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
