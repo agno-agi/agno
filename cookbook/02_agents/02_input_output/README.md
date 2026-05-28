@@ -12,6 +12,7 @@ Examples for input formats, validation schemas, streaming, and structured output
 - `response_as_variable.py` - Capture agent response as a variable.
 - `save_to_file.py` - Save agent responses to a file automatically.
 - `streaming.py` - Stream agent responses token by token.
+- `stop_reason.py` - Check why the model stopped generating (truncation, completion, etc).
 - `followup_suggestions.py` - Get a response with AI-generated follow-up suggestions.
 
 ## Prerequisites
