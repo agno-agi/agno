@@ -233,14 +233,15 @@ def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
     if agent_db:
         return agent_db
 
-    # Fallback: explicit db on auth_config (legacy)
+    # Fallback: explicit db on auth_config with store_tokens=True
     ga = getattr(toolkit, "auth_config", None)
     if ga is not None:
-        explicit_db = _valid_auth_token_db(getattr(ga, "_db", None))
-        if explicit_db:
-            return explicit_db
+        if getattr(ga, "_store_tokens", False):
+            explicit_db = _valid_auth_token_db(getattr(ga, "_db", None))
+            if explicit_db:
+                return explicit_db
 
-    # Fallback: store_token_in_db=True pattern (legacy)
+    # Fallback: store_token_in_db=True on toolkit (simple pattern)
     if getattr(toolkit, "store_token_in_db", False):
         return _valid_auth_token_db(getattr(toolkit, "_db", None))
 
@@ -365,7 +366,8 @@ class GoogleAuthManager:
         # Service account authentication (alternative to OAuth)
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        # Token storage encryption (moved from DB layer)
+        # Token storage config (moved from toolkit and DB layers)
+        store_tokens: bool = False,
         encrypt_tokens: bool = False,
         token_encryption_key: Optional[str] = None,
     ):
@@ -395,7 +397,8 @@ class GoogleAuthManager:
         # Service account auth (when set, OAuth is skipped)
         self._service_account_path = service_account_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._delegated_user = delegated_user or os.getenv("GOOGLE_DELEGATED_USER")
-        # Token encryption config
+        # Token storage config
+        self._store_tokens = store_tokens
         self._encrypt_tokens = encrypt_tokens
         self._token_encryption_key = token_encryption_key
 

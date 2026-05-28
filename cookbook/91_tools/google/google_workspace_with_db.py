@@ -58,13 +58,21 @@ agent = Agent(
     db=db,
     tools=[
         GmailTools(
-            auth_config=auth, include_tools=["get_latest_emails", "search_emails"]
+            auth_config=auth,
+            store_token_in_db=True,
+            include_tools=["get_latest_emails", "search_emails"],
         ),
         GoogleCalendarTools(
-            auth_config=auth, create_event=False, update_event=False, delete_event=False
+            auth_config=auth,
+            store_token_in_db=True,
+            create_event=False,
+            update_event=False,
+            delete_event=False,
         ),
         GoogleDriveTools(
-            auth_config=auth, include_tools=["list_files", "search_files"]
+            auth_config=auth,
+            store_token_in_db=True,
+            include_tools=["list_files", "search_files"],
         ),
     ],
     instructions="You are a Google Workspace assistant with Gmail, Calendar, and Drive access.",
