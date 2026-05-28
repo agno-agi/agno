@@ -15,7 +15,6 @@ for the continue-run path) and updates acontinue_run_dispatch to route to it
 when background=True and stream=True.
 """
 
-import asyncio
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
