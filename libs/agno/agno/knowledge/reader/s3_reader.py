@@ -10,7 +10,7 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.knowledge.reader.text_reader import TextReader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     from agno.aws.resource.s3.object import S3Object  # type: ignore
@@ -31,13 +31,17 @@ except ImportError:
 class S3Reader(Reader):
     """Reader for S3 files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for S3 readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -46,41 +50,32 @@ class S3Reader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.FILE, ContentType.URL, ContentType.TEXT]
 
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:
-            log_info(f"Reading S3 file: {s3_object.uri}")
+            log_debug(f"Reading S3 file: {s3_object.uri}")
+
+            doc_name = name or s3_object.name.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
 
             # Read PDF files
             if s3_object.uri.endswith(".pdf"):
                 object_resource = s3_object.get_resource()
                 object_body = object_resource.get()["Body"]
-                doc_name = (
-                    s3_object.name.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
-                    if name is None
-                    else name
-                )
                 return PDFReader().read(pdf=BytesIO(object_body.read()), name=doc_name)
 
             # Read text files
             else:
-                doc_name = (
-                    s3_object.name.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
-                    if name is None
-                    else name
-                )
                 obj_name = s3_object.name.split("/")[-1]
                 temporary_file = Path("storage").joinpath(obj_name)
                 s3_object.download(temporary_file)
                 documents = TextReader().read(file=temporary_file, name=doc_name)
-
                 temporary_file.unlink()
                 return documents
 
         except Exception as e:
-            logger.error(f"Error reading: {s3_object.uri}: {e}")
+            log_error(f"Error reading: {s3_object.uri}: {str(e)}")
 
         return []
 

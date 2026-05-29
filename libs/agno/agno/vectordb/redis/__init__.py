@@ -1,4 +1,4 @@
-from agno.vectordb.redis.redisdb import RedisDB
+from agno.vectordb.redis.redisdb import RedisDB, SearchType
 
 # Backward compatibility alias
 RedisVectorDb = RedisDB
@@ -6,4 +6,5 @@ RedisVectorDb = RedisDB
 __all__ = [
     "RedisVectorDb",
     "RedisDB",
+    "SearchType",
 ]

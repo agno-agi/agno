@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 
 class MovieScript(BaseModel):
@@ -76,7 +76,7 @@ def test_tool_use_with_structured_output():
     """Test basic tool use combined with structured output (non-streaming)."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-5-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         output_schema=ResearchSummary,
         telemetry=False,
     )
@@ -106,7 +106,7 @@ def test_tool_use_with_structured_output_stream():
     """Test streaming tool use combined with structured output - the main bug this PR fixes."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-5-mini"),
-        tools=[DuckDuckGoTools()],
+        tools=[WebSearchTools()],
         output_schema=ResearchSummary,
         telemetry=False,
     )

@@ -5,7 +5,7 @@ import requests
 from agno.agent.agent import Agent
 from agno.media import Audio, Image
 from agno.models.litellm import LiteLLMOpenAI
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.websearch import WebSearchTools
 
 
 def _get_audio_input() -> Union[bytes, Any]:
@@ -20,7 +20,7 @@ def test_image_input():
     """Test LiteLLMOpenAI with image input"""
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

@@ -18,7 +18,7 @@ def test_message_as_input():
     assert response.content is not None
 
 
-def test_list_as_input():
+def test_list_as_input(image_path):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
@@ -30,7 +30,7 @@ def test_list_as_input():
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg",
+                    "url": image_path,
                 },
             },
         ]
@@ -67,7 +67,7 @@ def test_base_model_as_input():
     assert response.content is not None
 
 
-def test_empty_string_with_image():
+def test_empty_string_with_image(image_path):
     """Test that agent handles empty string input with image media"""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -77,17 +77,13 @@ def test_empty_string_with_image():
 
     response = agent.run(
         input="",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(filepath=image_path)],
     )
     assert response.content is not None
     assert len(response.content) > 0
 
 
-def test_none_input_with_image():
+def test_none_input_with_image(image_path):
     """Test that agent handles None input with image media"""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -96,18 +92,14 @@ def test_none_input_with_image():
     )
 
     response = agent.run(
-        input=None,
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        input=None,  # type: ignore
+        images=[Image(filepath=image_path)],
     )
     assert response.content is not None
     assert len(response.content) > 0
 
 
-def test_empty_string_with_multiple_media():
+def test_empty_string_with_multiple_media(image_path):
     """Test that agent handles empty string with multiple media types"""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -117,17 +109,13 @@ def test_empty_string_with_multiple_media():
 
     response = agent.run(
         input="",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(filepath=image_path)],
     )
     assert response.content is not None
     assert len(response.content) > 0
 
 
-def test_empty_string_with_image_and_user_memories():
+def test_empty_string_with_image_and_user_memories(image_path):
     """Test that agent with user memories handles empty string input with image"""
     db = SqliteDb(db_file="tmp/test_empty_input_memories.db")
     session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
@@ -136,24 +124,20 @@ def test_empty_string_with_image_and_user_memories():
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         db=db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         session_summary_manager=session_summary_manager,
         markdown=True,
     )
 
     response = agent.run(
         input="",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(filepath=image_path)],
     )
     assert response.content is not None
     assert len(response.content) > 0
 
 
-def test_none_input_with_image_and_user_memories():
+def test_none_input_with_image_and_user_memories(image_path):
     """Test that agent with user memories handles None input with image"""
     db = SqliteDb(db_file="tmp/test_none_input_memories.db")
     session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
@@ -162,24 +146,20 @@ def test_none_input_with_image_and_user_memories():
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="Describe the image provided",
         db=db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         session_summary_manager=session_summary_manager,
         markdown=True,
     )
 
     response = agent.run(
-        input=None,
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        input=None,  # type: ignore
+        images=[Image(filepath=image_path)],
     )
     assert response.content is not None
     assert len(response.content) > 0
 
 
-def test_empty_string_with_image_and_session_summaries():
+def test_empty_string_with_image_and_session_summaries(image_path):
     """Test that agent with session summaries handles empty string input with image"""
     db = SqliteDb(db_file="tmp/test_empty_input_summaries.db")
     session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
@@ -195,17 +175,13 @@ def test_empty_string_with_image_and_session_summaries():
 
     response = agent.run(
         input="",
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        images=[Image(filepath=image_path)],
     )
     assert response.content is not None
     assert len(response.content) > 0
 
 
-def test_none_input_with_image_and_session_summaries():
+def test_none_input_with_image_and_session_summaries(image_path):
     """Test that agent with session summaries handles None input with image"""
     db = SqliteDb(db_file="tmp/test_none_input_summaries.db")
     session_summary_manager = SessionSummaryManager(model=OpenAIChat(id="gpt-4o-mini"))
@@ -220,12 +196,8 @@ def test_none_input_with_image_and_session_summaries():
     )
 
     response = agent.run(
-        input=None,
-        images=[
-            Image(
-                url="https://upload.wikimedia.org/wikipedia/commons/thumb/d/dd/Gfp-wisconsin-madison-the-nature-boardwalk.jpg/2560px-Gfp-wisconsin-madison-the-nature-boardwalk.jpg"
-            )
-        ],
+        input=None,  # type: ignore
+        images=[Image(filepath=image_path)],
     )
     assert response.content is not None
     assert len(response.content) > 0

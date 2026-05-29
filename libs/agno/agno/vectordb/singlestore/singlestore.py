@@ -56,7 +56,7 @@ class SingleStore(VectorDb):
             from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
-            log_info("Embedder not provided, using OpenAIEmbedder as default.")
+            log_debug("Embedder not provided, using OpenAIEmbedder as default.")
         self.embedder: Embedder = embedder
         self.dimensions: Optional[int] = self.embedder.dimensions
 
@@ -126,7 +126,7 @@ class SingleStore(VectorDb):
         try:
             return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
         except Exception as e:
-            log_error(e)
+            log_error(f"Unexpected error: {str(e)}")
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
@@ -185,8 +185,10 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -246,8 +248,10 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -361,7 +365,7 @@ class SingleStore(VectorDb):
                 try:
                     embedding_list = json.loads(neighbor.embedding)
                 except Exception as e:
-                    log_error(f"Error extracting vector: {e}")
+                    log_error(f"Error extracting vector: {str(e)}")
                     embedding_list = []
 
             search_results.append(
@@ -441,7 +445,7 @@ class SingleStore(VectorDb):
                 log_info(f"Deleted {result.rowcount} records with ID {id} from table '{self.table.name}'.")  # type: ignore
                 return result.rowcount > 0  # type: ignore
         except Exception as e:
-            log_error(f"Error deleting document with ID {id}: {e}")
+            log_error(f"Error deleting document with ID {id}: {str(e)}")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -459,7 +463,7 @@ class SingleStore(VectorDb):
                 )
                 return result.rowcount > 0  # type: ignore
         except Exception as e:
-            log_error(f"Error deleting document with content_id {content_id}: {e}")
+            log_error(f"Error deleting document with content_id {content_id}: {str(e)}")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -475,7 +479,7 @@ class SingleStore(VectorDb):
                 log_info(f"Deleted {result.rowcount} records with name '{name}' from table '{self.table.name}'.")  # type: ignore
                 return result.rowcount > 0  # type: ignore
         except Exception as e:
-            log_error(f"Error deleting document with name {name}: {e}")
+            log_error(f"Error deleting document with name {name}: {str(e)}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -493,7 +497,7 @@ class SingleStore(VectorDb):
                 log_info(f"Deleted {result.rowcount} records with metadata {metadata} from table '{self.table.name}'.")  # type: ignore
                 return result.rowcount > 0  # type: ignore
         except Exception as e:
-            log_error(f"Error deleting documents with metadata {metadata}: {e}")
+            log_error(f"Error deleting documents with metadata {metadata}: {str(e)}")
             return False
 
     async def async_create(self) -> None:
@@ -521,7 +525,7 @@ class SingleStore(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                     except Exception as e:
-                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -532,10 +536,10 @@ class SingleStore(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_error(f"Rate limit detected during batch embedding. {e}")
+                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
                     raise e
                 else:
-                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -548,8 +552,10 @@ class SingleStore(VectorDb):
             counter = 0
             for document in documents:
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -605,7 +611,7 @@ class SingleStore(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                     except Exception as e:
-                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -616,10 +622,10 @@ class SingleStore(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_error(f"Rate limit detected during batch embedding. {e}")
+                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
                     raise e
                 else:
-                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -632,8 +638,10 @@ class SingleStore(VectorDb):
             counter = 0
             for document in documents:
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or record_id
+                # Include content_hash in ID to ensure uniqueness across different content hashes
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -704,7 +712,7 @@ class SingleStore(VectorDb):
                 )
                 return result.rowcount > 0  # type: ignore
         except Exception as e:
-            log_error(f"Error deleting documents with content_hash {content_hash}: {e}")
+            log_error(f"Error deleting documents with content_hash {content_hash}: {str(e)}")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -755,7 +763,7 @@ class SingleStore(VectorDb):
                     log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
         except Exception as e:
-            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
             raise
 
     def get_supported_search_types(self) -> List[str]:

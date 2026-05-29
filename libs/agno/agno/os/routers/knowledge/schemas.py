@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from agno.os.schema import PaginationInfo
+
 
 class ContentStatus(str, Enum):
     """Enumeration of possible content processing statuses."""
@@ -16,6 +18,7 @@ class ContentStatus(str, Enum):
 class ContentStatusResponse(BaseModel):
     """Response model for content status endpoint."""
 
+    id: Optional[str] = Field(None, description="Content ID")
     status: ContentStatus = Field(..., description="Current processing status of the content")
     status_message: str = Field("", description="Status message or error details")
 
@@ -82,7 +85,7 @@ class ContentResponseSchema(BaseModel):
             status=status,
             status_message=content.get("status_message"),
             created_at=parse_timestamp(content.get("created_at")),
-            updated_at=parse_timestamp(content.get("updated_at")),
+            updated_at=parse_timestamp(content.get("updated_at", content.get("created_at", 0))),
             # TODO: These fields are not available in the Content class. Fix the inconsistency
             access_count=None,
             linked_to=None,
@@ -156,11 +159,12 @@ class VectorSearchRequestSchema(BaseModel):
     class Meta(BaseModel):
         """Inline metadata schema for pagination."""
 
-        limit: int = Field(20, description="Number of results per page", ge=1, le=100)
+        limit: int = Field(20, description="Number of results per page", ge=1)
         page: int = Field(1, description="Page number", ge=1)
 
     query: str = Field(..., description="The search query text")
-    db_id: Optional[str] = Field(None, description="The content database ID to search in")
+    db_id: Optional[str] = Field(None, description="Database ID to search in")
+    knowledge_id: Optional[str] = Field(None, description="Knowledge base ID to search in")
     vector_db_ids: Optional[List[str]] = Field(None, description="List of vector database IDs to search in")
     search_type: Optional[str] = Field(None, description="The type of search to perform (vector, keyword, hybrid)")
     max_results: Optional[int] = Field(None, description="The maximum number of results to return", ge=1, le=1000)
@@ -170,9 +174,51 @@ class VectorSearchRequestSchema(BaseModel):
     )
 
 
+class RemoteContentSourceSchema(BaseModel):
+    """Schema for remote content source configuration."""
+
+    id: str = Field(..., description="Unique identifier for the content source")
+    name: str = Field(..., description="Display name for the content source")
+    type: str = Field(..., description="Type of content source (s3, gcs, sharepoint, github, azureblob)")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Custom metadata for the content source")
+    prefix: Optional[str] = Field(None, description="Default path prefix for this source")
+
+
+class SourceFileSchema(BaseModel):
+    """Schema for a file in a content source."""
+
+    key: str = Field(..., description="Full path/key of the file")
+    name: str = Field(..., description="Display name (filename)")
+    size: Optional[int] = Field(None, description="File size in bytes")
+    last_modified: Optional[datetime] = Field(None, description="ISO 8601 timestamp of last modification")
+    content_type: Optional[str] = Field(None, description="MIME type of the file")
+
+
+class SourceFolderSchema(BaseModel):
+    """Schema for a folder in a content source."""
+
+    prefix: str = Field(..., description="Full prefix to use for navigating into this folder")
+    name: str = Field(..., description="Display name of the folder")
+    is_empty: bool = Field(False, description="Whether the folder contains any files")
+
+
+class SourceFilesResponseSchema(BaseModel):
+    """Response schema for listing files in a content source."""
+
+    source_id: str = Field(..., description="ID of the content source")
+    source_name: str = Field(..., description="Name of the content source")
+    prefix: Optional[str] = Field(None, description="Prefix filter that was applied")
+    folders: List[SourceFolderSchema] = Field(default_factory=list, description="Subfolders at this level")
+    files: List[SourceFileSchema] = Field(default_factory=list, description="List of files at this level")
+    meta: PaginationInfo = Field(..., description="Pagination metadata")
+
+
 class ConfigResponseSchema(BaseModel):
     readers: Optional[Dict[str, ReaderSchema]] = Field(None, description="Available content readers")
     readersForType: Optional[Dict[str, List[str]]] = Field(None, description="Mapping of content types to reader IDs")
     chunkers: Optional[Dict[str, ChunkerSchema]] = Field(None, description="Available chunking strategies")
     filters: Optional[List[str]] = Field(None, description="Available filter tags")
     vector_dbs: Optional[List[VectorDbSchema]] = Field(None, description="Configured vector databases")
+    remote_content_sources: Optional[List[RemoteContentSourceSchema]] = Field(
+        None, description="Configured remote content sources (S3, GCS, SharePoint, GitHub)"
+    )

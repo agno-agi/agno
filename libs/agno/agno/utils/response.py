@@ -1,4 +1,4 @@
-from typing import AsyncIterator, Iterator, List, Set, Union
+from typing import List, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.models.response import ToolExecution
@@ -80,35 +80,41 @@ def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:
 def create_paused_run_output_panel(run_output: Union[RunPausedEvent, RunOutput]):
     from rich.text import Text
 
+    # Filter out silent tools - they don't produce verbose output
+    non_silent_tools = [tc for tc in (run_output.tools or []) if not tc.external_execution_silent]
+
+    # If all tools are silent, return None to indicate no panel should be shown
+    if not non_silent_tools:
+        return None
+
     tool_calls_content = Text("Run is paused. ")
-    if run_output.tools is not None:
-        if any(tc.requires_confirmation for tc in run_output.tools):
-            tool_calls_content.append("The following tool calls require confirmation:\n")
-        for tool_call in run_output.tools:
-            if tool_call.requires_confirmation:
-                args_str = ""
-                for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                    args_str += f"{arg}={value}, "
-                args_str = args_str.rstrip(", ")
-                tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-        if any(tc.requires_user_input for tc in run_output.tools):
-            tool_calls_content.append("The following tool calls require user input:\n")
-        for tool_call in run_output.tools:
-            if tool_call.requires_user_input:
-                args_str = ""
-                for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                    args_str += f"{arg}={value}, "
-                args_str = args_str.rstrip(", ")
-                tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
-        if any(tc.external_execution_required for tc in run_output.tools):
-            tool_calls_content.append("The following tool calls require external execution:\n")
-        for tool_call in run_output.tools:
-            if tool_call.external_execution_required:
-                args_str = ""
-                for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
-                    args_str += f"{arg}={value}, "
-                args_str = args_str.rstrip(", ")
-                tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+    if any(tc.requires_confirmation for tc in non_silent_tools):
+        tool_calls_content.append("The following tool calls require confirmation:\n")
+    for tool_call in non_silent_tools:
+        if tool_call.requires_confirmation:
+            args_str = ""
+            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                args_str += f"{arg}={value}, "
+            args_str = args_str.rstrip(", ")
+            tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+    if any(tc.requires_user_input for tc in non_silent_tools):
+        tool_calls_content.append("The following tool calls require user input:\n")
+    for tool_call in non_silent_tools:
+        if tool_call.requires_user_input:
+            args_str = ""
+            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                args_str += f"{arg}={value}, "
+            args_str = args_str.rstrip(", ")
+            tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
+    if any(tc.external_execution_required for tc in non_silent_tools):
+        tool_calls_content.append("The following tool calls require external execution:\n")
+    for tool_call in non_silent_tools:
+        if tool_call.external_execution_required:
+            args_str = ""
+            for arg, value in tool_call.tool_args.items() if tool_call.tool_args else {}:
+                args_str += f"{arg}={value}, "
+            args_str = args_str.rstrip(", ")
+            tool_calls_content.append(f"• {tool_call.tool_name}({args_str})\n")
 
     # Create panel for response
     response_panel = create_panel(
@@ -122,6 +128,10 @@ def create_paused_run_output_panel(run_output: Union[RunPausedEvent, RunOutput])
 def get_paused_content(run_output: RunOutput) -> str:
     paused_content = ""
     for tool in run_output.tools or []:
+        # Skip silent tools - they don't produce verbose paused messages
+        if tool.external_execution_silent:
+            continue
+
         # Initialize flags for each tool
         confirmation_required = False
         user_input_required = False
@@ -149,15 +159,3 @@ def get_paused_content(run_output: RunOutput) -> str:
         elif external_execution_required:
             paused_content = "I have tools to execute, but it needs external execution."
     return paused_content
-
-
-def generator_wrapper(
-    event: Union[RunOutputEvent, TeamRunOutputEvent],
-) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
-    yield event
-
-
-async def async_generator_wrapper(
-    event: Union[RunOutputEvent, TeamRunOutputEvent],
-) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]:
-    yield event

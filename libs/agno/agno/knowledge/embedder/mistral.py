@@ -3,14 +3,9 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_error, log_info, log_warning
-
-try:
-    from mistralai import Mistral  # type: ignore
-    from mistralai.models.embeddingresponse import EmbeddingResponse  # type: ignore
-except ImportError:
-    log_error("`mistralai` not installed")
-    raise
+from agno.utils.log import log_info, log_warning
+from agno.utils.models._mistral_compat import EmbeddingResponse
+from agno.utils.models._mistral_compat import MistralClient as Mistral
 
 
 @dataclass
@@ -37,7 +32,7 @@ class MistralEmbedder(Embedder):
             "api_key": self.api_key,
             "endpoint": self.endpoint,
             "max_retries": self.max_retries,
-            "timeout": self.timeout,
+            "timeout_ms": self.timeout * 1000 if self.timeout else None,
         }
         _client_params = {k: v for k, v in _client_params.items() if v is not None}
 
@@ -67,7 +62,7 @@ class MistralEmbedder(Embedder):
                 return response.data[0].embedding
             return []
         except Exception as e:
-            log_warning(f"Error getting embedding: {e}")
+            log_warning(f"Error getting embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
@@ -79,7 +74,7 @@ class MistralEmbedder(Embedder):
             usage: Dict[str, Any] = response.usage.model_dump() if response.usage else {}
             return embedding, usage
         except Exception as e:
-            log_warning(f"Error getting embedding and usage: {e}")
+            log_warning(f"Error getting embedding and usage: {str(e)}")
             return [], {}
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -106,7 +101,7 @@ class MistralEmbedder(Embedder):
                 return response.data[0].embedding
             return []
         except Exception as e:
-            log_warning(f"Error getting embedding: {e}")
+            log_warning(f"Error getting embedding: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
@@ -135,7 +130,7 @@ class MistralEmbedder(Embedder):
             usage: Dict[str, Any] = response.usage.model_dump() if response.usage else {}
             return embedding, usage
         except Exception as e:
-            log_warning(f"Error getting embedding and usage: {e}")
+            log_warning(f"Error getting embedding and usage: {str(e)}")
             return [], {}
 
     async def async_get_embeddings_batch_and_usage(
@@ -191,7 +186,7 @@ class MistralEmbedder(Embedder):
                 all_usage.extend([usage_dict] * len(batch_texts))
 
             except Exception as e:
-                log_warning(f"Error in async batch embedding: {e}")
+                log_warning(f"Error in async batch embedding: {str(e)}")
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -199,7 +194,7 @@ class MistralEmbedder(Embedder):
                         all_embeddings.append(embedding)
                         all_usage.append(usage)
                     except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}")
+                        log_warning(f"Error in individual async embedding fallback: {e2}: {e2}")
                         all_embeddings.append([])
                         all_usage.append(None)
 

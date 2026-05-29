@@ -4,9 +4,16 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.xai import xAI
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
+
+# Check if exa_py is available for tests that need ExaTools
+try:
+    from agno.tools.exa import ExaTools
+
+    EXA_AVAILABLE = True
+except ImportError:
+    EXA_AVAILABLE = False
 
 
 def test_tool_use():
@@ -98,7 +105,7 @@ async def test_async_tool_use_stream():
 def test_multiple_tool_calls():
     agent = Agent(
         model=xAI(id="grok-2-1212"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         instructions=[
             "Use YFinance for stock price queries",
             "Use DuckDuckGo for news and general information",
@@ -175,6 +182,7 @@ def test_tool_call_custom_tool_optional_parameters():
     assert "70" in response.content
 
 
+@pytest.mark.skipif(not EXA_AVAILABLE, reason="exa_py not installed")
 def test_tool_call_list_parameters():
     agent = Agent(
         model=xAI(id="grok-3-mini-fast"),

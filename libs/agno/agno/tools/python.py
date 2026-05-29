@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 
 
 @functools.lru_cache(maxsize=None)
@@ -18,9 +18,11 @@ class PythonTools(Toolkit):
         base_dir: Optional[Path] = None,
         safe_globals: Optional[dict] = None,
         safe_locals: Optional[dict] = None,
+        restrict_to_base_dir: bool = True,
         **kwargs,
     ):
-        self.base_dir: Path = base_dir or Path.cwd()
+        self.base_dir: Path = (base_dir or Path.cwd()).resolve()
+        self.restrict_to_base_dir = restrict_to_base_dir
 
         # Restricted global and local scope
         self.safe_globals: dict = safe_globals or globals()
@@ -55,7 +57,9 @@ class PythonTools(Toolkit):
         """
         try:
             warn()
-            file_path = self.base_dir.joinpath(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            if not safe:
+                return f"Error: Path '{file_name}' is outside the allowed base directory"
             log_debug(f"Saving code to {file_path}")
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,7 +79,7 @@ class PythonTools(Toolkit):
             else:
                 return f"successfully ran {str(file_path)}"
         except Exception as e:
-            logger.error(f"Error saving and running code: {e}")
+            logger.exception("Error saving and running code")
             return f"Error saving and running code: {e}"
 
     def run_python_file_return_variable(self, file_name: str, variable_to_return: Optional[str] = None) -> str:
@@ -89,8 +93,9 @@ class PythonTools(Toolkit):
         """
         try:
             warn()
-            file_path = self.base_dir.joinpath(file_name)
-
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            if not safe:
+                return f"Error: Path '{file_name}' is outside the allowed base directory"
             log_info(f"Running {file_path}")
             globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
             if variable_to_return:
@@ -102,7 +107,7 @@ class PythonTools(Toolkit):
             else:
                 return f"successfully ran {str(file_path)}"
         except Exception as e:
-            logger.error(f"Error running file: {e}")
+            logger.exception("Error running file")
             return f"Error running file: {e}"
 
     def read_file(self, file_name: str) -> str:
@@ -113,11 +118,14 @@ class PythonTools(Toolkit):
         """
         try:
             log_info(f"Reading file: {file_name}")
-            file_path = self.base_dir.joinpath(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            if not safe:
+                log_error(f"Attempted to read file outside base directory: {file_name}")
+                return "Error reading file: path outside allowed directory"
             contents = file_path.read_text(encoding="utf-8")
             return str(contents)
         except Exception as e:
-            logger.error(f"Error reading file: {e}")
+            logger.exception("Error reading file")
             return f"Error reading file: {e}"
 
     def list_files(self) -> str:
@@ -130,7 +138,7 @@ class PythonTools(Toolkit):
             files = [str(file_path.name) for file_path in self.base_dir.iterdir()]
             return ", ".join(files)
         except Exception as e:
-            logger.error(f"Error reading files: {e}")
+            logger.exception("Error reading files")
             return f"Error reading files: {e}"
 
     def run_python_code(self, code: str, variable_to_return: Optional[str] = None) -> str:
@@ -159,7 +167,7 @@ class PythonTools(Toolkit):
             else:
                 return "successfully ran python code"
         except Exception as e:
-            logger.error(f"Error running python code: {e}")
+            logger.exception("Error running python code")
             return f"Error running python code: {e}"
 
     def pip_install_package(self, package_name: str) -> str:
@@ -180,7 +188,7 @@ class PythonTools(Toolkit):
             subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
             return f"successfully installed package {package_name}"
         except Exception as e:
-            logger.error(f"Error installing package {package_name}: {e}")
+            logger.exception(f"Error installing package {package_name}")
             return f"Error installing package {package_name}: {e}"
 
     def uv_pip_install_package(self, package_name: str) -> str:
@@ -201,5 +209,5 @@ class PythonTools(Toolkit):
             subprocess.check_call([sys.executable, "-m", "uv", "pip", "install", package_name])
             return f"successfully installed package {package_name}"
         except Exception as e:
-            logger.error(f"Error installing package {package_name}: {e}")
+            logger.exception(f"Error installing package {package_name}")
             return f"Error installing package {package_name}: {e}"

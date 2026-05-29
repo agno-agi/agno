@@ -20,6 +20,7 @@ class Crawl4aiTools(Toolkit):
         bm25_threshold: float = 1.0,
         headless: bool = True,
         wait_until: str = "domcontentloaded",
+        proxy_config: Optional[Dict[str, Any]] = None,
         enable_crawl: bool = True,
         all: bool = False,
         **kwargs,
@@ -36,6 +37,7 @@ class Crawl4aiTools(Toolkit):
         self.bm25_threshold = bm25_threshold
         self.wait_until = wait_until
         self.headless = headless
+        self.proxy_config = proxy_config or {}
 
     def _build_config(self, search_query: Optional[str] = None) -> Dict[str, Any]:
         """Build CrawlerRunConfig parameters from toolkit settings."""
@@ -65,9 +67,12 @@ class Crawl4aiTools(Toolkit):
 
                 config_params["markdown_generator"] = DefaultMarkdownGenerator(content_filter=content_filter)
                 log_debug("Using DefaultMarkdownGenerator with content_filter")
-            except ImportError:
+            except ImportError as e:
                 # If advanced features not available, continue without them
-                log_warning("crawl4ai.content_filter_strategy or crawl4ai.markdown_generation_strategy not installed")
+                log_warning(
+                    f"crawl4ai.content_filter_strategy or crawl4ai.markdown_generation_strategy not installed: {e}"
+                )
+
                 pass
 
         return config_params
@@ -103,6 +108,7 @@ class Crawl4aiTools(Toolkit):
             browser_config = BrowserConfig(
                 headless=self.headless,
                 verbose=False,
+                **self.proxy_config,
             )
 
             async with AsyncWebCrawler(config=browser_config) as crawler:

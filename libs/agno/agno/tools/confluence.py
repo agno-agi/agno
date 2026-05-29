@@ -109,7 +109,7 @@ class ConfluenceTools(Toolkit):
             return json.dumps({"error": f"Page '{page_title}' not found in space '{space_name}'"})
 
         except Exception as e:
-            logger.error(f"Error retrieving page '{page_title}': {e}")
+            logger.exception(f"Error retrieving page '{page_title}'")
             return json.dumps({"error": str(e)})
 
     def get_all_space_detail(self):
@@ -217,7 +217,7 @@ class ConfluenceTools(Toolkit):
             log_info(f"Page created: {title} with ID {page['id']}")
             return json.dumps({"id": page["id"], "title": title})
         except Exception as e:
-            logger.error(f"Error creating page '{title}': {e}")
+            logger.exception(f"Error creating page '{title}'")
             return json.dumps({"error": str(e)})
 
     def update_page(self, page_id: str, title: str, body: str) -> str:
@@ -236,5 +236,5 @@ class ConfluenceTools(Toolkit):
             log_info(f"Page updated: {title} with ID {updated_page['id']}")
             return json.dumps({"status": "success", "id": updated_page["id"]})
         except Exception as e:
-            logger.error(f"Error updating page '{title}': {e}")
+            logger.exception(f"Error updating page '{title}'")
             return json.dumps({"error": str(e)})

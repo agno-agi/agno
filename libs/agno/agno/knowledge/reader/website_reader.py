@@ -2,17 +2,23 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from agno.knowledge.chunking.semantic import SemanticChunking
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.url_validation import (
+    is_host_allowed,
+    make_async_redirect_guard,
+    make_redirect_guard,
+    validate_allowed_hosts,
+)
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -32,26 +38,32 @@ class WebsiteReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         max_depth: int = 3,
         max_links: int = 10,
         timeout: int = 10,
         proxy: Optional[str] = None,
+        allowed_hosts: Optional[List[str]] = None,
         **kwargs,
     ):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.max_depth = max_depth
         self.max_links = max_links
         self.proxy = proxy
         self.timeout = timeout
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
         self._visited = set()
         self._urls_to_crawl = []
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Website readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.RECURSIVE_CHUNKER,
@@ -60,7 +72,7 @@ class WebsiteReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.URL]
 
     def delay(self, min_seconds=1, max_seconds=3):
@@ -163,8 +175,14 @@ class WebsiteReader(Reader):
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
-        # Add starting URL with its depth to the global list
-        self._urls_to_crawl.append((url, starting_depth))
+
+        if not is_host_allowed(url, self.allowed_hosts):
+            log_debug(f"Start URL host not in allowed_hosts, refusing to crawl: {url}")
+            return {}
+
+        # Clear state so URLs from previous crawls aren't incorrectly skipped (matches async_crawl)
+        self._visited = set()
+        self._urls_to_crawl = [(url, starting_depth)]
         while self._urls_to_crawl:
             # Unpack URL and depth from the global list
             current_url, current_depth = self._urls_to_crawl.pop(0)
@@ -174,12 +192,16 @@ class WebsiteReader(Reader):
             # - does not end with the primary domain,
             # - exceeds max depth
             # - exceeds max links
+            # - host is not in allowed_hosts (when configured)
             if (
                 current_url in self._visited
                 or not urlparse(current_url).netloc.endswith(primary_domain)
                 or (current_depth > self.max_depth and current_url != url)
                 or num_links >= self.max_links
+                or not is_host_allowed(current_url, self.allowed_hosts)
             ):
+                if not is_host_allowed(current_url, self.allowed_hosts):
+                    log_debug(f"Host not in allowed_hosts, skipping: {current_url}")
                 continue
 
             self._visited.add(current_url)
@@ -188,11 +210,19 @@ class WebsiteReader(Reader):
             try:
                 log_debug(f"Crawling: {current_url}")
 
-                response = (
-                    httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
-                    if self.proxy
-                    else httpx.get(current_url, timeout=self.timeout, follow_redirects=True)
-                )
+                guard = make_redirect_guard(self.allowed_hosts)
+                if guard is None:
+                    response = (
+                        httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
+                        if self.proxy
+                        else httpx.get(current_url, timeout=self.timeout, follow_redirects=True)
+                    )
+                else:
+                    client_kwargs: Dict[str, Any] = {"timeout": self.timeout, "event_hooks": {"request": [guard]}}
+                    if self.proxy:
+                        client_kwargs["proxy"] = self.proxy
+                    with httpx.Client(**client_kwargs) as client:
+                        response = client.get(current_url, follow_redirects=True)
                 response.raise_for_status()
 
                 soup = BeautifulSoup(response.content, "html.parser")
@@ -229,21 +259,21 @@ class WebsiteReader(Reader):
                 # Log HTTP status errors but continue crawling other pages
                 # Skip redirect errors (3xx) as they should be handled by follow_redirects
                 if e.response.status_code >= 300 and e.response.status_code < 400:
-                    logger.debug(f"Redirect encountered for {current_url}, skipping: {e}")
+                    log_debug(f"Redirect encountered for {current_url}, skipping: {e}")
                 else:
-                    logger.warning(f"HTTP status error while crawling {current_url}: {e}")
+                    log_warning(f"HTTP status error while crawling {current_url}: {str(e)}")
                 # For the initial URL, we should raise the error only if it's not a redirect
                 if current_url == url and not crawler_result and not (300 <= e.response.status_code < 400):
                     raise
             except httpx.RequestError as e:
                 # Log request errors but continue crawling other pages
-                logger.warning(f"Request error while crawling {current_url}: {e}")
+                log_warning(f"Request error while crawling {current_url}: {str(e)}")
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     raise
             except Exception as e:
                 # Log other exceptions but continue crawling other pages
-                logger.warning(f"Failed to crawl {current_url}: {e}")
+                log_warning(f"Failed to crawl {current_url}: {str(e)}")
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     # Wrap non-HTTP exceptions in a RequestError
@@ -275,12 +305,19 @@ class WebsiteReader(Reader):
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
 
+        if not is_host_allowed(url, self.allowed_hosts):
+            log_debug(f"Start URL host not in allowed_hosts, refusing to crawl: {url}")
+            return {}
+
         # Clear previously visited URLs and URLs to crawl
         self._visited = set()
         self._urls_to_crawl = [(url, starting_depth)]
 
-        client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
+        client_args: Dict[str, Any] = {"proxy": self.proxy} if self.proxy else {}
+        guard = make_async_redirect_guard(self.allowed_hosts)
+        if guard is not None:
+            client_args["event_hooks"] = {"request": [guard]}
+        async with httpx.AsyncClient(**client_args) as client:
             while self._urls_to_crawl and num_links < self.max_links:
                 current_url, current_depth = self._urls_to_crawl.pop(0)
 
@@ -289,7 +326,10 @@ class WebsiteReader(Reader):
                     or not urlparse(current_url).netloc.endswith(primary_domain)
                     or current_depth > self.max_depth
                     or num_links >= self.max_links
+                    or not is_host_allowed(current_url, self.allowed_hosts)
                 ):
+                    if not is_host_allowed(current_url, self.allowed_hosts):
+                        log_debug(f"Host not in allowed_hosts, skipping: {current_url}")
                     continue
 
                 self._visited.add(current_url)
@@ -332,19 +372,19 @@ class WebsiteReader(Reader):
 
                 except httpx.HTTPStatusError as e:
                     # Log HTTP status errors but continue crawling other pages
-                    logger.warning(f"HTTP status error while crawling asynchronously {current_url}: {e}")
+                    log_warning(f"HTTP status error while crawling asynchronously {current_url}: {str(e)}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
                 except httpx.RequestError as e:
                     # Log request errors but continue crawling other pages
-                    logger.warning(f"Request error while crawling asynchronously {current_url}: {e}")
+                    log_warning(f"Request error while crawling asynchronously {current_url}: {str(e)}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
                 except Exception as e:
                     # Log other exceptions but continue crawling other pages
-                    logger.warning(f"Failed to crawl asynchronously {current_url}: {e}")
+                    log_warning(f"Failed to crawl asynchronously {current_url}: {str(e)}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         # Wrap non-HTTP exceptions in a RequestError
@@ -397,8 +437,8 @@ class WebsiteReader(Reader):
                         )
                     )
             return documents
-        except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            logger.error(f"Error reading website {url}: {e}")
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            log_error(f"Error reading website {url}")
             raise
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
@@ -427,7 +467,8 @@ class WebsiteReader(Reader):
                         meta_data={"url": str(crawled_url)},
                         content=crawled_content,
                     )
-                    return self.chunk_document(doc)
+                    chunks = self.chunk_document(doc)
+                    return chunks
                 else:
                     return [
                         Document(
@@ -443,6 +484,7 @@ class WebsiteReader(Reader):
                 process_document(crawled_url, crawled_content)
                 for crawled_url, crawled_content in crawler_result.items()
             ]
+
             results = await asyncio.gather(*tasks)
 
             # Flatten the results
@@ -450,6 +492,6 @@ class WebsiteReader(Reader):
                 documents.extend(doc_list)
 
             return documents
-        except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            logger.error(f"Error reading website asynchronously {url}: {e}")
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            log_error(f"Error reading website asynchronously {url}")
             raise

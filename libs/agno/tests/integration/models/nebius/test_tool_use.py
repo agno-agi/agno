@@ -4,8 +4,8 @@ import pytest
 
 from agno.agent import Agent  # noqa
 from agno.models.nebius import Nebius
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 NEBIUS_MODEL_ID = "Qwen/Qwen3-30B-A3B"
@@ -109,7 +109,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

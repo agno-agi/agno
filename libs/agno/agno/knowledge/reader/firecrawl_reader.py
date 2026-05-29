@@ -6,6 +6,7 @@ from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, logger
 
@@ -28,10 +29,14 @@ class FirecrawlReader(Reader):
         mode: Literal["scrape", "crawl"] = "scrape",
         chunk: bool = True,
         chunk_size: int = 5000,
-        chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        allowed_hosts: Optional[List[str]] = None,
     ) -> None:
+        if chunking_strategy is None:
+            chunking_strategy = SemanticChunking(chunk_size=chunk_size)
+
         # Initialise base Reader (handles chunk_size / strategy)
         super().__init__(
             chunk=chunk, chunk_size=chunk_size, chunking_strategy=chunking_strategy, name=name, description=description
@@ -41,11 +46,13 @@ class FirecrawlReader(Reader):
         self.api_key = api_key
         self.params = params
         self.mode = mode
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Firecrawl readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
@@ -54,7 +61,7 @@ class FirecrawlReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.URL]
 
     def scrape(self, url: str, name: Optional[str] = None) -> List[Document]:
@@ -67,6 +74,10 @@ class FirecrawlReader(Reader):
         Returns:
             A list of documents
         """
+
+        if not is_host_allowed(url, self.allowed_hosts):
+            log_debug(f"Host not in allowed_hosts, refusing to scrape: {url}")
+            return []
 
         log_debug(f"Scraping: {url}")
 
@@ -122,6 +133,10 @@ class FirecrawlReader(Reader):
         Returns:
             A list of documents
         """
+        if not is_host_allowed(url, self.allowed_hosts):
+            log_debug(f"Host not in allowed_hosts, refusing to crawl: {url}")
+            return []
+
         log_debug(f"Crawling: {url}")
 
         app = FirecrawlApp(api_key=self.api_key)

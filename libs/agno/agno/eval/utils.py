@@ -4,10 +4,11 @@ from typing import TYPE_CHECKING, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalRunRecord, EvalType
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from agno.eval.accuracy import AccuracyResult
+    from agno.eval.agent_as_judge import AgentAsJudgeResult
     from agno.eval.performance import PerformanceResult
     from agno.eval.reliability import ReliabilityResult
 
@@ -103,7 +104,7 @@ async def async_log_eval(
 
 def store_result_in_file(
     file_path: str,
-    result: Union["AccuracyResult", "PerformanceResult", "ReliabilityResult"],
+    result: Union["AccuracyResult", "AgentAsJudgeResult", "PerformanceResult", "ReliabilityResult"],
     eval_id: Optional[str] = None,
     name: Optional[str] = None,
 ):
@@ -116,4 +117,4 @@ def store_result_in_file(
             fn_path.parent.mkdir(parents=True, exist_ok=True)
         fn_path.write_text(json.dumps(asdict(result), indent=4))
     except Exception as e:
-        logger.warning(f"Failed to save result to file: {e}")
+        log_warning(f"Failed to save result to file: {str(e)}")

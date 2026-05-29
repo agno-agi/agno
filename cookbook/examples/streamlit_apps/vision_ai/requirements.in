@@ -1,9 +1,0 @@
-agno==2.0.0
-anthropic
-ddgs
-google-genai
-groq
-openai
-psycopg[binary]
-sqlalchemy
-streamlit

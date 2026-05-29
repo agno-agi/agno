@@ -2,12 +2,14 @@ import hashlib
 import json
 import re
 import uuid
-from typing import Optional, Type
+from typing import Any, Optional, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
+
+POSTGRES_INVALID_CHARS_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
 
 def is_valid_uuid(uuid_str: str) -> bool:
@@ -87,7 +89,8 @@ def _clean_json_content(content: str) -> str:
     if "```json" in content:
         content = content.split("```json")[-1].strip()
         parts = content.split("```")
-        parts.pop(-1)
+        if len(parts) > 1:
+            parts.pop(-1)
         content = "".join(parts)
     elif "```" in content:
         content = content.split("```")[1].strip()
@@ -151,7 +154,7 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
     try:
         return output_schema.model_validate(merged_data)
     except ValidationError as e:
-        logger.warning("Validation failed on merged data: %s", e)
+        log_warning(f"Validation failed on merged data: {str(e)}")
         return None
 
 
@@ -167,19 +170,30 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
         if reasoning_content:
             content = output_content
 
-    # Clean content first to simplify all parsing attempts
+    # First attempt: try parsing raw content directly (preserves valid JSON with code blocks in strings)
+    try:
+        structured_output = output_schema.model_validate_json(content)
+    except (ValidationError, json.JSONDecodeError):
+        try:
+            data = json.loads(content)
+            structured_output = output_schema.model_validate(data)
+        except (ValidationError, json.JSONDecodeError):
+            pass
+
+    if structured_output is not None:
+        return structured_output
+
+    # Second attempt: clean content and try again
     cleaned_content = _clean_json_content(content)
 
     try:
-        # First attempt: direct JSON validation on cleaned content
         structured_output = output_schema.model_validate_json(cleaned_content)
     except (ValidationError, json.JSONDecodeError):
         try:
-            # Second attempt: Parse as Python dict
             data = json.loads(cleaned_content)
             structured_output = output_schema.model_validate(data)
         except (ValidationError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to parse cleaned JSON: {e}")
+            log_warning(f"Failed to parse cleaned JSON: {str(e)}")
 
             # Third attempt: Extract individual JSON objects
             candidate_jsons = _extract_json_objects(cleaned_content)
@@ -201,6 +215,57 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
     return structured_output
 
 
+def parse_response_dict_str(content: str) -> Optional[dict]:
+    """Parse dict from string content, extracting JSON if needed"""
+    from agno.utils.reasoning import extract_thinking_content
+
+    # Handle thinking content b/w <think> tags
+    if "</think>" in content:
+        reasoning_content, output_content = extract_thinking_content(content)
+        if reasoning_content:
+            content = output_content
+
+    # First attempt: try parsing raw content directly (preserves valid JSON with code blocks in strings)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # Second attempt: clean content and try again
+    cleaned_content = _clean_json_content(content)
+
+    try:
+        return json.loads(cleaned_content)
+    except json.JSONDecodeError as e:
+        log_warning(f"Failed to parse cleaned JSON: {str(e)}")
+
+        # Second attempt: Extract individual JSON objects
+        candidate_jsons = _extract_json_objects(cleaned_content)
+
+        if len(candidate_jsons) == 1:
+            # Single JSON object - try to parse it directly
+            try:
+                return json.loads(candidate_jsons[0])
+            except json.JSONDecodeError:
+                pass
+
+        if len(candidate_jsons) > 1:
+            # Final attempt: Merge multiple JSON objects
+            merged_data: dict = {}
+            for candidate in candidate_jsons:
+                try:
+                    obj = json.loads(candidate)
+                    if isinstance(obj, dict):
+                        merged_data.update(obj)
+                except json.JSONDecodeError:
+                    continue
+            if merged_data:
+                return merged_data
+
+        logger.warning("All parsing attempts failed.")
+        return None
+
+
 def generate_id(seed: Optional[str] = None) -> str:
     """
     Generate a deterministic UUID5 based on a seed string.
@@ -220,7 +285,7 @@ def generate_id(seed: Optional[str] = None) -> str:
 def generate_id_from_name(name: Optional[str] = None) -> str:
     """
     Generate a deterministic ID from a name string.
-    If no name is provided, generate a random UUID4.
+    If no name is provided, generate a human-readable random ID.
 
     Args:
         name (str): The name string to generate the ID from.
@@ -228,4 +293,46 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
     if name:
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
-        return str(uuid4())
+        from agno.utils.names import generate_human_readable_id
+
+        return generate_human_readable_id()
+
+
+def sanitize_postgres_string(value: Optional[str]) -> Optional[str]:
+    """Remove illegal chars from string values to prevent PostgreSQL encoding errors.
+
+    This function all chars illegal in Postgres UTF-8 text fields.
+    Useful to prevent CharacterNotInRepertoireError when storing strings.
+
+    Args:
+        value: The string value to sanitize.
+
+    Returns:
+        The sanitized string with illegal chars removed, or None if input was None.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return POSTGRES_INVALID_CHARS_REGEX.sub("", value)
+
+
+def sanitize_postgres_strings(data: Union[dict, list, str, Any]) -> Union[dict, list, str, Any]:
+    """Recursively sanitize all string values in a dictionary or JSON structure.
+
+    This function traverses dictionaries, lists, and nested structures to find
+    and sanitize all string values, removing null bytes that PostgreSQL cannot handle.
+
+    Args:
+        data: The data structure to sanitize (dict, list, str or any other type).
+
+    Returns:
+        The sanitized data structure with all strings cleaned of null bytes.
+    """
+    if isinstance(data, dict):
+        return {key: sanitize_postgres_strings(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_postgres_strings(item) for item in data]
+    elif isinstance(data, str):
+        return sanitize_postgres_string(data)
+    else:
+        return data

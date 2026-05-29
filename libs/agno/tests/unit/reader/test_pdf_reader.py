@@ -9,6 +9,7 @@ from agno.knowledge.reader.pdf_reader import (
     PDFImageReader,
     PDFReader,
     _clean_page_numbers,
+    _sanitize_pdf_text,
 )
 
 
@@ -298,3 +299,203 @@ def test_clean_page_numbers_untrustable(p_nr_format):
     assert not clean_content[0].endswith(p_nr_format["end"].format(page_nr=1))
     assert not clean_content[0].startswith(p_nr_format["start"].format(page_nr=2))
     assert not clean_content[0].endswith(p_nr_format["end"].format(page_nr=2))
+
+
+def _create_encrypted_pdf_with_empty_password() -> BytesIO:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password="", owner_password="owner123")
+
+    buffer = BytesIO()
+    writer.write(buffer)
+    buffer.seek(0)
+    buffer.name = "encrypted_empty_password.pdf"
+    return buffer
+
+
+def _create_encrypted_pdf_with_password(password: str) -> BytesIO:
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password=password, owner_password="owner123")
+
+    buffer = BytesIO()
+    writer.write(buffer)
+    buffer.seek(0)
+    buffer.name = "encrypted.pdf"
+    return buffer
+
+
+def test_pdf_reader_decrypt_with_empty_password():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader()
+    docs = reader.read(pdf, password="")
+    assert docs is not None
+    assert len(docs) >= 0
+
+
+def test_pdf_reader_password_none_falls_back_to_instance():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader(password="")
+    docs = reader.read(pdf, password=None)
+    assert docs is not None
+
+
+def test_pdf_reader_explicit_password_overrides_instance():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader(password="wrong")
+    docs = reader.read(pdf, password="")
+    assert docs is not None
+
+
+def test_pdf_reader_no_password_for_encrypted_pdf_returns_empty():
+    pdf = _create_encrypted_pdf_with_password("secret123")
+
+    reader = PDFReader()
+    docs = reader.read(pdf)
+    assert docs == []
+
+
+@pytest.mark.asyncio
+async def test_pdf_reader_async_decrypt_with_empty_password():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader()
+    docs = await reader.async_read(pdf, password="")
+    assert docs is not None
+
+
+@pytest.mark.asyncio
+async def test_pdf_reader_async_password_none_falls_back_to_instance():
+    pdf = _create_encrypted_pdf_with_empty_password()
+
+    reader = PDFReader(password="")
+    docs = await reader.async_read(pdf, password=None)
+    assert docs is not None
+
+
+def test_sanitize_pdf_text_collapses_newlines():
+    text = "dietary\n \nmodifications.\n \nRecommendations\n \nshould\n \nfocus"
+    result = _sanitize_pdf_text(text)
+    assert result == "dietary modifications. Recommendations should focus"
+
+
+def test_sanitize_pdf_text_collapses_mixed_whitespace():
+    text = "hello\t\n  \n\tworld\n\nfoo   bar"
+    result = _sanitize_pdf_text(text)
+    # Paragraph break (\n\n) is preserved; word-per-line artifacts (\n \n) are collapsed
+    assert result == "hello world\n\nfoo bar"
+
+
+def test_sanitize_pdf_text_preserves_paragraph_breaks():
+    text = "First paragraph ends here.\n\nSecond paragraph starts here."
+    result = _sanitize_pdf_text(text)
+    assert result == "First paragraph ends here.\n\nSecond paragraph starts here."
+
+
+def test_sanitize_pdf_text_joins_single_newlines():
+    text = "line one\nline two\nline three"
+    result = _sanitize_pdf_text(text)
+    assert result == "line one line two line three"
+
+
+def test_sanitize_pdf_text_strips_leading_trailing():
+    text = "  \n hello world \n  "
+    result = _sanitize_pdf_text(text)
+    assert result == "hello world"
+
+
+def test_sanitize_pdf_text_preserves_clean_text():
+    text = "already clean text here"
+    result = _sanitize_pdf_text(text)
+    assert result == "already clean text here"
+
+
+def test_sanitize_pdf_text_empty_string():
+    assert _sanitize_pdf_text("") == ""
+    assert _sanitize_pdf_text("   \n\n  ") == ""
+
+
+def test_pdf_reader_sanitize_content_enabled_by_default(sample_pdf_path):
+    reader = PDFReader()
+    assert reader.sanitize_content is True
+    documents = reader.read(sample_pdf_path)
+
+    assert len(documents) > 0
+    for doc in documents:
+        # Sanitized content should not contain sequences of newlines with spaces
+        assert "\n \n" not in doc.content
+
+
+def test_pdf_reader_sanitize_content_disabled(sample_pdf_path):
+    reader = PDFReader(sanitize_content=False)
+    assert reader.sanitize_content is False
+    documents = reader.read(sample_pdf_path)
+
+    assert len(documents) > 0
+
+
+@pytest.mark.asyncio
+async def test_pdf_reader_async_sanitize_content_enabled(sample_pdf_path):
+    reader = PDFReader()
+    documents = await reader.async_read(sample_pdf_path)
+
+    assert len(documents) > 0
+    for doc in documents:
+        assert "\n \n" not in doc.content
+
+
+@pytest.mark.asyncio
+async def test_pdf_reader_async_sanitize_content_disabled(sample_pdf_path):
+    reader = PDFReader(sanitize_content=False)
+    documents = await reader.async_read(sample_pdf_path)
+
+    assert len(documents) > 0
+
+
+def test_pdf_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = PDFReader(chunk_size=100)
+    assert reader.chunk_size == 100
+    assert reader.chunking_strategy.chunk_size == 100
+    assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_pdf_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = PDFReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_pdf_reader_explicit_strategy_preserved():
+    """Test that explicit chunking_strategy is not overridden"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    custom_strategy = FixedSizeChunking(chunk_size=200)
+    reader = PDFReader(chunk_size=100, chunking_strategy=custom_strategy)
+    assert reader.chunk_size == 100
+    assert reader.chunking_strategy is custom_strategy
+    assert reader.chunking_strategy.chunk_size == 200  # Keeps explicit value
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_pdf_reader_multiple_instances_independent():
+    """Test that multiple instances don't share chunking strategies"""
+    reader1 = PDFReader(chunk_size=300)
+    reader2 = PDFReader(chunk_size=400)
+
+    assert reader1.chunking_strategy is not reader2.chunking_strategy
+    assert reader1.chunking_strategy.chunk_size == 300
+    assert reader2.chunking_strategy.chunk_size == 400

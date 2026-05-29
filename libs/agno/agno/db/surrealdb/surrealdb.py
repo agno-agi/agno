@@ -1,6 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+
+if TYPE_CHECKING:
+    from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.utils import (
@@ -23,8 +26,6 @@ from agno.db.surrealdb.models import (
     deserialize_cultural_knowledge,
     deserialize_eval_run_record,
     deserialize_knowledge_row,
-    deserialize_session,
-    deserialize_sessions,
     deserialize_user_memories,
     deserialize_user_memory,
     desurrealize_eval_run_record,
@@ -40,6 +41,7 @@ from agno.db.surrealdb.models import (
 )
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
+from agno.db.utils import deserialize_session, deserialize_sessions
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -64,6 +66,8 @@ class SurrealDb(BaseDb):
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         culture_table: Optional[str] = None,
+        traces_table: Optional[str] = None,
+        spans_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -71,6 +75,19 @@ class SurrealDb(BaseDb):
 
         Args:
             client: A blocking connection, either HTTP or WS
+            db_url: The URL of the SurrealDB database.
+            db_creds: The credentials for the SurrealDB database.
+            db_ns: The namespace for the SurrealDB database.
+            db_db: The database name for the SurrealDB database.
+            session_table: The name of the session table.
+            memory_table: The name of the memory table.
+            metrics_table: The name of the metrics table.
+            eval_table: The name of the eval table.
+            knowledge_table: The name of the knowledge table.
+            culture_table: The name of the culture table.
+            traces_table: The name of the traces table.
+            spans_table: The name of the spans table.
+            id: The ID of the database.
         """
         if id is None:
             base_seed = db_url
@@ -85,6 +102,8 @@ class SurrealDb(BaseDb):
             eval_table=eval_table,
             knowledge_table=knowledge_table,
             culture_table=culture_table,
+            traces_table=traces_table,
+            spans_table=spans_table,
         )
         self._client = client
         self._db_url = db_url
@@ -111,7 +130,9 @@ class SurrealDb(BaseDb):
             "knowledge": self.knowledge_table_name,
             "memories": self.memory_table_name,
             "sessions": self.session_table_name,
+            "spans": self.span_table_name,
             "teams": self._teams_table_name,
+            "traces": self.trace_table_name,
             "users": self._users_table_name,
             "workflows": self._workflows_table_name,
         }
@@ -159,6 +180,13 @@ class SurrealDb(BaseDb):
             table_name = self.eval_table_name
         elif table_type == "metrics":
             table_name = self.metrics_table_name
+        elif table_type == "traces":
+            table_name = self.trace_table_name
+        elif table_type == "spans":
+            # Ensure traces table exists before spans (for foreign key-like relationship)
+            if create_table_if_not_found:
+                self._get_table("traces", create_table_if_not_found=True)
+            table_name = self.span_table_name
         else:
             raise NotImplementedError(f"Unknown table type: {table_type}")
 
@@ -166,6 +194,14 @@ class SurrealDb(BaseDb):
             self._create_table(table_type, table_name)
 
         return table_name
+
+    def get_latest_schema_version(self):
+        """Get the latest version of the database schema."""
+        pass
+
+    def upsert_schema_version(self, version: str) -> None:
+        """Upsert the schema version into the database."""
+        pass
 
     def _query(
         self,
@@ -206,25 +242,36 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
         _ = self.client.delete(table)
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         table = self._get_table(table_type="sessions")
         if table is None:
             return False
+        if user_id is not None:
+            res = self.client.query(
+                f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
+                {"record": RecordID(table, session_id), "user_id": user_id},
+            )
+            return isinstance(res, list) and len(res) > 0
         res = self.client.delete(RecordID(table, session_id))
         return bool(res)
 
-    def delete_sessions(self, session_ids: list[str]) -> None:
+    def delete_sessions(self, session_ids: list[str], user_id: Optional[str] = None) -> None:
         table = self._get_table(table_type="sessions")
         if table is None:
             return
 
         records = [RecordID(table, id) for id in session_ids]
-        self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+        query = f"DELETE FROM {table} WHERE id IN $records"
+        params: Dict[str, Any] = {"records": records}
+        if user_id is not None:
+            query += " AND user_id = $user_id"
+            params["user_id"] = user_id
+        self.client.query(query, params)
 
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -233,9 +280,9 @@ class SurrealDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
-            session_type (SessionType): Type of session to get.
+            session_type (Optional[SessionType]): Type of session to get. If None, the type is inferred.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -250,6 +297,7 @@ class SurrealDb(BaseDb):
         where = WhereClause()
         if user_id is not None:
             where = where.and_("user_id", user_id)
+
         where_clause, where_vars = where.build()
         query = dedent(f"""
             SELECT *
@@ -258,10 +306,15 @@ class SurrealDb(BaseDb):
         """)
         vars = {"record": record, **where_vars}
         raw = self._query_one(query, vars, dict)
-        if raw is None or not deserialize:
-            return raw
+        if raw is None:
+            return None
 
-        return deserialize_session(session_type, raw)
+        desurrealized = desurrealize_session(raw)
+
+        if not deserialize:
+            return desurrealized
+
+        return deserialize_session(session_type, desurrealized)
 
     def get_sessions(
         self,
@@ -310,6 +363,20 @@ class SurrealDb(BaseDb):
         # -- Filters
         where = WhereClause()
 
+        # session_type — filter by which RecordID link is present
+        if session_type == SessionType.AGENT:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("agent IS NOT NONE")
+        elif session_type == SessionType.TEAM:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("team IS NOT NONE")
+        elif session_type == SessionType.WORKFLOW:
+            if where._conditions:
+                where._conditions.append("AND")
+            where._conditions.append("workflow IS NOT NONE")
+
         # user_id
         if user_id is not None:
             where = where.and_("user_id", user_id)
@@ -322,6 +389,21 @@ class SurrealDb(BaseDb):
                 where = where.and_("team", RecordID(teams_table, component_id))
             elif session_type == SessionType.WORKFLOW:
                 where = where.and_("workflow", RecordID(workflows_table, component_id))
+            elif session_type is None:
+                # Filter by component_id across all session type fields
+                p_a = f"p{where._param_count}"
+                where._params[p_a] = RecordID(agents_table, component_id)
+                where._param_count += 1
+                p_t = f"p{where._param_count}"
+                where._params[p_t] = RecordID(teams_table, component_id)
+                where._param_count += 1
+                p_w = f"p{where._param_count}"
+                where._params[p_w] = RecordID(workflows_table, component_id)
+                where._param_count += 1
+                or_cond = f"(agent = ${p_a} OR team = ${p_t} OR workflow = ${p_w})"
+                if where._conditions:
+                    where._conditions.append("AND")
+                where._conditions.append(or_cond)
 
         # session_name
         if session_name is not None:
@@ -329,11 +411,11 @@ class SurrealDb(BaseDb):
 
         # start_timestamp
         if start_timestamp is not None:
-            where = where.and_("start_timestamp", start_timestamp, ">=")
+            where = where.and_("created_at", start_timestamp, ">=")
 
         # end_timestamp
         if end_timestamp is not None:
-            where = where.and_("end_timestamp", end_timestamp, "<=")
+            where = where.and_("created_at", end_timestamp, "<=")
 
         where_clause, where_vars = where.build()
 
@@ -349,27 +431,30 @@ class SurrealDb(BaseDb):
             {order_limit_start_clause}
         """)
         sessions_raw = self._query(query, where_vars, dict)
-        converted_sessions_raw = [desurrealize_session(session, session_type) for session in sessions_raw]
+        converted_sessions_raw = [desurrealize_session(session) for session in sessions_raw]
 
         if not deserialize:
             return list(converted_sessions_raw), total_count
 
-        if session_type is None:
-            raise ValueError("session_type is required when deserialize=True")
-
-        return deserialize_sessions(session_type, list(sessions_raw))
+        return deserialize_sessions(session_type, converted_sessions_raw)
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: Optional[SessionType],
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
 
         Args:
             session_id (str): The ID of the session to rename.
-            session_type (SessionType): The type of session to rename.
+            session_type (Optional[SessionType]): The type of session to rename.
             session_name (str): The new name for the session.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -380,18 +465,26 @@ class SurrealDb(BaseDb):
             Exception: If an error occurs during renaming.
         """
         table = self._get_table("sessions")
-        vars = {"record": RecordID(table, session_id), "name": session_name}
+        vars: Dict[str, Any] = {"record": RecordID(table, session_id), "name": session_name}
 
-        # Query
-        query = dedent("""
-            UPDATE ONLY $record
-            SET session_name = $name
-        """)
-        session_raw = self._query_one(query, vars, dict)
+        # SurrealDB doesn't store session_type as a field — type is inferred from
+        # agent/team/workflow RecordID references. Only filter by user_id here.
+        if user_id is not None:
+            vars["user_id"] = user_id
+            result = self.client.query(
+                f"UPDATE {table} SET session_name = $name WHERE id = $record AND user_id = $user_id",
+                vars,
+            )
+            session_raw = (
+                result[0] if isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict) else None
+            )
+        else:
+            session_raw = self._query_one("UPDATE ONLY $record SET session_name = $name", vars, dict)
 
         if session_raw is None or not deserialize:
             return session_raw
-        return deserialize_session(session_type, session_raw)
+        desurrealized = desurrealize_session(session_raw)
+        return deserialize_session(session_type, desurrealized)
 
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
@@ -413,6 +506,16 @@ class SurrealDb(BaseDb):
         """
         session_type = get_session_type(session)
         table = self._get_table("sessions")
+
+        existing = self.client.query(
+            f"SELECT user_id FROM {table} WHERE id = $record",
+            {"record": RecordID(table, session.session_id)},
+        )
+        if isinstance(existing, list) and len(existing) > 0:
+            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            if existing_uid is not None and existing_uid != session.user_id:
+                return None
+
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
@@ -424,7 +527,8 @@ class SurrealDb(BaseDb):
         if session_raw is None or not deserialize:
             return session_raw
 
-        return deserialize_session(session_type, session_raw)
+        desurrealized = desurrealize_session(session_raw)
+        return deserialize_session(session_type, desurrealized)
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True
@@ -465,7 +569,8 @@ class SurrealDb(BaseDb):
         # wrapping with list because of:
         # Type "List[Session]" is not assignable to return type "List[Session | Dict[str, Any]]"
         # Consider switching from "list" to "Sequence" which is covariant
-        return list(deserialize_sessions(session_type, sessions_raw))
+        desurrealized = [desurrealize_session(s) for s in sessions_raw]
+        return list(deserialize_sessions(session_type, desurrealized))
 
     # --- Memory ---
     def clear_memories(self) -> None:
@@ -660,11 +765,12 @@ class SurrealDb(BaseDb):
         table = self._get_table("memories")
         records = [RecordID(table, memory_id) for memory_id in memory_ids]
         if user_id is None:
-            _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+            _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})  # type: ignore[dict-item]
         else:
             user_rec_id = RecordID(self._get_table("users"), user_id)
             _ = self.client.query(
-                f"DELETE FROM {table} WHERE id IN $records AND user = $user", {"records": records, "user": user_rec_id}
+                f"DELETE FROM {table} WHERE id IN $records AND user = $user",
+                {"records": records, "user": user_rec_id},  # type: ignore[dict-item]
             )
 
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
@@ -1092,7 +1198,7 @@ class SurrealDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             raise e
 
     # --- Knowledge ---
@@ -1134,6 +1240,7 @@ class SurrealDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1142,6 +1249,7 @@ class SurrealDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1151,6 +1259,11 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("knowledge")
         where = WhereClause()
+
+        # Apply linked_to filter if provided
+        if linked_to is not None:
+            where.and_("linked_to", linked_to)
+
         where_clause, where_vars = where.build()
 
         # Total count
@@ -1222,7 +1335,7 @@ class SurrealDb(BaseDb):
         """
         table = self._get_table("evals")
         records = [RecordID(table, id) for id in eval_run_ids]
-        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})
+        _ = self.client.query(f"DELETE FROM {table} WHERE id IN $records", {"records": records})  # type: ignore[dict-item]
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -1351,3 +1464,571 @@ class SurrealDb(BaseDb):
         if not raw or not deserialize:
             return raw
         return deserialize_eval_run_record(raw)
+
+    # --- Traces ---
+    def upsert_trace(self, trace: "Trace") -> None:
+        """Create or update a single trace record in the database.
+
+        Args:
+            trace: The Trace object to store (one per trace_id).
+        """
+        try:
+            table = self._get_table("traces", create_table_if_not_found=True)
+            record = RecordID(table, trace.trace_id)
+
+            # Check if trace exists
+            existing = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+
+            if existing:
+                # workflow (level 3) > team (level 2) > agent (level 1) > child/unknown (level 0)
+                def get_component_level(workflow_id: Any, team_id: Any, agent_id: Any, name: str) -> int:
+                    is_root_name = ".run" in name or ".arun" in name
+                    if not is_root_name:
+                        return 0
+                    elif workflow_id:
+                        return 3
+                    elif team_id:
+                        return 2
+                    elif agent_id:
+                        return 1
+                    else:
+                        return 0
+
+                existing_level = get_component_level(
+                    existing.get("workflow_id"),
+                    existing.get("team_id"),
+                    existing.get("agent_id"),
+                    existing.get("name", ""),
+                )
+                new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+                should_update_name = new_level > existing_level
+
+                # Parse existing start_time to calculate correct duration
+                existing_start_time = existing.get("start_time")
+                if isinstance(existing_start_time, datetime):
+                    recalculated_duration_ms = int((trace.end_time - existing_start_time).total_seconds() * 1000)
+                else:
+                    recalculated_duration_ms = trace.duration_ms
+
+                # Build update query
+                update_fields = [
+                    "end_time = $end_time",
+                    "duration_ms = $duration_ms",
+                    "status = $status",
+                ]
+                update_vars: Dict[str, Any] = {
+                    "record": record,
+                    "end_time": trace.end_time,
+                    "duration_ms": recalculated_duration_ms,
+                    "status": trace.status,
+                }
+
+                if should_update_name:
+                    update_fields.append("name = $name")
+                    update_vars["name"] = trace.name
+
+                # Preserve existing non-null context values: only fill in fields
+                # that the existing row left blank. Otherwise a later upsert from
+                # a child span (e.g. a post-hook agent's run with a different
+                # session_id) would overwrite the trace's already-correct context.
+                if existing.get("run_id") is None and trace.run_id is not None:
+                    update_fields.append("run_id = $run_id")
+                    update_vars["run_id"] = trace.run_id
+                if existing.get("session_id") is None and trace.session_id is not None:
+                    update_fields.append("session_id = $session_id")
+                    update_vars["session_id"] = trace.session_id
+                if existing.get("user_id") is None and trace.user_id is not None:
+                    update_fields.append("user_id = $user_id")
+                    update_vars["user_id"] = trace.user_id
+                if existing.get("agent_id") is None and trace.agent_id is not None:
+                    update_fields.append("agent_id = $agent_id")
+                    update_vars["agent_id"] = trace.agent_id
+                if existing.get("team_id") is None and trace.team_id is not None:
+                    update_fields.append("team_id = $team_id")
+                    update_vars["team_id"] = trace.team_id
+                if existing.get("workflow_id") is None and trace.workflow_id is not None:
+                    update_fields.append("workflow_id = $workflow_id")
+                    update_vars["workflow_id"] = trace.workflow_id
+
+                update_query = f"UPDATE ONLY $record SET {', '.join(update_fields)}"
+                self._query_one(update_query, update_vars, dict)
+            else:
+                # Create new trace
+                trace_dict = trace.to_dict()
+                trace_dict.pop("total_spans", None)
+                trace_dict.pop("error_count", None)
+
+                # Convert datetime fields
+                if isinstance(trace_dict.get("start_time"), str):
+                    trace_dict["start_time"] = datetime.fromisoformat(trace_dict["start_time"].replace("Z", "+00:00"))
+                if isinstance(trace_dict.get("end_time"), str):
+                    trace_dict["end_time"] = datetime.fromisoformat(trace_dict["end_time"].replace("Z", "+00:00"))
+                if isinstance(trace_dict.get("created_at"), str):
+                    trace_dict["created_at"] = datetime.fromisoformat(trace_dict["created_at"].replace("Z", "+00:00"))
+
+                self._query_one(
+                    "CREATE ONLY $record CONTENT $content",
+                    {"record": record, "content": trace_dict},
+                    dict,
+                )
+
+        except Exception as e:
+            log_error(f"Error creating trace: {str(e)}")
+
+    def get_trace(
+        self,
+        trace_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+    ):
+        """Get a single trace by trace_id or other filters.
+
+        Args:
+            trace_id: The unique trace identifier.
+            run_id: Filter by run ID (returns first match).
+
+        Returns:
+            Optional[Trace]: The trace if found, None otherwise.
+
+        Note:
+            If multiple filters are provided, trace_id takes precedence.
+            For other filters, the most recent trace is returned.
+        """
+        try:
+            table = self._get_table("traces", create_table_if_not_found=False)
+            spans_table = self._get_table("spans", create_table_if_not_found=False)
+
+            if trace_id:
+                record = RecordID(table, trace_id)
+                trace_data = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+            elif run_id:
+                query = dedent(f"""
+                    SELECT * FROM {table}
+                    WHERE run_id = $run_id
+                    ORDER BY start_time DESC
+                    LIMIT 1
+                """)
+                trace_data = self._query_one(query, {"run_id": run_id}, dict)
+            else:
+                log_debug("get_trace called without any filter parameters")
+                return None
+
+            if not trace_data:
+                return None
+
+            # Calculate total_spans and error_count
+            id_obj = trace_data.get("id")
+            trace_id_val = trace_data.get("trace_id") or (id_obj.id if id_obj is not None else None)
+            if trace_id_val:
+                count_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id GROUP ALL"
+                count_result = self._query_one(count_query, {"trace_id": trace_id_val}, dict)
+                trace_data["total_spans"] = count_result.get("total", 0) if count_result else 0
+
+                error_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id AND status_code = 'ERROR' GROUP ALL"
+                error_result = self._query_one(error_query, {"trace_id": trace_id_val}, dict)
+                trace_data["error_count"] = error_result.get("total", 0) if error_result else 0
+
+            # Deserialize
+            return self._deserialize_trace(trace_data)
+
+        except Exception as e:
+            log_error(f"Error getting trace: {str(e)}")
+            return None
+
+    def get_traces(
+        self,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List, int]:
+        """Get traces matching the provided filters with pagination.
+
+        Args:
+            run_id: Filter by run ID.
+            session_id: Filter by session ID.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            status: Filter by status (OK, ERROR, UNSET).
+            start_time: Filter traces starting after this datetime.
+            end_time: Filter traces ending before this datetime.
+            limit: Maximum number of traces to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
+        """
+        try:
+            table = self._get_table("traces", create_table_if_not_found=False)
+            spans_table = self._get_table("spans", create_table_if_not_found=False)
+
+            # Build where clause
+            where = WhereClause()
+            if run_id:
+                where.and_("run_id", run_id)
+            if session_id:
+                where.and_("session_id", session_id)
+            if user_id is not None:
+                where.and_("user_id", user_id)
+            if agent_id:
+                where.and_("agent_id", agent_id)
+            if team_id:
+                where.and_("team_id", team_id)
+            if workflow_id:
+                where.and_("workflow_id", workflow_id)
+            if status:
+                where.and_("status", status)
+            if start_time:
+                where.and_("start_time", start_time, ">=")
+            if end_time:
+                where.and_("end_time", end_time, "<=")
+
+            where_clause, where_vars = where.build()
+
+            # Total count
+            total_count = self._count(table, where_clause, where_vars)
+
+            # Query with pagination
+            order_limit_start_clause = order_limit_start("start_time", "DESC", limit, page)
+            query = dedent(f"""
+                SELECT * FROM {table}
+                {where_clause}
+                {order_limit_start_clause}
+            """)
+            traces_raw = self._query(query, where_vars, dict)
+
+            # Add total_spans and error_count to each trace
+            result_traces = []
+            for trace_data in traces_raw:
+                id_obj = trace_data.get("id")
+                trace_id_val = trace_data.get("trace_id") or (id_obj.id if id_obj is not None else None)
+                if trace_id_val:
+                    count_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id GROUP ALL"
+                    count_result = self._query_one(count_query, {"trace_id": trace_id_val}, dict)
+                    trace_data["total_spans"] = count_result.get("total", 0) if count_result else 0
+
+                    error_query = f"SELECT count() as total FROM {spans_table} WHERE trace_id = $trace_id AND status_code = 'ERROR' GROUP ALL"
+                    error_result = self._query_one(error_query, {"trace_id": trace_id_val}, dict)
+                    trace_data["error_count"] = error_result.get("total", 0) if error_result else 0
+
+                result_traces.append(self._deserialize_trace(trace_data))
+
+            return result_traces, total_count
+
+        except Exception as e:
+            log_error(f"Error getting traces: {str(e)}")
+            return [], 0
+
+    def get_trace_stats(
+        self,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Get trace statistics grouped by session.
+
+        Args:
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            workflow_id: Filter by workflow ID.
+            start_time: Filter sessions with traces created after this datetime.
+            end_time: Filter sessions with traces created before this datetime.
+            limit: Maximum number of sessions to return per page.
+            page: Page number (1-indexed).
+
+        Returns:
+            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+                Each dict contains: session_id, user_id, agent_id, team_id, workflow_id, total_traces,
+                first_trace_at, last_trace_at.
+        """
+        try:
+            table = self._get_table("traces", create_table_if_not_found=False)
+
+            # Build where clause
+            where = WhereClause()
+            where.and_("!!session_id", True, "=")  # Ensure session_id is not null
+            if user_id is not None:
+                where.and_("user_id", user_id)
+            if agent_id:
+                where.and_("agent_id", agent_id)
+            if team_id:
+                where.and_("team_id", team_id)
+            if workflow_id:
+                where.and_("workflow_id", workflow_id)
+            if start_time:
+                where.and_("created_at", start_time, ">=")
+            if end_time:
+                where.and_("created_at", end_time, "<=")
+
+            where_clause, where_vars = where.build()
+
+            # Get total count of unique sessions
+            count_query = dedent(f"""
+                SELECT count() as total FROM (
+                    SELECT session_id FROM {table}
+                    {where_clause}
+                    GROUP BY session_id
+                ) GROUP ALL
+            """)
+            count_result = self._query_one(count_query, where_vars, dict)
+            total_count = count_result.get("total", 0) if count_result else 0
+
+            # Query with aggregation
+            order_limit_start_clause = order_limit_start("last_trace_at", "DESC", limit, page)
+            query = dedent(f"""
+                SELECT
+                    session_id,
+                    array::first(user_id) AS user_id,
+                    array::first(agent_id) AS agent_id,
+                    array::first(team_id) AS team_id,
+                    array::first(workflow_id) AS workflow_id,
+                    count() AS total_traces,
+                    time::min(created_at) AS first_trace_at,
+                    time::max(created_at) AS last_trace_at
+                FROM {table}
+                {where_clause}
+                GROUP BY session_id
+                {order_limit_start_clause}
+            """)
+            results = self._query(query, where_vars, dict)
+
+            # Convert datetime objects
+            stats_list = []
+            for row in results:
+                stat = dict(row)
+                if isinstance(stat.get("first_trace_at"), datetime):
+                    pass  # Keep as datetime
+                if isinstance(stat.get("last_trace_at"), datetime):
+                    pass  # Keep as datetime
+                stats_list.append(stat)
+
+            return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting trace stats: {str(e)}")
+            return [], 0
+
+    def _deserialize_trace(self, trace_data: dict) -> "Trace":
+        """Helper to deserialize a trace record from SurrealDB."""
+        from agno.tracing.schemas import Trace
+
+        # Handle RecordID for id field
+        if isinstance(trace_data.get("id"), RecordID):
+            if "trace_id" not in trace_data or not trace_data["trace_id"]:
+                trace_data["trace_id"] = trace_data["id"].id
+            del trace_data["id"]
+
+        # Convert datetime to ISO string for Trace.from_dict
+        for field in ["start_time", "end_time", "created_at"]:
+            if isinstance(trace_data.get(field), datetime):
+                trace_data[field] = trace_data[field].isoformat()
+
+        return Trace.from_dict(trace_data)
+
+    # --- Spans ---
+    def create_span(self, span: "Span") -> None:
+        """Create a single span in the database.
+
+        Args:
+            span: The Span object to store.
+        """
+        try:
+            table = self._get_table("spans", create_table_if_not_found=True)
+            record = RecordID(table, span.span_id)
+
+            span_dict = span.to_dict()
+
+            # Convert datetime fields
+            if isinstance(span_dict.get("start_time"), str):
+                span_dict["start_time"] = datetime.fromisoformat(span_dict["start_time"].replace("Z", "+00:00"))
+            if isinstance(span_dict.get("end_time"), str):
+                span_dict["end_time"] = datetime.fromisoformat(span_dict["end_time"].replace("Z", "+00:00"))
+            if isinstance(span_dict.get("created_at"), str):
+                span_dict["created_at"] = datetime.fromisoformat(span_dict["created_at"].replace("Z", "+00:00"))
+
+            self._query_one(
+                "CREATE ONLY $record CONTENT $content",
+                {"record": record, "content": span_dict},
+                dict,
+            )
+
+        except Exception as e:
+            log_error(f"Error creating span: {str(e)}")
+
+    def create_spans(self, spans: List) -> None:
+        """Create multiple spans in the database as a batch.
+
+        Args:
+            spans: List of Span objects to store.
+        """
+        if not spans:
+            return
+
+        try:
+            table = self._get_table("spans", create_table_if_not_found=True)
+
+            for span in spans:
+                record = RecordID(table, span.span_id)
+                span_dict = span.to_dict()
+
+                # Convert datetime fields
+                if isinstance(span_dict.get("start_time"), str):
+                    span_dict["start_time"] = datetime.fromisoformat(span_dict["start_time"].replace("Z", "+00:00"))
+                if isinstance(span_dict.get("end_time"), str):
+                    span_dict["end_time"] = datetime.fromisoformat(span_dict["end_time"].replace("Z", "+00:00"))
+                if isinstance(span_dict.get("created_at"), str):
+                    span_dict["created_at"] = datetime.fromisoformat(span_dict["created_at"].replace("Z", "+00:00"))
+
+                self._query_one(
+                    "CREATE ONLY $record CONTENT $content",
+                    {"record": record, "content": span_dict},
+                    dict,
+                )
+
+        except Exception as e:
+            log_error(f"Error creating spans batch: {str(e)}")
+
+    def get_span(self, span_id: str):
+        """Get a single span by its span_id.
+
+        Args:
+            span_id: The unique span identifier.
+
+        Returns:
+            Optional[Span]: The span if found, None otherwise.
+        """
+        try:
+            table = self._get_table("spans", create_table_if_not_found=False)
+            record = RecordID(table, span_id)
+
+            span_data = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+            if not span_data:
+                return None
+
+            return self._deserialize_span(span_data)
+
+        except Exception as e:
+            log_error(f"Error getting span: {str(e)}")
+            return None
+
+    def get_spans(
+        self,
+        trace_id: Optional[str] = None,
+        parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
+    ) -> List:
+        """Get spans matching the provided filters.
+
+        Args:
+            trace_id: Filter by trace ID.
+            parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
+
+        Returns:
+            List[Span]: List of matching spans.
+        """
+        try:
+            table = self._get_table("spans", create_table_if_not_found=False)
+
+            # Build where clause
+            where = WhereClause()
+            if trace_id:
+                where.and_("trace_id", trace_id)
+            if parent_span_id:
+                where.and_("parent_span_id", parent_span_id)
+
+            where_clause, where_vars = where.build()
+
+            # Query
+            limit_clause = f"LIMIT {limit}" if limit else ""
+            query = dedent(f"""
+                SELECT * FROM {table}
+                {where_clause}
+                ORDER BY start_time ASC
+                {limit_clause}
+            """)
+            spans_raw = self._query(query, where_vars, dict)
+
+            return [self._deserialize_span(s) for s in spans_raw]
+
+        except Exception as e:
+            log_error(f"Error getting spans: {str(e)}")
+            return []
+
+    def _deserialize_span(self, span_data: dict) -> "Span":
+        """Helper to deserialize a span record from SurrealDB."""
+        from agno.tracing.schemas import Span
+
+        # Handle RecordID for id field
+        if isinstance(span_data.get("id"), RecordID):
+            if "span_id" not in span_data or not span_data["span_id"]:
+                span_data["span_id"] = span_data["id"].id
+            del span_data["id"]
+
+        # Convert datetime to ISO string for Span.from_dict
+        for field in ["start_time", "end_time", "created_at"]:
+            if isinstance(span_data.get(field), datetime):
+                span_data[field] = span_data[field].isoformat()
+
+        return Span.from_dict(span_data)
+
+    # -- Learning methods (stubs) --
+    def get_learning(
+        self,
+        learning_type: str,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError("Learning methods not yet implemented for SurrealDb")
+
+    def upsert_learning(
+        self,
+        id: str,
+        learning_type: str,
+        content: Dict[str, Any],
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        raise NotImplementedError("Learning methods not yet implemented for SurrealDb")
+
+    def delete_learning(self, id: str) -> bool:
+        raise NotImplementedError("Learning methods not yet implemented for SurrealDb")
+
+    def get_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError("Learning methods not yet implemented for SurrealDb")

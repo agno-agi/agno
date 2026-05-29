@@ -22,9 +22,9 @@ def cleanup_metrics_and_sessions(postgres_db_real: PostgresDb):
 
     with postgres_db_real.Session() as session:
         try:
-            metrics_table = postgres_db_real._get_table("metrics")
+            metrics_table = postgres_db_real._get_table("metrics", create_table_if_not_found=True)
             session.execute(metrics_table.delete())
-            sessions_table = postgres_db_real._get_table("sessions")
+            sessions_table = postgres_db_real._get_table("sessions", create_table_if_not_found=True)
             session.execute(sessions_table.delete())
             session.commit()
         except Exception:
@@ -100,7 +100,7 @@ def test_get_all_sessions_for_metrics_calculation_with_timestamp_filter(
 
 def test_get_metrics_calculation_starting_date_no_metrics_no_sessions(postgres_db_real: PostgresDb):
     """Test the _get_metrics_calculation_starting_date util method with no metrics and no sessions"""
-    metrics_table = postgres_db_real._get_table("metrics")
+    metrics_table = postgres_db_real._get_table("metrics", create_table_if_not_found=True)
 
     result = postgres_db_real._get_metrics_calculation_starting_date(metrics_table)
 
@@ -115,7 +115,7 @@ def test_get_metrics_calculation_starting_date_no_metrics_with_sessions(
     for session in sample_agent_sessions_for_metrics:
         postgres_db_real.upsert_session(session)
 
-    metrics_table = postgres_db_real._get_table("metrics")
+    metrics_table = postgres_db_real._get_table("metrics", create_table_if_not_found=True)
     result = postgres_db_real._get_metrics_calculation_starting_date(metrics_table)
 
     assert result is not None
@@ -167,7 +167,7 @@ def test_get_metrics_with_date_filter(postgres_db_real: PostgresDb, sample_agent
 
 def test_metrics_table_creation(postgres_db_real: PostgresDb):
     """Ensure the metrics table is created properly"""
-    metrics_table = postgres_db_real._get_table("metrics")
+    metrics_table = postgres_db_real._get_table("metrics", create_table_if_not_found=True)
 
     assert metrics_table is not None
     assert metrics_table.name == "test_metrics"

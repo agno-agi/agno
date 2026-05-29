@@ -342,7 +342,7 @@ async def test_team_async_streaming_with_send_media_false(shared_db):
 
 @pytest.mark.asyncio
 async def test_team_async_delegate_to_all_members(shared_db):
-    """Test Team with delegate_task_to_all_members=True and send_media_to_model=False."""
+    """Test Team with delegate_to_all_members=True and send_media_to_model=False."""
     # Create multiple member agents
     processor1 = Agent(
         name="Processor 1",
@@ -360,13 +360,13 @@ async def test_team_async_delegate_to_all_members(shared_db):
         db=shared_db,
     )
 
-    # Create team with delegate_task_to_all_members=True
+    # Create team with delegate_to_all_members=True
     team = Team(
         name="Parallel Processing Team",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[processor1, processor2],
         send_media_to_model=False,
-        delegate_task_to_all_members=True,
+        delegate_to_all_members=True,
         instructions="Process files in parallel.",
         db=shared_db,
     )
@@ -392,7 +392,7 @@ async def test_team_async_delegate_to_all_members(shared_db):
 
 @pytest.mark.asyncio
 async def test_team_async_delegate_to_all_members_streaming(shared_db):
-    """Test Team with delegate_task_to_all_members=True in async streaming mode."""
+    """Test Team with delegate_to_all_members=True in async streaming mode."""
     # Create multiple member agents
     processor1 = Agent(
         name="Processor 1",
@@ -410,13 +410,13 @@ async def test_team_async_delegate_to_all_members_streaming(shared_db):
         db=shared_db,
     )
 
-    # Create team with delegate_task_to_all_members=True
+    # Create team with delegate_to_all_members=True
     team = Team(
         name="Parallel Processing Team",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[processor1, processor2],
         send_media_to_model=False,
-        delegate_task_to_all_members=True,
+        delegate_to_all_members=True,
         instructions="Process files in parallel.",
         db=shared_db,
     )

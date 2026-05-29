@@ -20,7 +20,7 @@ def memory_agent(shared_db):
     return Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
     )
 
 

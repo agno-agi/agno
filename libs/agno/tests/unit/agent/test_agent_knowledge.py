@@ -12,12 +12,12 @@ class MockKnowledge:
     def validate_filters(self, filters):
         return filters or {}, []
 
-    async def async_validate_filters(self, filters):
+    async def avalidate_filters(self, filters):
         return filters or {}, []
 
-    async def async_search(self, query, num_documents, filters):
-        # Verify that num_documents is correctly set to default value
-        assert num_documents == 5
+    async def asearch(self, query, max_results, filters):
+        # Verify that max_results is correctly set to default value
+        assert max_results == 5
         return []
 
 
@@ -78,7 +78,7 @@ async def test_agent_aget_relevant_docs_from_knowledge_without_retriever():
     result = await agent.aget_relevant_docs_from_knowledge(query="test query", num_documents=None)
 
     # Verify the result
-    assert result is None  # Because async_search returns empty list
+    assert result is None  # Because asearch returns empty list
 
 
 def test_agent_get_relevant_docs_from_knowledge_with_none_num_documents():
