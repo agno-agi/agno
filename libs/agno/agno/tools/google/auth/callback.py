@@ -34,7 +34,10 @@ def _success_page(services: List[str], valid_services: Dict[str, List[str]]) -> 
 
 
 def _verify_jwt_state(state: str, secret: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    import jwt
+    try:
+        import jwt
+    except ImportError:
+        raise ImportError("PyJWT required for secure state verification. Install using `pip install PyJWT`")
 
     from agno.utils.oauth_state import verify_state
 
