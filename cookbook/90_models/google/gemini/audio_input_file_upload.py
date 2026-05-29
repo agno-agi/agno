@@ -16,7 +16,7 @@ from google.genai.types import UploadFileConfig
 # Create Agent
 # ---------------------------------------------------------------------------
 
-model = Gemini(id="gemini-3-flash-preview")
+model = Gemini(id="gemini-3.5-flash")
 agent = Agent(
     model=model,
     markdown=True,
