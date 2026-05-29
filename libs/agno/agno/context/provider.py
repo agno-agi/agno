@@ -35,12 +35,11 @@ import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from agno.context.mode import ContextMode
 from agno.run import RunContext
 from agno.run.agent import RunOutput
-from agno.team._response import TeamRunOutput
 from agno.tools import tool
 
 if TYPE_CHECKING:
@@ -251,7 +250,7 @@ class ContextProvider(ABC):
 
             kwargs = provider._run_kwargs_for_sub_agent(run_context)
             run_id = run_context.run_id if run_context else None
-            final_output: Union[RunOutput, TeamRunOutput, None] = None
+            final_output: RunOutput | None = None
 
             async for event in agent.arun(
                 question,
@@ -261,7 +260,7 @@ class ContextProvider(ABC):
                 **kwargs,
             ):
                 # Do NOT break out of the loop, AsyncIterator needs to exit properly
-                if isinstance(event, (RunOutput, TeamRunOutput)):
+                if isinstance(event, RunOutput):
                     final_output = event
                     continue  # Don't yield RunOutput, only yield events
 
