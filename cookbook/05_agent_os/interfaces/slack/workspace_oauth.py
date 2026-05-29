@@ -30,7 +30,7 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.google.auth import GoogleAuthManager
+from agno.tools.google.auth import GoogleAuthManager, create_oauth_router
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -80,7 +80,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # Mount OAuth callback router
-app.include_router(auth.get_oauth_router(db=db))
+app.include_router(create_oauth_router(auth, db=db))
 
 
 if __name__ == "__main__":

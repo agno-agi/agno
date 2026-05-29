@@ -32,7 +32,7 @@ from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.tools.google.auth import GoogleAuthManager
+from agno.tools.google.auth import GoogleAuthManager, create_oauth_router
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
@@ -84,7 +84,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # Mount OAuth callback router
-app.include_router(auth.get_oauth_router(db=db))
+app.include_router(create_oauth_router(auth, db=db))
 
 # ---------------------------------------------------------------------------
 # Run
