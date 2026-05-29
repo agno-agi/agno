@@ -36,27 +36,42 @@ class GoogleAuthManager:
         encrypt_tokens: bool = False,
         token_encryption_key: Optional[str] = None,
     ):
+        # --- OAuth credentials ---
         self.client_id = client_id or getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or getenv("GOOGLE_CLIENT_SECRET")
         self.redirect_uri = redirect_uri or getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
-        self._db: Optional["BaseDb"] = db
+
+        # --- Scope registry ---
+        # Service → scopes mapping, populated by toolkit.register_service()
         self._services: Dict[str, List[str]] = {}
-        self._callback_configured: bool = False
+
+        # --- State and security ---
+        self._db: Optional["BaseDb"] = db
         self._state_secret = state_secret or getenv("GOOGLE_OAUTH_STATE_SECRET")
-        self._include_granted_scopes = include_granted_scopes
         self._state_ttl_seconds = state_ttl_seconds
+        # Set True by get_oauth_router() — tells toolkits to block browser fallback
+        self._callback_configured: bool = False
+
+        # --- OAuth flow options ---
+        self._include_granted_scopes = include_granted_scopes
         self._hosted_domain = hosted_domain or getenv("GOOGLE_HOSTED_DOMAIN")
         self._access_type = access_type
-        self._callback_path = callback_path or getenv("GOOGLE_OAUTH_CALLBACK_PATH", "/google/oauth/callback")
         self._prompt = prompt
         self._login_hint = login_hint
+        self._callback_path = callback_path or getenv("GOOGLE_OAUTH_CALLBACK_PATH", "/google/oauth/callback")
+
+        # --- Service account (alternative to OAuth) ---
+        # Shared across all toolkits using this manager
         self._service_account_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._delegated_user = delegated_user or getenv("GOOGLE_DELEGATED_USER")
+
+        # --- Token storage ---
         self._store_tokens = store_tokens
         self._encrypt_tokens = encrypt_tokens
         self._token_encryption_key = token_encryption_key
 
     def register_service(self, service: str, scopes: List[str]) -> None:
+        # Union with existing scopes — allows incremental registration
         existing = self._services.get(service, [])
         self._services[service] = list(set(existing) | set(scopes))
 
@@ -76,6 +91,7 @@ class GoogleAuthManager:
                 "OAuth callback cannot verify state without a signing secret."
             }
 
+        # 1. Verify JWT state (CSRF protection)
         try:
             state_data = verify_state(state, secret=self._state_secret)
         except jwt.InvalidTokenError as e:
@@ -90,6 +106,7 @@ class GoogleAuthManager:
             log_warning("OAuth callback missing state_id — possible replay of pre-PKCE token")
             return {"error": "Invalid state: missing state_id"}
 
+        # 2. Retrieve PKCE state from DB (stored at oauth_google call time)
         try:
             row = db.get_auth_token("google", user_id, "google")
         except Exception as e:
@@ -104,6 +121,7 @@ class GoogleAuthManager:
         code_verifier = row.get("pkce_verifier")
         pkce_expires_at = row.get("pkce_expires_at")
 
+        # 3. Validate PKCE: state_id must match, verifier must exist, not expired
         if not stored_state_id or stored_state_id != state_id:
             log_warning(f"PKCE state_id mismatch for user={user_id}: expected {stored_state_id}, got {state_id}")
             return {"error": "OAuth session expired or invalid. Please try again."}
@@ -118,9 +136,11 @@ class GoogleAuthManager:
             log_warning(f"PKCE state expired for user={user_id}")
             return {"error": "OAuth session expired. Please try again."}
 
+        # 4. Exchange authorization code for tokens
         try:
             from google_auth_oauthlib.flow import Flow
 
+            # Build scope list from registry
             if self._include_granted_scopes:
                 scopes: list = []
                 for svc_scopes in self._services.values():
@@ -144,9 +164,11 @@ class GoogleAuthManager:
                 redirect_uri=self.redirect_uri,
             )
 
+            # Prevent Google from auto-constraining scopes
             if self._include_granted_scopes:
                 flow.oauth2session.scope = None
 
+            # PKCE: code_verifier proves we're the same client that started the flow
             flow.fetch_token(code=code, code_verifier=code_verifier)
             creds = flow.credentials
 
@@ -154,6 +176,7 @@ class GoogleAuthManager:
             log_error(f"OAuth token exchange failed: {e}")
             return {"error": f"Token exchange failed: {e}"}
 
+        # 5. Persist tokens to DB (replaces PKCE row with actual credentials)
         stored = persist_google_token(
             db=db,
             creds=creds,
@@ -170,6 +193,7 @@ class GoogleAuthManager:
 
     def get_oauth_router(self, db: Optional["BaseDb"] = None) -> Any:
         """Create FastAPI router with /google/oauth/callback endpoint."""
+        # Validate config early — fail at startup, not at callback time
         if not self._state_secret:
             raise RuntimeError(
                 "GOOGLE_OAUTH_STATE_SECRET is required for OAuth callback security. "
@@ -183,19 +207,24 @@ class GoogleAuthManager:
                 "Pass db= or set GoogleAuth(db=...)."
             )
 
+        # Mark as server mode — toolkits will block browser OAuth fallback
         self._callback_configured = True
+
         from html import escape
 
         from fastapi import APIRouter, Request
         from fastapi.responses import HTMLResponse
 
         router = APIRouter(tags=["Google OAuth"])
+
+        # Capture in closure — available when callback is hit later
         google_auth = self
         callback_path: str = self._callback_path or "/google/oauth/callback"
         callback_db = resolved_db
 
         @router.get(callback_path)
         async def oauth_callback(request: Request) -> HTMLResponse:
+            # Google redirects here with ?code=...&state=... or ?error=...
             error = request.query_params.get("error")
             if error:
                 desc = escape(request.query_params.get("error_description", error))
@@ -211,6 +240,7 @@ class GoogleAuthManager:
                 safe_error = escape(str(result["error"]))
                 return HTMLResponse(f"<h1>Error</h1><p>{safe_error}</p>", status_code=400)
 
+            # Whitelist services for XSS safety
             known = set(google_auth._services)
             safe_services = [s for s in result.get("services", []) if s in known]
             services_str = escape(", ".join(safe_services)) if safe_services else "services"
