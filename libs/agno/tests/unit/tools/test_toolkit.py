@@ -60,6 +60,15 @@ def test_toolkit_initialization():
     assert toolkit.add_instructions is False
 
 
+def test_toolkit_default_tools_are_not_shared():
+    first = Toolkit(name="first")
+    second = Toolkit(name="second")
+
+    first.tools.append(example_func)
+
+    assert second.tools == []
+
+
 def test_toolkit_with_tools_initialization(basic_toolkit):
     """Test toolkit initialization with tools."""
     assert basic_toolkit.name == "basic_toolkit"
