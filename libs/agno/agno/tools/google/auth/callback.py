@@ -75,7 +75,7 @@ def handle_oauth_callback(
 
     import time
 
-    if pkce_expires_at and int(time.time()) > pkce_expires_at:
+    if pkce_expires_at is not None and int(time.time()) > pkce_expires_at:
         log_warning(f"PKCE state expired for user={user_id}")
         return {"error": "OAuth session expired. Please try again."}
 
@@ -93,6 +93,10 @@ def handle_oauth_callback(
             for svc in services:
                 scopes.extend(manager._services.get(svc, []))
 
+        if not scopes:
+            log_error(f"No scopes resolved for services={services} — check scope registry")
+            return {"error": "No scopes configured for requested services. Contact administrator."}
+
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -107,7 +111,9 @@ def handle_oauth_callback(
             redirect_uri=manager.redirect_uri,
         )
 
-        # Prevent Google from auto-constraining scopes
+        # Prevent Google from auto-constraining scopes to only what's in the request
+        # This is a private API workaround — requests-oauthlib otherwise limits the token
+        # to exactly the requested scopes, discarding any previously-granted broader scopes
         if manager._include_granted_scopes:
             flow.oauth2session.scope = None
 
@@ -153,9 +159,6 @@ def create_oauth_router(
             "create_oauth_router() requires a DB with auth token support. "
             "Pass db= or set GoogleAuthManager(db=...)."
         )
-
-    # Mark as server mode — toolkits will block browser OAuth fallback
-    manager._callback_configured = True
 
     router = APIRouter(tags=["Google OAuth"])
 

@@ -71,6 +71,10 @@ class GoogleToolkit(Toolkit):
         if self.auth_config and self.google_service_name:
             self.auth_config.register_service(self.google_service_name, self.scopes)
 
+        # Register oauth_google tool once when multi-user OAuth is enabled
+        if self.auth_config:
+            self.auth_config.register_oauth_tool(self)
+
     @property
     def service(self) -> Any:
         """Per-call service from contextvar. Set by @google_authenticate decorator."""
@@ -192,8 +196,8 @@ class GoogleToolkit(Toolkit):
             creds = self._load_from_db(db, user_id)
             if creds:
                 return creds
-            # Server mode: don't fall through to browser OAuth
-            if self.auth_config and self.auth_config._callback_configured:
+            # Multi-user mode: users authenticate via OAuth URL, no browser fallback
+            if self.auth_config and self.auth_config.enable_multi_user_oauth:
                 raise PermissionError(
                     f"{self.google_service_name.title()} not authenticated — user must complete OAuth via oauth_google"
                 )

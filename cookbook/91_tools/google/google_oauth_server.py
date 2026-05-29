@@ -34,7 +34,6 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.tools.google.auth import GoogleAuthManager, create_oauth_router
 from agno.tools.google.gmail import GmailTools
-from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 # ---------------------------------------------------------------------------
 # Database for Token Storage
@@ -51,6 +50,7 @@ auth = GoogleAuthManager(
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
     store_tokens=True,
+    enable_multi_user_oauth=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -62,7 +62,6 @@ gmail_agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
-        GoogleOAuthTools(auth_config=auth),
         GmailTools(
             auth_config=auth, include_tools=["get_latest_emails", "search_emails"]
         ),

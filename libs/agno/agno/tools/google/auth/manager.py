@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
+    from agno.tools import Toolkit
 
 
 class GoogleAuthManager:
@@ -36,6 +37,8 @@ class GoogleAuthManager:
         store_tokens: bool = False,
         encrypt_tokens: bool = False,
         token_encryption_key: Optional[str] = None,
+        # Multi-user OAuth: enables oauth_google tool, blocks browser fallback
+        enable_multi_user_oauth: bool = False,
     ):
         # --- OAuth credentials ---
         self.client_id = client_id or getenv("GOOGLE_CLIENT_ID")
@@ -50,8 +53,10 @@ class GoogleAuthManager:
         self._db: Optional["BaseDb"] = db
         self._state_secret = state_secret or getenv("GOOGLE_OAUTH_STATE_SECRET")
         self._state_ttl_seconds = state_ttl_seconds
-        # Set True by create_oauth_router() — tells toolkits to block browser fallback
-        self._callback_configured: bool = False
+
+        # --- Multi-user OAuth ---
+        self.enable_multi_user_oauth = enable_multi_user_oauth
+        self._oauth_tool_registered = False  # Set True by first toolkit to register oauth_google
 
         # --- OAuth flow options ---
         self._include_granted_scopes = include_granted_scopes
@@ -76,3 +81,26 @@ class GoogleAuthManager:
         # Union with existing scopes — allows incremental registration
         existing = self._services.get(service, [])
         self._services[service] = list(set(existing) | set(scopes))
+
+    def register_oauth_tool(self, toolkit: "Toolkit") -> bool:
+        """Register oauth_google tool on the given toolkit. Returns True if registered, False if already done."""
+        if not self.enable_multi_user_oauth:
+            return False
+        if self._oauth_tool_registered:
+            return False
+
+        from functools import partial
+
+        from agno.tools.google.oauth import oauth_google
+
+        # Bind auth_config to the function — toolkit passes run_context and agent
+        bound_oauth = partial(oauth_google, self)
+        bound_oauth.__name__ = "oauth_google"
+        bound_oauth.__doc__ = oauth_google.__doc__
+
+        # Add to include_tools if filtering is active
+        if toolkit.include_tools is not None:
+            toolkit.include_tools = list(toolkit.include_tools) + ["oauth_google"]
+        toolkit.register(bound_oauth)
+        self._oauth_tool_registered = True
+        return True
