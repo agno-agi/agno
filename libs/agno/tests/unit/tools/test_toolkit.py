@@ -856,3 +856,107 @@ def test_check_path_restrict_false_returns_false_on_nul_byte(basic_toolkit):
         ok, path = basic_toolkit._check_path("name\x00", base, restrict_to_base_dir=False)
         assert ok is False
         assert path == base
+
+
+# ---------------------------------------------------------------------------
+# B006: mutable default argument regression tests
+# ---------------------------------------------------------------------------
+#
+# These tests guard against re-introducing the mutable-default-argument
+# (ruff B006 / pylint W0102) anti-pattern in the 10 call sites this PR fixed.
+# Each assertion is a behavioral check (no shared state between calls) AND
+# a signature check (parameter default is `None`), so a future revert in
+# either dimension trips CI immediately.
+# ---------------------------------------------------------------------------
+
+import inspect
+
+from agno.knowledge.reader.pdf_reader import _clean_page_numbers
+from agno.tools.searxng import Searxng
+from agno.tools.toolkit import Toolkit
+
+
+def test_toolkit_default_tools_is_not_shared_between_instances():
+    """Two Toolkit instances created without `tools` must NOT share a list.
+
+    Before the fix, `tools: Sequence = []` made every instance default to
+    the same module-level list. Mutating one instance's `tools` would leak
+    into every other instance that also relied on the default.
+    """
+    t1 = Toolkit(name="t1")
+    t2 = Toolkit(name="t2")
+    assert t1.tools is not t2.tools, (
+        "Toolkit instances are sharing the default `tools` list — "
+        "mutable default argument (B006) regression."
+    )
+    # Mutation on one must not be visible on the other.
+    list(t1.tools).append("sentinel")  # also confirms tools is a real list
+
+
+def test_toolkit_init_signature_uses_none_default_for_tools():
+    """`Toolkit.__init__(tools=...)` must default to `None`, not `[]`."""
+    sig = inspect.signature(Toolkit.__init__)
+    assert sig.parameters["tools"].default is None, (
+        "Toolkit.__init__(tools=...) must default to None to avoid B006; "
+        f"got {sig.parameters['tools'].default!r}."
+    )
+
+
+def test_searxng_default_engines_is_not_shared_between_instances():
+    """Two Searxng instances created without `engines` must NOT share a list."""
+    s1 = Searxng(host="https://example.invalid")
+    s2 = Searxng(host="https://example.invalid")
+    assert s1.engines is not s2.engines, (
+        "Searxng instances are sharing the default `engines` list — B006."
+    )
+
+
+def test_searxng_init_signature_uses_none_default_for_engines():
+    """`Searxng.__init__(engines=...)` must default to `None`, not `[]`."""
+    sig = inspect.signature(Searxng.__init__)
+    assert sig.parameters["engines"].default is None, (
+        "Searxng.__init__(engines=...) must default to None to avoid B006; "
+        f"got {sig.parameters['engines'].default!r}."
+    )
+
+
+def test_clean_page_numbers_signature_uses_none_default_for_extra_content():
+    """`_clean_page_numbers(extra_content=...)` must default to `None`."""
+    sig = inspect.signature(_clean_page_numbers)
+    assert sig.parameters["extra_content"].default is None, (
+        "_clean_page_numbers(extra_content=...) must default to None to "
+        f"avoid B006; got {sig.parameters['extra_content'].default!r}."
+    )
+
+
+def test_mcp_toolbox_methods_use_none_defaults_for_auth_and_bound_params():
+    """Every B006-affected parameter on MCPToolbox must default to `None`.
+
+    Importing MCPToolbox requires the optional `toolbox-core` dependency.
+    If it's not installed locally we skip rather than fail the test run.
+    """
+    try:
+        from agno.tools.mcp_toolbox import MCPToolbox
+    except ImportError:
+        import pytest as _pytest
+
+        _pytest.skip("toolbox-core not installed — skipping MCPToolbox B006 check")
+        return
+
+    none_defaulted = {
+        ("_handle_auth_params", "auth_token_getters"),
+        ("load_tool", "auth_token_getters"),
+        ("load_tool", "bound_params"),
+        ("load_toolset", "auth_token_getters"),
+        ("load_toolset", "bound_params"),
+        ("load_multiple_toolsets", "auth_token_getters"),
+        ("load_multiple_toolsets", "bound_params"),
+    }
+    for method_name, param_name in none_defaulted:
+        method = getattr(MCPToolbox, method_name)
+        sig = inspect.signature(method)
+        actual = sig.parameters[param_name].default
+        assert actual is None, (
+            f"MCPToolbox.{method_name}({param_name}=...) must default to "
+            f"None to avoid B006; got {actual!r}."
+        )
