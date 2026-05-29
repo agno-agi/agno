@@ -10,10 +10,12 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from agno.agent.agent import Agent
+from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import AgentOSConfig, ChatConfig, Manifest
-from agno.os.schema import ConfigResponse
+from agno.os.schema import AgentSummaryResponse, ConfigResponse, TeamSummaryResponse
 from agno.os.utils import load_yaml_config
+from agno.team.team import Team
 
 
 class TestManifest:
@@ -37,15 +39,11 @@ class TestManifest:
         m = Manifest(labels=["beta", "internal"])
         assert m.labels == ["beta", "internal"]
 
-    def test_labels_as_dict(self):
-        m = Manifest(labels={"env": "prod", "team": "growth"})
-        assert m.labels == {"env": "prod", "team": "growth"}
-
-    def test_labels_reject_invalid_shape(self):
+    def test_labels_reject_non_list(self):
+        with pytest.raises(ValidationError):
+            Manifest(labels={"env": "prod"})
         with pytest.raises(ValidationError):
             Manifest(labels=123)
-        with pytest.raises(ValidationError):
-            Manifest(labels=[1, 2, 3])
 
     def test_quick_prompts_cap_enforced(self):
         with pytest.raises(ValidationError, match="Too many quick prompts"):
@@ -71,15 +69,15 @@ class TestAgentOSConfigManifestField:
             manifest={
                 "marketing-agent": Manifest(
                     description="Plans and runs marketing campaigns.",
-                    labels=["beta"],
+                    labels=["beta", "marketing"],
                     quick_prompts=["What can you do?"],
                 ),
-                "support-team": Manifest(labels={"env": "prod"}),
+                "support-team": Manifest(labels=["prod", "support"]),
             },
         )
         assert cfg.manifest["marketing-agent"].description == "Plans and runs marketing campaigns."
-        assert cfg.manifest["marketing-agent"].labels == ["beta"]
-        assert cfg.manifest["support-team"].labels == {"env": "prod"}
+        assert cfg.manifest["marketing-agent"].labels == ["beta", "marketing"]
+        assert cfg.manifest["support-team"].labels == ["prod", "support"]
 
     def test_manifest_from_yaml(self):
         raw = yaml.safe_load(
@@ -93,9 +91,7 @@ class TestAgentOSConfigManifestField:
                   - "Latest post?"
               support-team:
                 description: "Triages support tickets."
-                labels:
-                  env: "prod"
-                  team: "growth"
+                labels: ["prod", "support"]
             """
         )
         cfg = AgentOSConfig(**raw)
@@ -103,7 +99,7 @@ class TestAgentOSConfigManifestField:
         assert m.description == "Plans and runs marketing campaigns."
         assert m.labels == ["beta", "marketing"]
         assert m.quick_prompts == ["What can you do?", "Latest post?"]
-        assert cfg.manifest["support-team"].labels == {"env": "prod", "team": "growth"}
+        assert cfg.manifest["support-team"].labels == ["prod", "support"]
 
     def test_manifest_quick_prompts_cap_via_yaml(self):
         raw = yaml.safe_load(
@@ -183,14 +179,12 @@ class TestConfigResponseExposesManifest:
         dumped = resp.model_dump(exclude_none=True)
         assert "manifest" not in dumped
 
-    def test_response_round_trips_labels_dict(self):
-        # The dict-shape for labels must survive a JSON round-trip alongside the list shape.
+    def test_response_round_trips_labels(self):
         resp = ConfigResponse(
             os_id="test-os",
             databases=[],
             manifest={
-                "support-team": Manifest(labels={"env": "prod", "team": "growth"}),
-                "marketing-agent": Manifest(labels=["beta"]),
+                "marketing-agent": Manifest(labels=["beta", "marketing"]),
             },
             agents=[],
             teams=[],
@@ -198,8 +192,7 @@ class TestConfigResponseExposesManifest:
             interfaces=[],
         )
         rebuilt = ConfigResponse(**json.loads(resp.model_dump_json()))
-        assert rebuilt.manifest["support-team"].labels == {"env": "prod", "team": "growth"}
-        assert rebuilt.manifest["marketing-agent"].labels == ["beta"]
+        assert rebuilt.manifest["marketing-agent"].labels == ["beta", "marketing"]
 
 
 class TestLoadYamlConfig:
@@ -214,9 +207,7 @@ class TestLoadYamlConfig:
                     quick_prompts:
                       - "What can you do?"
                   support-team:
-                    labels:
-                      env: "prod"
-                      team: "growth"
+                    labels: ["prod", "support"]
                 """
             )
             path = f.name
@@ -224,7 +215,7 @@ class TestLoadYamlConfig:
             cfg = load_yaml_config(path)
             assert cfg.manifest["marketing-agent"].description == "Plans campaigns."
             assert cfg.manifest["marketing-agent"].labels == ["beta", "marketing"]
-            assert cfg.manifest["support-team"].labels == {"env": "prod", "team": "growth"}
+            assert cfg.manifest["support-team"].labels == ["prod", "support"]
         finally:
             Path(path).unlink()
 
@@ -241,7 +232,7 @@ class TestConfigEndpointSerialization:
         )
         return TestClient(os_instance.get_app())
 
-    def test_manifest_serialized_with_list_labels(self):
+    def test_manifest_serialized_with_labels(self):
         client = self._build_client(
             {
                 "marketing-agent": Manifest(
@@ -261,13 +252,6 @@ class TestConfigEndpointSerialization:
             "quick_prompts": ["What can you do?"],
         }
 
-    def test_manifest_serialized_with_dict_labels(self):
-        client = self._build_client({"marketing-agent": Manifest(labels={"env": "prod", "team": "growth"})})
-        resp = client.get("/config")
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["manifest"]["marketing-agent"]["labels"] == {"env": "prod", "team": "growth"}
-
     def test_manifest_absent_from_response_when_unset(self):
         agent = Agent(name="Marketing Agent", id="marketing-agent", telemetry=False)
         os_instance = AgentOS(agents=[agent], telemetry=False)
@@ -276,3 +260,70 @@ class TestConfigEndpointSerialization:
         assert resp.status_code == 200
         # response_model_exclude_none=True on the route - so None manifest is omitted.
         assert "manifest" not in resp.json()
+
+
+class TestAgentSummaryModelField:
+    def test_from_agent_extracts_model(self):
+        agent = Agent(
+            name="Marketing Agent",
+            id="marketing-agent",
+            model=OpenAIChat(id="gpt-4o"),
+            telemetry=False,
+        )
+        summary = AgentSummaryResponse.from_agent(agent)
+        assert summary.model is not None
+        assert summary.model.id == "gpt-4o"
+        assert summary.model.provider == "OpenAI"
+
+    def test_from_agent_handles_missing_model(self):
+        agent = Agent(name="Marketing Agent", id="marketing-agent", telemetry=False)
+        summary = AgentSummaryResponse.from_agent(agent)
+        assert summary.model is None
+
+    def test_config_endpoint_exposes_agent_model(self):
+        agent = Agent(
+            name="Marketing Agent",
+            id="marketing-agent",
+            model=OpenAIChat(id="gpt-4o"),
+            telemetry=False,
+        )
+        os_instance = AgentOS(agents=[agent], telemetry=False)
+        client = TestClient(os_instance.get_app())
+        body = client.get("/config").json()
+        assert body["agents"][0]["model"] == {"id": "gpt-4o", "provider": "OpenAI"}
+
+
+class TestTeamSummaryModelField:
+    def test_from_team_extracts_model(self):
+        member = Agent(name="Member", id="member", telemetry=False)
+        team = Team(
+            name="Support Team",
+            id="support-team",
+            members=[member],
+            model=OpenAIChat(id="gpt-4o-mini"),
+            telemetry=False,
+        )
+        summary = TeamSummaryResponse.from_team(team)
+        assert summary.model is not None
+        assert summary.model.id == "gpt-4o-mini"
+        assert summary.model.provider == "OpenAI"
+
+    def test_from_team_handles_missing_model(self):
+        member = Agent(name="Member", id="member", telemetry=False)
+        team = Team(name="Support Team", id="support-team", members=[member], telemetry=False)
+        summary = TeamSummaryResponse.from_team(team)
+        assert summary.model is None
+
+    def test_config_endpoint_exposes_team_model(self):
+        member = Agent(name="Member", id="member-2", telemetry=False)
+        team = Team(
+            name="Support Team",
+            id="support-team",
+            members=[member],
+            model=OpenAIChat(id="gpt-4o-mini"),
+            telemetry=False,
+        )
+        os_instance = AgentOS(teams=[team], telemetry=False)
+        client = TestClient(os_instance.get_app())
+        body = client.get("/config").json()
+        assert body["teams"][0]["model"] == {"id": "gpt-4o-mini", "provider": "OpenAI"}

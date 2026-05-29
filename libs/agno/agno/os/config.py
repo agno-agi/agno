@@ -1,6 +1,6 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Dict, Generic, List, Optional, TypeVar, Union
+from typing import Dict, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -156,7 +156,7 @@ class Manifest(BaseModel):
     """
 
     description: Optional[str] = None
-    labels: Optional[Union[List[str], Dict[str, str]]] = None
+    labels: Optional[List[str]] = None
     quick_prompts: Optional[List[str]] = None
 
     @field_validator("quick_prompts")
