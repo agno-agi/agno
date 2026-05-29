@@ -1,5 +1,6 @@
 """Unit tests for Toolkit class."""
 
+import inspect
 import sys
 import tempfile
 from pathlib import Path
@@ -7,8 +8,10 @@ from pathlib import Path
 import pytest
 
 from agno.agent import Agent
+from agno.knowledge.reader.pdf_reader import _clean_page_numbers
 from agno.tools import Toolkit, tool
 from agno.tools.function import Function, FunctionCall
+from agno.tools.searxng import Searxng
 
 
 def example_func(a: int, b: int) -> int:
@@ -998,12 +1001,6 @@ def test_explicit_tools_argument_preserved():
 # a signature check (parameter default is `None`), so a future revert in
 # either dimension trips CI immediately.
 # ---------------------------------------------------------------------------
-
-import inspect
-
-from agno.knowledge.reader.pdf_reader import _clean_page_numbers
-from agno.tools.searxng import Searxng
-from agno.tools.toolkit import Toolkit
 
 
 def test_toolkit_default_tools_is_not_shared_between_instances():
