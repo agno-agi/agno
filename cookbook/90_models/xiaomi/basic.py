@@ -2,7 +2,15 @@
 Xiaomi MiMo Basic
 =================
 
-Cookbook example for `xiaomi/basic.py`.
+The minimal MiMo agent, run four ways: sync, sync + streaming, async, and
+async + streaming. Start here to confirm your `MIMO_API_KEY` works.
+
+Get an API key:
+    Sign in with a Xiaomi account (register at https://id.mi.com if you don't
+    have one), then create a key in the console at https://platform.xiaomimimo.com
+    under "API Keys", and export it:
+
+        export MIMO_API_KEY=***
 """
 
 import asyncio

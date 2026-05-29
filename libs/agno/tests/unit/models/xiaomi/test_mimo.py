@@ -45,10 +45,10 @@ def test_mimo_default_values():
     assert model.provider == "Xiaomi MiMo"
 
 
-def test_mimo_thinking_request_param_merges_extra_body():
+def test_mimo_use_thinking_true_merges_extra_body():
     model = MiMo(
         api_key="test-api-key",
-        thinking={"type": "enabled"},
+        use_thinking=True,
         extra_body={"custom": "value"},
     )
 
@@ -58,6 +58,35 @@ def test_mimo_thinking_request_param_merges_extra_body():
         "custom": "value",
         "thinking": {"type": "enabled"},
     }
+
+
+def test_mimo_use_thinking_false_sends_disabled_flag():
+    model = MiMo(api_key="test-api-key", use_thinking=False)
+
+    request_params = model.get_request_params()
+
+    assert request_params["extra_body"]["thinking"] == {"type": "disabled"}
+
+
+def test_mimo_use_thinking_none_sends_no_flag():
+    model = MiMo(api_key="test-api-key")
+
+    request_params = model.get_request_params()
+
+    assert "thinking" not in (request_params.get("extra_body") or {})
+
+
+def test_mimo_use_thinking_does_not_overwrite_explicit_extra_body():
+    model = MiMo(
+        api_key="test-api-key",
+        use_thinking=True,
+        extra_body={"thinking": {"type": "disabled"}},
+    )
+
+    request_params = model.get_request_params()
+
+    # An explicit thinking setting in extra_body takes precedence over the flag.
+    assert request_params["extra_body"]["thinking"] == {"type": "disabled"}
 
 
 def test_mimo_formats_reasoning_content_for_assistant_history():

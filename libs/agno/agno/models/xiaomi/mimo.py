@@ -16,13 +16,19 @@ class MiMo(OpenAILike):
     """
     A class for interacting with Xiaomi MiMo models.
 
+    Thinking mode is controlled with the ``use_thinking`` flag:
+    - ``use_thinking=None`` (default): the thinking flag is not sent, so the API
+      uses its own default for the model.
+    - ``use_thinking=True``: force thinking on (the model returns ``reasoning_content``).
+    - ``use_thinking=False``: force thinking off (faster, cheaper responses).
+
     Attributes:
         id (str): The model id. Defaults to "mimo-v2.5-pro".
         name (str): The model name. Defaults to "MiMo".
         provider (str): The provider name. Defaults to "Xiaomi MiMo".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.xiaomimimo.com/v1".
-        thinking (Optional[Dict[str, Any]]): MiMo thinking configuration, e.g. {"type": "enabled"}.
+        use_thinking (Optional[bool]): Toggle thinking mode. None uses the model default.
     """
 
     id: str = "mimo-v2.5-pro"
@@ -32,8 +38,11 @@ class MiMo(OpenAILike):
     api_key: Optional[str] = field(default_factory=lambda: getenv("MIMO_API_KEY"))
     base_url: str = "https://api.xiaomimimo.com/v1"
 
-    thinking: Optional[Dict[str, Any]] = None
+    # Toggle thinking mode. None = use the model default, True = force on, False = force off.
+    use_thinking: Optional[bool] = None
 
+    # MiMo supports JSON mode (response_format={"type": "json_object"}) but not
+    # native/json_schema structured outputs, so output_schema needs use_json_mode=True.
     supports_native_structured_outputs: bool = False
 
     def _get_client_params(self) -> Dict[str, Any]:
@@ -61,10 +70,17 @@ class MiMo(OpenAILike):
             run_response=run_response,
         )
 
-        if self.thinking is not None:
-            extra_body = dict(request_params.get("extra_body") or {})
-            extra_body["thinking"] = self.thinking
+        if self.use_thinking is not None:
+            # Merge with any user-supplied extra_body and never overwrite an explicit
+            # thinking setting (so a raw extra_body override still takes precedence).
+            extra_body = request_params.get("extra_body") or {}
+            mode = "enabled" if self.use_thinking else "disabled"
+            extra_body.setdefault("thinking", {"type": mode})
             request_params["extra_body"] = extra_body
+
+            # With thinking off, reasoning_effort has no effect, so strip it.
+            if not self.use_thinking:
+                request_params.pop("reasoning_effort", None)
 
         return request_params
 
@@ -75,8 +91,3 @@ class MiMo(OpenAILike):
             message_dict["reasoning_content"] = message.reasoning_content
 
         return message_dict
-
-    def to_dict(self) -> Dict[str, Any]:
-        model_dict = super().to_dict()
-        model_dict.update({"thinking": self.thinking})
-        return {k: v for k, v in model_dict.items() if v is not None}
