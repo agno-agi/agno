@@ -61,24 +61,7 @@ class GoogleAuthManager:
         self._services[service] = list(set(existing) | set(scopes))
 
     def handle_oauth_callback(self, code: str, state: str, db: "BaseDb") -> Dict[str, Any]:
-        """Exchange an OAuth authorization code for credentials and store in DB.
-
-        Called by the /google/oauth/callback endpoint after Google redirects.
-        The db is captured by the router closure at mount time — no process-local
-        registry needed, works across workers and restarts.
-
-        PKCE flow: The code_verifier is retrieved from the DB (stored during
-        authenticate_google), verified via state_id, and used for token exchange.
-        The verifier never appears in URLs or JWTs — only the state_id reference.
-
-        Args:
-            code: Authorization code from Google's redirect.
-            state: HMAC-signed JWT carrying user_id, services, and state_id.
-            db: Database handle for token persistence (captured by router closure).
-
-        Returns:
-            Dict with status, user_id, and services that were authorized.
-        """
+        """Exchange OAuth authorization code for credentials and persist to DB."""
         try:
             import jwt
         except ImportError:
@@ -186,22 +169,7 @@ class GoogleAuthManager:
         return {"status": "ok", "user_id": user_id, "services": services}
 
     def get_oauth_router(self, db: Optional["BaseDb"] = None) -> Any:
-        """Create a FastAPI APIRouter with the /google/oauth/callback endpoint.
-
-        Calling this marks GoogleAuth as "interface mode" — toolkits will raise
-        PermissionError on token miss so the LLM can surface an OAuth URL, rather
-        than falling through to a local browser flow.
-
-        The db is captured in the router closure at mount time — no process-local
-        registry needed, works across workers and container restarts.
-
-        Args:
-            db: Database for token persistence. Falls back to GoogleAuth(db=...).
-
-        Usage:
-            google_auth = GoogleAuth(client_id="...")
-            app.include_router(google_auth.get_oauth_router(db=agent.db))
-        """
+        """Create FastAPI router with /google/oauth/callback endpoint."""
         if not self._state_secret:
             raise RuntimeError(
                 "GOOGLE_OAUTH_STATE_SECRET is required for OAuth callback security. "
