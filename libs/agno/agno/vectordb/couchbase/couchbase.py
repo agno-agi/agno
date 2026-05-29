@@ -749,7 +749,7 @@ class CouchbaseSearch(VectorDb):
                     collection_name=self.collection_name, scope_name=self.scope_name
                 )
                 logger.info(f"Successfully dropped collection '{self.collection_name}'.")
-                time.sleep(1)  # Brief wait after drop, as in original code
+                await asyncio.sleep(1)  # Brief wait after drop, as in original code
             except CollectionNotFoundException:
                 logger.info(
                     f"Collection '{self.collection_name}' not found in scope '{self.scope_name}'. No need to drop."

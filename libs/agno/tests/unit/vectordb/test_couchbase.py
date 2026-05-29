@@ -627,6 +627,30 @@ async def test_async_create(couchbase_fts):
 
 
 @pytest.mark.asyncio
+async def test_async_create_collection_with_overwrite_uses_non_blocking_sleep(couchbase_fts_overwrite):
+    collection_manager = Mock()
+    collection_manager.create_scope = AsyncMock()
+    collection_manager.drop_collection = AsyncMock()
+    collection_manager.create_collection = AsyncMock()
+
+    async_bucket = Mock()
+    async_bucket.collections.return_value = collection_manager
+
+    with (
+        patch.object(couchbase_fts_overwrite, "get_async_bucket", AsyncMock(return_value=async_bucket)),
+        patch("agno.vectordb.couchbase.couchbase.asyncio.sleep", new_callable=AsyncMock) as sleep,
+        patch("agno.vectordb.couchbase.couchbase.time.sleep") as blocking_sleep,
+    ):
+        await couchbase_fts_overwrite._async_create_collection_and_scope()
+
+    collection_manager.drop_collection.assert_awaited_once_with(
+        collection_name=couchbase_fts_overwrite.collection_name, scope_name=couchbase_fts_overwrite.scope_name
+    )
+    sleep.assert_awaited_once_with(1)
+    blocking_sleep.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_async_id_exists(couchbase_fts):
     """Test the async_id_exists method."""
     mock_collection_inst = AsyncMock(spec=AsyncCollection)
