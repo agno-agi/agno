@@ -1,10 +1,18 @@
 import json
+import sys
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from slack_sdk.errors import SlackApiError
 
 from agno.tools.slack import SlackTools
+
+
+def _make_slack_tools_with_output_dir(output_dir: str) -> SlackTools:
+    """Build SlackTools with a fake token for unit-testing _save_file_to_disk."""
+    return SlackTools(token="fake-token-for-tests", output_directory=output_dir, save_downloads=True)
 
 
 @pytest.fixture
@@ -164,7 +172,10 @@ def test_upload_file_bytes(slack_tools):
     assert slack_tools.client.files_upload_v2.call_args[1]["content"] == b"bytes"
 
 
-def test_download_file_base64(slack_tools):
+def test_download_file_saves_to_disk(slack_tools, tmp_path):
+    """Download saves file to output_directory when save_downloads=True."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.save_downloads = True
     slack_tools.client.files_info.return_value = {
         "file": {"id": "F1", "name": "f.txt", "size": 10, "url_private": "https://files.slack.com/f.txt"}
     }
@@ -172,7 +183,64 @@ def test_download_file_base64(slack_tools):
         mock_get.return_value.content = b"data"
         mock_get.return_value.raise_for_status = Mock()
         result = slack_tools.download_file("F1")
-        assert "content_base64" in json.loads(result)
+        parsed = json.loads(result)
+        assert "path" in parsed
+        assert (tmp_path / "f.txt").exists()
+
+
+def test_upload_file_rejected_on_dangerous_filename(slack_tools, tmp_path):
+    """Dangerous filename aborts the upload — Slack never sees the raw name."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
+    result = slack_tools.upload_file("C1", b"data", "evil\x00name.bin")
+    parsed = json.loads(result)
+    assert "error" in parsed
+    assert "Invalid filename" in parsed["error"]
+    slack_tools.client.files_upload_v2.assert_not_called()
+
+
+def test_upload_file_sanitizes_filename_for_slack(slack_tools, tmp_path):
+    """Path components in the filename are stripped before reaching Slack."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
+    result = slack_tools.upload_file("C1", b"data", "subdir/../report.bin")
+    parsed = json.loads(result)
+    assert parsed["ok"] is True
+    assert slack_tools.client.files_upload_v2.call_args[1]["filename"] == "report.bin"
+
+
+def test_download_file_dest_path_traversal_falls_back_to_base64(slack_tools, tmp_path):
+    """Test that download_file falls back to base64 when dest_path traversal fails."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.save_downloads = True
+    slack_tools.client.files_info.return_value = {
+        "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
+    }
+    with patch("agno.tools.slack.httpx.get") as mock_get:
+        mock_get.return_value.content = b"data"
+        mock_get.return_value.raise_for_status = Mock()
+        result = slack_tools.download_file("F1", dest_path="../../escape.bin")
+        parsed = json.loads(result)
+        assert "save_error" in parsed
+        assert "resolves outside" in parsed["save_error"]
+        assert "content_base64" in parsed
+
+
+def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tools, tmp_path):
+    """Test that download_file accepts a legitimate subdir in dest_path."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.save_downloads = True
+    slack_tools.client.files_info.return_value = {
+        "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
+    }
+    (tmp_path / "subdir").mkdir()
+    with patch("agno.tools.slack.httpx.get") as mock_get:
+        mock_get.return_value.content = b"data"
+        mock_get.return_value.raise_for_status = Mock()
+        result = slack_tools.download_file("F1", dest_path="subdir/foo.bin")
+        parsed = json.loads(result)
+        assert "path" in parsed
+        assert (tmp_path / "subdir" / "foo.bin").read_bytes() == b"data"
 
 
 # === Extended Tools ===
@@ -388,3 +456,79 @@ def test_build_instructions_never_references_disabled_tools():
     # search_messages without search_workspace — should NOT mention "unavailable"
     result = SlackTools._build_instructions(["search_messages", "get_channel_history"])
     assert "unavailable" not in result
+
+
+# === Path safety (_save_file_to_disk) ===
+
+
+def test_save_file_traversal_filename_lands_inside_output_dir():
+    """Traversal '../../escape' is sanitized via safe_join_filename; file lands inside output_directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = _make_slack_tools_with_output_dir(tmp_dir)
+        path, error = tool._save_file_to_disk(b"payload", "../../escape.bin")
+        assert path == str((Path(tmp_dir) / "escape.bin").resolve())
+        assert error is None
+        assert (Path(tmp_dir) / "escape.bin").exists()
+        assert not (Path(tmp_dir).parent / "escape.bin").exists()
+
+
+def test_save_file_absolute_path_lands_inside_output_dir():
+    """Absolute paths are stripped to bare filename via safe_join_filename; file lands inside output_directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = _make_slack_tools_with_output_dir(tmp_dir)
+        path, error = tool._save_file_to_disk(b"payload", "/tmp/test_slack_abs_xyz.bin")
+        assert path is not None
+        assert error is None
+        assert (Path(tmp_dir) / "test_slack_abs_xyz.bin").exists()
+        assert not Path("/tmp/test_slack_abs_xyz.bin").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_save_file_symlink_escape_returns_none():
+    """A symlink inside output_dir pointing outside is dropped — no write, returns error."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        outside = Path(tmp_dir) / "outside"
+        outside.mkdir()
+        inside = Path(tmp_dir) / "inside"
+        inside.mkdir()
+        try:
+            (inside / "escape").symlink_to(outside)
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        tool = _make_slack_tools_with_output_dir(str(inside))
+        path, error = tool._save_file_to_disk(b"payload", "escape")
+        assert path is None
+        assert error is not None
+
+
+def test_save_file_control_char_filename_returns_none():
+    """Control characters in the filename cause _save_file_to_disk to return error."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = _make_slack_tools_with_output_dir(tmp_dir)
+        path, error = tool._save_file_to_disk(b"payload", "report\x00hacked.bin")
+        assert path is None
+        assert error is not None
+
+
+def test_save_file_normal_filename_saves_correctly():
+    """Happy path: 'report.bin' is written into output_directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = _make_slack_tools_with_output_dir(tmp_dir)
+        path, error = tool._save_file_to_disk(b"payload-bytes", "report.bin")
+        assert path == str((Path(tmp_dir) / "report.bin").resolve())
+        assert error is None
+        assert (Path(tmp_dir) / "report.bin").read_bytes() == b"payload-bytes"
+
+
+def test_save_file_oserror_returns_none(monkeypatch):
+    """OSError is caught and returned as error (disk-full is advisory, not security)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = _make_slack_tools_with_output_dir(tmp_dir)
+
+        def _raise_oserror(self, _data):
+            raise OSError("simulated disk full")
+
+        monkeypatch.setattr(Path, "write_bytes", _raise_oserror)
+        path, error = tool._save_file_to_disk(b"payload", "ok.bin")
+        assert path is None
+        assert error == "simulated disk full"
