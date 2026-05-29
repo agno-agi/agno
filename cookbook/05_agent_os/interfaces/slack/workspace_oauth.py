@@ -30,7 +30,7 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.google.auth import GoogleAuthManager, create_oauth_router
+from agno.tools.google.auth import GoogleAuthConfig, GoogleAuthManager
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -39,13 +39,16 @@ db = SqliteDb(db_file="tmp/slack_workspace_oauth.db")
 
 # Shared auth config — single OAuth consent covers Gmail + Calendar + Drive
 # enable_multi_user_oauth=True registers oauth_google tool and blocks browser fallback
-auth = GoogleAuthManager(
+auth = GoogleAuthConfig(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     redirect_uri=getenv("GOOGLE_REDIRECT_URI"),
-    state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
-    store_tokens=True,
-    enable_multi_user_oauth=True,
+    manager=GoogleAuthManager(
+        db=db,
+        state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+        store_tokens=True,
+        enable_multi_user_oauth=True,
+    ),
 )
 
 agent = Agent(
@@ -79,7 +82,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # Mount OAuth callback router
-app.include_router(create_oauth_router(auth, db=db))
+app.include_router(auth.create_router())
 
 
 if __name__ == "__main__":

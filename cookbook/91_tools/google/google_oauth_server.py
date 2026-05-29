@@ -32,7 +32,7 @@ from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.tools.google.auth import GoogleAuthManager, create_oauth_router
+from agno.tools.google.auth import GoogleAuthConfig, GoogleAuthManager
 from agno.tools.google.gmail import GmailTools
 
 # ---------------------------------------------------------------------------
@@ -45,12 +45,15 @@ db = SqliteDb(db_file="tmp/google_oauth_server.db")
 # Shared Auth Config
 # ---------------------------------------------------------------------------
 
-auth = GoogleAuthManager(
+auth = GoogleAuthConfig(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
-    state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
-    store_tokens=True,
-    enable_multi_user_oauth=True,
+    manager=GoogleAuthManager(
+        db=db,
+        state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+        store_tokens=True,
+        enable_multi_user_oauth=True,
+    ),
 )
 
 # ---------------------------------------------------------------------------
@@ -83,7 +86,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # Mount OAuth callback router
-app.include_router(create_oauth_router(auth, db=db))
+app.include_router(auth.create_router())
 
 # ---------------------------------------------------------------------------
 # Run
