@@ -734,6 +734,9 @@ class RegistryResourceType(str, Enum):
     FUNCTION = "function"
     AGENT = "agent"
     TEAM = "team"
+    KNOWLEDGE = "knowledge"
+    MEMORY_MANAGER = "memory_manager"
+    SESSION_SUMMARY_MANAGER = "session_summary_manager"
 
 
 class CallableMetadata(BaseModel):
@@ -810,6 +813,43 @@ class FunctionMetadata(CallableMetadata):
     pass
 
 
+class KnowledgeMetadata(BaseModel):
+    """Metadata for knowledge registry components."""
+
+    class_path: str = Field(..., description="Full module path to the knowledge class")
+    vector_db_class: Optional[str] = Field(None, description="Class of the vector database used")
+    contents_db_class: Optional[str] = Field(None, description="Class of the contents database used")
+    max_results: Optional[int] = Field(None, description="Maximum search results")
+    num_readers: Optional[int] = Field(None, description="Number of configured readers")
+
+
+class MemoryManagerMetadata(BaseModel):
+    """Metadata for memory manager registry components."""
+
+    class_path: str = Field(..., description="Full module path to the memory manager class")
+    owner_id: Optional[str] = Field(None, description="Id of the agent or team that owns this manager")
+    owner_type: Optional[str] = Field(None, description="Type of owner: 'agent' or 'team'")
+    model_class: Optional[str] = Field(None, description="Class of the model used by the manager")
+    model_id: Optional[str] = Field(None, description="Identifier of the model used by the manager")
+    db_class: Optional[str] = Field(None, description="Class of the database used by the manager")
+    add_memories: Optional[bool] = Field(None, description="Whether the manager can add memories")
+    update_memories: Optional[bool] = Field(None, description="Whether the manager can update memories")
+    delete_memories: Optional[bool] = Field(None, description="Whether the manager can delete memories")
+    clear_memories: Optional[bool] = Field(None, description="Whether the manager can clear memories")
+
+
+class SessionSummaryManagerMetadata(BaseModel):
+    """Metadata for session summary manager registry components."""
+
+    class_path: str = Field(..., description="Full module path to the session summary manager class")
+    owner_id: Optional[str] = Field(None, description="Id of the agent or team that owns this manager")
+    owner_type: Optional[str] = Field(None, description="Type of owner: 'agent' or 'team'")
+    model_class: Optional[str] = Field(None, description="Class of the model used by the manager")
+    model_id: Optional[str] = Field(None, description="Identifier of the model used by the manager")
+    last_n_runs: Optional[int] = Field(None, description="Number of recent runs included in the summary")
+    conversation_limit: Optional[int] = Field(None, description="Max number of messages in summary conversation")
+
+
 # Union of all metadata types for type hints
 RegistryMetadata = Union[
     ToolMetadata,
@@ -818,6 +858,9 @@ RegistryMetadata = Union[
     VectorDbMetadata,
     SchemaMetadata,
     FunctionMetadata,
+    KnowledgeMetadata,
+    MemoryManagerMetadata,
+    SessionSummaryManagerMetadata,
 ]
 
 
