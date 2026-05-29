@@ -432,10 +432,9 @@ def _create_events_from_chunk(
             event_buffer.end_reasoning()
 
     # Handle followup suggestions — emit before RUN_FINISHED so the client can render them
-    elif chunk.event == RunEvent.followups_completed:
-        followups = getattr(chunk, "followups", None)
-        if followups:
-            custom_event = CustomEvent(name="followups", value={"suggestions": followups})
+    elif isinstance(chunk, FollowupsCompletedEvent):
+        if chunk.followups:
+            custom_event = CustomEvent(name="followups", value={"suggestions": chunk.followups})
             events_to_emit.append(custom_event)
 
     # Handle custom events
