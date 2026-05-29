@@ -76,22 +76,20 @@ class GoogleAuthManager:
 
     def persist_token(
         self,
-        db: "BaseDb",
         creds: Any,
         user_id: Optional[str],
-        services_registry: Optional[Dict[str, List[str]]] = None,
     ) -> bool:
         """Upsert Google credentials to DB. Returns True on success."""
         import json
 
         from agno.utils.log import log_debug, log_error
 
-        if db is None:
+        if self._db is None:
             return False
         try:
             token_data: Dict[str, Any] = json.loads(creds.to_json())
-            if services_registry:
-                granted_scopes = sorted({s for scope_list in services_registry.values() for s in scope_list})
+            if self._services:
+                granted_scopes = sorted({s for scope_list in self._services.values() for s in scope_list})
             else:
                 granted_scopes = token_data.get("scopes", [])
 
@@ -100,7 +98,7 @@ class GoogleAuthManager:
 
                 token_data = encrypt_dict(token_data, key=self._token_encryption_key)
 
-            db.upsert_auth_token(
+            self._db.upsert_auth_token(
                 {
                     "provider": "google",
                     "user_id": user_id,

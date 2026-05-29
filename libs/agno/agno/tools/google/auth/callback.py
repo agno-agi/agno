@@ -52,37 +52,35 @@ def create_oauth_router(config: "GoogleAuthConfig") -> APIRouter:
         state = request.query_params.get("state", "")
         if not manager._state_secret:
             return _error_page("State secret not configured")
-        state_data, err = verify_jwt_state(state, manager._state_secret)
-        if err or state_data is None:
+        oauth_state, err = verify_jwt_state(state, manager._state_secret)
+        if err or oauth_state is None:
             return _error_page(err or "Invalid state")
 
-        user_id = state_data.get("user_id")
-        services = state_data.get("services", [])
-        state_id = state_data.get("state_id")
+        # Extract claims from JWT signed during OAuth URL generation
+        user_id = oauth_state.get("user_id")
+        services = oauth_state.get("services", [])
+        pkce_session_id = oauth_state.get("state_id")
 
-        # 2. Verify PKCE
-        if not state_id:
+        # 2. Verify PKCE — prevents intercepted auth codes from being exchanged
+        if not pkce_session_id:
             return _error_page("Invalid state: missing state_id")
-        code_verifier, err = verify_pkce(manager._db, user_id, state_id)
+        # Retrieve secret stored during OAuth URL generation
+        code_verifier, err = verify_pkce(manager._db, user_id, pkce_session_id)
         if err or not code_verifier:
             return _error_page(err or "PKCE verification failed")
 
-        # 3. Build scopes and exchange code for tokens
+        # 3. Build scopes for token request
         scopes, err = build_scopes(config, services)
         if err:
             return _error_page(err)
 
+        # 4. Exchange auth code + PKCE verifier for access/refresh tokens
         creds, err = exchange_code(config, code, code_verifier, scopes)
         if err:
             return _error_page(err)
 
-        # 4. Persist tokens
-        if not manager.persist_token(
-            db=manager._db,
-            creds=creds,
-            user_id=user_id,
-            services_registry=manager._services,
-        ):
+        # 5. Persist tokens to DB
+        if not manager.persist_token(creds=creds, user_id=user_id):
             log_error(f"Token persistence failed for user={user_id}")
             return _error_page("Failed to save token")
 

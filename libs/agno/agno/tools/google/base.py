@@ -169,12 +169,7 @@ class GoogleToolkit(Toolkit):
             try:
                 creds.refresh(Request())
                 if manager:
-                    manager.persist_token(
-                        db=db,
-                        creds=creds,
-                        user_id=user_id,
-                        services_registry=manager._services,
-                    )
+                    manager.persist_token(creds=creds, user_id=user_id)
             except Exception:
                 # Token refresh failed — needs re-authentication
                 return None
@@ -277,7 +272,7 @@ class GoogleToolkit(Toolkit):
                 mgr
                 and mgr._store_tokens
                 and mgr._db
-                and mgr.persist_token(db=mgr._db, creds=creds, user_id=user_id, services_registry=mgr._services)
+                and mgr.persist_token(creds=creds, user_id=user_id)
             ):
                 log_debug(f"{self.google_service_name.title()} credentials saved to DB")
             else:
