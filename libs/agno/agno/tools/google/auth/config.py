@@ -3,7 +3,7 @@ from os import getenv
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth.manager import OAuthConfig
+    from agno.tools.google.auth.oauth_config import OAuthConfig
 
 
 @dataclass

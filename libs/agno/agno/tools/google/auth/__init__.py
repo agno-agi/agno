@@ -5,7 +5,7 @@ from agno.tools.google.auth.decorator import (
     get_current_service,
     google_authenticate,
 )
-from agno.tools.google.auth.manager import OAuthConfig
+from agno.tools.google.auth.oauth_config import OAuthConfig
 
 __all__ = [
     "GoogleAuth",
