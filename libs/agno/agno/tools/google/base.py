@@ -3,11 +3,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import get_current_service, get_token_db, persist_google_token, save_token
+from agno.tools.google.auth import get_current_service
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth import GoogleAuthManager
+    from agno.tools.google.auth import GoogleAuthConfig
 
 
 class GoogleToolkit(Toolkit):
@@ -46,9 +46,12 @@ class GoogleToolkit(Toolkit):
         creds: Optional[Any] = None,
         token_path: Optional[str] = None,
         credentials_path: Optional[str] = None,
+        # New: unified auth config
+        auth: Optional["GoogleAuthConfig"] = None,
+        # Legacy params (use auth= instead)
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        auth_config: Optional["GoogleAuthManager"] = None,
+        auth_config: Optional["GoogleAuthConfig"] = None,
         store_token_in_db: bool = False,
         oauth_port: Optional[int] = 0,
         login_hint: Optional[str] = None,
@@ -60,20 +63,21 @@ class GoogleToolkit(Toolkit):
         self._explicit_creds = creds
         self.token_path = token_path
         self.credentials_path = credentials_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.auth_config = auth_config
-        self.store_token_in_db = store_token_in_db
-        self._db: Optional[Any] = None
         self.oauth_port = oauth_port
-        self.login_hint = login_hint
 
-        if self.auth_config and self.google_service_name:
-            self.auth_config.register_service(self.google_service_name, self.scopes)
+        # Normalize auth config: auth= takes precedence over auth_config=
+        self._auth = auth or auth_config
 
-        # Register oauth_google tool once when multi-user OAuth is enabled
-        if self.auth_config:
-            self.auth_config.register_oauth_tool(self)
+        # Legacy params — only used if no auth config provided
+        self._legacy_service_account_path = service_account_path
+        self._legacy_delegated_user = delegated_user
+        self._legacy_login_hint = login_hint
+        self._legacy_store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
+
+        # Register service scopes with manager
+        if self._auth and self._auth.manager and self.google_service_name:
+            self._auth.manager.register_service(self.google_service_name, self.scopes)
 
     @property
     def service(self) -> Any:
@@ -86,6 +90,18 @@ class GoogleToolkit(Toolkit):
 
         return build(self.api_name, self.api_version, credentials=creds)
 
+    def _get_service_account_path(self) -> Optional[str]:
+        """Resolve service account path from auth config or legacy params."""
+        if self._auth:
+            return self._auth.service_account_path
+        return self._legacy_service_account_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+
+    def _get_delegated_user(self) -> Optional[str]:
+        """Resolve delegated user from auth config or legacy params."""
+        if self._auth:
+            return self._auth.delegated_user
+        return self._legacy_delegated_user or os.getenv("GOOGLE_DELEGATED_USER")
+
     def _get_service_account_creds(self, service_account_path: str) -> Any:
         """Build service account credentials.
 
@@ -94,11 +110,7 @@ class GoogleToolkit(Toolkit):
         from google.auth.transport.requests import Request
         from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
-        delegated_user = (
-            self.delegated_user
-            or (self.auth_config._delegated_user if self.auth_config else None)
-            or os.getenv("GOOGLE_DELEGATED_USER")
-        )
+        delegated_user = self._get_delegated_user()
 
         if self.require_delegated_user_for_service_account and not delegated_user:
             raise ValueError(
@@ -144,9 +156,9 @@ class GoogleToolkit(Toolkit):
 
         try:
             token_data = row["token_data"]
+            manager = self._auth.manager if self._auth else None
             if is_encrypted(token_data):
-                auth_config = getattr(self, "auth_config", None)
-                key = auth_config._token_encryption_key if auth_config else None
+                key = manager._token_encryption_key if manager else None
                 token_data = decrypt_dict(token_data, key=key)
             effective_scopes = row.get("granted_scopes") or self.scopes
             creds = Credentials.from_authorized_user_info(token_data, effective_scopes)
@@ -156,15 +168,15 @@ class GoogleToolkit(Toolkit):
         if creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                # Use db directly — no need to re-lookup via get_token_db
-                persist_google_token(
-                    db=db,
-                    creds=creds,
-                    user_id=user_id,
-                    services_registry=auth_config._services if auth_config else None,
-                    auth_config=auth_config,
-                )
+                if manager:
+                    manager.persist_token(
+                        db=db,
+                        creds=creds,
+                        user_id=user_id,
+                        services_registry=manager._services,
+                    )
             except Exception:
+                # Token refresh failed — needs re-authentication
                 return None
 
         return creds if creds.valid else None
@@ -177,27 +189,25 @@ class GoogleToolkit(Toolkit):
 
         user_id = getattr(run_context, "user_id", None) if run_context else None
 
-        # 1. Explicit creds from constructor (single-user mode only)
-        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
+        # 1. Explicit creds from constructor (when multi-user OAuth is not enabled)
+        multi_user_mode = self._auth and self._auth.enable_multi_user_oauth
+        if self._explicit_creds and self._explicit_creds.valid and not multi_user_mode:
             return self._explicit_creds
 
         # 2. Service account (never stored in DB)
-        service_account_path = (
-            self.service_account_path
-            or (self.auth_config._service_account_path if self.auth_config else None)
-            or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        )
+        service_account_path = self._get_service_account_path()
         if service_account_path:
             return self._get_service_account_creds(service_account_path)
 
         # 3. DB lookup
-        db = get_token_db(self, agent=agent)
+        manager = self._auth.manager if self._auth else None
+        db = manager._db if manager and manager._store_tokens else None
         if db:
             creds = self._load_from_db(db, user_id)
             if creds:
                 return creds
             # Multi-user mode: users authenticate via OAuth URL, no browser fallback
-            if self.auth_config and self.auth_config.enable_multi_user_oauth:
+            if multi_user_mode:
                 raise PermissionError(
                     f"{self.google_service_name.title()} not authenticated — user must complete OAuth via oauth_google"
                 )
@@ -224,20 +234,26 @@ class GoogleToolkit(Toolkit):
             return creds
 
         # 5. Interactive OAuth (local only)
-        if self.auth_config is not None and self.auth_config._services:
-            consent_scopes = sorted({s for scope_list in self.auth_config._services.values() for s in scope_list})
+        manager = self._auth.manager if self._auth else None
+        if manager and manager._services:
+            consent_scopes = sorted({s for scope_list in manager._services.values() for s in scope_list})
         else:
             consent_scopes = self.scopes
 
+        # Build client config from auth config or env vars
+        client_id = self._auth.client_id if self._auth else os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = self._auth.client_secret if self._auth else os.getenv("GOOGLE_CLIENT_SECRET")
+        redirect_uri = self._auth.redirect_uri if self._auth else os.getenv("GOOGLE_REDIRECT_URI", "http://localhost")
+
         client_config = {
             "installed": {
-                "client_id": os.getenv("GOOGLE_CLIENT_ID"),
-                "client_secret": os.getenv("GOOGLE_CLIENT_SECRET"),
+                "client_id": client_id,
+                "client_secret": client_secret,
                 "project_id": os.getenv("GOOGLE_PROJECT_ID"),
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "redirect_uris": [os.getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
+                "redirect_uris": [redirect_uri],
             }
         }
         if creds_file.exists():
@@ -246,15 +262,23 @@ class GoogleToolkit(Toolkit):
             flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
 
         oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-        if self.login_hint:
-            oauth_kwargs["login_hint"] = self.login_hint
-        if self.auth_config and self.auth_config._hosted_domain:
-            oauth_kwargs["hd"] = self.auth_config._hosted_domain
+        login_hint = self._auth.login_hint if self._auth else self._legacy_login_hint
+        if login_hint:
+            oauth_kwargs["login_hint"] = login_hint
+        hosted_domain = self._auth.hosted_domain if self._auth else None
+        if hosted_domain:
+            oauth_kwargs["hd"] = hosted_domain
         creds = flow.run_local_server(port=self.oauth_port or 0, **oauth_kwargs)
 
         # Save to DB or file
         if creds and creds.valid:
-            if save_token(self, creds, user_id=user_id, agent=agent):
+            mgr = self._auth.manager if self._auth else None
+            if (
+                mgr
+                and mgr._store_tokens
+                and mgr._db
+                and mgr.persist_token(db=mgr._db, creds=creds, user_id=user_id, services_registry=mgr._services)
+            ):
                 log_debug(f"{self.google_service_name.title()} credentials saved to DB")
             else:
                 token_file.write_text(creds.to_json())

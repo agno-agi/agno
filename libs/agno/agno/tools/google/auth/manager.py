@@ -1,52 +1,116 @@
-"""OAuth configuration for Google toolkits.
-
-GoogleAuthManager holds config and scope registry.
-Callback handling lives in callback.py.
-"""
-
+from dataclasses import dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
-    from agno.tools import Toolkit
+
+
+@dataclass
+class GoogleAuthConfig:
+    """Google API credentials configuration.
+
+    Pure data class — holds GCP credentials and OAuth flow options.
+    Pass to toolkits directly for simple use cases, or nest a GoogleAuthManager
+    inside for multi-user OAuth, DB token storage, and encryption.
+
+    Authentication modes:
+    1. OAuth (client_id + client_secret) — for user-facing apps
+    2. Service account (service_account_path) — for server-to-server auth
+
+    Example — Local dev (env vars):
+        config = GoogleAuthConfig()
+        agent = Agent(tools=[GmailTools(auth=config)])
+
+    Example — Service account:
+        config = GoogleAuthConfig(
+            service_account_path="/path/to/sa.json",
+            delegated_user="admin@company.com",
+        )
+        agent = Agent(tools=[GmailTools(auth=config)])
+
+    Example — Multi-user OAuth with DB:
+        config = GoogleAuthConfig(
+            client_id=getenv("GOOGLE_CLIENT_ID"),
+            client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+            redirect_uri="https://myapp.com/google/oauth/callback",
+            manager=GoogleAuthManager(
+                db=db,
+                state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+                store_tokens=True,
+            ),
+        )
+        app.include_router(config.create_router())
+        agent = Agent(db=db, tools=[GmailTools(auth=config)])
+    """
+
+    # --- OAuth credentials ---
+    client_id: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_CLIENT_ID"))
+    client_secret: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_CLIENT_SECRET"))
+    redirect_uri: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/"))
+
+    # --- Service account (alternative to OAuth) ---
+    service_account_path: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_SERVICE_ACCOUNT_FILE"))
+    delegated_user: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_DELEGATED_USER"))
+
+    # --- OAuth flow options ---
+    hosted_domain: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_HOSTED_DOMAIN"))
+    access_type: str = "offline"
+    prompt: str = "consent"
+    login_hint: Optional[str] = None
+    include_granted_scopes: bool = False
+
+    # --- Agno behavior (optional) ---
+    manager: Optional["GoogleAuthManager"] = None
+
+    def create_router(self):
+        """Create FastAPI router for OAuth callback. Requires manager."""
+        if self.manager is None:
+            raise ValueError("create_router() requires a GoogleAuthManager. Set manager= in GoogleAuthConfig.")
+        return self.manager.create_router(self)
+
+    @property
+    def enable_multi_user_oauth(self) -> bool:
+        """Whether multi-user OAuth is enabled (URL in error vs browser fallback)."""
+        return self.manager.enable_multi_user_oauth if self.manager else False
 
 
 class GoogleAuthManager:
-    """OAuth configuration for Google toolkits. Holds credentials, scopes, and flow options."""
+    """Agno integration for Google OAuth. Adds multi-user token storage, encryption, and router creation.
+
+    Nested inside GoogleAuthConfig to add Agno-specific behavior:
+    - Multi-user OAuth (auth fails with OAuth URL when user not authenticated)
+    - Token storage in database
+    - Token encryption
+    - FastAPI router for OAuth callback
+
+    Example:
+        config = GoogleAuthConfig(
+            client_id=getenv("GOOGLE_CLIENT_ID"),
+            client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+            redirect_uri="https://myapp.com/google/oauth/callback",
+            manager=GoogleAuthManager(
+                db=db,
+                state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+                store_tokens=True,
+            ),
+        )
+    """
 
     def __init__(
         self,
-        client_id: Optional[str] = None,
-        client_secret: Optional[str] = None,
-        redirect_uri: Optional[str] = None,
         db: Optional["BaseDb"] = None,
         state_secret: Optional[str] = None,
-        include_granted_scopes: bool = False,
-        # Enterprise OAuth parameters
-        hosted_domain: Optional[str] = None,
-        access_type: str = "offline",
-        prompt: str = "consent",
-        login_hint: Optional[str] = None,
         # Route configuration
         callback_path: Optional[str] = None,
-        # Service account authentication (alternative to OAuth)
-        service_account_path: Optional[str] = None,
-        delegated_user: Optional[str] = None,
-        # Token storage config
+        # Token storage
         store_tokens: bool = False,
         encrypt_tokens: bool = False,
         token_encryption_key: Optional[str] = None,
-        # Multi-user OAuth: enables oauth_google tool, blocks browser fallback
+        # Multi-user OAuth: on auth failure, generate URL instead of browser fallback
         enable_multi_user_oauth: bool = False,
     ):
-        # --- OAuth credentials ---
-        self.client_id = client_id or getenv("GOOGLE_CLIENT_ID")
-        self.client_secret = client_secret or getenv("GOOGLE_CLIENT_SECRET")
-        self.redirect_uri = redirect_uri or getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
-
         # --- Scope registry ---
-        # Service → scopes mapping, populated by toolkit.register_service()
         self._services: Dict[str, List[str]] = {}
 
         # --- State and security ---
@@ -55,20 +119,9 @@ class GoogleAuthManager:
 
         # --- Multi-user OAuth ---
         self.enable_multi_user_oauth = enable_multi_user_oauth
-        self._oauth_tool_registered = False  # Set True by first toolkit to register oauth_google
 
-        # --- OAuth flow options ---
-        self._include_granted_scopes = include_granted_scopes
-        self._hosted_domain = hosted_domain or getenv("GOOGLE_HOSTED_DOMAIN")
-        self._access_type = access_type
-        self._prompt = prompt
-        self._login_hint = login_hint
+        # --- Route configuration ---
         self._callback_path = callback_path or getenv("GOOGLE_OAUTH_CALLBACK_PATH", "/google/oauth/callback")
-
-        # --- Service account (alternative to OAuth) ---
-        # Shared across all toolkits using this manager
-        self._service_account_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        self._delegated_user = delegated_user or getenv("GOOGLE_DELEGATED_USER")
 
         # --- Token storage ---
         self._store_tokens = store_tokens
@@ -77,29 +130,57 @@ class GoogleAuthManager:
 
     def register_service(self, service: str, scopes: List[str]) -> None:
         """Register scopes for a service. Called by toolkits during init."""
-        # Union with existing scopes — allows incremental registration
         existing = self._services.get(service, [])
         self._services[service] = list(set(existing) | set(scopes))
 
-    def register_oauth_tool(self, toolkit: "Toolkit") -> bool:
-        """Register oauth_google tool on the given toolkit. Returns True if registered, False if already done."""
-        if not self.enable_multi_user_oauth:
+    def create_router(self, config: "GoogleAuthConfig"):
+        """Create FastAPI router for OAuth callback."""
+        from agno.tools.google.auth.callback import create_oauth_router
+
+        return create_oauth_router(config)
+
+    def persist_token(
+        self,
+        db: "BaseDb",
+        creds: Any,
+        user_id: Optional[str],
+        services_registry: Optional[Dict[str, List[str]]] = None,
+    ) -> bool:
+        """Upsert Google credentials to DB. Returns True on success."""
+        import json
+
+        from agno.utils.log import log_debug, log_error
+
+        if db is None:
             return False
-        if self._oauth_tool_registered:
+        try:
+            token_data: Dict[str, Any] = json.loads(creds.to_json())
+            if services_registry:
+                granted_scopes = sorted({s for scope_list in services_registry.values() for s in scope_list})
+            else:
+                granted_scopes = token_data.get("scopes", [])
+
+            if self._encrypt_tokens:
+                from agno.utils.encryption import encrypt_dict
+
+                token_data = encrypt_dict(token_data, key=self._token_encryption_key)
+
+            db.upsert_auth_token(
+                {
+                    "provider": "google",
+                    "user_id": user_id,
+                    "service": "google",
+                    "token_data": token_data,
+                    "granted_scopes": granted_scopes,
+                    "pkce_verifier": None,
+                    "pkce_state_id": None,
+                    "pkce_expires_at": None,
+                }
+            )
+            return True
+        except NotImplementedError:
+            log_debug("DB does not support auth token storage")
             return False
-
-        from functools import partial
-
-        from agno.tools.google.oauth import oauth_google
-
-        # Bind auth_config to the function — toolkit passes run_context and agent
-        bound_oauth = partial(oauth_google, self)
-        bound_oauth.__name__ = "oauth_google"
-        bound_oauth.__doc__ = oauth_google.__doc__
-
-        # Add to include_tools if filtering is active
-        if toolkit.include_tools is not None:
-            toolkit.include_tools = list(toolkit.include_tools) + ["oauth_google"]
-        toolkit.register(bound_oauth)
-        self._oauth_tool_registered = True
-        return True
+        except Exception as e:
+            log_error(f"Failed to persist Google token: {e}")
+            return False
