@@ -5,14 +5,13 @@ This example demonstrates a Router that pauses for a human to choose which
 analysis path should run.
 """
 
-from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
-db = SqliteDb(db_file="tmp/agentos_workflow_router_selection.db")
+from workflow_db import db
 
 
 def analyze_data(step_input: StepInput) -> StepOutput:

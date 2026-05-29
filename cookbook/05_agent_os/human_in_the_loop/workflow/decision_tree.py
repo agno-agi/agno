@@ -5,7 +5,6 @@ This example demonstrates multiple sequential human decisions in one workflow.
 Each Condition pauses in AgentOS and the selected branch shapes the final output.
 """
 
-from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.workflow import OnReject
 from agno.workflow.condition import Condition
@@ -13,7 +12,7 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
-db = SqliteDb(db_file="tmp/agentos_workflow_decision_tree.db")
+from workflow_db import db
 
 
 def gather_requirements(step_input: StepInput) -> StepOutput:

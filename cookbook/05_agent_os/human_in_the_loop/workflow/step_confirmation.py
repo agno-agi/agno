@@ -5,14 +5,13 @@ This example demonstrates pausing a workflow before a step executes so the
 human can approve or reject that step from AgentOS.
 """
 
-from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.workflow import OnReject
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
-db = SqliteDb(db_file="tmp/agentos_workflow_step_confirmation.db")
+from workflow_db import db
 
 
 def fetch_data(step_input: StepInput) -> StepOutput:

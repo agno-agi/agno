@@ -13,14 +13,13 @@ Use case: Collecting user preferences before an agent generates content.
 """
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput, UserInputField
 from agno.workflow.workflow import Workflow
 
-db = SqliteDb(db_file="tmp/step_user_input.db")
+from workflow_db import db
 
 
 # Step 1: Gather context (no HITL)

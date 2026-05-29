@@ -5,7 +5,6 @@ This example demonstrates a human-controlled Condition. Confirming runs the
 primary branch; rejecting runs the else branch.
 """
 
-from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.workflow import OnReject
 from agno.workflow.condition import Condition
@@ -13,7 +12,7 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
-db = SqliteDb(db_file="tmp/agentos_workflow_condition_decision.db")
+from workflow_db import db
 
 
 def analyze_data(step_input: StepInput) -> StepOutput:

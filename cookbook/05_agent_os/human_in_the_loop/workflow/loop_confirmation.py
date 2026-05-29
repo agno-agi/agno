@@ -5,14 +5,13 @@ This example demonstrates pausing before a Loop starts so a human can decide
 whether to run the iterative work.
 """
 
-from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
-db = SqliteDb(db_file="tmp/agentos_workflow_loop_confirmation.db")
+from workflow_db import db
 
 
 def prepare_data(step_input: StepInput) -> StepOutput:

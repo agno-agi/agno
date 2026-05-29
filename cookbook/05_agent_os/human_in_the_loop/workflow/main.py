@@ -4,7 +4,6 @@ AgentOS Workflow HITL Examples
 Run all workflow human-in-the-loop examples from this directory in one AgentOS.
 """
 
-from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 
 from condition_user_decision import workflow as condition_user_decision_workflow
@@ -17,8 +16,7 @@ from router_user_selection import workflow as router_user_selection_workflow
 from step_confirmation import workflow as step_confirmation_workflow
 from step_user_input import workflow as step_user_input_workflow
 from step_user_input import workflow_with_executor as step_user_input_executor_workflow
-
-db = SqliteDb(db_file="tmp/agentos_workflow_hitl_examples.db")
+from workflow_db import db
 
 agent_os = AgentOS(
     id="workflow-hitl-examples",
