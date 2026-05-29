@@ -165,7 +165,7 @@ class RemoteDb:
         return await self.client.rename_session(session_id, session_name, **kwargs)
 
     async def update_session(
-        self, session_id: str, session_type: SessionType, **kwargs: Any
+        self, session_id: str, session_type: Optional[SessionType] = None, **kwargs: Any
     ) -> Union["AgentSessionDetailSchema", "TeamSessionDetailSchema", "WorkflowSessionDetailSchema"]:
         return await self.client.update_session(session_id=session_id, session_type=session_type, **kwargs)
 
@@ -212,6 +212,11 @@ class RemoteDb:
 
     async def get_trace_session_stats(self, **kwargs: Any) -> "PaginatedResponse[TraceSessionStats]":
         return await self.client.get_trace_session_stats(**kwargs)
+
+    async def search_traces(
+        self, **kwargs: Any
+    ) -> Union["PaginatedResponse[TraceDetail]", "PaginatedResponse[TraceSessionStats]"]:
+        return await self.client.search_traces(**kwargs)
 
     # EVALS
     async def get_eval_runs(self, **kwargs: Any) -> "PaginatedResponse[EvalSchema]":

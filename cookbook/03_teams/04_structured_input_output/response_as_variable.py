@@ -38,7 +38,8 @@ stock_searcher = Agent(
     role="Searches for stock price and analyst information",
     tools=[
         YFinanceTools(
-            include_tools=["get_current_stock_price", "get_analyst_recommendations"],
+            enable_stock_price=True,
+            enable_analyst_recommendations=True,
         )
     ],
     instructions=[
@@ -54,7 +55,9 @@ company_info_agent = Agent(
     output_schema=CompanyAnalysis,
     tools=[
         YFinanceTools(
-            include_tools=["get_company_info", "get_company_news"],
+            enable_stock_price=False,
+            enable_company_info=True,
+            enable_company_news=True,
         )
     ],
     instructions=[

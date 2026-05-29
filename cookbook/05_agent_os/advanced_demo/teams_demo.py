@@ -39,7 +39,7 @@ file_agent = Agent(
 
 video_agent = Agent(
     name="Video Understanding Agent",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     id="video-understanding-agent",
     role="Answer questions about video files",
     db=db,
@@ -135,7 +135,6 @@ multimodal_team = Team(
     description="A team of agents that can handle multiple modalities",
     members=[file_agent, audio_agent, video_agent],
     model=OpenAIChat(id="gpt-4o"),
-    pass_user_input_to_members=True,
     respond_directly=True,
     id="multimodal_team",
     instructions=[

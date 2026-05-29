@@ -135,10 +135,10 @@ async def async_distributed_search() -> None:
     query = "How do Agents work with tools and what are the performance considerations?"
 
     await knowledge_primary.ainsert_many(
-        urls=["https://docs.agno.com/basics/agents/overview.md"]
+        urls=["https://docs.agno.com/agents/overview.md"]
     )
     await knowledge_secondary.ainsert_many(
-        urls=["https://docs.agno.com/basics/agents/overview.md"]
+        urls=["https://docs.agno.com/agents/overview.md"]
     )
 
     await distributed_search_team.aprint_response(query, stream=True)
@@ -150,12 +150,8 @@ def sync_distributed_search() -> None:
 
     query = "How do Agents work with tools and what are the performance considerations?"
 
-    knowledge_primary.insert_many(
-        urls=["https://docs.agno.com/basics/agents/overview.md"]
-    )
-    knowledge_secondary.insert_many(
-        urls=["https://docs.agno.com/basics/agents/overview.md"]
-    )
+    knowledge_primary.insert_many(urls=["https://docs.agno.com/agents/overview.md"])
+    knowledge_secondary.insert_many(urls=["https://docs.agno.com/agents/overview.md"])
 
     distributed_search_team.print_response(query, stream=True)
 

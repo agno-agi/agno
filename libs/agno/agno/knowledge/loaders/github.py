@@ -5,8 +5,11 @@ Provides methods for loading content from GitHub repositories.
 
 # mypy: disable-error-code="attr-defined"
 
+import asyncio
+import threading
+import time
 from io import BytesIO
-from typing import Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import httpx
 from httpx import AsyncClient
@@ -24,9 +27,173 @@ from agno.utils.string import generate_id
 class GitHubLoader(BaseLoader):
     """Loader for GitHub content."""
 
+    # Cache for GitHub App installation tokens: {cache_key: (token, expires_at_timestamp)}
+    # Uses double-checked locking: lock-free fast path for cache hits,
+    # lock only on cache miss to coordinate token refresh.
+    _github_app_token_cache: Dict[str, tuple] = {}
+    _token_cache_lock = threading.Lock()
+    _async_token_cache_lock: Optional[asyncio.Lock] = None
+
     # ==========================================
     # GITHUB HELPERS (shared between sync/async)
     # ==========================================
+
+    @staticmethod
+    def _check_cached_token(cache: Dict[str, tuple], cache_key: str) -> Optional[str]:
+        """Return a cached token if it is still valid (60s buffer), else None."""
+        cached = cache.get(cache_key)
+        if cached is not None:
+            token, expires_at = cached
+            if time.time() < expires_at - 60:
+                return token
+        return None
+
+    @staticmethod
+    def _build_jwt_and_url(gh_config: GitHubConfig) -> Tuple[str, Dict[str, str]]:
+        """Build a signed JWT and return (exchange_url, headers).
+
+        Raises ImportError if PyJWT is not installed.
+        """
+        try:
+            import jwt
+        except ImportError:
+            raise ImportError(
+                "GitHub App authentication requires PyJWT with cryptography. "
+                "Install via: pip install PyJWT cryptography"
+            )
+
+        now = int(time.time())
+        payload = {
+            "iat": now - 60,
+            "exp": now + 600,
+            "iss": str(gh_config.app_id),
+        }
+        private_key = gh_config.private_key
+        if private_key is None:
+            raise ValueError("private_key is required for GitHub App authentication")
+        app_jwt = jwt.encode(payload, private_key, algorithm="RS256")
+
+        url = f"https://api.github.com/app/installations/{gh_config.installation_id}/access_tokens"
+        jwt_headers = {
+            "Authorization": f"Bearer {app_jwt}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Agno-Knowledge",
+        }
+        return url, jwt_headers
+
+    @staticmethod
+    def _parse_token_response(data: Dict[str, Any]) -> Tuple[str, float]:
+        """Extract the installation token and expiry timestamp from the API response."""
+        installation_token: str = data["token"]
+        expires_at_str = data.get("expires_at", "")
+        now = int(time.time())
+        if expires_at_str:
+            from datetime import datetime
+
+            try:
+                expires_at_ts = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00")).timestamp()
+            except (ValueError, AttributeError):
+                expires_at_ts = float(now + 3600)
+        else:
+            expires_at_ts = float(now + 3600)
+        return installation_token, expires_at_ts
+
+    def _get_github_app_token(self, gh_config: GitHubConfig) -> str:
+        """Generate or retrieve a cached installation access token for GitHub App auth.
+
+        Creates a JWT signed with the app's private key, then exchanges it for
+        an installation access token via the GitHub API.  Tokens are cached
+        until 60 seconds before expiry.
+
+        Uses double-checked locking: the cache is read lock-free first (safe
+        under the GIL since dict.get and tuple reads are atomic).  On a cache
+        miss the lock is acquired for the full token exchange and cache write,
+        preventing duplicate HTTP requests for the same installation.
+
+        Requires ``PyJWT[crypto]``: ``pip install PyJWT cryptography``
+        """
+        cache_key = f"{gh_config.app_id}:{gh_config.installation_id}"
+
+        # Fast path: lock-free cache read
+        cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        # Slow path: acquire lock, re-check, then fetch + cache write
+        with self._token_cache_lock:
+            cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+            if cached is not None:
+                return cached
+
+            url, jwt_headers = self._build_jwt_and_url(gh_config)
+
+            try:
+                with httpx.Client() as client:
+                    response = client.post(url, headers=jwt_headers, timeout=30.0)
+                    response.raise_for_status()
+                    data = response.json()
+            except httpx.HTTPStatusError as e:
+                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}: {str(e)}")
+                raise
+            except httpx.HTTPError as e:
+                log_error(f"GitHub App token exchange request failed: {str(e)}")
+                raise
+
+            installation_token, expires_at_ts = self._parse_token_response(data)
+            self._github_app_token_cache[cache_key] = (installation_token, expires_at_ts)
+            return installation_token
+
+    async def _aget_github_app_token(self, gh_config: GitHubConfig) -> str:
+        """Generate or retrieve a cached installation access token for GitHub App auth (async).
+
+        Async variant of ``_get_github_app_token``.  Uses ``httpx.AsyncClient``
+        so the event loop is not blocked during the token exchange.
+
+        Uses double-checked locking: the cache is read without the async lock
+        first (safe because no ``await`` is involved, so no coroutine can
+        interleave).  On a cache miss the lock is held for the full token
+        exchange and cache write, preventing duplicate HTTP requests.
+
+        Requires ``PyJWT[crypto]``: ``pip install PyJWT cryptography``
+        """
+        cache_key = f"{gh_config.app_id}:{gh_config.installation_id}"
+
+        # Fast path: lock-free cache read (no await, so no interleaving)
+        cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        # Ensure the async lock exists (sync lock guards initialization)
+        with self._token_cache_lock:
+            if self._async_token_cache_lock is None:
+                self.__class__._async_token_cache_lock = asyncio.Lock()
+
+        lock = self._async_token_cache_lock
+        assert lock is not None
+
+        # Slow path: acquire async lock, re-check, then fetch + cache write
+        async with lock:
+            cached = self._check_cached_token(self._github_app_token_cache, cache_key)
+            if cached is not None:
+                return cached
+
+            url, jwt_headers = self._build_jwt_and_url(gh_config)
+
+            try:
+                async with AsyncClient() as client:
+                    response = await client.post(url, headers=jwt_headers, timeout=30.0)
+                    response.raise_for_status()
+                    data = response.json()
+            except httpx.HTTPStatusError as e:
+                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}: {str(e)}")
+                raise
+            except httpx.HTTPError as e:
+                log_error(f"GitHub App token exchange request failed: {str(e)}")
+                raise
+
+            installation_token, expires_at_ts = self._parse_token_response(data)
+            self._github_app_token_cache[cache_key] = (installation_token, expires_at_ts)
+            return installation_token
 
     def _validate_github_config(
         self,
@@ -48,18 +215,43 @@ class GitHubLoader(BaseLoader):
         return gh_config
 
     def _build_github_headers(self, gh_config: GitHubConfig) -> Dict[str, str]:
-        """Build headers for GitHub API requests."""
+        """Build headers for GitHub API requests.
+
+        Uses GitHub App authentication when ``app_id`` is configured,
+        otherwise falls back to the personal access token.
+        """
         headers: Dict[str, str] = {
             "Accept": "application/vnd.github.v3+json",
             "User-Agent": "Agno-Knowledge",
         }
-        if gh_config.token:
+        if gh_config.app_id is not None:
+            token = self._get_github_app_token(gh_config)
+            headers["Authorization"] = f"Bearer {token}"
+        elif gh_config.token:
+            headers["Authorization"] = f"Bearer {gh_config.token}"
+        return headers
+
+    async def _abuild_github_headers(self, gh_config: GitHubConfig) -> Dict[str, str]:
+        """Build headers for GitHub API requests (async).
+
+        Async variant of ``_build_github_headers``.  Uses the async token
+        exchange so the event loop is not blocked.
+        """
+        headers: Dict[str, str] = {
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Agno-Knowledge",
+        }
+        if gh_config.app_id is not None:
+            token = await self._aget_github_app_token(gh_config)
+            headers["Authorization"] = f"Bearer {token}"
+        elif gh_config.token:
             headers["Authorization"] = f"Bearer {gh_config.token}"
         return headers
 
     def _build_github_metadata(
         self,
         gh_config: GitHubConfig,
+        repo: str,
         branch: str,
         file_path: str,
         file_name: str,
@@ -69,11 +261,21 @@ class GitHubLoader(BaseLoader):
             "source_type": "github",
             "source_config_id": gh_config.id,
             "source_config_name": gh_config.name,
-            "github_repo": gh_config.repo,
+            "github_repo": repo,
             "github_branch": branch,
             "github_path": file_path,
             "github_filename": file_name,
         }
+
+    @staticmethod
+    def _resolve_github_repo(remote_content: GitHubContent, gh_config: GitHubConfig) -> Optional[str]:
+        """Resolve the effective repo for this request.
+
+        Prefers the per-request override on the content reference, falls back
+        to the config's ``repo``. Returns ``None`` if neither is set; callers
+        should treat this as a configuration error.
+        """
+        return remote_content.repo or gh_config.repo
 
     def _build_github_virtual_path(self, repo: str, branch: str, file_path: str) -> str:
         """Build virtual path for GitHub content."""
@@ -140,15 +342,29 @@ class GitHubLoader(BaseLoader):
     ):
         """Load content from GitHub (async).
 
-        Requires the GitHub config to contain repo and optionally token for private repos.
-        Uses the GitHub API to fetch file contents.
+        Requires the effective repo (from GitHubContent or GitHubConfig) and
+        optionally a token for private repos. Uses the GitHub API to fetch file
+        contents.
         """
         remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
         gh_config = self._validate_github_config(content, config)
         if gh_config is None:
             return
 
-        headers = self._build_github_headers(gh_config)
+        repo = self._resolve_github_repo(remote_content, gh_config)
+        if not repo:
+            # Raise rather than log-and-return: the content entry hasn't been
+            # created yet, so returning here would silently no-op and callers
+            # (e.g. Knowledge.insert / ainsert) would treat the operation as
+            # successful. Surfacing this as a ValueError lets the caller handle
+            # the misconfiguration explicitly.
+            raise ValueError(
+                f"GitHub repo not specified. Set 'repo' on GitHubConfig '{gh_config.id}' "
+                f"or pass it at request time via GitHubConfig.file(..., repo=...) / "
+                f"GitHubConfig.folder(..., repo=...)."
+            )
+
+        headers = await self._abuild_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
         path_to_process = self._get_github_path_to_process(remote_content)
 
@@ -159,7 +375,7 @@ class GitHubLoader(BaseLoader):
             async def list_files_recursive(folder: str) -> List[Dict[str, str]]:
                 """Recursively list all files in a GitHub folder."""
                 files: List[Dict[str, str]] = []
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{folder}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{folder}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -178,12 +394,12 @@ class GitHubLoader(BaseLoader):
                             subdir_files = await list_files_recursive(item["path"])
                             files.extend(subdir_files)
                 except Exception as e:
-                    log_error(f"Error listing GitHub folder {folder}: {e}")
+                    log_error(f"Error listing GitHub folder {folder}: {str(e)}")
 
                 return files
 
             if path_to_process:
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{path_to_process}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{path_to_process}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -202,7 +418,7 @@ class GitHubLoader(BaseLoader):
                     else:
                         files_to_process.append({"path": path_data["path"], "name": path_data["name"]})
                 except Exception as e:
-                    log_error(f"Error fetching GitHub path {path_to_process}: {e}")
+                    log_error(f"Error fetching GitHub path {path_to_process}: {str(e)}")
                     return
 
             if not files_to_process:
@@ -217,8 +433,8 @@ class GitHubLoader(BaseLoader):
                 file_name = file_info["name"]
 
                 # Build metadata and virtual path using helpers
-                virtual_path = self._build_github_virtual_path(gh_config.repo, branch, file_path)
-                github_metadata = self._build_github_metadata(gh_config, branch, file_path, file_name)
+                virtual_path = self._build_github_virtual_path(repo, branch, file_path)
+                github_metadata = self._build_github_metadata(gh_config, repo, branch, file_path, file_name)
                 merged_metadata = self._merge_metadata(github_metadata, content.metadata)
 
                 # Compute content name using base helper
@@ -239,7 +455,7 @@ class GitHubLoader(BaseLoader):
                     continue
 
                 # Fetch file content
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{file_path}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
                 if branch:
                     api_url += f"?ref={branch}"
                 try:
@@ -248,7 +464,7 @@ class GitHubLoader(BaseLoader):
                     file_data = response.json()
                     file_content = await self._aprocess_github_file_content(file_data, client, headers)
                 except Exception as e:
-                    log_error(f"Error fetching GitHub file {file_path}: {e}")
+                    log_error(f"Error fetching GitHub file {file_path}: {str(e)}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     await self._aupdate_content(content_entry)
@@ -282,13 +498,27 @@ class GitHubLoader(BaseLoader):
     ):
         """Load content from GitHub (sync).
 
-        Requires the GitHub config to contain repo and optionally token for private repos.
-        Uses the GitHub API to fetch file contents.
+        Requires the effective repo (from GitHubContent or GitHubConfig) and
+        optionally a token for private repos. Uses the GitHub API to fetch file
+        contents.
         """
         remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
         gh_config = self._validate_github_config(content, config)
         if gh_config is None:
             return
+
+        repo = self._resolve_github_repo(remote_content, gh_config)
+        if not repo:
+            # Raise rather than log-and-return: the content entry hasn't been
+            # created yet, so returning here would silently no-op and callers
+            # (e.g. Knowledge.insert / ainsert) would treat the operation as
+            # successful. Surfacing this as a ValueError lets the caller handle
+            # the misconfiguration explicitly.
+            raise ValueError(
+                f"GitHub repo not specified. Set 'repo' on GitHubConfig '{gh_config.id}' "
+                f"or pass it at request time via GitHubConfig.file(..., repo=...) / "
+                f"GitHubConfig.folder(..., repo=...)."
+            )
 
         headers = self._build_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
@@ -301,7 +531,7 @@ class GitHubLoader(BaseLoader):
             def list_files_recursive(folder: str) -> List[Dict[str, str]]:
                 """Recursively list all files in a GitHub folder."""
                 files: List[Dict[str, str]] = []
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{folder}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{folder}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -320,12 +550,12 @@ class GitHubLoader(BaseLoader):
                             subdir_files = list_files_recursive(item["path"])
                             files.extend(subdir_files)
                 except Exception as e:
-                    log_error(f"Error listing GitHub folder {folder}: {e}")
+                    log_error(f"Error listing GitHub folder {folder}: {str(e)}")
 
                 return files
 
             if path_to_process:
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{path_to_process}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{path_to_process}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -344,7 +574,7 @@ class GitHubLoader(BaseLoader):
                     else:
                         files_to_process.append({"path": path_data["path"], "name": path_data["name"]})
                 except Exception as e:
-                    log_error(f"Error fetching GitHub path {path_to_process}: {e}")
+                    log_error(f"Error fetching GitHub path {path_to_process}: {str(e)}")
                     return
 
             if not files_to_process:
@@ -359,8 +589,8 @@ class GitHubLoader(BaseLoader):
                 file_name = file_info["name"]
 
                 # Build metadata and virtual path using helpers
-                virtual_path = self._build_github_virtual_path(gh_config.repo, branch, file_path)
-                github_metadata = self._build_github_metadata(gh_config, branch, file_path, file_name)
+                virtual_path = self._build_github_virtual_path(repo, branch, file_path)
+                github_metadata = self._build_github_metadata(gh_config, repo, branch, file_path, file_name)
                 merged_metadata = self._merge_metadata(github_metadata, content.metadata)
 
                 # Compute content name using base helper
@@ -381,7 +611,7 @@ class GitHubLoader(BaseLoader):
                     continue
 
                 # Fetch file content
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{file_path}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
                 if branch:
                     api_url += f"?ref={branch}"
                 try:
@@ -390,7 +620,7 @@ class GitHubLoader(BaseLoader):
                     file_data = response.json()
                     file_content = self._process_github_file_content(file_data, client, headers)
                 except Exception as e:
-                    log_error(f"Error fetching GitHub file {file_path}: {e}")
+                    log_error(f"Error fetching GitHub file {file_path}: {str(e)}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     self._update_content(content_entry)

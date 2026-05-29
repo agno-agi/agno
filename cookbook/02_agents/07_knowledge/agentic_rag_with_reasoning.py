@@ -52,7 +52,7 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(
-        knowledge.ainsert_many(urls=["https://docs.agno.com/basics/agents/overview.md"])
+        knowledge.ainsert_many(urls=["https://docs.agno.com/agents/overview.md"])
     )
     agent.print_response(
         "What are Agents?",

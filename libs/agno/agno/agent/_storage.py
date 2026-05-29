@@ -19,10 +19,10 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.db.base import BaseDb, ComponentType, SessionType
-from agno.db.utils import db_from_dict
+from agno.db.utils import resolve_db_from_config
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
@@ -42,7 +42,9 @@ from agno.utils.string import generate_id_from_name
 # ---------------------------------------------------------------------------
 
 
-def get_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+def get_run_output(
+    agent: Agent, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> Optional[RunOutput]:
     """
     Get a RunOutput from the database.
 
@@ -50,6 +52,7 @@ def get_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) 
         agent: The Agent instance.
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     Returns:
         Optional[RunOutput]: The RunOutput from the database or None if not found.
     """
@@ -57,10 +60,12 @@ def get_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) 
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or agent.session_id
-    return cast(RunOutput, get_run_output_util(agent, run_id=run_id, session_id=session_id_to_load))
+    return cast(RunOutput, get_run_output_util(agent, run_id=run_id, session_id=session_id_to_load, user_id=user_id))
 
 
-async def aget_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+async def aget_run_output(
+    agent: Agent, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> Optional[RunOutput]:
     """
     Get a RunOutput from the database.
 
@@ -68,6 +73,7 @@ async def aget_run_output(agent: Agent, run_id: str, session_id: Optional[str] =
         agent: The Agent instance.
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     Returns:
         Optional[RunOutput]: The RunOutput from the database or None if not found.
     """
@@ -75,7 +81,9 @@ async def aget_run_output(agent: Agent, run_id: str, session_id: Optional[str] =
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or agent.session_id
-    return cast(RunOutput, await aget_run_output_util(agent, run_id=run_id, session_id=session_id_to_load))
+    return cast(
+        RunOutput, await aget_run_output_util(agent, run_id=run_id, session_id=session_id_to_load, user_id=user_id)
+    )
 
 
 def get_last_run_output(agent: Agent, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -131,7 +139,7 @@ def read_session(
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -152,7 +160,7 @@ async def aread_session(
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -169,7 +177,7 @@ def upsert_session(
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
         return None
 
 
@@ -190,7 +198,7 @@ async def aupsert_session(
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
         return None
 
 
@@ -238,17 +246,43 @@ def update_metadata(agent: Agent, session: AgentSession):
         agent.metadata = session.metadata
 
 
-def get_session_metrics_internal(agent: Agent, session: AgentSession):
+def get_session_metrics_internal(agent: Agent, session: AgentSession) -> SessionMetrics:
     # Get the session_metrics from the database
     if session.session_data is not None and "session_metrics" in session.session_data:
         session_metrics_from_db = session.session_data.get("session_metrics")
         if session_metrics_from_db is not None:
             if isinstance(session_metrics_from_db, dict):
-                return Metrics(**session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, Metrics):
+                return SessionMetrics.from_dict(session_metrics_from_db)
+            elif isinstance(session_metrics_from_db, SessionMetrics):
                 return session_metrics_from_db
-    else:
-        return Metrics()
+            elif isinstance(session_metrics_from_db, RunMetrics):
+                # Convert legacy RunMetrics to SessionMetrics
+                return SessionMetrics(
+                    input_tokens=session_metrics_from_db.input_tokens,
+                    output_tokens=session_metrics_from_db.output_tokens,
+                    total_tokens=session_metrics_from_db.total_tokens,
+                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                    cost=session_metrics_from_db.cost,
+                )
+    return SessionMetrics()
+
+
+def update_session_metrics(agent: Agent, session: AgentSession, run_response: RunOutput) -> None:
+    """Calculate session metrics - convert run Metrics to SessionMetrics."""
+    session_metrics = get_session_metrics_internal(agent, session=session)
+    # Add the metrics for the current run to the session metrics
+    if session_metrics is None:
+        return
+    if run_response.metrics is not None:
+        session_metrics.accumulate_from_run(run_response.metrics)
+
+    if session.session_data is not None:
+        session.session_data["session_metrics"] = session_metrics.to_dict()
 
 
 def read_or_create_session(
@@ -432,10 +466,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["overwrite_db_session_state"] = agent.overwrite_db_session_state
     if agent.cache_session:
         config["cache_session"] = agent.cache_session
-    if agent.search_session_history:
-        config["search_session_history"] = agent.search_session_history
-    if agent.num_history_sessions is not None:
-        config["num_history_sessions"] = agent.num_history_sessions
+    if agent.search_past_sessions:
+        config["search_past_sessions"] = agent.search_past_sessions
+    if agent.num_past_sessions_to_search is not None:
+        config["num_past_sessions_to_search"] = agent.num_past_sessions_to_search
+    if agent.num_past_session_runs_in_search is not None:
+        config["num_past_session_runs_in_search"] = agent.num_past_session_runs_in_search
     if agent.enable_session_summaries:
         config["enable_session_summaries"] = agent.enable_session_summaries
     if agent.add_session_summary_to_context is not None:
@@ -489,9 +525,14 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["max_tool_calls_from_history"] = agent.max_tool_calls_from_history
 
     # --- Knowledge settings ---
-    # TODO: implement knowledge serialization
-    # if agent.knowledge is not None:
-    # config["knowledge"] = agent.knowledge.to_dict()
+    # Knowledge is a non-serializable object (it holds live db/vector_db connections),
+    # so we store a reference by name and resolve it from the registry on load.
+    if agent.knowledge is not None:
+        knowledge_name = getattr(agent.knowledge, "name", None)
+        if knowledge_name is not None:
+            config["knowledge"] = {"name": knowledge_name}
+        else:
+            log_warning("Agent knowledge has no name; it cannot be referenced from the registry and will not be saved.")
     if agent.knowledge_filters is not None:
         config["knowledge_filters"] = agent.knowledge_filters
     if agent.enable_agentic_knowledge_filters:
@@ -525,7 +566,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
                     serialized_tools.append(tool)
             except Exception as e:
                 # Skip tools that can't be serialized
-                log_warning(f"Could not serialize tool {tool}: {e}")
+                log_warning(f"Could not serialize tool {tool}: {str(e)}")
         if serialized_tools:
             config["tools"] = serialized_tools
 
@@ -598,6 +639,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["add_location_to_context"] = agent.add_location_to_context
     if agent.timezone_identifier is not None:
         config["timezone_identifier"] = agent.timezone_identifier
+    if agent.datetime_format is not None:
+        config["datetime_format"] = agent.datetime_format
     if not agent.resolve_in_context:
         config["resolve_in_context"] = agent.resolve_in_context
 
@@ -760,21 +803,11 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
 
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):
-        db_data = config["db"]
-        db_id = db_data.get("id")
-
-        # First try to get the db from the registry (preferred - reuses existing connection)
-        if registry and db_id:
-            registry_db = registry.get_db(db_id)
-            if registry_db is not None:
-                config["db"] = registry_db
-            else:
-                del config["db"]
+        resolved = resolve_db_from_config(config["db"], registry=registry)
+        if resolved is not None:
+            config["db"] = resolved
         else:
-            # No registry or no db_id, fall back to creating from dict
-            config["db"] = db_from_dict(db_data)
-            if config["db"] is None:
-                del config["db"]
+            del config["db"]
 
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -812,10 +845,16 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
 
     # --- Handle Knowledge reconstruction ---
-    # TODO: implement knowledge deserialization
-    # if "knowledge" in config and isinstance(config["knowledge"], dict):
-    #     from agno.knowledge import Knowledge
-    #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+    # Knowledge is stored as a reference by name and resolved from the registry,
+    # since it holds live db/vector_db connections that cannot be serialized.
+    if "knowledge" in config and isinstance(config["knowledge"], dict):
+        knowledge_name = config["knowledge"].get("name")
+        resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
+        if resolved_knowledge is not None:
+            config["knowledge"] = resolved_knowledge
+        else:
+            log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
+            del config["knowledge"]
 
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
@@ -847,8 +886,11 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         enable_agentic_state=config.get("enable_agentic_state", False),
         overwrite_db_session_state=config.get("overwrite_db_session_state", False),
         cache_session=config.get("cache_session", False),
-        search_session_history=config.get("search_session_history", False),
-        num_history_sessions=config.get("num_history_sessions"),
+        search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
+        num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
+        num_past_session_runs_in_search=config.get(
+            "num_past_session_runs_in_search", config.get("num_past_session_runs")
+        ),
         enable_session_summaries=config.get("enable_session_summaries", False),
         add_session_summary_to_context=config.get("add_session_summary_to_context"),
         # session_summary_manager=config.get("session_summary_manager"),  # TODO
@@ -871,7 +913,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         num_history_messages=config.get("num_history_messages"),
         max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
         # --- Knowledge settings ---
-        # knowledge=config.get("knowledge"),  # TODO
+        knowledge=config.get("knowledge"),
         knowledge_filters=config.get("knowledge_filters"),
         enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
         add_knowledge_to_context=config.get("add_knowledge_to_context", False),
@@ -908,6 +950,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         add_name_to_context=config.get("add_name_to_context", False),
         add_datetime_to_context=config.get("add_datetime_to_context", False),
         add_location_to_context=config.get("add_location_to_context", False),
+        datetime_format=config.get("datetime_format"),
         timezone_identifier=config.get("timezone_identifier"),
         resolve_in_context=config.get("resolve_in_context", True),
         # --- User message settings ---
@@ -1005,7 +1048,7 @@ def save(
         return config.get("version")
 
     except Exception as e:
-        log_error(f"Error saving Agent to database: {e}")
+        log_error(f"Error saving Agent to database: {str(e)}")
         raise
 
 
@@ -1043,7 +1086,11 @@ def load(
 
     agent = cls.from_dict(config, registry=registry)
     agent.id = id
-    agent.db = db
+    # Only fall back to the caller-provided db if the config didn't
+    # reconstruct one. Otherwise we'd clobber any custom table names
+    # (session_table, memory_table, ...) that were serialized with the agent.
+    if agent.db is None:
+        agent.db = db
 
     return agent
 

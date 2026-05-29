@@ -185,3 +185,34 @@ async def test_event_loop_handling_in_integration(async_mongo_db_real):
     # Should be able to recreate collections without errors
     collection = await async_mongo_db_real._get_collection("sessions", create_collection_if_not_found=True)
     assert collection is not None
+
+
+@pytest.mark.asyncio
+async def test_get_schedule_run_integration(async_mongo_db_real):
+    """Test schedule run retrieval against a real MongoDB instance."""
+    schedule_runs_collection = await async_mongo_db_real._get_collection(
+        "schedule_runs", create_collection_if_not_found=True
+    )
+    assert schedule_runs_collection is not None
+
+    run_doc = {
+        "id": "test-schedule-run-1",
+        "schedule_id": "test-schedule-1",
+        "status": "success",
+        "created_at": int(datetime.now(timezone.utc).timestamp()),
+    }
+    await schedule_runs_collection.insert_one(run_doc)
+
+    fetched = await async_mongo_db_real.get_schedule_run("test-schedule-run-1")
+    assert fetched is not None
+    assert fetched["id"] == "test-schedule-run-1"
+    assert fetched["schedule_id"] == "test-schedule-1"
+    assert fetched["status"] == "success"
+    assert "_id" not in fetched
+
+
+@pytest.mark.asyncio
+async def test_get_schedule_run_returns_none_for_missing_id(async_mongo_db_real):
+    """Test get_schedule_run returns None when the run does not exist."""
+    fetched = await async_mongo_db_real.get_schedule_run("missing-schedule-run-id")
+    assert fetched is None

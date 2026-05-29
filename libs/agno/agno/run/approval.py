@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from agno.run.base import RunStatus
 from agno.utils.dttm import now_epoch_s
 from agno.utils.log import log_debug, log_warning
 
@@ -40,6 +41,21 @@ def _has_approval_requirement(tools: Optional[List[Any]], requirements: Optional
     """
     tool = _get_first_approval_tool(tools, requirements)
     return tool is not None and getattr(tool, "approval_type", None) == "required"
+
+
+def _stamp_approval_id_on_tools(
+    tools: Optional[List[Any]], requirements: Optional[List[Any]], approval_id: str
+) -> None:
+    """Stamp approval_id on every tool that has approval_type set."""
+    if tools:
+        for tool in tools:
+            if getattr(tool, "approval_type", None) is not None:
+                tool.approval_id = approval_id
+    if requirements:
+        for req in requirements:
+            te = getattr(req, "tool_execution", None)
+            if te and getattr(te, "approval_type", None) is not None:
+                te.approval_id = approval_id
 
 
 def _build_approval_dict(
@@ -128,6 +144,8 @@ def _build_approval_dict(
         "resolved_at": None,
         "created_at": now_epoch_s(),
         "updated_at": None,
+        # Run status is PAUSED when the approval is created (run is paused waiting for approval)
+        "run_status": RunStatus.paused.value,
     }
 
 
@@ -143,18 +161,24 @@ def create_approval_from_pause(
     user_id: Optional[str] = None,
     schedule_id: Optional[str] = None,
     schedule_run_id: Optional[str] = None,
-) -> None:
+) -> Optional[str]:
     """Create an approval record when a run pauses for a tool with approval_type set.
 
-    Silently returns if no approval requirement is found or if DB doesn't support approvals.
+    Returns the approval_id if a record was created, None otherwise.
+    Silently returns None if no approval requirement is found or if DB doesn't support approvals.
     """
     if db is None:
-        return
+        return None
 
     tools = getattr(run_response, "tools", None)
     requirements = getattr(run_response, "requirements", None)
     if not _has_approval_requirement(tools, requirements):
-        return
+        return None
+
+    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
+    for t in tools or []:
+        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+            return getattr(t, "approval_id", None)
 
     try:
         approval_data = _build_approval_dict(
@@ -170,11 +194,16 @@ def create_approval_from_pause(
             schedule_run_id=schedule_run_id,
         )
         db.create_approval(approval_data)
-        log_debug(f"Created approval {approval_data['id']} for run {approval_data['run_id']}")
+        approval_id: str = approval_data["id"]
+        # Stamp the approval_id on all tools with approval_type
+        _stamp_approval_id_on_tools(tools, requirements, approval_id)
+        log_debug(f"Created approval {approval_id} for run {approval_data['run_id']}")
+        return approval_id
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating approval record (sync): {e}")
+        log_warning(f"Error creating approval record (sync): {str(e)}")
+    return None
 
 
 async def acreate_approval_from_pause(
@@ -189,15 +218,23 @@ async def acreate_approval_from_pause(
     user_id: Optional[str] = None,
     schedule_id: Optional[str] = None,
     schedule_run_id: Optional[str] = None,
-) -> None:
-    """Async variant of create_approval_from_pause."""
+) -> Optional[str]:
+    """Async variant of create_approval_from_pause.
+
+    Returns the approval_id if a record was created, None otherwise.
+    """
     if db is None:
-        return
+        return None
 
     tools = getattr(run_response, "tools", None)
     requirements = getattr(run_response, "requirements", None)
     if not _has_approval_requirement(tools, requirements):
-        return
+        return None
+
+    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
+    for t in tools or []:
+        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+            return getattr(t, "approval_id", None)
 
     try:
         approval_data = _build_approval_dict(
@@ -215,18 +252,23 @@ async def acreate_approval_from_pause(
         # Try async first, fall back to sync
         create_fn = getattr(db, "create_approval", None)
         if create_fn is None:
-            return
+            return None
         from inspect import iscoroutinefunction
 
         if iscoroutinefunction(create_fn):
             await create_fn(approval_data)
         else:
             create_fn(approval_data)
-        log_debug(f"Created approval {approval_data['id']} for run {approval_data['run_id']}")
+        approval_id: str = approval_data["id"]
+        # Stamp the approval_id on all tools with approval_type
+        _stamp_approval_id_on_tools(tools, requirements, approval_id)
+        log_debug(f"Created approval {approval_id} for run {approval_data['run_id']}")
+        return approval_id
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating approval record (async): {e}")
+        log_warning(f"Error creating approval record (async): {str(e)}")
+    return None
 
 
 def create_audit_approval(
@@ -289,7 +331,7 @@ def create_audit_approval(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating audit approval record (sync): {e}")
+        log_warning(f"Error creating audit approval record (sync): {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -359,8 +401,55 @@ async def _aget_approval_for_run(db: Any, run_id: str) -> Optional[Dict[str, Any
         return None
 
 
+def _collect_all_run_ids(run_id: str, run_response: Any) -> List[str]:
+    """Gather all candidate run_ids when looking up an approval record.
+
+    Approvals may be stored under the team's run_id (team-level tools) or a
+    member agent's run_id (member-level tools where the agent created the
+    approval before the team propagated the pause). This returns the team
+    run_id first, followed by any member_run_id values from the requirements,
+    so the lookup can try each until a match is found.
+    """
+    ids = [run_id]
+    for req in getattr(run_response, "requirements", None) or []:
+        mid = getattr(req, "member_run_id", None)
+        if mid and mid not in ids:
+            ids.append(mid)
+    return ids
+
+
+def _collect_all_approval_tools(run_response: Any) -> List[Any]:
+    """Collect all tool executions that carry an approval_type from the run response.
+
+    Searches both run_response.tools (team-level tools) and
+    run_response.requirements[*].tool_execution (member-level tools propagated
+    via _propagate_member_pause). Deduplicates by tool_call_id.
+    """
+    result: List[Any] = []
+    for t in getattr(run_response, "tools", None) or []:
+        if getattr(t, "approval_type", None) is not None:
+            result.append(t)
+    for req in getattr(run_response, "requirements", None) or []:
+        te = getattr(req, "tool_execution", None)
+        if te and getattr(te, "approval_type", None) is not None:
+            # Avoid duplicates (same tool_call_id already in result)
+            if not any(getattr(r, "tool_call_id", None) == te.tool_call_id for r in result):
+                result.append(te)
+    return result
+
+
+def _attach_resolved_approval(run_response: Any, approval: Dict[str, Any]) -> None:
+    """Expose the resolved approval record to post-hooks via run_response.metadata["approval"]."""
+    if run_response.metadata is None:
+        run_response.metadata = {}
+    run_response.metadata["approval"] = approval
+
+
 def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
     """Gate: if any tool has approval_type='required', verify the approval is resolved before continuing.
+
+    Checks both run_response.tools AND requirements' tool_execution objects so that
+    member-level approvals (where run_response.tools = [delegate_task_to_member]) are found.
 
     Raises RuntimeError if the approval is still pending or not found.
     No-op if no tools require approval or if db is None.
@@ -368,11 +457,16 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     if db is None:
         return
 
-    tools = getattr(run_response, "tools", None)
-    if not tools or not any(getattr(t, "approval_type", None) == "required" for t in tools):
+    all_approval_tools = _collect_all_approval_tools(run_response)
+    if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
         return
 
-    approval = _get_approval_for_run(db, run_id)
+    all_run_ids = _collect_all_run_ids(run_id, run_response)
+    approval = None
+    for rid in all_run_ids:
+        approval = _get_approval_for_run(db, rid)
+        if approval is not None:
+            break
     if approval is None:
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
@@ -382,7 +476,10 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     if status == "pending":
         raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
 
-    _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
+    resolution_data = approval.get("resolution_data")
+    _apply_approval_to_tools(all_approval_tools, status, resolution_data)
+
+    _attach_resolved_approval(run_response, approval)
 
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
@@ -390,11 +487,17 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     if db is None:
         return
 
-    tools = getattr(run_response, "tools", None)
-    if not tools or not any(getattr(t, "approval_type", None) == "required" for t in tools):
+    all_approval_tools = _collect_all_approval_tools(run_response)
+    if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
         return
 
-    approval = await _aget_approval_for_run(db, run_id)
+    # Search by team run_id first, then fall back to member run_ids
+    all_run_ids = _collect_all_run_ids(run_id, run_response)
+    approval = None
+    for rid in all_run_ids:
+        approval = await _aget_approval_for_run(db, rid)
+        if approval is not None:
+            break
     if approval is None:
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
@@ -404,7 +507,10 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     if status == "pending":
         raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
 
-    _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
+    resolution_data = approval.get("resolution_data")
+    _apply_approval_to_tools(all_approval_tools, status, resolution_data)
+
+    _attach_resolved_approval(run_response, approval)
 
 
 async def acreate_audit_approval(
@@ -470,4 +576,68 @@ async def acreate_audit_approval(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating audit approval record (async): {e}")
+        log_warning(f"Error creating audit approval record (async): {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Update approval run_status when run completes
+# ---------------------------------------------------------------------------
+
+
+def update_approval_run_status(db: Any, run_id: str, run_status: RunStatus) -> None:
+    """Update run_status on all approvals for a given run_id.
+
+    Called when a run completes, errors, or is cancelled after being paused.
+    This allows the UI to know if the run has already been continued.
+
+    Args:
+        db: Database adapter instance.
+        run_id: The run ID to match.
+        run_status: The new run status.
+    """
+    if db is None:
+        return
+
+    try:
+        update_fn = getattr(db, "update_approval_run_status", None)
+        if update_fn is None:
+            return
+        count = update_fn(run_id, run_status)
+        if count > 0:
+            log_debug(f"Updated run_status to {run_status} for {count} approval(s) on run {run_id}")
+    except NotImplementedError:
+        pass
+    except Exception as e:
+        log_warning(f"Error updating approval run_status (sync): {str(e)}")
+
+
+async def aupdate_approval_run_status(db: Any, run_id: str, run_status: RunStatus) -> None:
+    """Async variant of update_approval_run_status.
+
+    Called when a run completes, errors, or is cancelled after being paused.
+    This allows the UI to know if the run has already been continued.
+
+    Args:
+        db: Database adapter instance.
+        run_id: The run ID to match.
+        run_status: The new run status.
+    """
+    if db is None:
+        return
+
+    try:
+        update_fn = getattr(db, "update_approval_run_status", None)
+        if update_fn is None:
+            return
+        from inspect import iscoroutinefunction
+
+        if iscoroutinefunction(update_fn):
+            count = await update_fn(run_id, run_status)
+        else:
+            count = update_fn(run_id, run_status)
+        if count > 0:
+            log_debug(f"Updated run_status to {run_status} for {count} approval(s) on run {run_id}")
+    except NotImplementedError:
+        pass
+    except Exception as e:
+        log_warning(f"Error updating approval run_status (async): {str(e)}")

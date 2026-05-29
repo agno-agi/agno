@@ -641,3 +641,331 @@ class TestGetDb:
 
         not_found2 = reg.get_db("TEST-DB")
         assert not_found2 is None
+
+
+# =============================================================================
+# get_agent() / get_team() Tests
+# =============================================================================
+
+
+class TestGetAgent:
+    """Tests for Registry.get_agent() method."""
+
+    def test_get_agent_found(self):
+        """Test getting an agent that exists."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        reg = Registry(agents=[agent])
+
+        result = reg.get_agent("agent-1")
+
+        assert result is agent
+
+    def test_get_agent_multiple(self):
+        """Test getting different agents."""
+        a1 = MagicMock()
+        a1.id = "a1"
+        a2 = MagicMock()
+        a2.id = "a2"
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent("a1") is a1
+        assert reg.get_agent("a2") is a2
+
+    def test_get_agent_not_found(self):
+        """Test getting an agent that doesn't exist."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        reg = Registry(agents=[agent])
+
+        assert reg.get_agent("nonexistent") is None
+
+    def test_get_agent_empty_registry(self, basic_registry):
+        """Test getting agent from registry with no agents."""
+        assert basic_registry.get_agent("any-id") is None
+
+    def test_get_agent_no_id_attribute(self):
+        """Test agent without id attribute is skipped."""
+        agent = MagicMock(spec=[])  # no attributes
+        reg = Registry(agents=[agent])
+
+        assert reg.get_agent("anything") is None
+
+
+class TestGetTeam:
+    """Tests for Registry.get_team() method."""
+
+    def test_get_team_found(self):
+        """Test getting a team that exists."""
+        team = MagicMock()
+        team.id = "team-1"
+        reg = Registry(teams=[team])
+
+        result = reg.get_team("team-1")
+
+        assert result is team
+
+    def test_get_team_not_found(self):
+        """Test getting a team that doesn't exist."""
+        team = MagicMock()
+        team.id = "team-1"
+        reg = Registry(teams=[team])
+
+        assert reg.get_team("nonexistent") is None
+
+    def test_get_team_empty_registry(self, basic_registry):
+        """Test getting team from registry with no teams."""
+        assert basic_registry.get_team("any-id") is None
+
+
+# =============================================================================
+# get_agent_ids() / get_team_ids() / get_all_component_ids() Tests
+# =============================================================================
+
+
+class TestGetComponentIds:
+    """Tests for Registry ID set methods."""
+
+    def test_get_agent_ids(self):
+        """Test getting all agent IDs."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        a2 = MagicMock()
+        a2.id = "agent-2"
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent_ids() == {"agent-1", "agent-2"}
+
+    def test_get_agent_ids_empty(self, basic_registry):
+        """Test agent IDs from empty registry."""
+        assert basic_registry.get_agent_ids() == set()
+
+    def test_get_agent_ids_skips_none(self):
+        """Test that agents without id are excluded."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        a2 = MagicMock(spec=[])  # no id attribute
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent_ids() == {"agent-1"}
+
+    def test_get_team_ids(self):
+        """Test getting all team IDs."""
+        t1 = MagicMock()
+        t1.id = "team-1"
+        t2 = MagicMock()
+        t2.id = "team-2"
+        reg = Registry(teams=[t1, t2])
+
+        assert reg.get_team_ids() == {"team-1", "team-2"}
+
+    def test_get_team_ids_empty(self, basic_registry):
+        """Test team IDs from empty registry."""
+        assert basic_registry.get_team_ids() == set()
+
+    def test_get_all_component_ids(self):
+        """Test getting combined agent + team IDs."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        t1 = MagicMock()
+        t1.id = "team-1"
+        reg = Registry(agents=[a1], teams=[t1])
+
+        assert reg.get_all_component_ids() == {"agent-1", "team-1"}
+
+    def test_get_all_component_ids_no_overlap(self):
+        """Test that agent and team IDs are unioned, not intersected."""
+        a1 = MagicMock()
+        a1.id = "shared-id"
+        t1 = MagicMock()
+        t1.id = "shared-id"
+        reg = Registry(agents=[a1], teams=[t1])
+
+        # Same ID from both should appear once
+        assert reg.get_all_component_ids() == {"shared-id"}
+
+    def test_get_all_component_ids_empty(self, basic_registry):
+        """Test combined IDs from empty registry."""
+        assert basic_registry.get_all_component_ids() == set()
+
+
+# =============================================================================
+# get_knowledge() / get_knowledge_names() Tests
+# =============================================================================
+
+
+class TestGetKnowledge:
+    """Tests for Registry.get_knowledge() and get_knowledge_names()."""
+
+    def test_init_with_knowledge(self):
+        """Test registry initialization with knowledge instances."""
+        kb = MagicMock()
+        kb.name = "Docs KB"
+        reg = Registry(knowledge=[kb])
+
+        assert len(reg.knowledge) == 1
+        assert reg.knowledge[0] is kb
+
+    def test_get_knowledge_found(self):
+        """Test getting a knowledge instance that exists by name."""
+        kb = MagicMock()
+        kb.name = "Docs KB"
+        reg = Registry(knowledge=[kb])
+
+        assert reg.get_knowledge("Docs KB") is kb
+
+    def test_get_knowledge_multiple(self):
+        """Test getting different knowledge instances."""
+        kb1 = MagicMock()
+        kb1.name = "KB One"
+        kb2 = MagicMock()
+        kb2.name = "KB Two"
+        reg = Registry(knowledge=[kb1, kb2])
+
+        assert reg.get_knowledge("KB One") is kb1
+        assert reg.get_knowledge("KB Two") is kb2
+
+    def test_get_knowledge_not_found(self):
+        """Test getting a knowledge instance that doesn't exist."""
+        kb = MagicMock()
+        kb.name = "Docs KB"
+        reg = Registry(knowledge=[kb])
+
+        assert reg.get_knowledge("Nonexistent") is None
+
+    def test_get_knowledge_empty_registry(self, basic_registry):
+        """Test getting knowledge from registry with no knowledge."""
+        assert basic_registry.get_knowledge("any") is None
+
+    def test_get_knowledge_names(self):
+        """Test getting all knowledge names."""
+        kb1 = MagicMock()
+        kb1.name = "KB One"
+        kb2 = MagicMock()
+        kb2.name = "KB Two"
+        reg = Registry(knowledge=[kb1, kb2])
+
+        assert reg.get_knowledge_names() == {"KB One", "KB Two"}
+
+    def test_get_knowledge_names_empty(self, basic_registry):
+        """Test knowledge names from empty registry."""
+        assert basic_registry.get_knowledge_names() == set()
+
+    def test_get_knowledge_names_skips_none(self):
+        """Test that knowledge instances without a name are excluded."""
+        kb1 = MagicMock()
+        kb1.name = "KB One"
+        kb2 = MagicMock()
+        kb2.name = None
+        reg = Registry(knowledge=[kb1, kb2])
+
+        assert reg.get_knowledge_names() == {"KB One"}
+
+
+# =============================================================================
+# get_memory_manager() / get_session_summary_manager() Tests
+# =============================================================================
+
+
+class TestGetMemoryManager:
+    """Tests for Registry memory manager methods."""
+
+    def test_init_with_memory_managers(self):
+        """Test registry initialization with memory managers."""
+        mm = MagicMock()
+        mm.id = "mm-1"
+        reg = Registry(memory_managers=[mm])
+
+        assert len(reg.memory_managers) == 1
+        assert reg.memory_managers[0] is mm
+
+    def test_get_memory_manager_found(self):
+        """Test getting a memory manager that exists by id."""
+        mm = MagicMock()
+        mm.id = "mm-1"
+        reg = Registry(memory_managers=[mm])
+
+        assert reg.get_memory_manager("mm-1") is mm
+
+    def test_get_memory_manager_not_found(self):
+        """Test getting a memory manager that doesn't exist."""
+        mm = MagicMock()
+        mm.id = "mm-1"
+        reg = Registry(memory_managers=[mm])
+
+        assert reg.get_memory_manager("nonexistent") is None
+
+    def test_get_memory_manager_empty_registry(self, basic_registry):
+        """Test getting memory manager from empty registry."""
+        assert basic_registry.get_memory_manager("any") is None
+
+    def test_get_memory_manager_ids(self):
+        """Test getting all memory manager ids."""
+        mm1 = MagicMock()
+        mm1.id = "mm-1"
+        mm2 = MagicMock()
+        mm2.id = "mm-2"
+        reg = Registry(memory_managers=[mm1, mm2])
+
+        assert reg.get_memory_manager_ids() == {"mm-1", "mm-2"}
+
+    def test_get_memory_manager_ids_empty(self, basic_registry):
+        """Test memory manager ids from empty registry."""
+        assert basic_registry.get_memory_manager_ids() == set()
+
+    def test_get_memory_manager_ids_skips_none(self):
+        """Test that memory managers without an id are excluded."""
+        mm1 = MagicMock()
+        mm1.id = "mm-1"
+        mm2 = MagicMock()
+        mm2.id = None
+        reg = Registry(memory_managers=[mm1, mm2])
+
+        assert reg.get_memory_manager_ids() == {"mm-1"}
+
+
+class TestGetSessionSummaryManager:
+    """Tests for Registry session summary manager methods."""
+
+    def test_init_with_session_summary_managers(self):
+        """Test registry initialization with session summary managers."""
+        sm = MagicMock()
+        sm.id = "sm-1"
+        reg = Registry(session_summary_managers=[sm])
+
+        assert len(reg.session_summary_managers) == 1
+        assert reg.session_summary_managers[0] is sm
+
+    def test_get_session_summary_manager_found(self):
+        """Test getting a session summary manager that exists by id."""
+        sm = MagicMock()
+        sm.id = "sm-1"
+        reg = Registry(session_summary_managers=[sm])
+
+        assert reg.get_session_summary_manager("sm-1") is sm
+
+    def test_get_session_summary_manager_not_found(self):
+        """Test getting a session summary manager that doesn't exist."""
+        sm = MagicMock()
+        sm.id = "sm-1"
+        reg = Registry(session_summary_managers=[sm])
+
+        assert reg.get_session_summary_manager("nonexistent") is None
+
+    def test_get_session_summary_manager_empty_registry(self, basic_registry):
+        """Test getting session summary manager from empty registry."""
+        assert basic_registry.get_session_summary_manager("any") is None
+
+    def test_get_session_summary_manager_ids(self):
+        """Test getting all session summary manager ids."""
+        sm1 = MagicMock()
+        sm1.id = "sm-1"
+        sm2 = MagicMock()
+        sm2.id = "sm-2"
+        reg = Registry(session_summary_managers=[sm1, sm2])
+
+        assert reg.get_session_summary_manager_ids() == {"sm-1", "sm-2"}
+
+    def test_get_session_summary_manager_ids_empty(self, basic_registry):
+        """Test session summary manager ids from empty registry."""
+        assert basic_registry.get_session_summary_manager_ids() == set()

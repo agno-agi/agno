@@ -62,6 +62,21 @@ async def _aresolve_callable_resources(team: "Team", run_context: "RunContext") 
     await aresolve_callable_members(team, run_context)
 
 
+async def _aget_learning_tools(
+    team: "Team",
+    user_id: Optional[str] = None,
+    session: Optional[TeamSession] = None,
+) -> List[Callable]:
+    """Async helper to fetch learning tools for Team runs."""
+    if team._learning is None:
+        return []
+    return await team._learning.aget_tools(
+        user_id=user_id,
+        session_id=session.session_id if session else None,
+        team_id=team.id,
+    )
+
+
 async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Connect MCP tools
     from agno.team._init import _connect_mcp_tools
@@ -83,13 +98,13 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive: {e}")
+                        log_warning(f"Failed to check if MCP tool is alive: {str(e)}")
                         continue
 
                     try:
                         await tool.build_tools()  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                        log_warning(f"Failed to build tools for {tool}: {str(e)}")
                         continue
 
 
@@ -114,6 +129,7 @@ def _determine_tools_for_model(
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     check_mcp_tools: bool = True,
+    learning_tools: Optional[List[Callable]] = None,
 ) -> List[Union[Function, dict]]:
     # Connect tools that require connection management
     from functools import partial
@@ -121,9 +137,11 @@ def _determine_tools_for_model(
     from agno.team._default_tools import (
         _get_chat_history_function,
         _get_delegate_task_function,
-        _get_previous_sessions_messages_function,
         _get_update_user_memory_function,
+        _read_past_session_function,
+        _search_past_sessions_function,
         _update_session_state_tool,
+        create_knowledge_search_tool,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -172,41 +190,61 @@ def _determine_tools_for_model(
         _tools.append(_get_update_user_memory_function(team, user_id=user_id, async_mode=async_mode))
 
     # Add learning machine tools
+    # In async mode, caller should pre-fetch with await team._learning.aget_tools() and pass learning_tools
     if team._learning is not None:
-        learning_tools = team._learning.get_tools(
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            team_id=team.id,
-        )
-        _tools.extend(learning_tools)
+        if learning_tools is not None:
+            _tools.extend(learning_tools)
+        else:
+            _learning_tools = team._learning.get_tools(
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                team_id=team.id,
+            )
+            _tools.extend(_learning_tools)
 
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
 
-    if team.search_session_history:
+    if team.search_past_sessions:
         _tools.append(
-            _get_previous_sessions_messages_function(
-                team, num_history_sessions=team.num_history_sessions, user_id=user_id, async_mode=async_mode
+            _search_past_sessions_function(
+                team,
+                num_past_sessions_to_search=team.num_past_sessions_to_search,
+                num_past_session_runs_in_search=team.num_past_session_runs_in_search,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+                async_mode=async_mode,
+            )
+        )
+        _tools.append(
+            _read_past_session_function(
+                team,
+                user_id=user_id,
+                async_mode=async_mode,
             )
         )
 
     # Add tools for accessing knowledge
-    if resolved_knowledge is not None and team.search_knowledge:
-        # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
-        if callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
+    # Single unified path through get_relevant_docs_from_knowledge(),
+    # which checks knowledge_retriever first, then falls back to knowledge.search().
+    if (resolved_knowledge is not None or team.knowledge_retriever is not None) and team.search_knowledge:
+        _tools.append(
+            create_knowledge_search_tool(
+                team,
                 run_response=run_response,
                 run_context=run_context,
                 knowledge_filters=run_context.knowledge_filters,
-                async_mode=async_mode,
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,
-                agent=team,
+                async_mode=async_mode,
             )
-            _tools.extend(knowledge_tools)
+        )
 
     if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)
+
+    # Add tools for accessing skills
+    if team.skills is not None:
+        _tools.extend(team.skills.get_tools())
 
     from agno.team.mode import TeamMode
 
@@ -293,7 +331,12 @@ def _determine_tools_for_model(
 
     # Check if we need strict mode for the model
     strict = False
-    if output_schema is not None and not team.use_json_mode and model.supports_native_structured_outputs:
+    if (
+        output_schema is not None
+        and team.parser_model is None
+        and not team.use_json_mode
+        and model.supports_native_structured_outputs
+    ):
         strict = True
 
     for tool in _tools:
@@ -308,6 +351,10 @@ def _determine_tools_for_model(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
+                        f"already registered on team; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
@@ -323,6 +370,12 @@ def _determine_tools_for_model(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name} from {tool.name}")
 
+                # Add per-function instructions
+                if _func.add_instructions and _func.instructions is not None:
+                    if team._tool_instructions is None:
+                        team._tool_instructions = []
+                    team._tool_instructions.append(_func.instructions)
+
             # Add instructions from the toolkit
             if tool.add_instructions and tool.instructions is not None:
                 if team._tool_instructions is None:
@@ -331,6 +384,7 @@ def _determine_tools_for_model(
 
         elif isinstance(tool, Function):
             if tool.name in _function_names:
+                log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
                 continue
             _function_names.append(tool.name)
             tool = tool.model_copy(deep=True)
@@ -357,6 +411,9 @@ def _determine_tools_for_model(
                 _func = Function.from_callable(tool, strict=strict)
                 _func = _func.model_copy(deep=True)
                 if _func.name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(_func.name)
 
@@ -368,7 +425,7 @@ def _determine_tools_for_model(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name}")
             except Exception as e:
-                log_warning(f"Could not add tool {tool}: {e}")
+                log_warning(f"Could not add tool {tool}: {str(e)}")
 
     if _functions:
         from inspect import signature

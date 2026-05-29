@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
@@ -140,10 +140,20 @@ def get_tools(
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
-    if agent.search_session_history:
+    if agent.search_past_sessions:
         agent_tools.append(
-            _default_tools.get_previous_sessions_messages_function(
-                agent, num_history_sessions=agent.num_history_sessions, user_id=user_id
+            _default_tools.get_search_past_sessions_function(
+                agent,
+                num_past_sessions_to_search=agent.num_past_sessions_to_search,
+                num_past_session_runs_in_search=agent.num_past_session_runs_in_search,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+            )
+        )
+        agent_tools.append(
+            _default_tools.get_read_past_session_function(
+                agent,
+                user_id=user_id,
             )
         )
 
@@ -171,26 +181,16 @@ def get_tools(
         )
 
     # Add tools for accessing knowledge
-    if resolved_knowledge is not None and agent.search_knowledge:
-        # Use knowledge protocol's get_tools method
-        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
-        if callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
-                run_response=run_response,
-                run_context=run_context,
-                knowledge_filters=run_context.knowledge_filters,
-                async_mode=False,
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-                agent=agent,
-            )
-            agent_tools.extend(knowledge_tools)
-    elif agent.knowledge_retriever is not None and agent.search_knowledge:
-        # Create search tool using custom knowledge_retriever
+    # Single unified path through get_relevant_docs_from_knowledge(),
+    # which checks knowledge_retriever first, then falls back to knowledge.search().
+    if (resolved_knowledge is not None or agent.knowledge_retriever is not None) and agent.search_knowledge:
         agent_tools.append(
-            _default_tools.create_knowledge_retriever_search_tool(
+            _default_tools.create_knowledge_search_tool(
                 agent,
                 run_response=run_response,
                 run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
                 async_mode=False,
             )
         )
@@ -251,13 +251,13 @@ async def aget_tools(
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {e}")
+                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {str(e)}")
                         continue
 
                     try:
                         await tool.build_tools()  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                        log_warning(f"Failed to build tools for {str(tool)}: {str(e)}")
                         continue
 
                 # Only add the tool if it successfully connected and built its tools
@@ -272,10 +272,20 @@ async def aget_tools(
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
-    if agent.search_session_history:
+    if agent.search_past_sessions:
         agent_tools.append(
-            await _default_tools.aget_previous_sessions_messages_function(
-                agent, num_history_sessions=agent.num_history_sessions, user_id=user_id
+            await _default_tools.aget_search_past_sessions_function(
+                agent,
+                num_past_sessions_to_search=agent.num_past_sessions_to_search,
+                num_past_session_runs_in_search=agent.num_past_session_runs_in_search,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+            )
+        )
+        agent_tools.append(
+            await _default_tools.aget_read_past_session_function(
+                agent,
+                user_id=user_id,
             )
         )
 
@@ -303,38 +313,16 @@ async def aget_tools(
         )
 
     # Add tools for accessing knowledge
-    if resolved_knowledge is not None and agent.search_knowledge:
-        # Use knowledge protocol's get_tools method
-        aget_tools_fn = getattr(resolved_knowledge, "aget_tools", None)
-        get_tools_fn = getattr(resolved_knowledge, "get_tools", None)
-
-        if callable(aget_tools_fn):
-            knowledge_tools = await aget_tools_fn(
-                run_response=run_response,
-                run_context=run_context,
-                knowledge_filters=run_context.knowledge_filters,
-                async_mode=True,
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-                agent=agent,
-            )
-            agent_tools.extend(knowledge_tools)
-        elif callable(get_tools_fn):
-            knowledge_tools = get_tools_fn(
-                run_response=run_response,
-                run_context=run_context,
-                knowledge_filters=run_context.knowledge_filters,
-                async_mode=True,
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-                agent=agent,
-            )
-            agent_tools.extend(knowledge_tools)
-    elif agent.knowledge_retriever is not None and agent.search_knowledge:
-        # Create search tool using custom knowledge_retriever
+    # Single unified path through aget_relevant_docs_from_knowledge(),
+    # which checks knowledge_retriever first, then falls back to knowledge.search().
+    if (resolved_knowledge is not None or agent.knowledge_retriever is not None) and agent.search_knowledge:
         agent_tools.append(
-            _default_tools.create_knowledge_retriever_search_tool(
+            _default_tools.create_knowledge_search_tool(
                 agent,
                 run_response=run_response,
                 run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
                 async_mode=True,
             )
         )
@@ -367,6 +355,7 @@ def parse_tools(
     strict = False
     if (
         output_schema is not None
+        and agent.parser_model is None
         and (agent.structured_outputs or (not agent.use_json_mode))
         and model.supports_native_structured_outputs
     ):
@@ -384,10 +373,16 @@ def parse_tools(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
+                        f"already registered on agent; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
+                if agent._team is not None:
+                    _func._team = agent._team
                 # Respect the function's explicit strict setting if set
                 effective_strict = strict if _func.strict is None else _func.strict
                 _func.process_entrypoint(strict=effective_strict)
@@ -398,12 +393,17 @@ def parse_tools(
                 _functions.append(_func)
                 log_debug(f"Added tool {name} from {tool.name}")
 
+                # Add per-function instructions
+                if _func.add_instructions and _func.instructions is not None:
+                    agent._tool_instructions.append(_func.instructions)
+
             # Add instructions from the toolkit
             if tool.add_instructions and tool.instructions is not None:
                 agent._tool_instructions.append(tool.instructions)
 
         elif isinstance(tool, Function):
             if tool.name in _function_names:
+                log_warning(f"Duplicate tool name '{tool.name}' already registered on agent; skipping the duplicate.")
                 continue
             _function_names.append(tool.name)
 
@@ -413,6 +413,8 @@ def parse_tools(
             tool.process_entrypoint(strict=effective_strict)
 
             tool._agent = agent
+            if agent._team is not None:
+                tool._team = agent._team
             if strict and tool.strict is None:
                 tool.strict = True
             if agent.tool_hooks is not None:
@@ -429,6 +431,9 @@ def parse_tools(
                 function_name = tool.__name__
 
                 if function_name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{function_name}' already registered on agent; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(function_name)
 
@@ -451,6 +456,8 @@ def parse_tools(
                         )
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
+                if agent._team is not None:
+                    _func._team = agent._team
                 if strict:
                     _func.strict = True
                 if agent.tool_hooks is not None:
@@ -458,7 +465,7 @@ def parse_tools(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name}")
             except Exception as e:
-                log_warning(f"Could not add tool {tool}: {e}")
+                log_warning(f"Could not add tool {tool}: {str(e)}")
 
     return _functions
 
@@ -565,7 +572,7 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
-            metrics=Metrics(duration=0),
+            metrics=MessageMetrics(duration=0),
         )
     )
 
@@ -586,7 +593,7 @@ def handle_ask_user_tool_update(agent: Agent, run_messages: RunMessages, tool: T
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
-            metrics=Metrics(duration=0),
+            metrics=MessageMetrics(duration=0),
         )
     )
 
@@ -632,8 +639,18 @@ def run_tool(
     tool: ToolExecution,
     functions: Optional[Dict[str, Function]] = None,
     stream_events: bool = False,
+    team_mode: bool = False,
 ) -> Iterator[RunOutputEvent]:
     from agno.run.agent import CustomEvent
+
+    # team_mode=True when called from team continue path with a TeamRunOutput.
+    # Team-level tools need team event creators since TeamRunOutput has team_id, not agent_id.
+    if team_mode:
+        from agno.utils.events import (
+            create_team_tool_call_completed_event,
+            create_team_tool_call_error_event,
+            create_team_tool_call_started_event,
+        )
 
     agent.model = cast(Model, agent.model)
     # Execute the tool
@@ -647,35 +664,66 @@ def run_tool(
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_tool_call_started_event(from_run_response=run_response, tool=tool),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
+                    if team_mode:
+                        yield handle_event(  # type: ignore
+                            create_team_tool_call_started_event(from_run_response=run_response, tool=tool),  # type: ignore
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    else:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
 
             if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool, content=call_result.content
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if tool.tool_call_error:
+                    if team_mode:
                         yield handle_event(  # type: ignore
-                            create_tool_call_error_event(
-                                from_run_response=run_response, tool=tool, error=str(tool.result)
+                            create_team_tool_call_completed_event(
+                                from_run_response=run_response,  # type: ignore[arg-type]
+                                tool=tool,
+                                content=call_result.content,  # type: ignore
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
                             store_events=agent.store_events,
                         )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_team_tool_call_error_event(
+                                    from_run_response=run_response,  # type: ignore[arg-type]
+                                    tool=tool,
+                                    error=str(tool.result),  # type: ignore
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+                    else:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool, content=call_result.content
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool, error=str(tool.result)
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
         # Yield CustomEvent instances from sync tool generators
         elif isinstance(call_result, CustomEvent):
             if stream_events:
@@ -705,8 +753,17 @@ async def arun_tool(
     tool: ToolExecution,
     functions: Optional[Dict[str, Function]] = None,
     stream_events: bool = False,
+    team_mode: bool = False,
 ) -> AsyncIterator[RunOutputEvent]:
     from agno.run.agent import CustomEvent
+
+    # team_mode=True when called from team continue path with a TeamRunOutput.
+    if team_mode:
+        from agno.utils.events import (
+            create_team_tool_call_completed_event,
+            create_team_tool_call_error_event,
+            create_team_tool_call_started_event,
+        )
 
     agent.model = cast(Model, agent.model)
 
@@ -722,34 +779,65 @@ async def arun_tool(
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_tool_call_started_event(from_run_response=run_response, tool=tool),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
+                    if team_mode:
+                        yield handle_event(  # type: ignore
+                            create_team_tool_call_started_event(from_run_response=run_response, tool=tool),  # type: ignore
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    else:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
             if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool, content=call_result.content
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if tool.tool_call_error:
+                    if team_mode:
                         yield handle_event(  # type: ignore
-                            create_tool_call_error_event(
-                                from_run_response=run_response, tool=tool, error=str(tool.result)
+                            create_team_tool_call_completed_event(
+                                from_run_response=run_response,  # type: ignore[arg-type]
+                                tool=tool,
+                                content=call_result.content,  # type: ignore
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
                             store_events=agent.store_events,
                         )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_team_tool_call_error_event(
+                                    from_run_response=run_response,  # type: ignore[arg-type]
+                                    tool=tool,
+                                    error=str(tool.result),  # type: ignore
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+                    else:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool, content=call_result.content
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool, error=str(tool.result)
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
         # Yield CustomEvent instances from async tool generators
         elif isinstance(call_result, CustomEvent):
             if stream_events:

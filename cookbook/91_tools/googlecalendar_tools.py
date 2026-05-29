@@ -1,7 +1,7 @@
 """
 Steps to get the Google OAuth Credentials (Reference : https://developers.google.com/calendar/api/quickstart/python)
 
-1. Enable Google Calender API
+1. Enable Google Calendar API
     - Go To https://console.cloud.google.com/apis/enableflow?apiid=calendar-json.googleapis.com
     - Select Project and Enable The API
 
@@ -15,7 +15,7 @@ Steps to get the Google OAuth Credentials (Reference : https://developers.google
 
 5. Select Scope
     - Click on Add or Remove Scope
-    - Search for Google Calender API (Make Sure you've enabled Google calender API otherwise scopes wont be visible)
+    - Search for Google Calendar API (Make Sure you've enabled Google calendar API otherwise scopes wont be visible)
     - Select Scopes Accordingly
         - From the dropdown check on /auth/calendar scope
     - Save and Continue
@@ -36,12 +36,12 @@ Steps to get the Google OAuth Credentials (Reference : https://developers.google
     - Select Application Type as Desktop app
     - Download JSON
 
-8. Using Google Calender Tool
-    - Pass the Path of downloaded credentials as credentials_path to Google Calender tool
+8. Using Google Calendar Tool
+    - Pass the Path of downloaded credentials as credentials_path to Google Calendar tool
 """
 
 from agno.agent import Agent
-from agno.tools.googlecalendar import GoogleCalendarTools
+from agno.tools.google.calendar import GoogleCalendarTools
 
 # ---------------------------------------------------------------------------
 # Create Agent

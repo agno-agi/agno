@@ -6,9 +6,14 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.routers.traces.schemas import (
+    TRACE_FILTER_SCHEMA,
+    FilterSchemaResponse,
     TraceDetail,
     TraceNode,
+    TraceSearchGroupBy,
+    TraceSearchRequest,
     TraceSessionStats,
     TraceSummary,
 )
@@ -22,7 +27,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db, timestamp_to_datetime
+from agno.os.utils import timestamp_to_datetime
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 
@@ -133,8 +138,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Get list of traces with optional filters and pagination"""
         import time as time_module
 
-        # Get database using db_id or default to first available
-        db = await get_db(dbs, db_id)
+        # Look up the DB and the user_id to thread on the query. Non-admin
+        # scoped callers get the JWT sub; admins / unscoped callers keep the
+        # query-param ``user_id`` they used before.
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -142,7 +149,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             return await db.get_traces(
                 run_id=run_id,
                 session_id=session_id,
-                user_id=user_id,
+                user_id=effective_user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 workflow_id=workflow_id,
@@ -158,7 +165,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             start_time_ms = time_module.time() * 1000
 
-            # Convert ISO datetime strings to UTC datetime objects
             start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
             end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
@@ -166,7 +172,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 traces, total_count = await db.get_traces(
                     run_id=run_id,
                     session_id=session_id,
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     workflow_id=workflow_id,
@@ -180,7 +186,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 traces, total_count = db.get_traces(
                     run_id=run_id,
                     session_id=session_id,
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     workflow_id=workflow_id,
@@ -226,8 +232,27 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         except Exception as e:
-            log_error(f"Error retrieving traces: {e}")
+            log_error(f"Error retrieving traces: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
+
+    @router.get(
+        "/traces/filter-schema",
+        response_model=FilterSchemaResponse,
+        tags=["Traces"],
+        operation_id="get_traces_filter_schema",
+        summary="Get Trace Filter Schema",
+        description=(
+            "Returns the available filterable fields, their types, valid operators, and enum values.\n\n"
+            "The frontend uses this to dynamically build the filter bar UI:\n"
+            "- Field dropdown populated from `fields[].key`\n"
+            "- Operator dropdown changes per field type\n"
+            "- Value input shows autocomplete for enum fields (e.g., status)\n"
+            "- Logical operators (AND, OR) for combining clauses"
+        ),
+    )
+    async def get_traces_filter_schema():
+        """Return the filter schema for traces (fields, operators, enum values)"""
+        return TRACE_FILTER_SCHEMA
 
     @router.get(
         "/traces/{trace_id}",
@@ -331,8 +356,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
-        # Get database using db_id or default to first available
-        db = await get_db(dbs, db_id)
+        # ``trace_id`` is a unique key — there's nothing to narrow further at
+        # the DB layer, so ``get_trace`` only takes ``trace_id`` / ``run_id``.
+        # Authorization for this endpoint is upheld by the list endpoint
+        # (``GET /traces``), which is the only way for a non-admin caller to
+        # discover trace_ids in the first place; that listing is scoped to
+        # the caller's ``user_id``, so by the time a request lands here the
+        # caller necessarily owns the trace they're asking about.
+        db, _ = await resolve_db_and_scope(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -346,8 +377,18 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         try:
-            # If span_id is provided, return just that span
+            # If span_id is provided, return just that span. Spans are not
+            # user-scoped at the DB layer (no user_id column); the parent
+            # trace_id check ensures the span belongs to the requested trace.
             if span_id:
+                if isinstance(db, AsyncBaseDb):
+                    parent_trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
+                else:
+                    parent_trace = db.get_trace(trace_id=trace_id, run_id=run_id)
+
+                if parent_trace is None:
+                    raise HTTPException(status_code=404, detail="Trace not found")
+
                 if isinstance(db, AsyncBaseDb):
                     span = await db.get_span(span_id)
                 else:
@@ -364,7 +405,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 return TraceNode.from_span(span, spans=None)
 
             # Otherwise, return full trace with hierarchy
-            # Get trace
             if isinstance(db, AsyncBaseDb):
                 trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
             else:
@@ -385,7 +425,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error retrieving trace {trace_id}: {e}")
+            log_error(f"Error retrieving trace {trace_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving trace: {str(e)}")
 
     @router.get(
@@ -461,14 +501,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Get trace statistics grouped by session"""
         import time as time_module
 
-        # Get database using db_id or default to first available
-        db = await get_db(dbs, db_id)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_trace_session_stats(
-                user_id=user_id,
+                user_id=effective_user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 workflow_id=workflow_id,
@@ -483,13 +522,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             start_time_ms = time_module.time() * 1000
 
-            # Convert ISO datetime strings to UTC datetime objects
             start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
             end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
             if isinstance(db, AsyncBaseDb):
                 stats_list, total_count = await db.get_trace_stats(
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     workflow_id=workflow_id,
@@ -500,7 +538,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 )
             else:
                 stats_list, total_count = db.get_trace_stats(
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     workflow_id=workflow_id,
@@ -543,7 +581,192 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         except Exception as e:
-            log_error(f"Error retrieving trace statistics: {e}")
+            log_error(f"Error retrieving trace statistics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving statistics: {str(e)}")
+
+    @router.post(
+        "/traces/search",
+        response_model=Union[PaginatedResponse[TraceDetail], PaginatedResponse[TraceSessionStats]],
+        response_model_exclude_none=True,
+        tags=["Traces"],
+        operation_id="search_traces",
+        summary="Search Traces with Advanced Filters",
+        description=(
+            "Search traces using the FilterExpr DSL for complex, composable queries.\n\n"
+            "**Group By Mode:**\n"
+            "- `run` (default): Returns `PaginatedResponse[TraceDetail]` with full span trees\n"
+            "- `session`: Returns `PaginatedResponse[TraceSessionStats]` with aggregated session stats\n\n"
+            "**Supported Operators:**\n"
+            "- Comparison: `EQ`, `NEQ`, `GT`, `GTE`, `LT`, `LTE`\n"
+            "- Inclusion: `IN`\n"
+            "- String matching: `CONTAINS` (case-insensitive substring), `STARTSWITH` (prefix)\n"
+            "- Logical: `AND`, `OR`, `NOT`\n\n"
+            "**Filterable Fields:**\n"
+            "trace_id, name, status, start_time, end_time, duration_ms, "
+            "run_id, session_id, user_id, agent_id, team_id, workflow_id, created_at\n\n"
+            "**Example Request Body (runs):**\n"
+            "```json\n"
+            "{\n"
+            '  "filter": {"op": "EQ", "key": "status", "value": "OK"},\n'
+            '  "group_by": "run",\n'
+            '  "page": 1,\n'
+            '  "limit": 20\n'
+            "}\n"
+            "```\n\n"
+            "**Example Request Body (sessions):**\n"
+            "```json\n"
+            "{\n"
+            '  "filter": {"op": "CONTAINS", "key": "agent_id", "value": "stock"},\n'
+            '  "group_by": "session",\n'
+            '  "page": 1,\n'
+            '  "limit": 20\n'
+            "}\n"
+            "```"
+        ),
+        responses={
+            400: {"description": "Invalid filter expression", "model": BadRequestResponse},
+        },
+    )
+    async def search_traces(
+        request: Request,
+        body: TraceSearchRequest,
+        db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
+    ):
+        """Search traces using advanced FilterExpr DSL queries.
+
+        Returns TraceDetail (group_by=run) or TraceSessionStats (group_by=session).
+        """
+        import time as time_module
+
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            auth_token = get_auth_token_from_request(request)
+            headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
+            return await db.search_traces(
+                filter_expr=body.filter,
+                group_by=body.group_by.value,
+                limit=body.limit,
+                page=body.page,
+                db_id=db_id,
+                headers=headers,
+            )
+
+        try:
+            start_time_ms = time_module.time() * 1000
+
+            # Validate filter expression if provided
+            filter_expr_dict = None
+            if body.filter:
+                from agno.filters import from_dict
+
+                from_dict(body.filter)  # Validate structure; raises ValueError if invalid
+                filter_expr_dict = body.filter
+
+            # For non-admin scoped callers, AND a user_id constraint into the
+            # filter so they can't query across other users' traces. Admins /
+            # unscoped callers get the raw filter unchanged.
+            if effective_user_id is not None:
+                user_clause = {"op": "EQ", "key": "user_id", "value": effective_user_id}
+                if filter_expr_dict is None:
+                    filter_expr_dict = user_clause
+                else:
+                    filter_expr_dict = {"op": "AND", "exprs": [user_clause, filter_expr_dict]}
+
+            # Branch based on group_by mode
+            if body.group_by == TraceSearchGroupBy.SESSION:
+                # Session grouping - return TraceSessionStats
+                if isinstance(db, AsyncBaseDb):
+                    stats_list, total_count = await db.get_trace_stats(
+                        filter_expr=filter_expr_dict,
+                        limit=body.limit,
+                        page=body.page,
+                    )
+                else:
+                    stats_list, total_count = db.get_trace_stats(
+                        filter_expr=filter_expr_dict,
+                        limit=body.limit,
+                        page=body.page,
+                    )
+
+                end_time_ms = time_module.time() * 1000
+                search_time_ms = round(end_time_ms - start_time_ms, 2)
+
+                # Calculate total pages
+                total_pages = (total_count + body.limit - 1) // body.limit if body.limit > 0 else 0
+
+                # Convert stats to response models
+                stats_response = [
+                    TraceSessionStats(
+                        session_id=stat["session_id"],
+                        user_id=stat.get("user_id"),
+                        agent_id=stat.get("agent_id"),
+                        team_id=stat.get("team_id"),
+                        workflow_id=stat.get("workflow_id"),
+                        total_traces=stat["total_traces"],
+                        first_trace_at=stat["first_trace_at"],
+                        last_trace_at=stat["last_trace_at"],
+                    )
+                    for stat in stats_list
+                ]
+
+                return PaginatedResponse(
+                    data=stats_response,
+                    meta=PaginationInfo(
+                        page=body.page,
+                        limit=body.limit,
+                        total_pages=total_pages,
+                        total_count=total_count,
+                        search_time_ms=search_time_ms,
+                    ),
+                )
+
+            else:
+                # Run grouping (default) - return TraceDetail
+                if isinstance(db, AsyncBaseDb):
+                    traces, total_count = await db.get_traces(
+                        filter_expr=filter_expr_dict,
+                        limit=body.limit,
+                        page=body.page,
+                    )
+                else:
+                    traces, total_count = db.get_traces(
+                        filter_expr=filter_expr_dict,
+                        limit=body.limit,
+                        page=body.page,
+                    )
+
+                end_time_ms = time_module.time() * 1000
+                search_time_ms = round(end_time_ms - start_time_ms, 2)
+
+                # Calculate total pages
+                total_pages = (total_count + body.limit - 1) // body.limit if body.limit > 0 else 0
+
+                # Build full TraceDetail (with span tree) for each trace
+                trace_details = []
+                for trace in traces:
+                    if isinstance(db, AsyncBaseDb):
+                        spans = await db.get_spans(trace_id=trace.trace_id)
+                    else:
+                        spans = db.get_spans(trace_id=trace.trace_id)
+
+                    trace_details.append(TraceDetail.from_trace_and_spans(trace, spans))
+
+                return PaginatedResponse(
+                    data=trace_details,
+                    meta=PaginationInfo(
+                        page=body.page,
+                        limit=body.limit,
+                        total_pages=total_pages,
+                        total_count=total_count,
+                        search_time_ms=search_time_ms,
+                    ),
+                )
+
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid filter expression: {str(e)}")
+        except Exception as e:
+            log_error(f"Error searching traces: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error searching traces: {str(e)}")
 
     return router

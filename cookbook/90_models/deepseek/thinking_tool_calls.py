@@ -14,7 +14,7 @@ Before outputting the final answer, the model can engage in multiple turns of re
 """
 
 agent = Agent(
-    model=DeepSeek(id="deepseek-reasoner"),
+    model=DeepSeek(id="deepseek-v4-pro"),
     tools=[WebSearchTools()],
     markdown=True,
     stream=True,

@@ -73,3 +73,13 @@
 **Description:** Scores a tool-assisted math response for quality.
 
 ---
+
+### agent_as_judge_eval_metrics.py
+
+**Status:** PASS
+
+**Description:** Eval model metrics tracked under "eval_model" detail key via post-hook, with sync and async variants.
+
+**Result:** Shows agent "model" and "eval_model" tokens in metrics.details. Async variant confirms eval_model present.
+
+---

@@ -21,10 +21,10 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import db_from_dict
+from agno.db.utils import resolve_db_from_config
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
 from agno.models.utils import get_model
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
@@ -37,8 +37,10 @@ from agno.tools.function import Function
 from agno.utils.agent import (
     aget_last_run_output_util,
     aget_run_output_util,
+    aget_session_metrics_util,
     get_last_run_output_util,
     get_run_output_util,
+    get_session_metrics_util,
 )
 from agno.utils.log import (
     log_debug,
@@ -54,7 +56,7 @@ from agno.utils.string import generate_id_from_name
 
 
 def get_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -62,16 +64,17 @@ def get_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
 
 
 async def aget_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -79,12 +82,13 @@ async def aget_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
 
 
 def get_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
@@ -126,17 +130,30 @@ async def aget_last_run_output(team: "Team", session_id: Optional[str] = None) -
 # ---------------------------------------------------------------------------
 
 
-def get_session_metrics_internal(team: "Team", session: TeamSession) -> Metrics:
+def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionMetrics:
     # Get the session_metrics from the database
     if session.session_data is not None and "session_metrics" in session.session_data:
         session_metrics_from_db = session.session_data.get("session_metrics")
         if session_metrics_from_db is not None:
             if isinstance(session_metrics_from_db, dict):
-                return Metrics(**session_metrics_from_db)
-            elif isinstance(session_metrics_from_db, Metrics):
+                return SessionMetrics.from_dict(session_metrics_from_db)
+            elif isinstance(session_metrics_from_db, SessionMetrics):
                 return session_metrics_from_db
-
-    return Metrics()
+            elif isinstance(session_metrics_from_db, RunMetrics):
+                # Convert legacy RunMetrics to SessionMetrics
+                return SessionMetrics(
+                    input_tokens=session_metrics_from_db.input_tokens,
+                    output_tokens=session_metrics_from_db.output_tokens,
+                    total_tokens=session_metrics_from_db.total_tokens,
+                    audio_input_tokens=session_metrics_from_db.audio_input_tokens,
+                    audio_output_tokens=session_metrics_from_db.audio_output_tokens,
+                    audio_total_tokens=session_metrics_from_db.audio_total_tokens,
+                    cache_read_tokens=session_metrics_from_db.cache_read_tokens,
+                    cache_write_tokens=session_metrics_from_db.cache_write_tokens,
+                    reasoning_tokens=session_metrics_from_db.reasoning_tokens,
+                    cost=session_metrics_from_db.cost,
+                )
+    return SessionMetrics()
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +171,7 @@ def _read_session(
         session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         return session  # type: ignore
     except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -174,7 +191,7 @@ async def _aread_session(
             session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
         return session  # type: ignore
     except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -186,7 +203,7 @@ def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]
             raise ValueError("Db not initialized")
         return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
     return None
 
 
@@ -202,7 +219,7 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
         else:
             return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
     return None
 
 
@@ -451,10 +468,12 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["num_team_history_runs"] = team.num_team_history_runs
     if team.share_member_interactions:
         config["share_member_interactions"] = team.share_member_interactions
-    if team.search_session_history:
-        config["search_session_history"] = team.search_session_history
-    if team.num_history_sessions is not None:
-        config["num_history_sessions"] = team.num_history_sessions
+    if team.search_past_sessions:
+        config["search_past_sessions"] = team.search_past_sessions
+    if team.num_past_sessions_to_search is not None:
+        config["num_past_sessions_to_search"] = team.num_past_sessions_to_search
+    if team.num_past_session_runs_in_search is not None:
+        config["num_past_session_runs_in_search"] = team.num_past_session_runs_in_search
     if team.read_chat_history:
         config["read_chat_history"] = team.read_chat_history
 
@@ -479,6 +498,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_datetime_to_context"] = team.add_datetime_to_context
     if team.add_location_to_context:
         config["add_location_to_context"] = team.add_location_to_context
+    if team.datetime_format is not None:
+        config["datetime_format"] = team.datetime_format
     if team.timezone_identifier is not None:
         config["timezone_identifier"] = team.timezone_identifier
     if team.add_name_to_context:
@@ -499,9 +520,14 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_dependencies_to_context"] = team.add_dependencies_to_context
 
     # --- Knowledge settings ---
-    # TODO: implement knowledge serialization
-    # if team.knowledge is not None:
-    #     config["knowledge"] = team.knowledge.to_dict()
+    # Knowledge is a non-serializable object (it holds live db/vector_db connections),
+    # so we store a reference by name and resolve it from the registry on load.
+    if team.knowledge is not None:
+        knowledge_name = getattr(team.knowledge, "name", None)
+        if knowledge_name is not None:
+            config["knowledge"] = {"name": knowledge_name}
+        else:
+            log_warning("Team knowledge has no name; it cannot be referenced from the registry and will not be saved.")
     if team.knowledge_filters is not None:
         config["knowledge_filters"] = team.knowledge_filters
     if team.enable_agentic_knowledge_filters:
@@ -531,7 +557,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
             except Exception as e:
-                log_warning(f"Could not serialize tool {tool}: {e}")
+                log_warning(f"Could not serialize tool {tool}: {str(e)}")
         if serialized_tools:
             config["tools"] = serialized_tools
     if team.tool_choice is not None:
@@ -666,10 +692,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     if team.metadata is not None:
         config["metadata"] = team.metadata
 
-    # --- Version ---
-    if team.version is not None:
-        config["version"] = team.version
-
     # --- Debug and telemetry settings ---
     if team.debug_mode:
         config["debug_mode"] = team.debug_mode
@@ -800,21 +822,11 @@ def from_dict(
 
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):
-        db_data = config["db"]
-        db_id = db_data.get("id")
-
-        # First try to get the db from the registry (preferred - reuses existing connection)
-        if registry and db_id:
-            registry_db = registry.get_db(db_id)
-            if registry_db is not None:
-                config["db"] = registry_db
-            else:
-                del config["db"]
+        resolved = resolve_db_from_config(config["db"], registry=registry)
+        if resolved is not None:
+            config["db"] = resolved
         else:
-            # No registry or no db_id, fall back to creating from dict
-            config["db"] = db_from_dict(db_data)
-            if config["db"] is None:
-                del config["db"]
+            del config["db"]
 
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -846,10 +858,16 @@ def from_dict(
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
     # --- Handle Knowledge reconstruction ---
-    # TODO: implement knowledge deserialization
-    # if "knowledge" in config and isinstance(config["knowledge"], dict):
-    #     from agno.knowledge import Knowledge
-    #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+    # Knowledge is stored as a reference by name and resolved from the registry,
+    # since it holds live db/vector_db connections that cannot be serialized.
+    if "knowledge" in config and isinstance(config["knowledge"], dict):
+        knowledge_name = config["knowledge"].get("name")
+        resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
+        if resolved_knowledge is not None:
+            config["knowledge"] = resolved_knowledge
+        else:
+            log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
+            del config["knowledge"]
 
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
@@ -888,8 +906,11 @@ def from_dict(
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
-            search_session_history=config.get("search_session_history", False),
-            num_history_sessions=config.get("num_history_sessions"),
+            search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
+            num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
+            num_past_session_runs_in_search=config.get(
+                "num_past_session_runs_in_search", config.get("num_past_session_runs")
+            ),
             read_chat_history=config.get("read_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
@@ -901,6 +922,7 @@ def from_dict(
             markdown=config.get("markdown", False),
             add_datetime_to_context=config.get("add_datetime_to_context", False),
             add_location_to_context=config.get("add_location_to_context", False),
+            datetime_format=config.get("datetime_format"),
             timezone_identifier=config.get("timezone_identifier"),
             add_name_to_context=config.get("add_name_to_context", False),
             add_member_tools_to_context=config.get("add_member_tools_to_context", False),
@@ -911,7 +933,7 @@ def from_dict(
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context", False),
             # --- Knowledge settings ---
-            # knowledge=config.get("knowledge"),  # TODO
+            knowledge=config.get("knowledge"),
             knowledge_filters=config.get("knowledge_filters"),
             enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
             add_knowledge_to_context=config.get("add_knowledge_to_context", False),
@@ -982,10 +1004,6 @@ def from_dict(
             telemetry=config.get("telemetry", True),
         ),
     )
-
-    # Set fields that are not constructor parameters
-    if "version" in config:
-        team.version = config["version"]
 
     return team
 
@@ -1065,7 +1083,7 @@ def save(
         return config["version"]
 
     except Exception as e:
-        log_error(f"Error saving Team to database: {e}")
+        log_error(f"Error saving Team to database: {str(e)}")
         raise
 
 
@@ -1089,7 +1107,11 @@ def _hydrate_from_graph(
 
     team = cls.from_dict(config, db=db, registry=registry)
     team.id = graph["component"]["component_id"]
-    team.db = db
+    # Only fall back to the caller-provided db if the config didn't
+    # reconstruct one. Otherwise we'd clobber any custom table names
+    # (session_table, memory_table, ...) that were serialized with the team.
+    if team.db is None:
+        team.db = db
 
     # Hydrate members from graph children
     team.members = []
@@ -1108,7 +1130,8 @@ def _hydrate_from_graph(
         if member_type == "agent":
             agent = Agent.from_dict(child_config)
             agent.id = child_graph["component"]["component_id"]
-            agent.db = db
+            if agent.db is None:
+                agent.db = db
             team.members.append(agent)
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph
@@ -1172,3 +1195,17 @@ def delete(
         raise ValueError("Cannot delete team without an id")
 
     return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
+
+
+def get_session_metrics(team: "Team", session_id: Optional[str] = None):
+    session_id = session_id or team.session_id
+    if session_id is None:
+        raise Exception("Session ID is not set")
+    return get_session_metrics_util(team, session_id=session_id)
+
+
+async def aget_session_metrics(team: "Team", session_id: Optional[str] = None):
+    session_id = session_id or team.session_id
+    if session_id is None:
+        raise Exception("Session ID is not set")
+    return await aget_session_metrics_util(team, session_id=session_id)

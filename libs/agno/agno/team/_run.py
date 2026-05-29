@@ -30,9 +30,10 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
+from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
-from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse
+from agno.models.metrics import RunMetrics, merge_background_metrics
+from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.cancel import (
@@ -51,6 +52,7 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
+    TaskData,
     TeamRunInput,
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -60,6 +62,7 @@ from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
     await_for_thread_tasks_stream,
+    collect_background_metrics,
     store_media_util,
     validate_input,
     validate_media_object_id,
@@ -93,6 +96,7 @@ from agno.utils.log import (
 _background_tasks: set[asyncio.Task[None]] = set()
 
 if TYPE_CHECKING:
+    from agno.team._run_options import ResolvedRunOptions
     from agno.team.team import Team
 
 
@@ -190,7 +194,7 @@ def _run_tasks(
     """
     from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools
-    from agno.team._managers import _start_memory_future
+    from agno.team._managers import _start_learning_future, _start_memory_future
     from agno.team._messages import _get_run_messages
     from agno.team._response import (
         _convert_response_to_structured_format,
@@ -203,6 +207,7 @@ def _run_tasks(
 
     log_debug(f"Team Task Run Start: {run_response.run_id}", center=True)
     memory_future = None
+    learning_future = None
 
     try:
         run_input = cast(TeamRunInput, run_response.input)
@@ -269,12 +274,19 @@ def _run_tasks(
         if len(run_messages.messages) == 0:
             log_error("No messages to be sent to the model.")
 
-        # 4. Start memory creation in background
+        # 4. Start memory and learning creation in background
         memory_future = _start_memory_future(
             team,
             run_messages=run_messages,
             user_id=user_id,
             existing_future=memory_future,
+        )
+        learning_future = _start_learning_future(
+            team,
+            run_messages=run_messages,
+            session=session,
+            user_id=user_id,
+            existing_future=learning_future,
         )
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -306,7 +318,9 @@ def _run_tasks(
                 accumulated_messages.append(state_message)
 
             # Get model response
-            model_response = team.model.response(
+            model_response = call_model_with_fallback(
+                team.model,
+                team.fallback_config,
                 messages=accumulated_messages,
                 response_format=response_format,
                 tools=_tools,
@@ -332,7 +346,9 @@ def _run_tasks(
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
-                return _hooks.handle_team_run_paused(team, run_response=run_response, session=session)
+                return _hooks.handle_team_run_paused(
+                    team, run_response=run_response, session=session, run_context=run_context
+                )
 
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
@@ -356,8 +372,8 @@ def _run_tasks(
 
         # === Post-loop ===
 
-        # Store media if enabled
-        if team.store_media and model_response is not None:
+        # Always add media to run_response for caller availability
+        if model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -380,8 +396,9 @@ def _run_tasks(
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # Wait for background memory creation
-        wait_for_open_threads(memory_future=memory_future)  # type: ignore
+        # Wait for background memory and learning creation
+        wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
+        merge_background_metrics(run_response.metrics, collect_background_metrics(memory_future, learning_future))
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -389,11 +406,16 @@ def _run_tasks(
         if team.session_summary_manager is not None:
             session.upsert_run(run_response=run_response)
             try:
-                team.session_summary_manager.create_session_summary(session=session)
+                team.session_summary_manager.create_session_summary(session=session, run_metrics=run_response.metrics)
             except Exception as e:
                 log_warning(f"Error in session summary creation: {str(e)}")
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Generate followups if enabled
+        from agno.team._response import generate_team_followups
+
+        generate_team_followups(team, run_response=run_response)
 
         # Set the run status to completed
         run_response.status = RunStatus.completed
@@ -447,12 +469,495 @@ def _run_tasks(
         return run_response
 
     finally:
-        if memory_future is not None and not memory_future.done():
-            memory_future.cancel()
+        # Cancel background futures on error
+        for future in (memory_future, learning_future):
+            if future is not None and not future.done():
+                future.cancel()
+                try:
+                    future.result(timeout=0)
+                except Exception:
+                    pass
         _disconnect_connectable_tools(team)
         cleanup_run(run_response.run_id)  # type: ignore
 
     return run_response
+
+
+def _run_tasks_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: bool = False,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+    """Run the Team in autonomous task mode with streaming support.
+
+    The team leader iteratively plans and delegates tasks to members until
+    the goal is complete or max_iterations is reached. Events are yielded
+    for each iteration.
+    """
+    from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
+    from agno.team._init import _disconnect_connectable_tools
+    from agno.team._managers import _start_learning_future, _start_memory_future
+    from agno.team._messages import _get_run_messages
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        _handle_model_response_stream,
+        generate_response_with_output_model_stream,
+        handle_reasoning_stream,
+    )
+    from agno.team._telemetry import log_team_telemetry
+    from agno.team._tools import _determine_tools_for_model
+    from agno.team.task import TaskStatus, load_task_list
+    from agno.utils.events import (
+        create_team_task_iteration_completed_event,
+        create_team_task_iteration_started_event,
+        create_team_task_state_updated_event,
+    )
+
+    log_debug(f"Team Task Run (Stream) Start: {run_response.run_id}", center=True)
+    memory_future = None
+    learning_future = None
+
+    try:
+        run_input = cast(TeamRunInput, run_response.input)
+        team.model = cast(Model, team.model)
+
+        # 1. Execute pre-hooks
+        if team.pre_hooks is not None:
+            pre_hook_iterator = _execute_pre_hooks(
+                team,
+                hooks=team.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            for pre_hook_event in pre_hook_iterator:
+                yield pre_hook_event
+
+        # 2. Determine tools for model (includes task management tools)
+        team_run_context: Dict[str, Any] = {}
+        _tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=session,
+            user_id=user_id,
+            async_mode=False,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            stream=True,
+            stream_events=stream_events,
+        )
+
+        # 3. Prepare initial run messages
+        run_messages = _get_run_messages(
+            team,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+            user_id=user_id,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            tools=_tools,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        # 4. Start memory creation in background
+        memory_future = _start_memory_future(
+            team,
+            run_messages=run_messages,
+            user_id=user_id,
+            existing_future=memory_future,
+        )
+        learning_future = _start_learning_future(
+            team,
+            run_messages=run_messages,
+            session=session,
+            user_id=user_id,
+            existing_future=learning_future,
+        )
+
+        # Yield run started event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_run_started_event(run_response),
+                run_response,
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # 5. Reason about the task if reasoning is enabled
+        yield from handle_reasoning_stream(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            stream_events=stream_events,
+        )
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Use accumulated messages for the iterative loop
+        accumulated_messages = run_messages.messages
+
+        # === Iterative task loop ===
+        for iteration in range(team.max_iterations):
+            log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+
+            # Yield task iteration started event
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_team_task_iteration_started_event(
+                        from_run_response=run_response,
+                        iteration=iteration + 1,
+                        max_iterations=team.max_iterations,
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+            # On subsequent iterations, inject current task state as a user message
+            if iteration > 0:
+                task_list = load_task_list(run_context.session_state)
+                task_summary = task_list.get_summary_string()
+                state_message = Message(
+                    role="user",
+                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                    "When all tasks are done, call `mark_all_complete` with a summary.",
+                )
+                accumulated_messages.append(state_message)
+
+            # Get model response with streaming
+            # Update run_messages with accumulated messages for streaming
+            run_messages.messages = accumulated_messages
+
+            if team.output_model is None:
+                for event in _handle_model_response_stream(
+                    team,
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=_tools,
+                    response_format=response_format,
+                    stream_events=stream_events,
+                    session_state=run_context.session_state,
+                    run_context=run_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+            else:
+                for event in _handle_model_response_stream(
+                    team,
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=_tools,
+                    response_format=response_format,
+                    stream_events=stream_events,
+                    session_state=run_context.session_state,
+                    run_context=run_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                    if isinstance(event, RunContentEvent):
+                        if stream_events:
+                            yield IntermediateRunContentEvent(
+                                content=event.content,
+                                content_type=event.content_type,
+                            )
+                    else:
+                        yield event
+
+                for event in generate_response_with_output_model_stream(
+                    team,
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    stream_events=stream_events,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # Check if delegation propagated member HITL requirements
+            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                from agno.team import _hooks
+
+                yield from _hooks.handle_team_run_paused_stream(
+                    team, run_response=run_response, session=session, run_context=run_context
+                )
+                if yield_run_output:
+                    yield run_response
+                return
+
+            # Check termination conditions
+            task_list = load_task_list(run_context.session_state)
+
+            # Yield task state updated event
+            if stream_events:
+                # Convert task list to TaskData for frontend
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
+                yield handle_event(  # type: ignore
+                    create_team_task_state_updated_event(
+                        from_run_response=run_response,
+                        task_summary=task_list.get_summary_string(),
+                        goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+            # Yield task iteration completed event
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_team_task_iteration_completed_event(
+                        from_run_response=run_response,
+                        iteration=iteration + 1,
+                        max_iterations=team.max_iterations,
+                        task_summary=task_list.get_summary_string(),
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+            if task_list.goal_complete:
+                log_debug("Task goal marked complete, finishing task loop.")
+                break
+
+            if task_list.all_terminal():
+                # All tasks done but some may have failed
+                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
+                if not has_failures:
+                    log_debug("All tasks completed successfully, finishing task loop.")
+                    break
+                # If there are failures, continue to let model handle them
+                log_debug("All tasks terminal but some failed, continuing to let model handle.")
+        else:
+            # Loop exhausted without completing
+            task_list = load_task_list(run_context.session_state)
+            if not task_list.goal_complete:
+                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+
+        # === Post-loop ===
+
+        # Convert response to structured format
+        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+        # Yield RunContentCompletedEvent
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_run_content_completed_event(from_run_response=run_response),
+                run_response,
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )
+
+        # Execute post-hooks
+        if team.post_hooks is not None:
+            yield from _execute_post_hooks(
+                team,
+                hooks=team.post_hooks,  # type: ignore
+                run_output=run_response,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Wait for background memory creation
+        yield from wait_for_thread_tasks_stream(
+            run_response=run_response,
+            memory_future=memory_future,  # type: ignore
+            learning_future=learning_future,  # type: ignore
+            stream_events=stream_events,
+            events_to_skip=team.events_to_skip,  # type: ignore
+            store_events=team.store_events,
+            get_memories_callback=lambda: team.get_user_memories(user_id=user_id),
+        )
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Create session summary
+        if team.session_summary_manager is not None:
+            session.upsert_run(run_response=run_response)
+
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_team_session_summary_started_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+            try:
+                team.session_summary_manager.create_session_summary(session=session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_team_session_summary_completed_event(
+                        from_run_response=run_response, session_summary=session.summary
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Create the run completed event
+        completed_event = handle_event(
+            create_team_run_completed_event(from_run_response=run_response),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
+
+        # Generate followups if enabled
+        from agno.team._response import generate_team_followups_stream
+
+        yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
+
+        # Set the run status to completed
+        run_response.status = RunStatus.completed
+
+        # Cleanup and store
+        _cleanup_and_store(team, run_response=run_response, session=session)
+
+        if stream_events:
+            yield completed_event
+
+        if yield_run_output:
+            yield run_response
+
+        log_team_telemetry(team, session_id=session.session_id, run_id=run_response.run_id)
+
+        log_debug(f"Team Task Run (Stream) End: {run_response.run_id}", center=True, symbol="*")
+
+    except RunCancelledException as e:
+        log_info(f"Team task run {run_response.run_id} was cancelled during streaming")
+        run_response.status = RunStatus.cancelled
+        run_response.content = str(e)
+
+        yield handle_event(
+            create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
+        _cleanup_and_store(team, run_response=run_response, session=session)
+
+    except (InputCheckError, OutputCheckError) as e:
+        run_response.status = RunStatus.error
+        run_error = create_team_run_error_event(
+            run_response,
+            error=str(e),
+            error_id=e.error_id,
+            error_type=e.type,
+            additional_data=e.additional_data,
+        )
+        run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+        if run_response.content is None:
+            run_response.content = str(e)
+        log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+        _cleanup_and_store(team, run_response=run_response, session=session)
+        yield run_error
+
+    except KeyboardInterrupt:
+        run_response = cast(TeamRunOutput, run_response)
+        run_response.status = RunStatus.cancelled
+        run_response.content = "Operation cancelled by user"
+        try:
+            _cleanup_and_store(team, run_response=run_response, session=session)
+        except Exception:
+            pass
+        yield handle_event(  # type: ignore
+            create_team_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+            run_response,
+            events_to_skip=team.events_to_skip,  # type: ignore
+            store_events=team.store_events,
+        )
+
+    except Exception as e:
+        run_response.status = RunStatus.error
+        run_error = create_team_run_error_event(run_response, error=str(e))
+        run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+        if run_response.content is None:
+            run_response.content = str(e)
+        log_error(f"Error in Team task run (stream): {str(e)}")
+        _cleanup_and_store(team, run_response=run_response, session=session)
+        yield run_error
+
+    finally:
+        # Cancel background futures on error
+        for future in (memory_future, learning_future):
+            if future is not None and not future.done():
+                future.cancel()
+                try:
+                    future.result(timeout=0)
+                except Exception:
+                    pass
+
+        _disconnect_connectable_tools(team)
+        cleanup_run(run_response.run_id)  # type: ignore
 
 
 def _run(
@@ -624,7 +1129,9 @@ def _run(
 
                 # 6. Get the model response for the team leader
                 team.model = cast(Model, team.model)
-                model_response: ModelResponse = team.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    team.model,
+                    team.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -639,10 +1146,12 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                parse_response_with_output_model(team, model_response, run_messages)
+                parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
 
                 # If a parser model is provided, structure the response separately
-                parse_response_with_parser_model(team, model_response, run_messages, run_context=run_context)
+                parse_response_with_parser_model(
+                    team, model_response, run_messages, run_context=run_context, run_response=run_response
+                )
 
                 # 7. Update TeamRunOutput with the model response
                 _update_run_response(
@@ -657,11 +1166,12 @@ def _run(
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
-                    return _hooks.handle_team_run_paused(team, run_response=run_response, session=session)
+                    return _hooks.handle_team_run_paused(
+                        team, run_response=run_response, session=session, run_context=run_context
+                    )
 
-                # 8. Store media if enabled
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -684,6 +1194,9 @@ def _run(
 
                 # 11. Wait for background memory creation
                 wait_for_open_threads(memory_future=memory_future, learning_future=learning_future)  # type: ignore
+                merge_background_metrics(
+                    run_response.metrics, collect_background_metrics(memory_future, learning_future)
+                )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -692,11 +1205,18 @@ def _run(
                     # Upsert the RunOutput to Team Session before creating the session summary
                     session.upsert_run(run_response=run_response)
                     try:
-                        team.session_summary_manager.create_session_summary(session=session)
+                        team.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Generate followups if enabled
+                from agno.team._response import generate_team_followups
+
+                generate_team_followups(team, run_response=run_response)
 
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
@@ -758,7 +1278,7 @@ def _run(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -836,11 +1356,11 @@ def _run_stream(
     from agno.team._tools import _determine_tools_for_model
 
     # Fallback for tasks mode (streaming not yet supported)
+    # Dispatch to task mode streaming if applicable
     from agno.team.mode import TeamMode
 
     if team.mode == TeamMode.tasks:
-        log_warning("Streaming is not yet supported in tasks mode; falling back to non-streaming.")
-        result = _run_tasks(
+        yield from _run_tasks_stream(
             team,
             run_response=run_response,
             session=session,
@@ -850,11 +1370,12 @@ def _run_stream(
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             response_format=response_format,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
         )
-        yield result
         return
 
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
@@ -1033,7 +1554,9 @@ def _run_stream(
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
-                    yield from _hooks.handle_team_run_paused_stream(team, run_response=run_response, session=session)
+                    yield from _hooks.handle_team_run_paused_stream(
+                        team, run_response=run_response, session=session, run_context=run_context
+                    )
                     if yield_run_output:
                         yield run_response
                     return
@@ -1081,6 +1604,9 @@ def _run_stream(
                     store_events=team.store_events,
                     get_memories_callback=lambda: team.get_user_memories(user_id=user_id),
                 )
+                merge_background_metrics(
+                    run_response.metrics, collect_background_metrics(memory_future, learning_future)
+                )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
                 # 9. Create session summary
@@ -1096,7 +1622,9 @@ def _run_stream(
                             store_events=team.store_events,
                         )
                     try:
-                        team.session_summary_manager.create_session_summary(session=session)
+                        team.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -1119,6 +1647,11 @@ def _run_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
+
+                # Generate followups if enabled
+                from agno.team._response import generate_team_followups_stream
+
+                yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
 
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
@@ -1195,7 +1728,7 @@ def _run_stream(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1388,7 +1921,7 @@ def run_dispatch(
         run_response.model_provider = team.model.provider if team.model is not None else None
 
         # Start the run metrics timer, to calculate the run duration
-        run_response.metrics = Metrics()
+        run_response.metrics = RunMetrics()
         run_response.metrics.start_timer()
     except Exception:
         cleanup_run(run_id)
@@ -1450,7 +1983,7 @@ async def _arun_tasks(
     """
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
-    from agno.team._managers import _astart_memory_task
+    from agno.team._managers import _astart_learning_task, _astart_memory_task
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
         _convert_response_to_structured_format,
@@ -1458,11 +1991,12 @@ async def _arun_tasks(
         ahandle_reasoning,
     )
     from agno.team._telemetry import alog_team_telemetry
-    from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
+    from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
     from agno.team.task import TaskStatus, load_task_list
 
     log_debug(f"Team Task Run Start: {run_response.run_id}", center=True)
     memory_task = None
+    learning_task = None
     team_session: Optional[TeamSession] = None
 
     try:
@@ -1501,6 +2035,7 @@ async def _arun_tasks(
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
         await _check_and_refresh_mcp_tools(team)
+        learning_tools = await _aget_learning_tools(team, user_id, team_session)
         _tools = _determine_tools_for_model(
             team,
             model=team.model,
@@ -1521,6 +2056,7 @@ async def _arun_tasks(
             add_session_state_to_context=add_session_state_to_context,
             stream=False,
             stream_events=False,
+            learning_tools=learning_tools,
         )
 
         # 3. Prepare initial run messages
@@ -1542,12 +2078,19 @@ async def _arun_tasks(
             **kwargs,
         )
 
-        # 4. Start memory creation in background
+        # 4. Start memory and learning creation in background
         memory_task = await _astart_memory_task(
             team,
             run_messages=run_messages,
             user_id=user_id,
             existing_task=memory_task,
+        )
+        learning_task = await _astart_learning_task(
+            team,
+            run_messages=run_messages,
+            session=team_session,
+            user_id=user_id,
+            existing_task=learning_task,
         )
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1579,7 +2122,9 @@ async def _arun_tasks(
                 accumulated_messages.append(state_message)
 
             # Get model response
-            model_response = await team.model.aresponse(
+            model_response = await acall_model_with_fallback(
+                team.model,
+                team.fallback_config,
                 messages=accumulated_messages,
                 response_format=response_format,
                 tools=_tools,
@@ -1605,7 +2150,9 @@ async def _arun_tasks(
             if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                 from agno.team import _hooks
 
-                return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
+                return await _hooks.ahandle_team_run_paused(
+                    team, run_response=run_response, session=team_session, run_context=run_context
+                )
 
             # Check termination conditions
             task_list = load_task_list(run_context.session_state)
@@ -1627,8 +2174,8 @@ async def _arun_tasks(
 
         # === Post-loop ===
 
-        # Store media if enabled
-        if team.store_media and model_response is not None:
+        # Always add media to run_response for caller availability
+        if model_response is not None:
             store_media_util(run_response, model_response)
 
         # Convert response to structured format
@@ -1651,8 +2198,9 @@ async def _arun_tasks(
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-        # Wait for background memory creation
-        await await_for_open_threads(memory_task=memory_task)
+        # Wait for background memory and learning creation
+        await_for_open_threads(memory_task=memory_task, learning_task=learning_task)  # type: ignore
+        merge_background_metrics(run_response.metrics, collect_background_metrics(memory_task, learning_task))
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1660,11 +2208,18 @@ async def _arun_tasks(
         if team.session_summary_manager is not None:
             team_session.upsert_run(run_response=run_response)
             try:
-                await team.session_summary_manager.acreate_session_summary(session=team_session)
+                await team.session_summary_manager.acreate_session_summary(
+                    session=team_session, run_metrics=run_response.metrics
+                )
             except Exception as e:
                 log_warning(f"Error in session summary creation: {str(e)}")
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Generate followups if enabled
+        from agno.team._response import agenerate_team_followups
+
+        await agenerate_team_followups(team, run_response=run_response)
 
         # Set the run status to completed
         run_response.status = RunStatus.completed
@@ -1723,15 +2278,525 @@ async def _arun_tasks(
     finally:
         _disconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)
+        # Cancel background tasks on error
+        for task in (memory_task, learning_task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        await acleanup_run(run_response.run_id)  # type: ignore
+
+    return run_response
+
+
+async def _arun_tasks_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: bool = False,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    add_history_to_context: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+    """Run the Team in autonomous task mode with async streaming support.
+
+    The team leader iteratively plans and delegates tasks to members until
+    the goal is complete or max_iterations is reached. Events are yielded
+    for each iteration.
+    """
+    from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
+    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._managers import _astart_learning_task, _astart_memory_task
+    from agno.team._messages import _aget_run_messages
+    from agno.team._response import (
+        _ahandle_model_response_stream,
+        _convert_response_to_structured_format,
+        agenerate_response_with_output_model_stream,
+        ahandle_reasoning_stream,
+    )
+    from agno.team._telemetry import alog_team_telemetry
+    from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
+    from agno.team.task import TaskStatus, load_task_list
+    from agno.utils.events import (
+        create_team_task_iteration_completed_event,
+        create_team_task_iteration_started_event,
+        create_team_task_state_updated_event,
+    )
+
+    log_debug(f"Team Task Run (Async Stream) Start: {run_response.run_id}", center=True)
+    memory_task = None
+    learning_task = None
+    team_session: Optional[TeamSession] = None
+
+    try:
+        # Register run for cancellation tracking
+        await aregister_run(run_context.run_id)
+
+        # Setup session
+        team_session = await _asetup_session(
+            team=team,
+            run_context=run_context,
+            session_id=session_id,
+            user_id=user_id,
+            run_id=run_response.run_id,
+        )
+
+        run_input = cast(TeamRunInput, run_response.input)
+        team.model = cast(Model, team.model)
+
+        # 1. Execute pre-hooks
+        if team.pre_hooks is not None:
+            pre_hook_iterator = _aexecute_pre_hooks(
+                team,
+                hooks=team.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                run_input=run_input,
+                session=team_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            async for pre_hook_event in pre_hook_iterator:
+                yield pre_hook_event
+
+        # 2. Determine tools for model (includes task management tools)
+        team_run_context: Dict[str, Any] = {}
+        await _check_and_refresh_mcp_tools(team)
+        learning_tools = await _aget_learning_tools(team, user_id, team_session)
+        _tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=True,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            stream=True,
+            stream_events=stream_events,
+            learning_tools=learning_tools,
+        )
+
+        # 3. Prepare initial run messages
+        run_messages = await _aget_run_messages(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session=team_session,  # type: ignore
+            user_id=user_id,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            tools=_tools,
+            **kwargs,
+        )
+
+        # 4. Start memory creation in background
+        memory_task = await _astart_memory_task(
+            team,
+            run_messages=run_messages,
+            user_id=user_id,
+            existing_task=memory_task,
+        )
+        learning_task = await _astart_learning_task(
+            team,
+            run_messages=run_messages,
+            session=team_session,
+            user_id=user_id,
+            existing_task=learning_task,
+        )
+
+        # Yield run started event
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_run_started_event(run_response),
+                run_response,
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )
+
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # 5. Reason about the task if reasoning is enabled
+        async for item in ahandle_reasoning_stream(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            stream_events=stream_events,
+        ):
+            await araise_if_cancelled(run_response.run_id)  # type: ignore
+            yield item
+
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Use accumulated messages for the iterative loop
+        accumulated_messages = run_messages.messages
+
+        # === Iterative task loop ===
+        for iteration in range(team.max_iterations):
+            log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+
+            # Yield task iteration started event
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_team_task_iteration_started_event(
+                        from_run_response=run_response,
+                        iteration=iteration + 1,
+                        max_iterations=team.max_iterations,
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+            # On subsequent iterations, inject current task state as a user message
+            if iteration > 0:
+                task_list = load_task_list(run_context.session_state)
+                task_summary = task_list.get_summary_string()
+                state_message = Message(
+                    role="user",
+                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                    "When all tasks are done, call `mark_all_complete` with a summary.",
+                )
+                accumulated_messages.append(state_message)
+
+            # Get model response with streaming
+            # Update run_messages with accumulated messages for streaming
+            run_messages.messages = accumulated_messages
+
+            if team.output_model is None:
+                async for event in _ahandle_model_response_stream(
+                    team,
+                    session=team_session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=_tools,
+                    response_format=response_format,
+                    stream_events=stream_events,
+                    session_state=run_context.session_state,
+                    run_context=run_context,
+                ):
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+            else:
+                async for event in _ahandle_model_response_stream(
+                    team,
+                    session=team_session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    tools=_tools,
+                    response_format=response_format,
+                    stream_events=stream_events,
+                    session_state=run_context.session_state,
+                    run_context=run_context,
+                ):
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                    if isinstance(event, RunContentEvent):
+                        if stream_events:
+                            yield IntermediateRunContentEvent(
+                                content=event.content,
+                                content_type=event.content_type,
+                            )
+                    else:
+                        yield event
+
+                async for event in agenerate_response_with_output_model_stream(
+                    team,
+                    session=team_session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    stream_events=stream_events,
+                ):
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+
+            await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # Check if delegation propagated member HITL requirements
+            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                from agno.team import _hooks
+
+                async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
+                    team, run_response=run_response, session=team_session, run_context=run_context
+                ):
+                    yield item
+                if yield_run_output:
+                    yield run_response
+                return
+
+            # Check termination conditions
+            task_list = load_task_list(run_context.session_state)
+
+            # Yield task state updated event
+            if stream_events:
+                # Convert task list to TaskData for creating detailed events
+                task_data_list = [
+                    TaskData(
+                        id=t.id,
+                        title=t.title,
+                        description=t.description,
+                        status=t.status.value,
+                        assignee=t.assignee,
+                        dependencies=t.dependencies,
+                        result=t.result,
+                    )
+                    for t in task_list.tasks
+                ]
+                yield handle_event(  # type: ignore
+                    create_team_task_state_updated_event(
+                        from_run_response=run_response,
+                        task_summary=task_list.get_summary_string(),
+                        goal_complete=task_list.goal_complete,
+                        tasks=task_data_list,
+                        completion_summary=task_list.completion_summary,
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+            # Yield task iteration completed event
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_team_task_iteration_completed_event(
+                        from_run_response=run_response,
+                        iteration=iteration + 1,
+                        max_iterations=team.max_iterations,
+                        task_summary=task_list.get_summary_string(),
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+            if task_list.goal_complete:
+                log_debug("Task goal marked complete, finishing task loop.")
+                break
+
+            if task_list.all_terminal():
+                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
+                if not has_failures:
+                    log_debug("All tasks completed successfully, finishing task loop.")
+                    break
+                log_debug("All tasks terminal but some failed, continuing to let model handle.")
+        else:
+            # Loop exhausted without completing
+            task_list = load_task_list(run_context.session_state)
+            if not task_list.goal_complete:
+                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+
+        # === Post-loop ===
+
+        # Convert response to structured format
+        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+        # Yield RunContentCompletedEvent
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_run_content_completed_event(from_run_response=run_response),
+                run_response,
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )
+
+        # Execute post-hooks
+        if team.post_hooks is not None:
+            async for event in _aexecute_post_hooks(
+                team,
+                hooks=team.post_hooks,  # type: ignore
+                run_output=run_response,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                yield event
+
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Wait for background memory creation
+        async for event in await_for_thread_tasks_stream(
+            run_response=run_response,
+            memory_task=memory_task,
+            learning_task=learning_task,
+            stream_events=stream_events,
+            events_to_skip=team.events_to_skip,  # type: ignore
+            store_events=team.store_events,
+            get_memories_callback=lambda: team.aget_user_memories(user_id=user_id),
+        ):
+            yield event
+
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Create session summary
+        if team.session_summary_manager is not None:
+            team_session.upsert_run(run_response=run_response)
+
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_team_session_summary_started_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+            try:
+                await team.session_summary_manager.acreate_session_summary(session=team_session)
+            except Exception as e:
+                log_warning(f"Error in session summary creation: {str(e)}")
+            if stream_events:
+                yield handle_event(  # type: ignore
+                    create_team_session_summary_completed_event(
+                        from_run_response=run_response, session_summary=team_session.summary
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Create the run completed event
+        completed_event = handle_event(
+            create_team_run_completed_event(from_run_response=run_response),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
+
+        # Generate followups if enabled
+        from agno.team._response import agenerate_team_followups_stream
+
+        async for event in agenerate_team_followups_stream(
+            team, run_response=run_response, stream_events=stream_events
+        ):
+            yield event
+
+        # Set the run status to completed
+        run_response.status = RunStatus.completed
+
+        # Cleanup and store
+        await _acleanup_and_store(team, run_response=run_response, session=team_session)
+
+        if stream_events:
+            yield completed_event
+
+        if yield_run_output:
+            yield run_response
+
+        await alog_team_telemetry(team, session_id=team_session.session_id, run_id=run_response.run_id)
+
+        log_debug(f"Team Task Run (Async Stream) End: {run_response.run_id}", center=True, symbol="*")
+
+    except RunCancelledException as e:
+        log_info(f"Team task run {run_response.run_id} was cancelled during async streaming")
+        run_response.status = RunStatus.cancelled
+        run_response.content = str(e)
+
+        yield handle_event(  # type: ignore
+            create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
+        if team_session is not None:
+            await _acleanup_and_store(team, run_response=run_response, session=team_session)
+
+    except (InputCheckError, OutputCheckError) as e:
+        run_response.status = RunStatus.error
+        run_error = create_team_run_error_event(
+            run_response,
+            error=str(e),
+            error_id=e.error_id,
+            error_type=e.type,
+            additional_data=e.additional_data,
+        )
+        run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+        if run_response.content is None:
+            run_response.content = str(e)
+        log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+        if team_session is not None:
+            await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        yield run_error
+
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        run_response = cast(TeamRunOutput, run_response)
+        run_response.status = RunStatus.cancelled
+        run_response.content = "Operation cancelled by user"
+        try:
+            if team_session is not None:
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        except Exception:
+            pass
+        yield handle_event(  # type: ignore
+            create_team_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+            run_response,
+            events_to_skip=team.events_to_skip,  # type: ignore
+            store_events=team.store_events,
+        )
+
+    except Exception as e:
+        run_response.status = RunStatus.error
+        run_error = create_team_run_error_event(run_response, error=str(e))
+        run_response.events = add_team_error_event(error=run_error, events=run_response.events)
+        if run_response.content is None:
+            run_response.content = str(e)
+        log_error(f"Error in Team task run (async stream): {str(e)}")
+        if team_session is not None:
+            await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        yield run_error
+
+    finally:
+        _disconnect_connectable_tools(team)
+        await _disconnect_mcp_tools(team)
+
+        # Cancel background tasks on error
         if memory_task is not None and not memory_task.done():
             memory_task.cancel()
             try:
                 await memory_task
             except asyncio.CancelledError:
                 pass
-        await acleanup_run(run_response.run_id)  # type: ignore
+        if learning_task is not None and not learning_task.done():
+            learning_task.cancel()
+            try:
+                await learning_task
+            except asyncio.CancelledError:
+                pass
 
-    return run_response
+        await acleanup_run(run_response.run_id)  # type: ignore
 
 
 async def _arun(
@@ -1780,7 +2845,7 @@ async def _arun(
         aparse_response_with_parser_model,
     )
     from agno.team._telemetry import alog_team_telemetry
-    from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
+    from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
 
     # Dispatch to task mode if applicable
     from agno.team.mode import TeamMode
@@ -1858,6 +2923,7 @@ async def _arun(
                 await _check_and_refresh_mcp_tools(
                     team,
                 )
+                learning_tools = await _aget_learning_tools(team, user_id, team_session)
                 _tools = _determine_tools_for_model(
                     team,
                     model=team.model,
@@ -1878,6 +2944,7 @@ async def _arun(
                     add_session_state_to_context=add_session_state_to_context,
                     stream=False,
                     stream_events=False,
+                    learning_tools=learning_tools,
                 )
 
                 # 3. Prepare run messages
@@ -1926,7 +2993,9 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 6. Get the model response for the team leader
-                model_response = await team.model.aresponse(
+                model_response = await acall_model_with_fallback(
+                    team.model,
+                    team.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=team.tool_choice,
@@ -1942,12 +3011,16 @@ async def _arun(
 
                 # If an output model is provided, generate output using the output model
                 await agenerate_response_with_output_model(
-                    team, model_response=model_response, run_messages=run_messages
+                    team, model_response=model_response, run_messages=run_messages, run_response=run_response
                 )
 
                 # If a parser model is provided, structure the response separately
                 await aparse_response_with_parser_model(
-                    team, model_response=model_response, run_messages=run_messages, run_context=run_context
+                    team,
+                    model_response=model_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    run_response=run_response,
                 )
 
                 # 7. Update TeamRunOutput with the model response
@@ -1963,11 +3036,12 @@ async def _arun(
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
-                    return await _hooks.ahandle_team_run_paused(team, run_response=run_response, session=team_session)
+                    return await _hooks.ahandle_team_run_paused(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    )
 
-                # 8. Store media if enabled
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # 9. Convert response to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
@@ -1991,6 +3065,7 @@ async def _arun(
 
                 # 11. Wait for background memory creation
                 await await_for_open_threads(memory_task=memory_task, learning_task=learning_task)
+                merge_background_metrics(run_response.metrics, collect_background_metrics(memory_task, learning_task))
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 12. Create session summary
@@ -1998,11 +3073,19 @@ async def _arun(
                     # Upsert the RunOutput to Team Session before creating the session summary
                     team_session.upsert_run(run_response=run_response)
                     try:
-                        await team.session_summary_manager.acreate_session_summary(session=team_session)
+                        await team.session_summary_manager.acreate_session_summary(
+                            session=team_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Generate followups if enabled
+                from agno.team._response import agenerate_team_followups
+
+                await agenerate_team_followups(team, run_response=run_response)
+
                 run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
@@ -2063,7 +3146,7 @@ async def _arun(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -2167,15 +3250,15 @@ async def _arun_background(
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        except Exception:
-            log_error(f"Background run {run_response.run_id} failed", exc_info=True)
+        except Exception as e:
+            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 team_session.upsert_run(run_response=run_response)
                 await asave_session(team, session=team_session)
-            except Exception:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
+            except Exception as e:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -2184,6 +3267,142 @@ async def _arun_background(
 
     # 5. Return immediately with the PENDING response
     return run_response
+
+
+async def _arun_background_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming team run that survives client disconnections.
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _arun_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+
+    The detached task keeps running even if the client disconnects.
+    The caller (router) just yields the SSE strings to the client.
+    """
+    from agno.team._session import asave_session
+    from agno.team._storage import _aread_or_create_session, _update_metadata
+
+    run_id = run_response.run_id
+    if not run_id:
+        raise ValueError("run_id is required for background streaming")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    run_response.status = RunStatus.running
+
+    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    _update_metadata(team, session=team_session)
+    team_session.upsert_run(run_response=run_response)
+    await asave_session(team, session=team_session)
+
+    log_info(f"Background stream run {run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _arun_stream(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output or False,
+                session_id=session_id,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                if isinstance(event, TeamRunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for run {run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for run {run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for run {run_id}")
+
+        except Exception:
+            log_error(f"Background stream run {run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                run_response.status = RunStatus.error
+                team_session.upsert_run(run_response=run_response)
+                await asave_session(team, session=team_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
+
+        finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for run {run_id} completion")
+
+            # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
+            try:
+                event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
+            except Exception:
+                log_warning(f"Failed to mark run {run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(run_id))
+            except (Exception, asyncio.CancelledError):
+                log_warning(f"Failed to signal SSE subscribers for run {run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
 
 
 async def _arun_stream(
@@ -2230,28 +3449,30 @@ async def _arun_stream(
         aparse_response_with_parser_model_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
-    from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
+    from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
 
     # Fallback for tasks mode (streaming not yet supported)
+    # Dispatch to task mode streaming if applicable
     from agno.team.mode import TeamMode
 
     if team.mode == TeamMode.tasks:
-        log_warning("Streaming is not yet supported in tasks mode; falling back to non-streaming.")
-        result = await _arun_tasks(
+        async for event in _arun_tasks_stream(
             team,
             run_response=run_response,
             run_context=run_context,
             session_id=session_id,
             user_id=user_id,
             response_format=response_format,
+            stream_events=stream_events,
+            yield_run_output=yield_run_output,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
             add_history_to_context=add_history_to_context,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
-        )
-        yield result
+        ):
+            yield event
         return
 
     log_debug(f"Team Run Start: {run_response.run_id}", center=True)
@@ -2311,6 +3532,7 @@ async def _arun_stream(
                 await _check_and_refresh_mcp_tools(
                     team,
                 )
+                learning_tools = await _aget_learning_tools(team, user_id, team_session)
                 _tools = _determine_tools_for_model(
                     team,
                     model=team.model,
@@ -2331,6 +3553,7 @@ async def _arun_stream(
                     add_session_state_to_context=add_session_state_to_context,
                     stream=True,
                     stream_events=stream_events,
+                    learning_tools=learning_tools,
                 )
 
                 # 3. Prepare run messages
@@ -2447,7 +3670,7 @@ async def _arun_stream(
                     from agno.team import _hooks
 
                     async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
-                        team, run_response=run_response, session=team_session
+                        team, run_response=run_response, session=team_session, run_context=run_context
                     ):
                         yield item
                     if yield_run_output:
@@ -2501,6 +3724,7 @@ async def _arun_stream(
                     get_memories_callback=lambda: team.aget_user_memories(user_id=user_id),
                 ):
                     yield event
+                merge_background_metrics(run_response.metrics, collect_background_metrics(memory_task, learning_task))
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2517,7 +3741,9 @@ async def _arun_stream(
                             store_events=team.store_events,
                         )
                     try:
-                        await team.session_summary_manager.acreate_session_summary(session=team_session)
+                        await team.session_summary_manager.acreate_session_summary(
+                            session=team_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -2539,6 +3765,14 @@ async def _arun_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
+
+                # Generate followups if enabled
+                from agno.team._response import agenerate_team_followups_stream
+
+                async for event in agenerate_team_followups_stream(
+                    team, run_response=run_response, stream_events=stream_events
+                ):
+                    yield event
 
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
@@ -2620,7 +3854,7 @@ async def _arun_stream(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -2798,18 +4032,32 @@ def arun_dispatch(  # type: ignore
     run_response.model_provider = team.model.provider if team.model is not None else None
 
     # Start the run metrics timer, to calculate the run duration
-    run_response.metrics = Metrics()
+    run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
     # Background execution: return immediately with PENDING status
     if background:
-        if opts.stream:
-            raise ValueError(
-                "Background execution cannot be combined with streaming. Set stream=False when using background=True."
-            )
         if not team.db:
             raise ValueError(
                 "Background execution requires a database to be configured on the team for run persistence."
+            )
+        if opts.stream:
+            # background=True, stream=True: run in background task, stream events via queue
+            return _arun_background_stream(  # type: ignore[return-value]
+                team,  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
             team,  # type: ignore
@@ -2881,44 +4129,96 @@ def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutpu
 # ---------------------------------------------------------------------------
 
 
-def _cleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
-    #  Scrub the stored run based on storage flags
+def _cleanup_and_store(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    import copy
+
+    from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
-    scrub_run_output_for_storage(team, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Add RunOutput to Team Session
-    session.upsert_run(run_response=run_response)
+    # Update run_response.session_state before saving
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
+
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
+
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
 
     # Save session to memory
     team.save_session(session=session)
 
+    # Update approval run_status if this run has an associated approval.
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(team.db, run_response.run_id, run_response.status)
 
-async def _acleanup_and_store(team: "Team", run_response: TeamRunOutput, session: TeamSession) -> None:
-    #  Scrub the stored run based on storage flags
+
+async def _acleanup_and_store(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    import copy
+
+    from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
-    scrub_run_output_for_storage(team, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Add RunOutput to Team Session
-    session.upsert_run(run_response=run_response)
+    # Update run_response.session_state before saving
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
+
+    # Add scrubbed RunOutput to Team Session
+    session.upsert_run(run_response=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
 
+    # Update session state before saving the session
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
     # Save session to memory
     await team.asave_session(session=session)
+
+    # Update approval run_status if this run has an associated approval.
+    if run_response.status is not None and run_response.run_id is not None:
+        await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
 
 
 def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
@@ -3020,7 +4320,7 @@ def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
-            log_warning(f"Failed to resolve dependencies for {key}: {e}")
+            log_warning(f"Failed to resolve dependencies for {key}: {str(e)}")
 
 
 async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
@@ -3055,7 +4355,7 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+            log_warning(f"Failed to resolve context for '{key}': {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -3066,6 +4366,9 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
 def _get_continue_run_messages(
     team: "Team",
     input: List[Message],
+    session: Optional[TeamSession] = None,
+    add_history_to_context: Optional[bool] = None,
+    run_context: Optional[RunContext] = None,
 ) -> RunMessages:
     """Build a RunMessages object from the existing conversation messages.
 
@@ -3073,6 +4376,9 @@ def _get_continue_run_messages(
     from the existing message list for the continuation run.
     """
     run_messages = RunMessages()
+
+    if add_history_to_context is None:
+        add_history_to_context = team.add_history_to_context
 
     # Extract most recent user message
     user_message = None
@@ -3091,7 +4397,45 @@ def _get_continue_run_messages(
 
     run_messages.system_message = system_message
     run_messages.user_message = user_message
-    run_messages.messages = input
+
+    # Skip re-fetching history if input already contains it (run_response path).
+    input_has_history = any(msg.from_history for msg in input)
+
+    # Build messages: system first, then history (if needed), then remaining input
+    if system_message is not None:
+        run_messages.messages.append(system_message)
+
+    if add_history_to_context and session is not None and not input_has_history:
+        from copy import deepcopy
+
+        from agno.utils.message import filter_tool_calls
+
+        skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
+
+        history: List[Message] = session.get_messages(
+            last_n_runs=team.num_history_runs,
+            limit=team.num_history_messages,
+            skip_roles=[skip_role] if skip_role else None,
+            team_id=team.id if team.parent_team_id is not None else None,
+        )
+
+        if len(history) > 0:
+            history_copy = [deepcopy(msg) for msg in history]
+            for _msg in history_copy:
+                _msg.from_history = True
+            if team.max_tool_calls_from_history is not None:
+                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+            log_debug(f"Adding {len(history_copy)} messages from history")
+            run_messages.messages += history_copy
+
+    # Add remaining input messages (skip system to avoid duplication)
+    for msg in input:
+        if msg is not system_message:
+            run_messages.messages.append(msg)
+
+    # Set messages on run_context so tool hooks can access the current message history
+    if run_context is not None:
+        run_context.messages = run_messages.messages
 
     return run_messages
 
@@ -3110,6 +4454,7 @@ def _handle_team_tool_call_updates(
     etc.) that ``Team`` also provides, so passing a ``Team`` is safe at runtime.
     """
     from agno.agent._tools import (
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -3124,7 +4469,7 @@ def _handle_team_tool_call_updates(
         # Case 1: Handle confirmed tools and execute them
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                deque(run_tool(team, run_response, run_messages, _t, functions=_functions), maxlen=0)  # type: ignore
+                deque(run_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True), maxlen=0)  # type: ignore
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
                 _t.confirmed = False
@@ -3136,9 +4481,15 @@ def _handle_team_tool_call_updates(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -3147,7 +4498,7 @@ def _handle_team_tool_call_updates(
             handle_user_input_update(team, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
-            deque(run_tool(team, run_response, run_messages, _t, functions=_functions), maxlen=0)  # type: ignore
+            deque(run_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True), maxlen=0)  # type: ignore
 
 
 def _handle_team_tool_call_updates_stream(
@@ -3163,6 +4514,7 @@ def _handle_team_tool_call_updates_stream(
     Yields events during tool execution for streaming responses.
     """
     from agno.agent._tools import (
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -3184,6 +4536,7 @@ def _handle_team_tool_call_updates_stream(
                     _t,
                     functions=_functions,
                     stream_events=stream_events,  # type: ignore
+                    team_mode=True,
                 )
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
@@ -3196,9 +4549,15 @@ def _handle_team_tool_call_updates_stream(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -3212,6 +4571,7 @@ def _handle_team_tool_call_updates_stream(
                 _t,
                 functions=_functions,
                 stream_events=stream_events,  # type: ignore
+                team_mode=True,
             )
             _t.requires_user_input = False
             _t.answered = True
@@ -3229,6 +4589,7 @@ async def _ahandle_team_tool_call_updates(
     """
     from agno.agent._tools import (
         arun_tool,
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -3241,7 +4602,7 @@ async def _ahandle_team_tool_call_updates(
     for _t in run_response.tools or []:
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions):  # type: ignore
+                async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True):  # type: ignore
                     pass
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
@@ -3253,8 +4614,15 @@ async def _ahandle_team_tool_call_updates(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
 
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -3262,7 +4630,7 @@ async def _ahandle_team_tool_call_updates(
             handle_user_input_update(team, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
-            async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions):  # type: ignore
+            async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True):  # type: ignore
                 pass
 
 
@@ -3280,6 +4648,7 @@ async def _ahandle_team_tool_call_updates_stream(
     """
     from agno.agent._tools import (
         arun_tool,
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -3300,6 +4669,7 @@ async def _ahandle_team_tool_call_updates_stream(
                     _t,
                     functions=_functions,
                     stream_events=stream_events,  # type: ignore
+                    team_mode=True,
                 ):
                     yield event  # type: ignore
             else:
@@ -3313,9 +4683,15 @@ async def _ahandle_team_tool_call_updates_stream(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -3329,6 +4705,7 @@ async def _ahandle_team_tool_call_updates_stream(
                 _t,
                 functions=_functions,
                 stream_events=stream_events,  # type: ignore
+                team_mode=True,
             ):
                 yield event  # type: ignore
             _t.requires_user_input = False
@@ -3350,6 +4727,76 @@ def _normalize_requirements_payload(
     return result
 
 
+def _merge_tools_preserving_approval(
+    original_tools: List[Any],
+    updated_tools_map: Dict[str, Any],
+) -> List[Any]:
+    """Merge updated tool executions from the continue payload with the original session tools.
+
+    When a client sends tool updates during continue_run, the payload typically
+    only includes HITL-relevant fields (confirmed, answered, user_input_schema, etc.)
+    and omits approval metadata (approval_type, approval_id). A naive replacement
+    would lose these fields, preventing the approval resolution gate from finding
+    and applying the admin's decision to the correct tools.
+
+    This function preserves approval_type and approval_id from the session originals
+    whenever the incoming tool does not carry them.
+    """
+    merged: List[Any] = []
+    for orig in original_tools:
+        updated = updated_tools_map.get(orig.tool_call_id)
+        if updated is not None:
+            for attr in ("approval_type", "approval_id"):
+                if getattr(updated, attr, None) is None and getattr(orig, attr, None) is not None:
+                    setattr(updated, attr, getattr(orig, attr))
+            merged.append(updated)
+        else:
+            merged.append(orig)
+    return merged
+
+
+def _backfill_approval_to_requirements(
+    run_response: Any,
+    old_requirements: Optional[List[Any]] = None,
+) -> None:
+    """Restore approval metadata on requirements' tool_execution objects after a continue payload merge.
+
+    During continue_run the client's requirements replace the session originals,
+    but approval_type/approval_id are typically absent from the client payload.
+    This function copies those fields back from two sources (checked in priority order):
+
+    1. run_response.tools — covers team-level approval tools whose metadata was
+       already preserved by _merge_tools_preserving_approval.
+    2. old_requirements (the pre-overwrite session requirements) — covers member-level
+       approval tools where run_response.tools only contains delegate_task_to_member
+       entries that have no approval_type. The original session requirements carry it.
+    """
+    reqs = getattr(run_response, "requirements", None)
+    if not reqs:
+        return
+
+    # Build lookup from both sources
+    by_id: Dict[str, Any] = {}
+    # Old requirements first (lower priority)
+    if old_requirements:
+        for old_req in old_requirements:
+            old_te = getattr(old_req, "tool_execution", None)
+            if old_te and old_te.tool_call_id:
+                by_id[old_te.tool_call_id] = old_te
+    # run_response.tools second (higher priority, overwrites)
+    for t in getattr(run_response, "tools", None) or []:
+        if t.tool_call_id and getattr(t, "approval_type", None) is not None:
+            by_id[t.tool_call_id] = t
+
+    for req in reqs:
+        te = getattr(req, "tool_execution", None)
+        if te and te.tool_call_id and te.tool_call_id in by_id:
+            src = by_id[te.tool_call_id]
+            for attr in ("approval_type", "approval_id"):
+                if getattr(te, attr, None) is None and getattr(src, attr, None) is not None:
+                    setattr(te, attr, getattr(src, attr))
+
+
 def _has_member_requirements(requirements: List[Any]) -> bool:
     """Check if any requirements are for member agents (have member_agent_id set)."""
     return any(getattr(req, "member_agent_id", None) is not None for req in requirements)
@@ -3366,7 +4813,7 @@ def _route_requirements_to_members(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> List[str]:
-    """Route member requirements back to the appropriate member agents (sync).
+    """Route member requirements back to the appropriate member agents (sync, non-streaming).
 
     Groups requirements by member_agent_id, calls member.continue_run() for each,
     and returns a list of result descriptions for building a continuation message.
@@ -3401,6 +4848,17 @@ def _route_requirements_to_members(
         # initialize_team clears the cached session).
         member_run_output = getattr(reqs[0], "_member_run_response", None)
 
+        # If _member_run_response is not available (e.g., API flow where it's lost during
+        # JSON serialization), try to find the member's run from run_response.member_responses.
+        # This requires store_member_responses=True on the team.
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id and run_response.member_responses:
+                for mr in run_response.member_responses:
+                    if getattr(mr, "run_id", None) == member_run_id:
+                        member_run_output = mr
+                        break
+
         if member_run_output is not None:
             # Update requirements and tool executions on the member's run output
             member_run_output.requirements = reqs
@@ -3410,13 +4868,13 @@ def _route_requirements_to_members(
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
             member_response = member.continue_run(
-                run_response=member_run_output,
+                run_response=member_run_output,  # type: ignore[arg-type]
                 session_id=session.session_id,
             )
         else:
             # Fallback: use run_id (requires DB or cached session)
             member_run_id = reqs[0].member_run_id if reqs else None
-            member_response = member.continue_run(
+            member_response = member.continue_run(  # type: ignore[arg-type]
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
@@ -3428,6 +4886,10 @@ def _route_requirements_to_members(
 
             _propagate_member_pause(run_response, member, member_response)
         else:
+            # Update the member's run in the team session so its status is persisted
+            # (member agents skip save_session when team_id is set)
+            session.upsert_run(member_response)
+
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
@@ -3438,13 +4900,125 @@ def _route_requirements_to_members(
     return member_results
 
 
+def _route_requirements_to_members_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    member_results: List[str],
+    run_context: Optional[RunContext] = None,
+    stream_events: bool = False,
+) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    """Route member requirements back to the appropriate member agents (sync, streaming).
+
+    Yields member streaming events (RunContent, etc.) to the caller, and appends
+    result descriptions to the provided member_results list.
+
+    Following the same pattern as delegate_task_to_member: iterate the member's
+    streaming response, yield intermediate events, capture the final RunOutput.
+
+    Args:
+        member_results: Mutable list to collect member result strings.
+
+    Yields:
+        Member streaming events (RunOutputEvent, TeamRunOutputEvent).
+    """
+    from agno.run.requirement import RunRequirement
+    from agno.team._tools import _find_member_route_by_id
+
+    # Group requirements by member
+    member_reqs: Dict[str, List[RunRequirement]] = {}
+    for req in run_response.requirements or []:
+        mid = getattr(req, "member_agent_id", None)
+        if mid is not None:
+            member_reqs.setdefault(mid, []).append(req)
+
+    for member_id, reqs in member_reqs.items():
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
+        if route_result is None:
+            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
+            member_results.append(f"[{member_id}]: Could not route requirement — member not found")
+            continue
+
+        _, member = route_result
+
+        member_run_output = getattr(reqs[0], "_member_run_response", None)
+
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id and run_response.member_responses:
+                for mr in run_response.member_responses:
+                    if getattr(mr, "run_id", None) == member_run_id:
+                        member_run_output = mr
+                        break
+
+        if member_run_output is not None:
+            member_run_output.requirements = reqs
+            updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
+            if updated_tools and member_run_output.tools:
+                updated_map = {t.tool_call_id: t for t in updated_tools}
+                member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
+
+            member_response_stream = member.continue_run(  # type: ignore[call-overload]
+                run_response=member_run_output,  # type: ignore[arg-type]
+                session_id=session.session_id,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                yield_run_output=True,
+            )
+        else:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            member_response_stream = member.continue_run(  # type: ignore[call-overload]
+                run_id=member_run_id,
+                requirements=reqs,
+                session_id=session.session_id,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                yield_run_output=True,
+            )
+
+        # Iterate the member's streaming response — yield intermediate events,
+        member_response = None
+        for event in member_response_stream:  # type: ignore[union-attr]
+            if isinstance(event, (RunOutput, TeamRunOutput)):
+                member_response = event
+                continue  # Don't yield the final RunOutput
+
+            # Set parent_run_id on member events (same as delegate_task_to_member)
+            event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
+
+            # Store event and yield (same as _handle_model_response_chunk for member events)
+            if stream_events or team.stream_member_events:
+                yield handle_event(
+                    event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+        if member_response is None:
+            log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
+            member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
+        elif getattr(member_response, "is_paused", False):
+            from agno.team._tools import _propagate_member_pause
+
+            _propagate_member_pause(run_response, member, member_response)
+        else:
+            session.upsert_run(member_response)
+            content = getattr(member_response, "content", None) or "Task completed"
+            member_results.append(f"[{member.name or member_id}]: {content}")
+
+        # Clear _member_run_response references to allow GC of the member RunOutput
+        for req in reqs:
+            req._member_run_response = None
+
+
 async def _aroute_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> List[str]:
-    """Route member requirements back to the appropriate member agents (async).
+    """Route member requirements back to the appropriate member agents (async, non-streaming).
 
     Runs member continue_run() calls concurrently with asyncio.gather.
 
@@ -3474,6 +5048,17 @@ async def _aroute_requirements_to_members(
         # Get the member's paused RunOutput from the requirement
         member_run_output = getattr(reqs[0], "_member_run_response", None)
 
+        # If _member_run_response is not available (e.g., API flow where it's lost during
+        # JSON serialization), try to find the member's run from run_response.member_responses.
+        # This requires store_member_responses=True on the team.
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id and run_response.member_responses:
+                for mr in run_response.member_responses:
+                    if getattr(mr, "run_id", None) == member_run_id:
+                        member_run_output = mr
+                        break
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -3482,7 +5067,7 @@ async def _aroute_requirements_to_members(
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
             member_response = await member.acontinue_run(  # type: ignore[misc]
-                run_response=member_run_output,
+                run_response=member_run_output,  # type: ignore[arg-type]
                 session_id=session.session_id,
             )
         else:
@@ -3503,6 +5088,10 @@ async def _aroute_requirements_to_members(
             _propagate_member_pause(run_response, member, member_response)
             return None
         else:
+            # Update the member's run in the team session so its status is persisted
+            # (member agents skip save_session when team_id is set, so we do it here)
+            session.upsert_run(member_response)
+
             content = getattr(member_response, "content", None) or "Task completed"
             return f"[{member.name or member_id}]: {content}"
 
@@ -3518,6 +5107,121 @@ async def _aroute_requirements_to_members(
     return member_results
 
 
+async def _aroute_requirements_to_members_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    member_results: List[str],
+    run_context: Optional[RunContext] = None,
+    stream_events: bool = False,
+) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    """Route member requirements back to the appropriate member agents (async, streaming).
+
+    Yields member streaming events (RunContent, etc.) to the caller, and appends
+    result descriptions to the provided member_results list.
+
+    Following the same pattern as adelegate_task_to_member: iterate the member's
+    async streaming response, yield intermediate events, capture the final RunOutput.
+
+    Note: When streaming, members are processed sequentially (not with asyncio.gather)
+    because we need to yield events as they arrive.
+
+    Args:
+        member_results: Mutable list to collect member result strings.
+
+    Yields:
+        Member streaming events (RunOutputEvent, TeamRunOutputEvent).
+    """
+    from agno.run.requirement import RunRequirement
+    from agno.team._tools import _find_member_route_by_id
+
+    # Group requirements by member
+    member_reqs: Dict[str, List[RunRequirement]] = {}
+    for req in run_response.requirements or []:
+        mid = getattr(req, "member_agent_id", None)
+        if mid is not None:
+            member_reqs.setdefault(mid, []).append(req)
+
+    for member_id, reqs in member_reqs.items():
+        route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
+        if route_result is None:
+            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
+            member_results.append(f"[{member_id}]: Could not route requirement — member not found")
+            continue
+
+        _, member = route_result
+
+        member_run_output = getattr(reqs[0], "_member_run_response", None)
+
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id and run_response.member_responses:
+                for mr in run_response.member_responses:
+                    if getattr(mr, "run_id", None) == member_run_id:
+                        member_run_output = mr
+                        break
+
+        if member_run_output is not None:
+            member_run_output.requirements = reqs
+            updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
+            if updated_tools and member_run_output.tools:
+                updated_map = {t.tool_call_id: t for t in updated_tools}
+                member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
+
+            member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
+                run_response=member_run_output,  # type: ignore[arg-type]
+                session_id=session.session_id,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                yield_run_output=True,
+            )
+        else:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
+                run_id=member_run_id,
+                requirements=reqs,
+                session_id=session.session_id,
+                stream=True,
+                stream_events=stream_events or team.stream_member_events,
+                yield_run_output=True,
+            )
+
+        # Iterate the member's async streaming response — yield intermediate events,
+        member_response = None
+        async for event in member_response_stream:  # type: ignore[union-attr]
+            if isinstance(event, (RunOutput, TeamRunOutput)):
+                member_response = event
+                continue  # Don't yield the final RunOutput
+
+            # Set parent_run_id on member events (same as adelegate_task_to_member)
+            event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
+
+            # Store event and yield (same as _handle_model_response_chunk for member events)
+            if stream_events or team.stream_member_events:
+                yield handle_event(
+                    event,
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                )
+
+        if member_response is None:
+            log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
+            member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
+        elif getattr(member_response, "is_paused", False):
+            from agno.team._tools import _propagate_member_pause
+
+            _propagate_member_pause(run_response, member, member_response)
+        else:
+            session.upsert_run(member_response)
+            content = getattr(member_response, "content", None) or "Task completed"
+            member_results.append(f"[{member.name or member_id}]: {content}")
+
+        # Clear _member_run_response references to allow GC of the member RunOutput
+        for req in reqs:
+            req._member_run_response = None
+
+
 def _build_continuation_message(member_results: List[str]) -> str:
     """Build a user message from member results to feed back into the team model."""
     if not member_results:
@@ -3525,6 +5229,120 @@ def _build_continuation_message(member_results: List[str]) -> str:
     parts = ["Member results after human-in-the-loop resolution:"]
     parts.extend(member_results)
     return "\n".join(parts)
+
+
+def _tool_result_requires_human_input(tool: ToolExecution) -> bool:
+    result = tool.result or ""
+    return isinstance(result, str) and "requires human input" in result.lower()
+
+
+def _prepare_member_hitl_continuation(
+    run_response: TeamRunOutput,
+    run_messages: RunMessages,
+    member_results: List[str],
+) -> None:
+    """Prepare run_response and run_messages for member HITL continuation.
+
+    Updates the delegate_task_to_member/delegate_task_to_members tool result in both
+    run_response.tools and the corresponding message in run_messages. Also resets run
+    state for continuation.
+
+    This is called after the member agent's HITL has been resolved and we need to
+    continue the team run with the member's results.
+    """
+
+    continuation_message = _build_continuation_message(member_results)
+
+    target_tool_call_ids: set[str] = set()
+    for tool in run_response.tools or []:
+        if tool.tool_name in {
+            "delegate_task_to_member",
+            "delegate_task_to_members",
+        } and _tool_result_requires_human_input(tool):
+            tool.result = continuation_message
+            if tool.tool_call_id is not None:
+                target_tool_call_ids.add(tool.tool_call_id)
+
+    if not target_tool_call_ids:
+        for tool in run_response.tools or []:
+            if _tool_result_requires_human_input(tool):
+                tool.result = continuation_message
+                if tool.tool_call_id is not None:
+                    target_tool_call_ids.add(tool.tool_call_id)
+
+    # Update the existing tool result messages in run_messages
+    if target_tool_call_ids:
+        for msg in run_messages.messages:
+            if msg.role == "tool" and msg.tool_call_id in target_tool_call_ids:
+                msg.content = continuation_message
+
+    # Reset run state for continuation
+    run_response.status = RunStatus.running
+    run_response.content = None
+
+
+async def _ahandle_model_response_for_continue(
+    team: "Team",
+    run_response: TeamRunOutput,
+    run_messages: RunMessages,
+    run_context: RunContext,
+    tools: List[Any],
+    team_session: "TeamSession",
+    response_format: Optional[Any] = None,
+) -> Optional[TeamRunOutput]:
+    """Handle async model response for team continue_run (non-streaming).
+
+    Shared logic for both team-level and member HITL continuation.
+    Returns the run_response if paused (needs to return early), otherwise None.
+    """
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        _update_run_response,
+        agenerate_response_with_output_model,
+        aparse_response_with_parser_model,
+    )
+
+    team.model = cast(Model, team.model)
+    model_response: ModelResponse = await acall_model_with_fallback(
+        team.model,
+        team.fallback_config,
+        messages=run_messages.messages,
+        response_format=response_format,
+        tools=tools,
+        tool_choice=team.tool_choice,
+        tool_call_limit=team.tool_call_limit,
+        run_response=run_response,
+        send_media_to_model=team.send_media_to_model,
+        compression_manager=team.compression_manager if team.compress_tool_results else None,
+    )
+
+    await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+    await agenerate_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+    await aparse_response_with_parser_model(
+        team, model_response, run_messages, run_context=run_context, run_response=run_response
+    )
+
+    _update_run_response(
+        team,
+        model_response=model_response,
+        run_response=run_response,
+        run_messages=run_messages,
+        run_context=run_context,
+    )
+
+    # Check for new pauses
+    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+        from agno.team import _hooks
+
+        return await _hooks.ahandle_team_run_paused(
+            team, run_response=run_response, session=team_session, run_context=run_context
+        )
+
+    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+    store_media_util(run_response, model_response)
+
+    return None  # Continue with post-hooks
 
 
 def continue_run_dispatch(
@@ -3625,9 +5443,6 @@ def continue_run_dispatch(
 
     # Resolve run_response from run_id if needed
     if run_response is None and run_id is not None:
-        if requirements is None:
-            raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
-
         runs = team_session.runs or []
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
@@ -3635,17 +5450,45 @@ def continue_run_dispatch(
 
     run_response = cast(TeamRunOutput, run_response)
 
+    # Save old requirements before overwriting — needed to preserve approval fields for member-level tools
+    old_requirements = run_response.requirements
+
     # Normalize and apply requirements
-    if requirements is not None:
+    if requirements:
         requirements = _normalize_requirements_payload(requirements)
         run_response.requirements = requirements
-        # Update tools from requirements
+        # Update tools from requirements, preserving approval fields the FE omits
         updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
         if updated_tools and run_response.tools:
             updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-            run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+            run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
         elif updated_tools:
             run_response.tools = updated_tools
+        _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+
+        # Also apply any resolved approval
+        if run_response.tools:
+            from agno.run.approval import check_and_apply_approval_resolution
+
+            try:
+                check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
+            except RuntimeError:
+                raise ValueError(
+                    "To continue a run from a given run_id, the requirements parameter must be provided "
+                    "(or resolve an admin approval first)."
+                )
+    elif run_response.tools:
+        from agno.run.approval import check_and_apply_approval_resolution
+
+        try:
+            check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
+        except RuntimeError:
+            raise ValueError(
+                "To continue a run from a given run_id, the requirements parameter must be provided "
+                "(or resolve an admin approval first)."
+            )
+    else:
+        raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
 
     # Determine what kind of pause we're continuing from
     has_member = _has_member_requirements(run_response.requirements or [])
@@ -3660,10 +5503,51 @@ def continue_run_dispatch(
         # may append newly propagated reqs via _propagate_member_pause (chained HITL).
         original_member_req_ids = {id(r) for r in member_reqs}
         run_response.requirements = member_reqs
-        member_results = _route_requirements_to_members(
-            team, run_response=run_response, session=team_session, run_context=run_context
-        )
-        # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
+
+        if opts.stream:
+            # Streaming: use the generator variant that yields member events.
+            # We collect member_results via a mutable list and chain with the
+            # team continuation stream below.
+            member_event_stream = _route_requirements_to_members_stream(
+                team,
+                run_response=run_response,
+                session=team_session,
+                member_results=member_results,
+                run_context=run_context,
+                stream_events=opts.stream_events or False,
+            )
+        else:
+            member_event_stream = None
+            member_results = _route_requirements_to_members(
+                team,
+                run_response=run_response,
+                session=team_session,
+                run_context=run_context,
+            )
+
+        # For non-streaming, member routing is done eagerly above.
+        # For streaming, we must consume member events lazily inside a returned generator.
+        # But first we need to check for chained pauses AFTER member routing completes.
+        # So for streaming, we defer everything to a wrapper generator.
+        if opts.stream and member_event_stream is not None:
+            return _continue_run_dispatch_stream_with_member_events(
+                team=team,
+                run_response=run_response,
+                member_event_stream=member_event_stream,
+                member_results=member_results,
+                original_member_req_ids=original_member_req_ids,
+                team_level_reqs=team_level_reqs,
+                has_team_level=has_team_level,
+                team_session=team_session,
+                run_context=run_context,
+                opts=opts,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+
+        # Non-streaming: merge and check for chained pauses
         newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
         run_response.requirements = team_level_reqs + newly_propagated
 
@@ -3671,10 +5555,9 @@ def continue_run_dispatch(
         if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
             from agno.team import _hooks
 
-            if opts.stream:
-                return _hooks.handle_team_run_paused_stream(team, run_response=run_response, session=team_session)  # type: ignore
-            else:
-                return _hooks.handle_team_run_paused(team, run_response=run_response, session=team_session)
+            return _hooks.handle_team_run_paused(
+                team, run_response=run_response, session=team_session, run_context=run_context
+            )
 
     # Handle team-level tool resolution
     if has_team_level:
@@ -3688,9 +5571,13 @@ def continue_run_dispatch(
             from agno.team import _hooks
 
             if opts.stream:
-                return _hooks.handle_team_run_paused_stream(team, run_response=run_response, session=team_session)  # type: ignore
+                return _hooks.handle_team_run_paused_stream(
+                    team, run_response=run_response, session=team_session, run_context=run_context
+                )  # type: ignore
             else:
-                return _hooks.handle_team_run_paused(team, run_response=run_response, session=team_session)
+                return _hooks.handle_team_run_paused(
+                    team, run_response=run_response, session=team_session, run_context=run_context
+                )
 
         response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
         team.model = cast(Model, team.model)
@@ -3712,7 +5599,13 @@ def continue_run_dispatch(
 
         # Get continue run messages from existing conversation
         input_messages = run_response.messages or []
-        run_messages = _get_continue_run_messages(team, input=input_messages)
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
 
         # Handle tool call updates (execute confirmed tools, etc.)
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
@@ -3756,37 +5649,69 @@ def continue_run_dispatch(
                 **kwargs,
             )
 
-    # Member-only case: re-run team model with member results
+    # Member-only case: continue the same run with member results
     if member_results and not has_team_level:
-        continuation_message = _build_continuation_message(member_results)
+        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+        team.model = cast(Model, team.model)
 
-        # Mark original paused run as completed before starting a fresh run
-        run_response.status = RunStatus.completed
-        _cleanup_and_store(team, run_response=run_response, session=team_session)
+        # Prepare tools for the continuation
+        team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
+        _tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            stream=opts.stream or False,
+            stream_events=opts.stream_events or False,
+        )
+
+        # Get existing messages
+        input_messages = run_response.messages or []
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
+
+        # Prepare for member HITL continuation
+        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+        log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
         if opts.stream:
-            return team.run(  # type: ignore
-                input=continuation_message,
-                stream=True,
-                stream_events=opts.stream_events,
-                session_id=session_id,
+            return _continue_run_stream(
+                team,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                tools=_tools,
+                session=team_session,
                 user_id=user_id,
-                knowledge_filters=knowledge_filters,
-                dependencies=dependencies,
-                metadata=metadata,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
         else:
-            return team.run(
-                input=continuation_message,
-                stream=False,
-                session_id=session_id,
+            return _continue_run(
+                team,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                tools=_tools,
+                session=team_session,
                 user_id=user_id,
-                knowledge_filters=knowledge_filters,
-                dependencies=dependencies,
-                metadata=metadata,
+                response_format=response_format,
                 debug_mode=debug_mode,
+                background_tasks=background_tasks,
                 **kwargs,
             )
 
@@ -3794,6 +5719,165 @@ def continue_run_dispatch(
     run_response.status = RunStatus.completed
     _cleanup_and_store(team, run_response=run_response, session=team_session)
     return run_response
+
+
+def _continue_run_dispatch_stream_with_member_events(
+    team: "Team",
+    run_response: TeamRunOutput,
+    member_event_stream: Iterator[Union[TeamRunOutputEvent, RunOutputEvent]],
+    member_results: List[str],
+    original_member_req_ids: set,
+    team_level_reqs: list,
+    has_team_level: bool,
+    team_session: TeamSession,
+    run_context: RunContext,
+    opts: "ResolvedRunOptions",
+    user_id: Optional[str] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+    """Sync streaming wrapper that yields member events then continues the team run.
+
+    This generator first yields all member streaming events from the member routing,
+    then proceeds with the normal team continuation (model call, etc.).
+    """
+    from agno.team._response import get_response_format
+    from agno.team._tools import _determine_tools_for_model
+
+    # Phase 1: Yield member streaming events
+    yield from member_event_stream
+
+    # Phase 2: After member routing completes, check for chained pauses
+    newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
+    run_response.requirements = team_level_reqs + newly_propagated
+
+    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+        from agno.team import _hooks
+
+        yield from _hooks.handle_team_run_paused_stream(
+            team, run_response=run_response, session=team_session, run_context=run_context
+        )
+        return
+
+    # Phase 3: Continue the team run with member results
+    if has_team_level:
+        unresolved_team = [
+            r
+            for r in (run_response.requirements or [])
+            if getattr(r, "member_agent_id", None) is None and not r.is_resolved()
+        ]
+        if unresolved_team:
+            from agno.team import _hooks
+
+            yield from _hooks.handle_team_run_paused_stream(
+                team, run_response=run_response, session=team_session, run_context=run_context
+            )
+            return
+
+        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+        team.model = cast(Model, team.model)
+
+        team_run_context: Dict[str, Any] = {}
+        _tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            stream=True,
+            stream_events=opts.stream_events or False,
+        )
+
+        input_messages = run_response.messages or []
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
+
+        _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
+
+        run_response.status = RunStatus.running
+        run_response.content = None
+
+        log_debug(f"Team Continue Run Start: {run_response.run_id}", center=True)
+
+        yield from _continue_run_stream(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            tools=_tools,
+            session=team_session,
+            user_id=user_id,
+            response_format=response_format,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        return
+
+    if member_results:
+        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+        team.model = cast(Model, team.model)
+
+        team_run_context_2: Dict[str, Any] = {}
+        _tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context_2,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            stream=True,
+            stream_events=opts.stream_events or False,
+        )
+
+        input_messages = run_response.messages or []
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
+
+        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+        log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
+
+        yield from _continue_run_stream(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            tools=_tools,
+            session=team_session,
+            user_id=user_id,
+            response_format=response_format,
+            stream_events=opts.stream_events,
+            yield_run_output=opts.yield_run_output,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        return
+
+    # Fallback: nothing more to do
+    run_response.status = RunStatus.completed
+    _cleanup_and_store(team, run_response=run_response, session=team_session)
+    if opts.yield_run_output:
+        yield run_response
 
 
 def _continue_run(
@@ -3849,7 +5933,9 @@ def _continue_run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Generate model response
-                model_response: ModelResponse = team.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    team.model,
+                    team.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -3863,8 +5949,10 @@ def _continue_run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Parse with output/parser models if needed
-                parse_response_with_output_model(team, model_response, run_messages)
-                parse_response_with_parser_model(team, model_response, run_messages, run_context=run_context)
+                parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+                parse_response_with_parser_model(
+                    team, model_response, run_messages, run_context=run_context, run_response=run_response
+                )
 
                 # Update run response
                 _update_run_response(
@@ -3879,14 +5967,15 @@ def _continue_run(
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
-                    return _hooks.handle_team_run_paused(team, run_response=run_response, session=session)
+                    return _hooks.handle_team_run_paused(
+                        team, run_response=run_response, session=session, run_context=run_context
+                    )
 
                 # Convert to structured format
                 _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
-                # Store media
-                if team.store_media:
-                    store_media_util(run_response, model_response)
+                # Always add media to run_response for caller availability
+                store_media_util(run_response, model_response)
 
                 # Execute post-hooks
                 if team.post_hooks is not None:
@@ -3907,7 +5996,9 @@ def _continue_run(
                 if team.session_summary_manager is not None:
                     session.upsert_run(run_response=run_response)
                     try:
-                        team.session_summary_manager.create_session_summary(session=session)
+                        team.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -3956,7 +6047,7 @@ def _continue_run(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     _time.sleep(delay)
                     continue
 
@@ -4081,7 +6172,9 @@ def _continue_run_stream(
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
 
-                    yield from _hooks.handle_team_run_paused_stream(team, run_response=run_response, session=session)
+                    yield from _hooks.handle_team_run_paused_stream(
+                        team, run_response=run_response, session=session, run_context=run_context
+                    )
                     if yield_run_output:
                         yield run_response
                     return
@@ -4131,7 +6224,9 @@ def _continue_run_stream(
                             store_events=team.store_events,
                         )
                     try:
-                        team.session_summary_manager.create_session_summary(session=session)
+                        team.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -4170,6 +6265,7 @@ def _continue_run_stream(
                 run_response.status = RunStatus.cancelled
                 if not run_response.content:
                     run_response.content = str(e)
+
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                     run_response,
@@ -4215,7 +6311,7 @@ def _continue_run_stream(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     _time.sleep(delay)
                     continue
 
@@ -4230,6 +6326,154 @@ def _continue_run_stream(
     finally:
         _disconnect_connectable_tools(team)
         cleanup_run(run_response.run_id)  # type: ignore
+
+
+async def _acontinue_run_background_stream(
+    team: Team,
+    run_context: RunContext,
+    session_id: str,
+    run_response: Optional[TeamRunOutput] = None,
+    run_id: Optional[str] = None,
+    requirements: Optional[List[Any]] = None,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming continue-run that survives client disconnections.
+
+    Mirrors _arun_background_stream but drives _acontinue_run_stream instead of
+    _arun_stream. Used for HITL scenarios where a paused run resumes and the
+    client needs reconnection support.
+
+    Without this, team.acontinue_run(background=True, stream=True) would route
+    to _acontinue_run_stream and yield raw TeamRunOutputEvent objects directly
+    into FastAPI's StreamingResponse, which calls .encode() per chunk and
+    raises::
+
+        AttributeError: 'RunContinuedEvent' object has no attribute 'encode'
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _acontinue_run_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+    """
+    from agno.team._session import asave_session
+    from agno.team._storage import _aread_or_create_session, _update_metadata
+
+    _run_id = run_id or (run_response.run_id if run_response else None)
+    if not _run_id:
+        raise ValueError("run_id is required for background streaming continue-run")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    _update_metadata(team, session=team_session)
+
+    if run_response is not None:
+        run_response.status = RunStatus.running
+        team_session.upsert_run(run_response=run_response)
+    await asave_session(team, session=team_session)
+
+    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _acontinue_run_stream(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                requirements=requirements,
+                run_id=_run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output or False,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                if isinstance(event, TeamRunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(_run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        _run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
+
+        except Exception:
+            log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                if run_response is not None:
+                    run_response.status = RunStatus.error
+                    team_session.upsert_run(run_response=run_response)
+                    await asave_session(team, session=team_session)
+            except Exception:
+                log_error(
+                    f"Failed to persist error state for background continue-run stream {_run_id}",
+                    exc_info=True,
+                )
+
+        finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
+
+            # Mark run completed in event buffer
+            try:
+                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                event_buffer.set_run_completed(_run_id, final_status)
+            except Exception:
+                log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(_run_id))
+            except (Exception, asyncio.CancelledError):
+                log_warning(f"Failed to signal SSE subscribers for continue-run {_run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
 
 
 def acontinue_run_dispatch(  # type: ignore
@@ -4248,11 +6492,13 @@ def acontinue_run_dispatch(  # type: ignore
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
 
-    Routes to _acontinue_run or _acontinue_run_stream based on stream option.
+    Routes between _acontinue_run, _acontinue_run_stream, and
+    _acontinue_run_background_stream based on the stream and background options.
     """
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
@@ -4314,6 +6560,31 @@ def acontinue_run_dispatch(  # type: ignore
 
     response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
 
+    if background:
+        if not team.db:
+            raise ValueError(
+                "Background execution requires a database to be configured on the team for run persistence."
+            )
+        if opts.stream:
+            # background=True, stream=True: run in background task, yield SSE strings via queue
+            return _acontinue_run_background_stream(  # type: ignore[return-value]
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                requirements=requirements,
+                run_id=run_id_resolved,
+                user_id=user_id,
+                session_id=session_id_resolved,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        # background=True, stream=False is not supported for continue_run yet —
+        # fall through to the regular non-streaming path to preserve prior behavior.
+
     if opts.stream:
         return _acontinue_run_stream(
             team,
@@ -4362,14 +6633,8 @@ async def _acontinue_run(
     """Continue a paused team run (async, non-streaming)."""
     from agno.team._hooks import _aexecute_post_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
-    from agno.team._response import (
-        _convert_response_to_structured_format,
-        _update_run_response,
-        agenerate_response_with_output_model,
-        aparse_response_with_parser_model,
-    )
     from agno.team._telemetry import alog_team_telemetry
-    from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
+    from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
 
     log_debug(f"Team Continue Run: {run_response.run_id if run_response else run_id}", center=True)
 
@@ -4390,9 +6655,6 @@ async def _acontinue_run(
 
                 # Resolve run_response from run_id if needed
                 if run_response is None and run_id is not None:
-                    if requirements is None:
-                        raise ValueError("Requirements are required to continue a run from a run_id.")
-
                     runs = team_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
@@ -4400,18 +6662,50 @@ async def _acontinue_run(
 
                 run_response = cast(TeamRunOutput, run_response)
 
+                # Save old requirements before overwriting — needed for member-level approval fields
+                old_requirements = run_response.requirements
+
                 # Normalize and apply requirements
-                if requirements is not None:
+                if requirements:
                     requirements = _normalize_requirements_payload(requirements)
                     run_response.requirements = requirements
                     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                     if updated_tools and run_response.tools:
                         updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = [
-                            updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                        ]
+                        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
                     elif updated_tools:
                         run_response.tools = updated_tools
+                    _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+
+                    # Also apply any resolved approval
+                    if run_response.tools:
+                        from agno.run.approval import acheck_and_apply_approval_resolution
+
+                        try:
+                            await acheck_and_apply_approval_resolution(
+                                team.db, run_response.run_id or run_id or "", run_response
+                            )
+                        except RuntimeError:
+                            raise ValueError(
+                                "To continue a run from a given run_id, the requirements parameter must be provided "
+                                "(or resolve an admin approval first)."
+                            )
+                elif run_response.tools:
+                    from agno.run.approval import acheck_and_apply_approval_resolution
+
+                    try:
+                        await acheck_and_apply_approval_resolution(
+                            team.db, run_response.run_id or run_id or "", run_response
+                        )
+                    except RuntimeError:
+                        raise ValueError(
+                            "To continue a run from a given run_id, the requirements parameter must be provided "
+                            "(or resolve an admin approval first)."
+                        )
+                else:
+                    raise ValueError(
+                        "To continue a run from a given run_id, the requirements parameter must be provided."
+                    )
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
@@ -4440,7 +6734,10 @@ async def _acontinue_run(
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
                     member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session, run_context=run_context
+                        team,
+                        run_response=run_response,
+                        session=team_session,
+                        run_context=run_context,
                     )
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
@@ -4453,7 +6750,7 @@ async def _acontinue_run(
                         from agno.team import _hooks
 
                         return await _hooks.ahandle_team_run_paused(
-                            team, run_response=run_response, session=team_session
+                            team, run_response=run_response, session=team_session, run_context=run_context
                         )
 
                 # Handle team-level tool resolution
@@ -4468,13 +6765,14 @@ async def _acontinue_run(
                         from agno.team import _hooks
 
                         return await _hooks.ahandle_team_run_paused(
-                            team, run_response=run_response, session=team_session
+                            team, run_response=run_response, session=team_session, run_context=run_context
                         )
 
                     team.model = cast(Model, team.model)
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -4484,10 +6782,17 @@ async def _acontinue_run(
                         session=team_session,
                         user_id=user_id,
                         async_mode=True,
+                        learning_tools=learning_tools,
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(team, input=input_messages)
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
+                    )
 
                     await _ahandle_team_tool_call_updates(
                         team, run_response=run_response, run_messages=run_messages, tools=_tools
@@ -4496,65 +6801,64 @@ async def _acontinue_run(
                     run_response.status = RunStatus.running
                     run_response.content = None
 
-                    # Get model response
-                    model_response: ModelResponse = await team.model.aresponse(
-                        messages=run_messages.messages,
-                        response_format=response_format,
-                        tools=_tools,
-                        tool_choice=team.tool_choice,
-                        tool_call_limit=team.tool_call_limit,
-                        run_response=run_response,
-                        send_media_to_model=team.send_media_to_model,
-                        compression_manager=team.compression_manager if team.compress_tool_results else None,
-                    )
-
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                    await agenerate_response_with_output_model(team, model_response, run_messages)
-                    await aparse_response_with_parser_model(team, model_response, run_messages, run_context=run_context)
-
-                    _update_run_response(
+                    # Handle model response using shared helper
+                    paused_result = await _ahandle_model_response_for_continue(
                         team,
-                        model_response=model_response,
                         run_response=run_response,
                         run_messages=run_messages,
                         run_context=run_context,
+                        tools=_tools,
+                        team_session=team_session,
+                        response_format=response_format,
                     )
-
-                    # Check for new pauses
-                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                        from agno.team import _hooks
-
-                        return await _hooks.ahandle_team_run_paused(
-                            team, run_response=run_response, session=team_session
-                        )
-
-                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
-
-                    if team.store_media:
-                        store_media_util(run_response, model_response)
+                    if paused_result is not None:
+                        return paused_result
 
                 elif member_results:
-                    # Member-only: re-run team with results
-                    continuation_message = _build_continuation_message(member_results)
+                    # Member-only: continue the same run with results
+                    team.model = cast(Model, team.model)
+                    await _check_and_refresh_mcp_tools(team)
 
-                    # Mark original paused run as completed before starting a fresh run
-                    run_response.status = RunStatus.completed
-                    if team_session is not None:
-                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
-
-                    result = await team.arun(  # type: ignore[misc]
-                        input=continuation_message,
-                        stream=False,
-                        session_id=session_id,
+                    team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    _tools = _determine_tools_for_model(
+                        team,
+                        model=team.model,
+                        run_response=run_response,
+                        run_context=run_context,
+                        team_run_context=team_run_context,
+                        session=team_session,
                         user_id=user_id,
-                        knowledge_filters=run_context.knowledge_filters,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
-                        debug_mode=debug_mode,
-                        **kwargs,
+                        async_mode=True,
+                        learning_tools=learning_tools,
                     )
-                    return result  # type: ignore
+
+                    input_messages = run_response.messages or []
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
+                    )
+
+                    # Prepare for member HITL continuation
+                    _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+                    log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
+
+                    # Handle model response using shared helper
+                    paused_result = await _ahandle_model_response_for_continue(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        tools=_tools,
+                        team_session=team_session,
+                        response_format=response_format,
+                    )
+                    if paused_result is not None:
+                        return paused_result
 
                 # Post-hooks
                 if team.post_hooks is not None:
@@ -4575,7 +6879,9 @@ async def _acontinue_run(
                 if team.session_summary_manager is not None:
                     team_session.upsert_run(run_response=run_response)
                     try:
-                        await team.session_summary_manager.acreate_session_summary(session=team_session)
+                        await team.session_summary_manager.acreate_session_summary(
+                            session=team_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -4593,6 +6899,7 @@ async def _acontinue_run(
                 log_info(f"Team run {run_response.run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
+
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -4603,6 +6910,7 @@ async def _acontinue_run(
                 if run_response.content is None:
                     run_response.content = str(e)
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -4620,7 +6928,7 @@ async def _acontinue_run(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -4666,7 +6974,7 @@ async def _acontinue_run_stream(
         aparse_response_with_parser_model_stream,
     )
     from agno.team._telemetry import alog_team_telemetry
-    from agno.team._tools import _check_and_refresh_mcp_tools, _determine_tools_for_model
+    from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
     from agno.utils.events import create_team_run_continued_event
 
     log_debug(f"Team Continue Run Stream: {run_response.run_id if run_response else run_id}", center=True)
@@ -4688,8 +6996,6 @@ async def _acontinue_run_stream(
 
                 # Resolve run_response from run_id if needed
                 if run_response is None and run_id is not None:
-                    if requirements is None:
-                        raise ValueError("Requirements are required to continue a run from a run_id.")
                     runs = team_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
@@ -4697,18 +7003,50 @@ async def _acontinue_run_stream(
 
                 run_response = cast(TeamRunOutput, run_response)
 
+                # Save old requirements before overwriting — needed for member-level approval fields
+                old_requirements = run_response.requirements
+
                 # Normalize and apply requirements
-                if requirements is not None:
+                if requirements:
                     requirements = _normalize_requirements_payload(requirements)
                     run_response.requirements = requirements
                     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                     if updated_tools and run_response.tools:
                         updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = [
-                            updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                        ]
+                        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
                     elif updated_tools:
                         run_response.tools = updated_tools
+                    _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+
+                    # Also apply any resolved approval
+                    if run_response.tools:
+                        from agno.run.approval import acheck_and_apply_approval_resolution
+
+                        try:
+                            await acheck_and_apply_approval_resolution(
+                                team.db, run_response.run_id or run_id or "", run_response
+                            )
+                        except RuntimeError:
+                            raise ValueError(
+                                "To continue a run from a given run_id, the requirements parameter must be provided "
+                                "(or resolve an admin approval first)."
+                            )
+                elif run_response.tools:
+                    from agno.run.approval import acheck_and_apply_approval_resolution
+
+                    try:
+                        await acheck_and_apply_approval_resolution(
+                            team.db, run_response.run_id or run_id or "", run_response
+                        )
+                    except RuntimeError:
+                        raise ValueError(
+                            "To continue a run from a given run_id, the requirements parameter must be provided "
+                            "(or resolve an admin approval first)."
+                        )
+                else:
+                    raise ValueError(
+                        "To continue a run from a given run_id, the requirements parameter must be provided."
+                    )
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
@@ -4726,9 +7064,16 @@ async def _acontinue_run_stream(
                     ]
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
-                    member_results = await _aroute_requirements_to_members(
-                        team, run_response=run_response, session=team_session, run_context=run_context
-                    )
+                    # Streaming: use the async generator variant that yields member events
+                    async for event in _aroute_requirements_to_members_stream(
+                        team,
+                        run_response=run_response,
+                        session=team_session,
+                        member_results=member_results,
+                        run_context=run_context,
+                        stream_events=stream_events,
+                    ):
+                        yield event
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
                         r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
@@ -4739,7 +7084,7 @@ async def _acontinue_run_stream(
                         from agno.team import _hooks
 
                         async for item in _hooks.ahandle_team_run_paused_stream(
-                            team, run_response=run_response, session=team_session
+                            team, run_response=run_response, session=team_session, run_context=run_context
                         ):
                             yield item
                         if yield_run_output:
@@ -4757,7 +7102,7 @@ async def _acontinue_run_stream(
                         from agno.team import _hooks
 
                         async for item in _hooks.ahandle_team_run_paused_stream(
-                            team, run_response=run_response, session=team_session
+                            team, run_response=run_response, session=team_session, run_context=run_context
                         ):
                             yield item
                         if yield_run_output:
@@ -4768,6 +7113,7 @@ async def _acontinue_run_stream(
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
                     _tools = _determine_tools_for_model(
                         team,
                         model=team.model,
@@ -4779,10 +7125,17 @@ async def _acontinue_run_stream(
                         async_mode=True,
                         stream=True,
                         stream_events=stream_events,
+                        learning_tools=learning_tools,
                     )
 
                     input_messages = run_response.messages or []
-                    run_messages = _get_continue_run_messages(team, input=input_messages)
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
+                    )
 
                     run_response.status = RunStatus.running
                     run_response.content = None
@@ -4863,7 +7216,7 @@ async def _acontinue_run_stream(
                         from agno.team import _hooks
 
                         async for item in _hooks.ahandle_team_run_paused_stream(
-                            team, run_response=run_response, session=team_session
+                            team, run_response=run_response, session=team_session, run_context=run_context
                         ):
                             yield item
                         if yield_run_output:
@@ -4881,25 +7234,119 @@ async def _acontinue_run_stream(
                         yield event
 
                 elif member_results:
-                    # Member-only: mark original run as completed, then re-run team
-                    continuation_message = _build_continuation_message(member_results)
-                    run_response.status = RunStatus.completed
-                    if team_session is not None:
-                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
-                    async for item in team.arun(  # type: ignore
-                        input=continuation_message,
+                    # Member-only: continue the same run with member results
+                    team.model = cast(Model, team.model)
+                    await _check_and_refresh_mcp_tools(team)
+
+                    team_run_context: Dict[str, Any] = {}  # type: ignore[no-redef]
+                    learning_tools = await _aget_learning_tools(team, user_id, team_session)
+                    _tools = _determine_tools_for_model(
+                        team,
+                        model=team.model,
+                        run_response=run_response,
+                        run_context=run_context,
+                        team_run_context=team_run_context,
+                        session=team_session,
+                        user_id=user_id,
+                        async_mode=True,
                         stream=True,
                         stream_events=stream_events,
-                        session_id=session_id,
-                        user_id=user_id,
-                        knowledge_filters=run_context.knowledge_filters,
-                        dependencies=run_context.dependencies,
-                        metadata=run_context.metadata,
-                        debug_mode=debug_mode,
-                        **kwargs,
+                        learning_tools=learning_tools,
+                    )
+
+                    input_messages = run_response.messages or []
+                    run_messages = _get_continue_run_messages(
+                        team,
+                        input=input_messages,
+                        session=team_session,
+                        add_history_to_context=team.add_history_to_context,
+                        run_context=run_context,
+                    )
+
+                    # Prepare for member HITL continuation
+                    _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
+                    log_debug(f"Team Continue Run Stream (Member HITL): {run_response.run_id}", center=True)
+
+                    # Yield RunContinued event
+                    if stream_events:
+                        yield handle_event(
+                            create_team_run_continued_event(run_response),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+
+                    # Stream model response
+                    if team.output_model is None:
+                        async for event in _ahandle_model_response_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                        async for event in _ahandle_model_response_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        async for event in agenerate_response_with_output_model_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+
+                    # Check for new pauses
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        async for item in _hooks.ahandle_team_run_paused_stream(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        ):
+                            yield item
+                        if yield_run_output:
+                            yield run_response
+                        return
+
+                    # Parse response with parser model
+                    async for event in aparse_response_with_parser_model_stream(
+                        team,
+                        session=team_session,
+                        run_response=run_response,
+                        stream_events=stream_events,
+                        run_context=run_context,
                     ):
-                        yield item
-                    return
+                        yield event
 
                 # Content completed
                 if stream_events:
@@ -4937,7 +7384,9 @@ async def _acontinue_run_stream(
                             store_events=team.store_events,
                         )
                     try:
-                        await team.session_summary_manager.acreate_session_summary(session=team_session)
+                        await team.session_summary_manager.acreate_session_summary(
+                            session=team_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -4979,6 +7428,7 @@ async def _acontinue_run_stream(
                 run_response.status = RunStatus.cancelled
                 if not run_response.content:
                     run_response.content = str(e)
+
                 yield handle_event(
                     create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
                     run_response,
@@ -5031,7 +7481,7 @@ async def _acontinue_run_stream(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 

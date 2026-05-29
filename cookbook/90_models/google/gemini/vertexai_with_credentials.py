@@ -24,7 +24,7 @@ credentials = None  # Replace with your actual credentials object
 
 # 2. Initialize the Gemini model with the credentials parameter
 model = Gemini(
-    id="gemini-3-flash-preview",
+    id="gemini-3.5-flash",
     vertexai=True,
     project_id="your-google-cloud-project-id",
     location="us-central1",

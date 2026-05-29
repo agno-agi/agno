@@ -5,9 +5,9 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.filters import FilterExpr
-from agno.media import Audio, Image, Video
+from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
 
@@ -26,6 +26,12 @@ class RunContext:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
+
+    # Live reference to the current run's message list. Available in tool hooks
+    # via run_context.messages. Hooks receive a shallow copy (via _safe_hook_call)
+    # so accidental list mutations (.clear(), .append()) won't corrupt the run.
+    # Individual Message objects are shared references — do not mutate them.
+    messages: Optional[List[Message]] = None
 
     # Runtime-resolved callable factory results
     tools: Optional[List[Any]] = None
@@ -60,7 +66,9 @@ class BaseRunOutputEvent:
                 "metrics",
                 "run_input",
                 "requirements",
+                "tasks",
                 "memories",
+                "followups",
             ]
         }
 
@@ -78,6 +86,9 @@ class BaseRunOutputEvent:
 
         if hasattr(self, "references") and self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if hasattr(self, "followups") and self.followups is not None:
+            _dict["followups"] = self.followups
 
         if hasattr(self, "member_responses") and self.member_responses:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
@@ -105,6 +116,14 @@ class BaseRunOutputEvent:
                     _dict["audio"].append(aud.to_dict())
                 else:
                     _dict["audio"].append(aud)
+
+        if hasattr(self, "files") and self.files is not None:
+            _dict["files"] = []
+            for file in self.files:
+                if isinstance(file, File):
+                    _dict["files"].append(file.to_dict())
+                else:
+                    _dict["files"].append(file)
 
         if hasattr(self, "response_audio") and self.response_audio is not None:
             if isinstance(self.response_audio, Audio):
@@ -154,6 +173,9 @@ class BaseRunOutputEvent:
         if hasattr(self, "memories") and self.memories is not None:
             _dict["memories"] = [mem.to_dict() if hasattr(mem, "to_dict") else mem for mem in self.memories]
 
+        if hasattr(self, "tasks") and self.tasks is not None:
+            _dict["tasks"] = [t.to_dict() for t in self.tasks]
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -163,8 +185,8 @@ class BaseRunOutputEvent:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response event to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response event to json: {str(e)}")
             raise
 
         if indent is None:
@@ -198,6 +220,12 @@ class BaseRunOutputEvent:
         if audio:
             data["audio"] = [Audio.model_validate(audio) for audio in audio]
 
+        files = data.pop("files", None)
+        if files:
+            from agno.utils.media import reconstruct_files
+
+            data["files"] = reconstruct_files(files)
+
         response_audio = data.pop("response_audio", None)
         if response_audio:
             data["response_audio"] = Audio.model_validate(response_audio)
@@ -220,7 +248,7 @@ class BaseRunOutputEvent:
 
         metrics = data.pop("metrics", None)
         if metrics:
-            data["metrics"] = Metrics(**metrics)
+            data["metrics"] = RunMetrics.from_dict(metrics)
 
         session_summary = data.pop("session_summary", None)
         if session_summary:
@@ -253,6 +281,13 @@ class BaseRunOutputEvent:
                 elif isinstance(item, dict):
                     requirements_list.append(RunRequirement.from_dict(item))
             data["requirements"] = requirements_list if requirements_list else None
+
+        # Handle tasks (TaskData objects in TaskStateUpdatedEvent)
+        tasks_data = data.pop("tasks", None)
+        if tasks_data is not None:
+            from agno.run.team import TaskData
+
+            data["tasks"] = [TaskData.from_dict(t) if isinstance(t, dict) else t for t in tasks_data]
 
         # Filter data to only include fields that are actually defined in the target class
         # CustomEvent accepts arbitrary fields, so skip filtering for it

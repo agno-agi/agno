@@ -1,11 +1,12 @@
+import asyncio
 import hmac
 from os import getenv
-from typing import List, Optional, Set
+from typing import Any, List, Optional, Set
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from agno.os.scopes import get_accessible_resource_ids
+from agno.os.scopes import get_accessible_resource_ids, has_required_scopes
 from agno.os.settings import AgnoAPISettings
 
 # Create a global HTTPBearer instance
@@ -144,6 +145,14 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     return token == settings.os_security_key
 
 
+def build_insufficient_permissions_detail(required_scopes: Optional[List[str]]) -> str:
+    """Format a 403 detail string, appending the required scope(s) when known."""
+    base = "Insufficient permissions"
+    if required_scopes:
+        return f"{base}. Required scope(s): {', '.join(required_scopes)}"
+    return base
+
+
 def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     """
     Get the set of resource IDs the user has access to based on their scopes.
@@ -188,8 +197,19 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     # Get user's scopes from request state (set by JWT middleware)
     user_scopes = getattr(request.state, "scopes", [])
 
+    # Honour any custom admin_scope configured on JWTMiddleware (set on
+    # request.state by the middleware). Without this, list endpoints reject
+    # custom-admin tokens with 403 even though check_resource_access would
+    # accept them.
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+
     # Get accessible resource IDs
-    accessible_ids = get_accessible_resource_ids(user_scopes=user_scopes, resource_type=resource_type)
+    accessible_ids = get_accessible_resource_ids(
+        user_scopes=user_scopes,
+        resource_type=resource_type,
+        admin_scope=admin_scope,
+    )
 
     return accessible_ids
 
@@ -235,7 +255,7 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
 
 def check_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
     """
-    Check if user has access to a specific resource.
+    Check if user has access to a specific resource for a specific action.
 
     Args:
         request: The FastAPI request object
@@ -251,14 +271,26 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
             raise HTTPException(status_code=403, detail="Access denied")
 
     Examples:
-        >>> # Token scopes: ["agent-os:my-os:agents:my-agent:read", "agent-os:my-os:agents:my-agent:run"]
+        >>> # Token scopes: ["agents:my-agent:read", "agents:my-agent:run"]
         >>> check_resource_access(request, "my-agent", "agents", "run")
         True
 
-        >>> check_resource_access(request, "other-agent", "agents", "run")
+        >>> # Token scopes: ["agents:my-agent:read"] (no run scope)
+        >>> check_resource_access(request, "my-agent", "agents", "run")
         False
     """
-    accessible_ids = get_accessible_resources(request, resource_type)
+    user_scopes = getattr(request.state, "scopes", [])
+    # Honour the configured admin scope (set by JWTMiddleware on request.state)
+    # so custom-admin tokens are recognised here too. Non-string values (e.g.
+    # MagicMock attributes in tests) are ignored.
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    accessible_ids = get_accessible_resource_ids(
+        user_scopes=user_scopes,
+        resource_type=resource_type,
+        action=action,
+        admin_scope=admin_scope,
+    )
 
     # Wildcard access grants all permissions
     if "*" in accessible_ids:
@@ -324,5 +356,69 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
         resource_id = request.path_params.get(resource_id_param)
         if resource_id and not check_resource_access(request, resource_id, resource_type, action):
             raise HTTPException(status_code=403, detail=f"Access denied to {action} this {resource_singular}")
+
+    return dependency
+
+
+def require_approval_resolved(db: Any) -> Any:
+    """
+    Dependency factory that blocks a run continuation when a pending admin-required
+    approval exists for the run.
+
+    Designed to sit alongside ``require_resource_access`` in the route's
+    ``dependencies`` list.  Pass the OS-level DB adapter at router-creation time
+    (the same pattern used by ``get_approval_router``).
+
+    Usage::
+
+        dependencies=[
+            Depends(require_resource_access("agents", "run", "agent_id")),
+            Depends(require_approval_resolved(os.db)),
+        ]
+    """
+
+    async def dependency(request: Request) -> None:
+        # Mirror require_resource_access: skip entirely when authorization is disabled.
+        if not getattr(request.state, "authorization_enabled", False):
+            return
+
+        if db is None:
+            return
+
+        # Callers with approvals:write (admins) bypass this gate — they can
+        # force-continue a run for operational or debugging purposes.
+        user_scopes: List[str] = getattr(request.state, "scopes", [])
+        if has_required_scopes(user_scopes, ["approvals:write"]):
+            return
+
+        run_id: Optional[str] = request.path_params.get("run_id")
+        if not run_id:
+            return
+
+        fn = getattr(db, "get_approvals", None)
+        if fn is None:
+            return
+
+        try:
+            if asyncio.iscoroutinefunction(fn):
+                result = await fn(run_id=run_id, status="pending", approval_type="required")
+            else:
+                result = fn(run_id=run_id, status="pending", approval_type="required")
+
+            approvals = result[0] if isinstance(result, tuple) else result
+            if approvals:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This run requires admin approval before it can be continued",
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # DB doesn't support approvals or another transient error — let the
+            # run continue so non-approval setups are unaffected.
+            from agno.utils.log import log_warning
+
+            log_warning(f"Approval resolution check skipped due to error: {exc}: {exc}")
+            return
 
     return dependency

@@ -1,0 +1,31 @@
+chat:
+  quick_prompts:
+    # Level 1: Stateless tool calling — no memory, no knowledge
+    l1-coding-agent:
+      - "Write a Fibonacci function, save it to fib.py, and run it"
+      - "Write a binary search function with type hints, save and test it"
+      - "Create a command-line calculator that handles +, -, *, /"
+
+    # Level 2: Knowledge base + session storage
+    l2-coding-agent:
+      - "Write a CSV parser following our project conventions"
+      - "Create a file reader using pathlib following project standards"
+      - "Write a JSON config loader that follows our coding conventions"
+
+    # Level 3: Learning + agentic memory — improves over time
+    l3-coding-agent:
+      - "I prefer functional style -- no classes, pure functions only. Write a data pipeline."
+      - "Write a log parser that groups errors by category"
+      - "Write a text analyzer and save useful patterns for next time"
+
+    # Level 4: Multi-agent team — Coder, Reviewer, Tester
+    l4-coding-team:
+      - "Build a stack data structure with full test coverage"
+      - "Write a binary search function and review it for edge cases"
+      - "Create a simple key-value store with tests"
+
+    # Level 5: Production system — PostgreSQL, PgVector, tracing (most complete)
+    l5-coding-agent:
+      - "Write a function that validates email addresses using regex"
+      - "Write a CSV parser following project conventions"
+      - "Write a data pipeline and save useful coding patterns"

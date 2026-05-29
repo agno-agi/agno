@@ -1,10 +1,10 @@
-# Get Started with Agents, The Easy Way
+# The Agent Quickstart: 12 Guided Cookbooks
 
-This guide walks through the basics of building Agents with Agno. Follow along to learn how to build agents with memory, knowledge, state, guardrails, and human in the loop. We'll also build multi-agent teams and step-based agentic workflows.
+Learn how to build agents with 12 guided cookbooks. We'll go from single tool-using agent to multi-agent teams and step-based workflows through clean, runnable examples.
 
-Each example can be run independently and contains detailed comments to help you understand what's happening under the hood. We'll use **Gemini 3 Flash** — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
+Each example can be run independently and contains detailed comments to help you understand what's happening under the hood. We'll use Gemini 3.5 Flash — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
 
-## Files
+## What You'll Build
 
 | # | File | What You'll Learn | Key Features |
 |:--|:---------|:------------------|:-------------|
@@ -35,14 +35,6 @@ Each example can be run independently and contains detailed comments to help you
 | **Guardrails** | Validate and filter input | Block PII, prevent prompt injection |
 | **Human in the Loop** | Require confirmation for actions | Sensitive operations, safety-critical tools |
 
-## Why Gemini 3 Flash?
-
-- **Speed** — Sub-second responses make agent loops feel responsive
-- **Tool Calling** — Reliable function calling out of the box
-- **Affordable** — Cheap enough to experiment freely
-
-Agno is **Model-Agnostic** and you can swap to OpenAI, Anthropic, or any provider with one line.
-
 ## Getting Started
 
 ### 1. Clone the repo
@@ -53,8 +45,8 @@ cd agno
 
 ### 2. Create and activate a virtual environment
 ```bash
-uv venv .quickstart --python 3.12
-source .quickstart/bin/activate
+uv venv .venvs/quickstart --python 3.12
+source .venvs/quickstart/bin/activate
 ```
 
 ### 3. Install dependencies
@@ -82,7 +74,7 @@ Agent OS provides a web interface for interacting with your agents. Start the se
 python cookbook/00_quickstart/run.py
 ```
 
-Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
+Then visit [os.agno.com](https://os.agno.com?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=agentos) and add `http://localhost:7777` as an endpoint.
 
 Here's how it looks in action — chat with your agents, explore sessions, monitor traces, manage knowledge and memories, all through a beautiful visual UI.
 
@@ -101,7 +93,7 @@ Agno is model-agnostic. Same code, different provider:
 ```python
 # Gemini (default in these examples)
 from agno.models.google import Gemini
-model = Gemini(id="gemini-3-flash-preview")
+model = Gemini(id="gemini-3.5-flash")
 
 # OpenAI
 from agno.models.openai import OpenAIResponses
@@ -158,5 +150,5 @@ All examples in this Quick Start use synchronous code for simplicity. For async/
 
 ## Learn More
 
-- [Agno Documentation](https://docs.agno.com)
-- [Agent OS Overview](https://docs.agno.com/agent-os/introduction)
+- [Agno Documentation](https://docs.agno.com?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=docs)
+- [Agent OS Overview](https://docs.agno.com/agent-os/introduction?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=docs)
