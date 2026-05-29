@@ -14,7 +14,6 @@ from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.milvus import Milvus
 from agno.vectordb.search import SearchType
 
-
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
@@ -35,9 +34,8 @@ knowledge = Knowledge(
     contents_db=contents_db,
 )
 
-LARGE_TEXT = (
-    "Tom Kha Gai is a classic Thai coconut soup. " * 200
-)
+LARGE_TEXT = "Tom Kha Gai is a classic Thai coconut soup. " * 200
+
 
 def _ensure_loaded() -> None:
     vector_db.create()
