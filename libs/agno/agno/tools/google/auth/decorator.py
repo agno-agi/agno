@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Any, Optional
 
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 
 
 @dataclass
@@ -37,6 +37,18 @@ def get_cache_key() -> Optional[str]:
     return ctx.user_id if ctx else None
 
 
+def _is_auth_error(e: Exception) -> bool:
+    """Check if exception is an authentication error that needs re-auth."""
+    if isinstance(e, PermissionError):
+        return True
+    try:
+        from google.auth.exceptions import GoogleAuthError
+
+        return isinstance(e, GoogleAuthError)
+    except ImportError:
+        return False
+
+
 def google_authenticate(service_name: str):
     """Decorator that resolves credentials and builds a fresh service per-call.
 
@@ -51,6 +63,9 @@ def google_authenticate(service_name: str):
 
     - agent: provides agent.db for token storage/lookup
     - run_context: provides user_id for per-user credential isolation
+
+    When enable_multi_user_oauth=True and authentication fails, returns OAuth URL
+    instead of plain error — allows interface to display login link.
     """
     from agno.run.base import RunContext
 
@@ -60,6 +75,14 @@ def google_authenticate(service_name: str):
             try:
                 creds = self._resolve_creds(run_context, agent=agent)
             except Exception as e:
+                # Check if multi-user OAuth is enabled — if so, return OAuth URL
+                auth_config = getattr(self, "_auth", None)
+                if auth_config and auth_config.enable_multi_user_oauth and _is_auth_error(e):
+                    log_debug(f"{service_name.title()} auth failed, generating OAuth URL: {e}")
+                    from agno.tools.google.auth.oauth import oauth_google
+
+                    return oauth_google(auth_config, run_context, agent)
+
                 log_error(f"{service_name.title()} authentication failed: {str(e)}")
                 return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
 

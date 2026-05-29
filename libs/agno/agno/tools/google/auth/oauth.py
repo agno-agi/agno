@@ -1,5 +1,3 @@
-"""oauth_google tool — generates OAuth URL for multi-user authentication."""
-
 import json
 import secrets
 from typing import TYPE_CHECKING, Any, Dict, Optional, Set
@@ -8,7 +6,7 @@ from urllib.parse import urlencode
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth.manager import GoogleAuthConfig
+    from agno.tools.google.auth.config import GoogleAuthConfig
 
 
 def oauth_google(
