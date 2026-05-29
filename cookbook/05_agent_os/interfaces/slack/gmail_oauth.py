@@ -33,18 +33,18 @@ from agno.os.interfaces.slack import Slack
 from agno.tools.google.auth import GoogleAuthManager, create_oauth_router
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
-from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 db = SqliteDb(db_file="tmp/slack_gmail_calendar.db")
 
 # Shared auth config — single OAuth consent covers Gmail + Calendar
-# All parameters read from env vars if not passed explicitly
+# enable_multi_user_oauth=True registers oauth_google tool and blocks browser fallback
 auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     redirect_uri=getenv("GOOGLE_REDIRECT_URI"),
     state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
     store_tokens=True,
+    enable_multi_user_oauth=True,
 )
 
 agent = Agent(
@@ -52,7 +52,6 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
-        GoogleOAuthTools(auth_config=auth),
         GmailTools(
             auth_config=auth, include_tools=["get_latest_emails", "search_emails"]
         ),

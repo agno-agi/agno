@@ -33,18 +33,19 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.google.auth import GoogleAuthManager
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
-from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 # ---------------------------------------------------------------------------
 # Enterprise Auth Config
 # ---------------------------------------------------------------------------
 # hosted_domain restricts OAuth to users from this domain only.
+# enable_multi_user_oauth=True registers oauth_google tool and blocks browser fallback
 
 auth = GoogleAuthManager(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     hosted_domain="agno.com",  # Only @agno.com users can authenticate
     store_tokens=True,
+    enable_multi_user_oauth=True,
 )
 
 agent = Agent(
@@ -52,7 +53,6 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     db=SqliteDb(db_file="tmp/enterprise_oauth.db"),
     tools=[
-        GoogleOAuthTools(auth_config=auth),
         GmailTools(
             auth_config=auth, include_tools=["get_latest_emails", "search_emails"]
         ),
