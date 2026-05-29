@@ -1,5 +1,5 @@
 from html import escape
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
@@ -8,7 +8,6 @@ from agno.tools.google.auth.security import build_scopes, exchange_code, verify_
 from agno.utils.log import log_error, log_info
 
 if TYPE_CHECKING:
-    from agno.db.base import BaseDb
     from agno.tools.google.auth.config import GoogleAuthConfig
 
 
@@ -25,35 +24,15 @@ def _success_page(services: List[str], valid_services: Dict[str, List[str]]) -> 
     )
 
 
-def create_oauth_router(
-    config: "GoogleAuthConfig",
-    db: Optional["BaseDb"] = None,
-) -> APIRouter:
-    """Create FastAPI router for OAuth callback endpoint.
-
-    The callback flow:
-    1. Verify JWT state signature (prevents CSRF)
-    2. Verify PKCE state_id matches DB (prevents replay)
-    3. Exchange authorization code for tokens
-    4. Persist tokens to database
-
-    Args:
-        config: GoogleAuthConfig with OAuth credentials
-        db: Optional database override (defaults to manager._db)
-
-    Returns:
-        FastAPI APIRouter with the callback endpoint
-    """
+def create_oauth_router(config: "GoogleAuthConfig") -> APIRouter:
     if not config.manager:
         raise RuntimeError("create_oauth_router() requires GoogleAuthConfig with manager= set")
 
     manager = config.manager
     if not manager._state_secret:
         raise RuntimeError("GOOGLE_OAUTH_STATE_SECRET required for OAuth callback")
-
-    resolved_db = db or manager._db
-    if not resolved_db:
-        raise RuntimeError("create_oauth_router() requires a DB with auth token support")
+    if not manager._db:
+        raise RuntimeError("GoogleAuthManager requires db= for OAuth callback")
 
     router = APIRouter(tags=["Google OAuth"])
     path = manager._callback_path or "/google/oauth/callback"
@@ -84,7 +63,7 @@ def create_oauth_router(
         # 2. Verify PKCE
         if not state_id:
             return _error_page("Invalid state: missing state_id")
-        code_verifier, err = verify_pkce(resolved_db, user_id, state_id)
+        code_verifier, err = verify_pkce(manager._db, user_id, state_id)
         if err or not code_verifier:
             return _error_page(err or "PKCE verification failed")
 
@@ -99,7 +78,7 @@ def create_oauth_router(
 
         # 4. Persist tokens
         if not manager.persist_token(
-            db=resolved_db,
+            db=manager._db,
             creds=creds,
             user_id=user_id,
             services_registry=manager._services,
