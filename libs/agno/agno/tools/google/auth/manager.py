@@ -1,40 +1,23 @@
-import os
-from typing import Any, Dict, List, Optional
+from os import getenv
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from agno.tools.google.auth.tokens import persist_google_token, valid_auth_token_db
 from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.oauth_state import verify_state
 
-from agno.tools.google.auth.tokens import persist_google_token, valid_auth_token_db
+if TYPE_CHECKING:
+    from agno.db.base import BaseDb
 
 
 class GoogleAuthManager:
-    """OAuth coordinator for Google toolkits — NOT a Toolkit itself.
-
-    Handles:
-    - OAuth URL generation for interactive auth flows (Slack, etc.)
-    - Token storage/retrieval via agent's DB when available
-    - Service scope registry for combined OAuth consent
-
-    Usage (cookbook — file-based, zero config):
-        gmail = GmailTools()
-
-    Usage (interface — client-side OAuth, opt-in):
-        auth_config = GoogleAuthManager(hosted_domain="mycompany.com")
-        agent = Agent(
-            db=db,
-            tools=[
-                GoogleOAuthTools(auth_config=auth_config),
-                GmailTools(),  # Auto-wired from GoogleOAuthTools
-            ],
-        )
-    """
+    """OAuth coordinator for Google toolkits. Manages token storage, scope registry, and OAuth callbacks."""
 
     def __init__(
         self,
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
         redirect_uri: Optional[str] = None,
-        db: Optional[Any] = None,
+        db: Optional["BaseDb"] = None,
         state_secret: Optional[str] = None,
         state_ttl_seconds: int = 600,
         include_granted_scopes: bool = False,
@@ -53,22 +36,22 @@ class GoogleAuthManager:
         encrypt_tokens: bool = False,
         token_encryption_key: Optional[str] = None,
     ):
-        self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
-        self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
-        self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
-        self._db: Optional[Any] = db
+        self.client_id = client_id or getenv("GOOGLE_CLIENT_ID")
+        self.client_secret = client_secret or getenv("GOOGLE_CLIENT_SECRET")
+        self.redirect_uri = redirect_uri or getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
+        self._db: Optional["BaseDb"] = db
         self._services: Dict[str, List[str]] = {}
         self._callback_configured: bool = False
-        self._state_secret = state_secret or os.getenv("GOOGLE_OAUTH_STATE_SECRET")
+        self._state_secret = state_secret or getenv("GOOGLE_OAUTH_STATE_SECRET")
         self._include_granted_scopes = include_granted_scopes
         self._state_ttl_seconds = state_ttl_seconds
-        self._hosted_domain = hosted_domain or os.getenv("GOOGLE_HOSTED_DOMAIN")
+        self._hosted_domain = hosted_domain or getenv("GOOGLE_HOSTED_DOMAIN")
         self._access_type = access_type
-        self._callback_path = callback_path or os.getenv("GOOGLE_OAUTH_CALLBACK_PATH", "/google/oauth/callback")
+        self._callback_path = callback_path or getenv("GOOGLE_OAUTH_CALLBACK_PATH", "/google/oauth/callback")
         self._prompt = prompt
         self._login_hint = login_hint
-        self._service_account_path = service_account_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        self._delegated_user = delegated_user or os.getenv("GOOGLE_DELEGATED_USER")
+        self._service_account_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+        self._delegated_user = delegated_user or getenv("GOOGLE_DELEGATED_USER")
         self._store_tokens = store_tokens
         self._encrypt_tokens = encrypt_tokens
         self._token_encryption_key = token_encryption_key
@@ -77,7 +60,7 @@ class GoogleAuthManager:
         existing = self._services.get(service, [])
         self._services[service] = list(set(existing) | set(scopes))
 
-    def handle_oauth_callback(self, code: str, state: str, db: Any) -> Dict[str, Any]:
+    def handle_oauth_callback(self, code: str, state: str, db: "BaseDb") -> Dict[str, Any]:
         """Exchange an OAuth authorization code for credentials and store in DB.
 
         Called by the /google/oauth/callback endpoint after Google redirects.
@@ -202,7 +185,7 @@ class GoogleAuthManager:
         log_info(f"OAuth complete for user={user_id}, services={services}")
         return {"status": "ok", "user_id": user_id, "services": services}
 
-    def get_oauth_router(self, db: Any = None) -> Any:
+    def get_oauth_router(self, db: Optional["BaseDb"] = None) -> Any:
         """Create a FastAPI APIRouter with the /google/oauth/callback endpoint.
 
         Calling this marks GoogleAuth as "interface mode" — toolkits will raise

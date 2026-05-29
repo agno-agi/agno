@@ -1,10 +1,14 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agno.utils.log import log_debug, log_error, log_warning
 
+if TYPE_CHECKING:
+    from agno.db.base import BaseDb
+    from agno.tools.google.auth.manager import GoogleAuthManager
 
-def valid_auth_token_db(db: Any) -> Any:
+
+def valid_auth_token_db(db: Optional["BaseDb"]) -> Optional["BaseDb"]:
     """Return db if it supports sync auth token CRUD, else None."""
     if db is None:
         return None
@@ -23,7 +27,7 @@ def valid_auth_token_db(db: Any) -> Any:
     return None
 
 
-def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
+def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Optional["BaseDb"]:
     """Resolve the DB for token storage, or None if not configured."""
     ga = getattr(toolkit, "auth_config", None)
     manager_wants_db = ga is not None and getattr(ga, "_store_tokens", False)
@@ -36,11 +40,11 @@ def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
 
 
 def persist_google_token(
-    db: Any,
+    db: Optional["BaseDb"],
     creds: Any,
     user_id: Optional[str],
     services_registry: Optional[Dict[str, List[str]]] = None,
-    auth_config: Optional[Any] = None,
+    auth_config: Optional["GoogleAuthManager"] = None,
 ) -> bool:
     """Upsert Google credentials to DB. Returns True on success."""
     if db is None:
