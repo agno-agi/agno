@@ -5102,6 +5102,28 @@ def _has_team_level_requirements(requirements: List[Any]) -> bool:
     return any(getattr(req, "member_agent_id", None) is None for req in requirements)
 
 
+def _member_continue_kwargs_from_run_context(run_context: Optional[RunContext]) -> Dict[str, Any]:
+    """Build kwargs to forward team run_context state to a member's continue_run call.
+
+    Without this, member tools resumed via continue_run would lose access to the
+    dependencies/metadata/knowledge_filters the team carried at pause time
+    (see https://github.com/agno-agi/agno/issues/8135). The member's session_state
+    is rehydrated from the shared DB session, so it does not need to be forwarded
+    here (and `Agent.acontinue_run` does not accept a `session_state` parameter).
+    """
+    if run_context is None:
+        return {}
+
+    kwargs: Dict[str, Any] = {}
+    if run_context.dependencies is not None:
+        kwargs["dependencies"] = run_context.dependencies
+    if run_context.metadata is not None:
+        kwargs["metadata"] = run_context.metadata
+    if run_context.knowledge_filters is not None:
+        kwargs["knowledge_filters"] = run_context.knowledge_filters
+    return kwargs
+
+
 def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
@@ -5163,6 +5185,10 @@ def _route_requirements_to_members(
         if member_run_id and run_response.run_id is not None:
             register_member_run(run_response.run_id, member_run_id)
 
+        # Forward team's run_context state to the member so dependencies and
+        # session_state remain accessible to member tools after continue_run.
+        member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+
         if member_run_output is not None:
             # Update requirements and tool executions on the member's run output
             member_run_output.requirements = reqs
@@ -5174,6 +5200,7 @@ def _route_requirements_to_members(
             member_response = member.continue_run(
                 run_response=member_run_output,  # type: ignore[arg-type]
                 session_id=session.session_id,
+                **member_continue_kwargs,
             )
         else:
             # Fallback: use run_id (requires DB or cached session)
@@ -5181,6 +5208,7 @@ def _route_requirements_to_members(
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
+                **member_continue_kwargs,
             )
 
         # Check if member is still paused (chained HITL)
@@ -5266,6 +5294,10 @@ def _route_requirements_to_members_stream(
         if member_run_id and run_response.run_id is not None:
             register_member_run(run_response.run_id, member_run_id)
 
+        # Forward team's run_context state to the member so dependencies and
+        # session_state remain accessible to member tools after continue_run.
+        member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5279,6 +5311,7 @@ def _route_requirements_to_members_stream(
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
+                **member_continue_kwargs,
             )
         else:
             member_response_stream = member.continue_run(  # type: ignore[call-overload]
@@ -5288,6 +5321,7 @@ def _route_requirements_to_members_stream(
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
+                **member_continue_kwargs,
             )
 
         # Iterate the member's streaming response — yield intermediate events,
@@ -5384,6 +5418,10 @@ async def _aroute_requirements_to_members(
         if member_run_id and run_response.run_id is not None:
             await aregister_member_run(run_response.run_id, member_run_id)
 
+        # Forward team's run_context state to the member so dependencies and
+        # session_state remain accessible to member tools after continue_run.
+        member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5394,12 +5432,14 @@ async def _aroute_requirements_to_members(
             member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_response=member_run_output,  # type: ignore[arg-type]
                 session_id=session.session_id,
+                **member_continue_kwargs,
             )
         else:
             member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
+                **member_continue_kwargs,
             )
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -5497,6 +5537,10 @@ async def _aroute_requirements_to_members_stream(
         if member_run_id and run_response.run_id is not None:
             await aregister_member_run(run_response.run_id, member_run_id)
 
+        # Forward team's run_context state to the member so dependencies and
+        # session_state remain accessible to member tools after continue_run.
+        member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5510,6 +5554,7 @@ async def _aroute_requirements_to_members_stream(
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
+                **member_continue_kwargs,
             )
         else:
             member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
@@ -5519,6 +5564,7 @@ async def _aroute_requirements_to_members_stream(
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
+                **member_continue_kwargs,
             )
 
         # Iterate the member's async streaming response — yield intermediate events,
