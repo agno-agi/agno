@@ -16,7 +16,7 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.agent import RunCancelledEvent, RunEvent
+from agno.run.agent import RunCancelledEvent, RunCompletedEvent, RunEvent
 from agno.run.base import RunStatus
 from agno.run.cancel import cancel_run, register_run
 
@@ -583,3 +583,230 @@ async def test_continue_run_after_cancellation_async(shared_db):
     session_after = agent.get_session(session_id=session_id)
     assert session_after is not None
     assert session_after.runs is not None and len(session_after.runs) >= 2
+
+
+# ============================================================================
+# ADDITIONAL CANCELLATION COVERAGE
+# ============================================================================
+
+
+def _self_cancel_tool(run_context) -> str:
+    """Record progress to the journal. Call this once, immediately, before writing."""
+    cancel_run(run_context.run_id)
+    return "progress recorded; continue working"
+
+
+def test_cancel_agent_immediately(shared_db):
+    """Cancel on the very first event; exactly one RunCancelledEvent is emitted."""
+    agent = Agent(
+        name="Quick Cancel Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent.",
+        db=shared_db,
+    )
+
+    session_id = "test_immediate_cancel"
+    events_collected = []
+    run_id = None
+    cancelled = False
+
+    for event in agent.run(input="Tell me about AI", session_id=session_id, stream=True, stream_events=True):
+        events_collected.append(event)
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+            if not cancelled:
+                agent.cancel_run(run_id)
+                cancelled = True
+
+    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
+    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
+    assert run_id is not None
+
+
+def test_cancel_agent_with_tool_calls(shared_db):
+    """Cancel an agent that is calling a (real, local) tool mid-run; status persists cancelled."""
+
+    def slow_lookup(topic: str) -> str:
+        """Look up detailed notes about a topic."""
+        return f"Notes about {topic}: " + ("detail " * 50)
+
+    agent = Agent(
+        name="Tool Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="Use the slow_lookup tool, then write a long essay using its result.",
+        tools=[slow_lookup],
+        db=shared_db,
+    )
+
+    session_id = "test_cancel_with_tools"
+    content_chunks = []
+    run_id = None
+    cancelled = False
+
+    for event in agent.run(
+        input="Look up 'artificial intelligence' then write a long essay.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+        if hasattr(event, "content") and event.content and isinstance(event.content, str):
+            content_chunks.append(event.content)
+        if len(content_chunks) >= 3 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None and session.runs
+    assert session.runs[-1].status == RunStatus.cancelled
+
+
+def test_multiple_cancel_calls(shared_db):
+    """Calling cancel multiple times is idempotent — one RunCancelledEvent, cancelled in DB."""
+    agent = Agent(
+        name="Multiple Cancel Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are a helpful agent.",
+        db=shared_db,
+    )
+
+    session_id = "test_multiple_cancel"
+    run_id = None
+    cancelled = False
+    events_collected = []
+
+    for event in agent.run(input="Tell me about AI", session_id=session_id, stream=True, stream_events=True):
+        events_collected.append(event)
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+            if not cancelled:
+                agent.cancel_run(run_id)
+                agent.cancel_run(run_id)
+                agent.cancel_run(run_id)
+                cancelled = True
+
+    cancelled_events = [e for e in events_collected if isinstance(e, RunCancelledEvent)]
+    assert len(cancelled_events) == 1, "Should have exactly one RunCancelledEvent"
+    session = agent.get_session(session_id=session_id)
+    assert session is not None and session.runs
+    assert session.runs[-1].status == RunStatus.cancelled
+
+
+@pytest.mark.asyncio
+async def test_cancel_structured_output_run_persists_cancelled(shared_db):
+    """A structured-output (output_schema) run, when cancelled, persists status=cancelled.
+
+    Structured output is not streamed token-by-token, so a mid-stream cancel would race
+    the finalization. We cancel-before-start (register + cancel the run_id) so the first
+    cancellation checkpoint fires deterministically.
+    """
+    from pydantic import BaseModel
+
+    class Essay(BaseModel):
+        title: str
+        paragraphs: list[str]
+
+    agent = Agent(
+        name="Structured Output Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You write essays.",
+        output_schema=Essay,
+        db=shared_db,
+    )
+
+    session_id = "test_structured_cancel"
+    run_id = str(uuid.uuid4())
+    register_run(run_id)
+    cancel_run(run_id)
+
+    async for _ in agent.arun(
+        input="Write a 5-paragraph essay about technology",
+        session_id=session_id,
+        run_id=run_id,
+        stream=True,
+        stream_events=True,
+    ):
+        pass
+
+    session = agent.get_session(session_id=session_id)
+    assert session is not None and session.runs
+    assert session.runs[-1].status == RunStatus.cancelled
+
+
+def test_cancel_non_streaming_tool_loop_preserves_messages(shared_db):
+    """Non-streaming, mid-tool-loop cancel preserves tool messages + cancelled status in DB.
+
+    Uses a real self-cancel tool: the model calls it, the next checkpoint raises, and the
+    tool interaction accumulated so far must be persisted.
+    """
+    agent = Agent(
+        name="NonStream Tool Cancel",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[_self_cancel_tool],
+        instructions="First call _self_cancel_tool, then write a long essay.",
+        db=shared_db,
+    )
+
+    session_id = "test_nonstream_tool_loop_cancel"
+    result = agent.run(
+        input="Call _self_cancel_tool, then write a 1000 word essay about bridges.",
+        session_id=session_id,
+        stream=False,
+    )
+
+    assert result.status == RunStatus.cancelled
+    session = agent.get_session(session_id=session_id)
+    assert session is not None and session.runs
+    last_run = session.runs[-1]
+    assert last_run.status == RunStatus.cancelled
+    # The tool interaction generated before the cancel checkpoint is preserved.
+    assert last_run.messages is not None and len(last_run.messages) > 0
+
+
+def test_cancel_streaming_emits_cancelled_then_completed_terminal(shared_db):
+    """Cancelled streaming runs emit a RunCancelledEvent AND a terminal RunCompletedEvent.
+
+    The trailing RunCompletedEvent is intentional: the AgentOS frontend keys stream
+    finalization on completed events (it does not treat RunCancelled as terminal), so a
+    cancelled streaming run must still emit a completion marker. The run status itself
+    stays 'cancelled' in the DB.
+    """
+    agent = Agent(
+        name="Terminal Events Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="Write a very long, detailed essay.",
+        db=shared_db,
+    )
+
+    session_id = "test_terminal_event_pair"
+    events = []
+    run_id = None
+    cancelled = False
+    chunks = 0
+
+    for event in agent.run(
+        input="Write a 2000 word essay about the history of the steam engine.",
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+    ):
+        events.append(event)
+        if run_id is None and getattr(event, "run_id", None):
+            run_id = event.run_id
+        if getattr(event, "content", None) and isinstance(event.content, str):
+            chunks += 1
+        if chunks >= 5 and run_id and not cancelled:
+            agent.cancel_run(run_id)
+            cancelled = True
+
+    assert len([e for e in events if isinstance(e, RunCancelledEvent)]) == 1
+    assert len([e for e in events if isinstance(e, RunCompletedEvent)]) == 1
+    # Order: cancelled is emitted before the terminal completed marker.
+    cancelled_idx = next(i for i, e in enumerate(events) if isinstance(e, RunCancelledEvent))
+    completed_idx = next(i for i, e in enumerate(events) if isinstance(e, RunCompletedEvent))
+    assert cancelled_idx < completed_idx
+    # Despite the completed marker, the persisted status is cancelled.
+    session = agent.get_session(session_id=session_id)
+    assert session is not None and session.runs
+    assert session.runs[-1].status == RunStatus.cancelled

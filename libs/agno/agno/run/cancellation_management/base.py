@@ -85,32 +85,28 @@ class BaseRunCancellationManager(ABC):
         """Get all currently tracked runs and their cancellation status (async version)."""
         pass
 
-    @abstractmethod
+    # Member-run tracking (team cancel-cascade). Default no-ops so existing custom
+    # managers stay instantiable; override these to support team cancel-cascade.
     def register_member_run(self, team_run_id: str, member_run_id: str) -> None:
         """Record that a member run belongs to a team run for cancel-cascade."""
         pass
 
-    @abstractmethod
     async def aregister_member_run(self, team_run_id: str, member_run_id: str) -> None:
         """Record that a member run belongs to a team run for cancel-cascade (async version)."""
         pass
 
-    @abstractmethod
     def get_member_run_ids(self, team_run_id: str) -> Set[str]:
         """Return the in-flight member run_ids of a team run."""
-        pass
+        return set()
 
-    @abstractmethod
     async def aget_member_run_ids(self, team_run_id: str) -> Set[str]:
         """Return the in-flight member run_ids of a team run (async version)."""
-        pass
+        return set()
 
-    @abstractmethod
     def cleanup_member_runs(self, team_run_id: str) -> None:
         """Drop a team run's member mapping when the team run finishes."""
         pass
 
-    @abstractmethod
     async def acleanup_member_runs(self, team_run_id: str) -> None:
         """Drop a team run's member mapping when the team run finishes (async version)."""
         pass

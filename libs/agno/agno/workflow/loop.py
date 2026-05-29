@@ -461,6 +461,8 @@ class Loop:
         early_termination = False
 
         while iteration < self.max_iterations:
+            if workflow_run_response and workflow_run_response.run_id:
+                raise_if_cancelled(workflow_run_response.run_id)
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results: List[StepOutput] = []
             current_step_input = step_input
@@ -853,6 +855,8 @@ class Loop:
         early_termination = False
 
         while iteration < self.max_iterations:
+            if workflow_run_response and workflow_run_response.run_id:
+                await araise_if_cancelled(workflow_run_response.run_id)
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results: List[StepOutput] = []
             current_step_input = step_input

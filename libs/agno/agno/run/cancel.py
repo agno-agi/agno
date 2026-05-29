@@ -135,7 +135,17 @@ async def acleanup_member_runs(team_run_id: str) -> None:
 def register_member_drain_task(team_run_id: str, task: asyncio.Task) -> None:
     """Track an async delegate task so its post-cancel cleanup can be awaited."""
     _member_drain_tasks.setdefault(team_run_id, set()).add(task)
-    task.add_done_callback(lambda t: _member_drain_tasks.get(team_run_id, set()).discard(t))
+
+    def _discard(t: asyncio.Task) -> None:
+        # Drop the finished task and the now-empty bucket so the run never leaks
+        # an empty set if cleanup_member_runs is not reached.
+        tasks = _member_drain_tasks.get(team_run_id)
+        if tasks is not None:
+            tasks.discard(t)
+            if not tasks:
+                _member_drain_tasks.pop(team_run_id, None)
+
+    task.add_done_callback(_discard)
 
 
 async def adrain_member_tasks(team_run_id: str, timeout: float = 5.0) -> None:

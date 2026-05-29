@@ -242,6 +242,11 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
                 key = key.decode("utf-8")
             run_id = key[len(self.key_prefix) :]
 
+            # Skip member-set keys: they hold Redis SETs (see _get_members_key),
+            # not run-status strings, so a GET on them would raise WRONGTYPE.
+            if run_id.startswith("members:"):
+                continue
+
             # Get value
             value = client.get(key)
             if value is not None:
@@ -269,6 +274,11 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
             if isinstance(key, bytes):
                 key = key.decode("utf-8")
             run_id = key[len(self.key_prefix) :]
+
+            # Skip member-set keys: they hold Redis SETs (see _get_members_key),
+            # not run-status strings, so a GET on them would raise WRONGTYPE.
+            if run_id.startswith("members:"):
+                continue
 
             # Get value
             value = await client.get(key)

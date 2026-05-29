@@ -1809,10 +1809,20 @@ async def _arun(
                     )
 
                 return run_response
-            except (KeyboardInterrupt, asyncio.CancelledError):
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                try:
-                    if agent_session is not None:
+                if agent_session is not None:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+                        _persist_cancelled_run_in_background(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Ctrl-C under asyncio.run: persist inline; a detached task would not run before the loop exits
                         await acleanup_and_store(
                             agent,
                             run_response=run_response,
@@ -1820,8 +1830,9 @@ async def _arun(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception as store_err:
-                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                # Re-raise on disconnect to propagate it; return the partial on Ctrl-C
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 return run_response
             except Exception as e:
                 # Check if this is the last attempt
@@ -2591,16 +2602,27 @@ async def _arun_stream(
                 yield run_error
                 break
 
-            except (KeyboardInterrupt, asyncio.CancelledError):
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                # Build terminal events first so they are stored on the run (matches cancel_run())
                 cancelled_event, completed_event = _build_cancel_terminal_events(
                     agent,
                     run_response,
                     error=KeyboardInterrupt(),
                     run_context=run_context,
                 )
-                try:
-                    if agent_session is not None:
+                if agent_session is not None:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+                        _persist_cancelled_run_in_background(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Ctrl-C under asyncio.run: persist inline; a detached task would not run before the loop exits
                         await acleanup_and_store(
                             agent,
                             run_response=run_response,
@@ -2608,8 +2630,9 @@ async def _arun_stream(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception as store_err:
-                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                # Re-raise on disconnect (client gone); yield the terminal events on Ctrl-C
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -4042,6 +4065,9 @@ async def _acontinue_run(
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
+                # Bind run_messages early — cancellation can fire before run_messages
+                # is built, and the cancellation handler reads it.
+                run_messages: Optional[RunMessages] = None
                 if attempt > 0:
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
@@ -4308,12 +4334,22 @@ async def _acontinue_run(
                     )
 
                 return run_response
-            except (KeyboardInterrupt, asyncio.CancelledError):
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                try:
-                    if agent_session is not None:
+                if agent_session is not None:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+                        _persist_cancelled_run_in_background(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Ctrl-C under asyncio.run: persist inline; a detached task would not run before the loop exits
                         await acleanup_and_store(
                             agent,
                             run_response=run_response,
@@ -4321,8 +4357,9 @@ async def _acontinue_run(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception as store_err:
-                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                # Re-raise on disconnect to propagate it; return the partial on Ctrl-C
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 return run_response
             except ValueError:
                 # Validation errors (e.g. cancelled run, missing args) propagate to the caller
@@ -4431,6 +4468,9 @@ async def _acontinue_run_stream(
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
+                # Bind run_messages early — cancellation can fire before run_messages
+                # is built, and the cancellation handler reads it.
+                run_messages: Optional[RunMessages] = None
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
@@ -4809,18 +4849,29 @@ async def _acontinue_run_stream(
                 # Yield the error event
                 yield run_error
                 break
-            except (KeyboardInterrupt, asyncio.CancelledError):
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                # Build terminal events first so they are stored on the run (matches cancel_run())
                 cancelled_event, completed_event = _build_cancel_terminal_events(
                     agent,
                     run_response,
                     error=KeyboardInterrupt(),
                     run_context=run_context,
                 )
-                try:
-                    if agent_session is not None:
+                if agent_session is not None:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+                        _persist_cancelled_run_in_background(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Ctrl-C under asyncio.run: persist inline; a detached task would not run before the loop exits
                         await acleanup_and_store(
                             agent,
                             run_response=run_response,
@@ -4828,8 +4879,9 @@ async def _acontinue_run_stream(
                             run_context=run_context,
                             user_id=user_id,
                         )
-                except Exception as store_err:
-                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                # Re-raise on disconnect (client gone); yield the terminal events on Ctrl-C
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -5149,6 +5201,42 @@ async def acleanup_and_store(
     # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
         await aupdate_approval_run_status(agent.db, run_response.run_id, run_response.status)
+
+
+def _persist_cancelled_run_in_background(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    """Persist a cancelled run on a detached background task.
+
+    On a client disconnect the request runs inside an anyio cancel scope; awaiting
+    acleanup_and_store inline lets its DB write be re-cancelled mid-flight, losing the
+    run. Scheduling it on _background_tasks runs the write to completion outside that
+    scope.
+    """
+
+    async def _persist() -> None:
+        try:
+            await acleanup_and_store(
+                agent,
+                run_response=run_response,
+                session=session,
+                run_context=run_context,
+                user_id=user_id,
+            )
+            # The _arun finally also cleans up, but on a disconnect that await can be
+            # re-cancelled; clean up here too so the run is never left tracked.
+            if run_response.run_id:
+                await acleanup_run(run_response.run_id)
+        except Exception as store_err:
+            log_warning(f"Failed to persist cancelled run: {store_err}")
+
+    task = asyncio.create_task(_persist())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 # ---------------------------------------------------------------------------
