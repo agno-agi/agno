@@ -1207,9 +1207,9 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
             return self.function.entrypoint(**arguments)  # type: ignore
 
-        # If no hooks, just return the entrypoint execution function
+        # If no hooks, just return the async entrypoint execution function
         if not self.function.tool_hooks:
-            return execute_entrypoint
+            return execute_entrypoint_async
 
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
