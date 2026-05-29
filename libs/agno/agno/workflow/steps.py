@@ -2,9 +2,11 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     StepsExecutionCompletedEvent,
@@ -272,6 +274,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    raise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -351,6 +355,8 @@ class Steps:
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
         except Exception as e:
             logger.exception("Steps execution failed")
             return StepOutput(
@@ -412,6 +418,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    raise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -515,6 +523,8 @@ class Steps:
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
         except Exception as e:
             logger.exception("Steps streaming failed")
             error_result = StepOutput(
@@ -558,6 +568,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    await araise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -636,6 +648,8 @@ class Steps:
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
         except Exception as e:
             logger.exception("Async steps execution failed")
             return StepOutput(
@@ -697,6 +711,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    await araise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -799,6 +815,8 @@ class Steps:
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
         except Exception as e:
             logger.exception("Async steps streaming failed")
             error_result = StepOutput(
