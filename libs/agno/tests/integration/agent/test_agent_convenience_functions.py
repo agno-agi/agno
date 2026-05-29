@@ -365,6 +365,46 @@ async def test_aget_last_run_output(async_test_agent):
     assert last_output.run_id == response2.run_id
 
 
+def test_get_last_run_output_with_fresh_agent_instance(shared_db):
+    """A fresh Agent(name=...) instance with id=None must
+    still find runs persisted by an earlier instance with the same name. arun()
+    auto-derives the id from the name; the read path must do the same.
+    """
+    session_id = str(uuid.uuid4())
+
+    agent1 = Agent(name="convenience_test_agent", model=OpenAIChat(id="gpt-4o-mini"), db=shared_db)
+    response = agent1.run("Hello", session_id=session_id)
+    assert agent1.id is not None  # set_id() ran during run()
+
+    # New instance, same name, no explicit id -- mirrors the pause/continue pattern.
+    agent2 = Agent(name="convenience_test_agent", model=OpenAIChat(id="gpt-4o-mini"), db=shared_db)
+    assert agent2.id is None
+
+    last_output = agent2.get_last_run_output(session_id=session_id)
+    assert last_output is not None
+    assert last_output.run_id == response.run_id
+    # The util resolved the id as a side-effect, matching arun() behaviour.
+    assert agent2.id == agent1.id
+
+
+@pytest.mark.asyncio
+async def test_aget_last_run_output_with_fresh_agent_instance(async_shared_db):
+    """Async variant of the regression for #7838."""
+    session_id = str(uuid.uuid4())
+
+    agent1 = Agent(name="convenience_test_agent_async", model=OpenAIChat(id="gpt-4o-mini"), db=async_shared_db)
+    response = await agent1.arun("Hello", session_id=session_id)
+    assert agent1.id is not None
+
+    agent2 = Agent(name="convenience_test_agent_async", model=OpenAIChat(id="gpt-4o-mini"), db=async_shared_db)
+    assert agent2.id is None
+
+    last_output = await agent2.aget_last_run_output(session_id=session_id)
+    assert last_output is not None
+    assert last_output.run_id == response.run_id
+    assert agent2.id == agent1.id
+
+
 # Tests for delete_session() and adelete_session()
 def test_delete_session(test_agent):
     """Test delete_session removes a session."""
