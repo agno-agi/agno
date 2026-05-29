@@ -109,6 +109,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return WatsonX(id=model_id)
 
+    elif model_provider == "inception":
+        from agno.models.inception import Inception
+
+        return Inception(id=model_id)
+
     elif model_provider == "internlm":
         from agno.models.internlm import InternLM
 
