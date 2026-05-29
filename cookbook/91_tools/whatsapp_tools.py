@@ -41,7 +41,7 @@ from agno.tools.whatsapp import WhatsAppTools
 
 agent = Agent(
     name="whatsapp",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     tools=[WhatsAppTools()],
 )
 

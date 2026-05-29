@@ -1,4 +1,5 @@
 import asyncio
+import re
 from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
@@ -13,7 +14,7 @@ try:
     from sqlalchemy.orm import Session, scoped_session, sessionmaker
     from sqlalchemy.schema import Column, Index, MetaData, Table
     from sqlalchemy.sql.elements import ColumnElement
-    from sqlalchemy.sql.expression import bindparam, desc, func, select, text
+    from sqlalchemy.sql.expression import bindparam, desc, func, literal_column, select, text
     from sqlalchemy.types import DateTime, Integer, String
 
 except ImportError:
@@ -926,6 +927,12 @@ class PgVector(VectorDb):
         """
         Preprocess the query for prefix matching.
 
+        Note: this helper is kept for backwards compatibility. The output
+        (``ani*``) is only meaningful when fed to ``to_tsquery``; with
+        ``websearch_to_tsquery`` (the default code path) the ``*`` is
+        silently dropped. New code should use ``_build_ts_query`` below,
+        which routes through ``to_tsquery`` when prefix matching is on.
+
         Args:
             query (str): The original query.
 
@@ -936,6 +943,33 @@ class PgVector(VectorDb):
         words = query.strip().split()
         processed_words = [word + "*" for word in words]
         return " ".join(processed_words)
+
+    def _build_ts_query(self, query: str):
+        """
+        Build the tsquery expression for keyword / hybrid search.
+
+        When ``prefix_match`` is False (default) we use
+        ``websearch_to_tsquery``, which accepts free-form natural language
+        and supports AND/OR/quoted-phrases/-negation. When ``prefix_match``
+        is True we tokenize on word boundaries and build a ``to_tsquery``
+        expression with ``:*`` per token — that lets a partial query like
+        ``"ani"`` match the ``anim`` lexeme that ``"animal"`` lemmatizes
+        into.
+
+        Returns ``None`` for a query that doesn't yield any usable tokens
+        in prefix mode (caller should treat as "no FTS hit").
+        """
+        if not self.prefix_match:
+            return func.websearch_to_tsquery(self.content_language, bindparam("query", value=query))
+
+        # to_tsquery is stricter than websearch_to_tsquery: it doesn't
+        # tolerate punctuation or operators in the input. Tokenize on
+        # word boundaries, append :* per token, AND them.
+        tokens = re.findall(r"\w+", query)
+        if not tokens:
+            return None
+        prefix_query = " & ".join(f"{t}:*" for t in tokens)
+        return func.to_tsquery(self.content_language, bindparam("query", value=prefix_query))
 
     def keyword_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -967,9 +1001,12 @@ class PgVector(VectorDb):
 
             # Build the text search vector
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-            # Create the ts_query using websearch_to_tsquery with parameter binding
-            processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
-            ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
+            # Build the ts_query — routes through to_tsquery with :* per token
+            # when prefix_match is on, websearch_to_tsquery otherwise.
+            ts_query = self._build_ts_query(query)
+            if ts_query is None:
+                # Prefix mode with no usable tokens (e.g. empty query): nothing to match
+                return []
             # Compute the text rank
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
@@ -1061,13 +1098,24 @@ class PgVector(VectorDb):
                 self.table.c.usage,
             ]
 
-            # Build the text search vector
+            # === TEXT SEARCH COMPONENT ===
+            # Hybrid search combines: (1) text/keyword matching + (2) vector similarity
+
+            # ts_vector: convert document content into searchable tokens
+            # Example: "The quick fox" -> 'fox':3 'quick':2 (stems words, removes stopwords)
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-            # Create the ts_query using websearch_to_tsquery with parameter binding
-            processed_query = self.enable_prefix_matching(query) if self.prefix_match else query
-            ts_query = func.websearch_to_tsquery(self.content_language, bindparam("query", value=processed_query))
-            # Compute the text rank, normalized to [0, 1] range
-            # ts_rank_cd returns small values (0.0-0.1), so we normalize using x/(x+k)
+
+            # ts_query: convert user's search query into a search pattern
+            # Routes through to_tsquery with :* per token when prefix_match is on,
+            # websearch_to_tsquery otherwise
+            ts_query = self._build_ts_query(query)
+            if ts_query is None:
+                # No usable tokens (e.g. query was "!@#$" or empty)
+                # Fall back to empty tsquery so text_rank=0, letting vector search drive results
+                ts_query = literal_column("''::tsquery")
+
+            # text_rank: score how well document matches the query (0.0 to 1.0)
+            # ts_rank_cd returns small values (0.0-0.1), normalize with x/(x+k) formula
             raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
             text_rank = raw_text_rank / (raw_text_rank + 0.1)
 

@@ -15,7 +15,9 @@ from rich.pretty import pprint  # noqa
 
 class BreakingNewsSummary(BaseModel):
     topic: str = Field(..., description="The topic or region being summarized")
-    summary: str = Field(..., description="A concise summary of the latest developments")
+    summary: str = Field(
+        ..., description="A concise summary of the latest developments"
+    )
     key_updates: List[str] = Field(
         ..., description="Important updates or headlines related to the topic"
     )

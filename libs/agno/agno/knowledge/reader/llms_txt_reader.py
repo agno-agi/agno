@@ -16,6 +16,12 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.url_validation import (
+    is_host_allowed,
+    make_async_redirect_guard,
+    make_redirect_guard,
+    validate_allowed_hosts,
+)
 from agno.knowledge.types import ContentType
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_warning
@@ -47,6 +53,7 @@ class LLMsTxtReader(Reader):
         timeout: int = 60,
         proxy: Optional[str] = None,
         skip_optional: bool = False,
+        allowed_hosts: Optional[List[str]] = None,
         **kwargs,
     ):
         if chunking_strategy is None:
@@ -57,6 +64,7 @@ class LLMsTxtReader(Reader):
         self.timeout = timeout
         self.proxy = proxy
         self.skip_optional = skip_optional
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -174,20 +182,57 @@ class LLMsTxtReader(Reader):
         return overview, entries
 
     def fetch_url(self, url: str) -> Optional[str]:
+        if not is_host_allowed(url, self.allowed_hosts):
+            log_debug(f"Host not in allowed_hosts: {url}")
+            return None
         try:
-            response = fetch_with_retry(
-                url, max_retries=1, proxy=self.proxy, timeout=self.timeout, follow_redirects=True
-            )
+            guard = make_redirect_guard(self.allowed_hosts)
+            if guard is None:
+                response = fetch_with_retry(
+                    url,
+                    max_retries=1,
+                    proxy=self.proxy,
+                    timeout=self.timeout,
+                    follow_redirects=True,
+                )
+            else:
+                # Per-redirect host check: follow redirects but validate each hop's
+                # target against the allowlist via the request event hook.
+                client_kwargs: dict = {"timeout": self.timeout, "event_hooks": {"request": [guard]}}
+                if self.proxy:
+                    client_kwargs["proxy"] = self.proxy
+                with httpx.Client(**client_kwargs) as client:
+                    response = client.get(url, follow_redirects=True)
+                response.raise_for_status()
             return self._process_response(response.headers.get("content-type", ""), response.text)
         except Exception as e:
             log_warning(f"Failed to fetch {url}: {e}")
             return None
 
     async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
+        if not is_host_allowed(url, self.allowed_hosts):
+            log_debug(f"Host not in allowed_hosts: {url}")
+            return None
         try:
-            response = await async_fetch_with_retry(
-                url, client=client, max_retries=1, timeout=self.timeout, follow_redirects=True
-            )
+            guard = make_async_redirect_guard(self.allowed_hosts)
+            if guard is None:
+                response = await async_fetch_with_retry(
+                    url,
+                    client=client,
+                    max_retries=1,
+                    timeout=self.timeout,
+                    follow_redirects=True,
+                )
+            else:
+                # Build a local client so we can attach the per-redirect host-check hook
+                # without mutating the caller's client (which may be shared across calls).
+                async with httpx.AsyncClient(
+                    proxy=self.proxy,
+                    timeout=self.timeout,
+                    event_hooks={"request": [guard]},
+                ) as local_client:
+                    response = await local_client.get(url, follow_redirects=True)
+                response.raise_for_status()
             return self._process_response(response.headers.get("content-type", ""), response.text)
         except Exception as e:
             log_warning(f"Failed to fetch {url}: {e}")

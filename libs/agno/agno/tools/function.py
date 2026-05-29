@@ -907,6 +907,16 @@ class FunctionCall(BaseModel):
         if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
 
+        # `_agno_`-prefixed variants are used by internal wrappers so framework
+        # objects can be injected without colliding with user-facing tool
+        # arguments that happen to be named "agent", "team" and "run_context".
+        if "_agno_agent" in sig.parameters:
+            entrypoint_args["_agno_agent"] = self.function._agent
+        if "_agno_team" in sig.parameters:
+            entrypoint_args["_agno_team"] = self.function._team
+        if "_agno_run_context" in sig.parameters:
+            entrypoint_args["_agno_run_context"] = self.function._run_context
+
         # Check if the entrypoint has media arguments
         if "images" in sig.parameters:
             entrypoint_args["images"] = self.function._images
@@ -1187,9 +1197,9 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
             return self.function.entrypoint(**arguments)  # type: ignore
 
-        # If no hooks, just return the entrypoint execution function
+        # If no hooks, just return the async entrypoint execution function
         if not self.function.tool_hooks:
-            return execute_entrypoint
+            return execute_entrypoint_async
 
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
