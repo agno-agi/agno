@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -27,7 +28,12 @@ from agno.db.sqlite.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_cultural_knowledge_for_db,
 )
-from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.db.utils import (
+    deserialize_session,
+    deserialize_session_json_fields,
+    deserialize_sessions,
+    serialize_session_json_fields,
+)
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -544,7 +550,7 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -586,14 +592,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if not session_raw or not deserialize:
                     return session_raw
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session_raw)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session_raw)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session_raw)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session_raw)
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
@@ -654,6 +653,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
@@ -688,14 +693,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if not sessions_raw:
                     return []
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in sessions_raw]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, sessions_raw)
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
@@ -704,7 +702,7 @@ class AsyncSqliteDb(AsyncBaseDb):
     async def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -714,10 +712,10 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         Args:
             session_id (str): The ID of the session to rename.
-            session_type (SessionType): The type of session to rename.
+            session_type (Optional[SessionType]): The type of session to rename. Defaults to None.
             session_name (str): The new name for the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1182,8 +1180,11 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
-    async def get_all_memory_topics(self) -> List[str]:
+    async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of memory topics.
@@ -1194,11 +1195,24 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return []
 
             async with self.async_session_factory() as sess, sess.begin():
-                # Select topics from all results
-                stmt = select(table.c.topics)
-                result = (await sess.execute(stmt)).fetchall()
+                stmt = select(table.c.topics).where(table.c.topics.is_not(None))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                rows = (await sess.execute(stmt)).fetchall()
 
-                return list(set([record[0] for record in result]))
+                topics_set: set = set()
+                for row in rows:
+                    raw = row[0]
+                    if not raw:
+                        continue
+                    if isinstance(raw, str):
+                        try:
+                            raw = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                    if isinstance(raw, list):
+                        topics_set.update(raw)
+                return list(topics_set)
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
@@ -2621,13 +2635,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                             (new_level > existing_level, insert_stmt.excluded.name),
                             else_=table.c.name,
                         ),
-                        # Preserve existing non-null context values using COALESCE
-                        "run_id": func.coalesce(insert_stmt.excluded.run_id, table.c.run_id),
-                        "session_id": func.coalesce(insert_stmt.excluded.session_id, table.c.session_id),
-                        "user_id": func.coalesce(insert_stmt.excluded.user_id, table.c.user_id),
-                        "agent_id": func.coalesce(insert_stmt.excluded.agent_id, table.c.agent_id),
-                        "team_id": func.coalesce(insert_stmt.excluded.team_id, table.c.team_id),
-                        "workflow_id": func.coalesce(insert_stmt.excluded.workflow_id, table.c.workflow_id),
+                        # Preserve existing non-null context values: COALESCE returns
+                        # the first non-null arg, so put the existing column first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": func.coalesce(table.c.run_id, insert_stmt.excluded.run_id),
+                        "session_id": func.coalesce(table.c.session_id, insert_stmt.excluded.session_id),
+                        "user_id": func.coalesce(table.c.user_id, insert_stmt.excluded.user_id),
+                        "agent_id": func.coalesce(table.c.agent_id, insert_stmt.excluded.agent_id),
+                        "team_id": func.coalesce(table.c.team_id, insert_stmt.excluded.team_id),
+                        "workflow_id": func.coalesce(table.c.workflow_id, insert_stmt.excluded.workflow_id),
                     },
                 )
                 await sess.execute(upsert_stmt)

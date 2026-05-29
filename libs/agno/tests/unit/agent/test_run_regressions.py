@@ -1034,3 +1034,158 @@ async def test_ahandle_agent_run_paused_stream_persists_session_state(monkeypatc
     assert len(events) >= 1
     assert session.session_data["session_state"] == {"cart": ["item-1"]}
     assert run_response.session_state == {"cart": ["item-1"]}
+
+
+def test_continue_run_dispatch_syncs_requirements_with_updated_tools(monkeypatch: pytest.MonkeyPatch):
+    """When continue_run_dispatch is called with updated_tools (deprecated path),
+    run_response.requirements must reference the same ToolExecution objects as
+    run_response.tools.  Otherwise the model loop's is_resolved() check on stale
+    requirement objects causes it to break prematurely after the first tool call,
+    preventing subsequent model requests.  (Fixes #7497)
+    """
+    from agno.models.response import ToolExecution
+    from agno.run.requirement import RunRequirement
+
+    agent = Agent(name="test-agent")
+    _patch_sync_dispatch_dependencies(agent, monkeypatch)
+    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+
+    # Simulate a paused run loaded from the session store.
+    old_tool = ToolExecution(
+        tool_call_id="tc-1",
+        tool_name="collect_info",
+        requires_user_input=True,
+    )
+    old_requirement = RunRequirement(tool_execution=old_tool)
+    paused_run = RunOutput(
+        run_id="run-1",
+        session_id="session-1",
+        status=RunStatus.paused,
+        tools=[old_tool],
+        requirements=[old_requirement],
+        messages=[],
+    )
+
+    # The frontend sends back updated_tools with user input filled in.
+    new_tool = ToolExecution(
+        tool_call_id="tc-1",
+        tool_name="collect_info",
+        requires_user_input=True,
+        result="user provided value",
+    )
+
+    # Provide the paused run in the session so continue_run_dispatch can find it.
+    monkeypatch.setattr(
+        _storage,
+        "read_or_create_session",
+        lambda agent, session_id=None, user_id=None: AgentSession(
+            session_id=session_id, user_id=user_id, runs=[paused_run]
+        ),
+    )
+
+    # Intercept _continue_run so we can inspect run_response before model is called.
+    captured: dict = {}
+
+    def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+        captured["run_response"] = run_response
+        run_response.status = RunStatus.completed
+        return run_response
+
+    monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
+    monkeypatch.setattr(_tools, "determine_tools_for_model", lambda *a, **kw: [])
+
+    _run.continue_run_dispatch(
+        agent=agent,
+        run_id="run-1",
+        updated_tools=[new_tool],
+        session_id="session-1",
+        stream=False,
+    )
+
+    rr = captured["run_response"]
+    # The requirement's tool_execution must be the NEW object, not the stale one.
+    assert rr.requirements[0].tool_execution is new_tool, (
+        "Requirement should reference the updated ToolExecution object, not the stale one from the session."
+    )
+
+
+def test_continue_run_dispatch_skips_response_format_when_parser_model_set(monkeypatch: pytest.MonkeyPatch):
+    """Regression for #8101: continue_run_dispatch must pass response_format=None
+    when agent.parser_model is set, mirroring run_dispatch's guard."""
+    agent = _make_precedence_test_agent()
+    agent.parser_model = object()  # truthy non-None sentinel
+    _patch_continue_dispatch_dependencies(agent, monkeypatch)
+
+    # Override get_response_format to return a non-None sentinel that should be
+    # discarded by the parser_model guard.
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: {"type": "json_object"})
+
+    captured: dict[str, Any] = {}
+
+    def fake_continue_run_impl(
+        agent: Agent,
+        run_response,
+        run_messages,
+        run_context,
+        tools,
+        user_id: Optional[str] = None,
+        session=None,
+        response_format: Optional[Any] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ):
+        captured["response_format"] = response_format
+        return run_response
+
+    monkeypatch.setattr(_run, "_continue_run", fake_continue_run_impl)
+
+    _run.continue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="cont-parser-1", session_id="session-1", messages=[]),
+        stream=False,
+    )
+
+    assert captured["response_format"] is None
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_dispatch_skips_response_format_when_parser_model_set(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression for #8101: acontinue_run_dispatch must pass response_format=None
+    when agent.parser_model is set, mirroring arun_dispatch's guard."""
+    agent = _make_precedence_test_agent()
+    agent.parser_model = object()
+    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: {"type": "json_object"})
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acontinue_run(
+        agent: Agent,
+        session_id: str,
+        run_context,
+        run_response: Optional[RunOutput] = None,
+        updated_tools=None,
+        requirements=None,
+        run_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        response_format: Optional[Any] = None,
+        debug_mode: Optional[bool] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> RunOutput:
+        captured["response_format"] = response_format
+        return run_response if run_response is not None else RunOutput(run_id=run_id, session_id=session_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_run, "_acontinue_run", fake_acontinue_run)
+
+    await _run.acontinue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="acont-parser-1", session_id="session-1", messages=[]),
+        stream=False,
+    )
+
+    assert captured["response_format"] is None
