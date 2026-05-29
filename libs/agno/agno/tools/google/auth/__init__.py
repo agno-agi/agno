@@ -1,4 +1,4 @@
-from agno.tools.google.auth.config import GoogleAuth
+from agno.tools.google.auth.credentials import GoogleAuth
 from agno.tools.google.auth.decorator import (
     get_cache_key,
     get_current_creds,

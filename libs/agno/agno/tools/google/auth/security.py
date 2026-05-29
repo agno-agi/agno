@@ -4,7 +4,7 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
-    from agno.tools.google.auth.config import GoogleAuth
+    from agno.tools.google.auth.credentials import GoogleAuth
 
 
 def verify_jwt_state(state: str, secret: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:

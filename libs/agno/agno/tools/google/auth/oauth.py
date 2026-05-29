@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth.config import GoogleAuth
+    from agno.tools.google.auth.credentials import GoogleAuth
 
 
 def oauth_google(

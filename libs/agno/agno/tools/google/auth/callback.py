@@ -9,7 +9,7 @@ from agno.tools.google.auth.security import averify_pkce, build_scopes, exchange
 from agno.utils.log import log_debug, log_error
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth.config import GoogleAuth
+    from agno.tools.google.auth.credentials import GoogleAuth
 
 
 def _error_page(message: str) -> HTMLResponse:

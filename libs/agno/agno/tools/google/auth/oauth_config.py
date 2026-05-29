@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
-    from agno.tools.google.auth.config import GoogleAuth
+    from agno.tools.google.auth.credentials import GoogleAuth
 
 
 class OAuthConfig:
