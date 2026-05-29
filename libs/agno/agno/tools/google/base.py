@@ -3,8 +3,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import get_current_service
-from agno.tools.google.auth import persist_google_token, get_token_db, save_token
+from agno.tools.google.auth import get_current_service, get_token_db, persist_google_token, save_token
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
@@ -91,7 +90,11 @@ class GoogleToolkit(Toolkit):
         from google.auth.transport.requests import Request
         from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
-        delegated_user = self.delegated_user or os.getenv("GOOGLE_DELEGATED_USER")
+        delegated_user = (
+            self.delegated_user
+            or (self.auth_config._delegated_user if self.auth_config else None)
+            or os.getenv("GOOGLE_DELEGATED_USER")
+        )
 
         if self.require_delegated_user_for_service_account and not delegated_user:
             raise ValueError(
@@ -175,7 +178,11 @@ class GoogleToolkit(Toolkit):
             return self._explicit_creds
 
         # 2. Service account (never stored in DB)
-        service_account_path = self.service_account_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+        service_account_path = (
+            self.service_account_path
+            or (self.auth_config._service_account_path if self.auth_config else None)
+            or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+        )
         if service_account_path:
             return self._get_service_account_creds(service_account_path)
 
