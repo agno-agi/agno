@@ -67,7 +67,6 @@ class AsyncSqliteDb(AsyncBaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
-        auth_tokens_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -95,7 +94,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
-            auth_tokens_table (Optional[str]): Name of the table to store OAuth tokens.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -120,7 +118,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
-            auth_tokens_table=auth_tokens_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -404,14 +401,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
-
-        elif table_type == "auth_tokens":
-            self.auth_tokens_table = await self._get_or_create_table(
-                table_name=self.auth_tokens_table_name,
-                table_type="auth_tokens",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.auth_tokens_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
