@@ -6374,6 +6374,154 @@ def _continue_run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+async def _acontinue_run_background_stream(
+    team: Team,
+    run_context: RunContext,
+    session_id: str,
+    run_response: Optional[TeamRunOutput] = None,
+    run_id: Optional[str] = None,
+    requirements: Optional[List[Any]] = None,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming continue-run that survives client disconnections.
+
+    Mirrors _arun_background_stream but drives _acontinue_run_stream instead of
+    _arun_stream. Used for HITL scenarios where a paused run resumes and the
+    client needs reconnection support.
+
+    Without this, team.acontinue_run(background=True, stream=True) would route
+    to _acontinue_run_stream and yield raw TeamRunOutputEvent objects directly
+    into FastAPI's StreamingResponse, which calls .encode() per chunk and
+    raises::
+
+        AttributeError: 'RunContinuedEvent' object has no attribute 'encode'
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _acontinue_run_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+    """
+    from agno.team._session import asave_session
+    from agno.team._storage import _aread_or_create_session, _update_metadata
+
+    _run_id = run_id or (run_response.run_id if run_response else None)
+    if not _run_id:
+        raise ValueError("run_id is required for background streaming continue-run")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    _update_metadata(team, session=team_session)
+
+    if run_response is not None:
+        run_response.status = RunStatus.running
+        team_session.upsert_run(run_response=run_response)
+    await asave_session(team, session=team_session)
+
+    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _acontinue_run_stream(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                requirements=requirements,
+                run_id=_run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output or False,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                if isinstance(event, TeamRunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(_run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        _run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
+
+        except Exception:
+            log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                if run_response is not None:
+                    run_response.status = RunStatus.error
+                    team_session.upsert_run(run_response=run_response)
+                    await asave_session(team, session=team_session)
+            except Exception:
+                log_error(
+                    f"Failed to persist error state for background continue-run stream {_run_id}",
+                    exc_info=True,
+                )
+
+        finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
+
+            # Mark run completed in event buffer
+            try:
+                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                event_buffer.set_run_completed(_run_id, final_status)
+            except Exception:
+                log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(_run_id))
+            except (Exception, asyncio.CancelledError):
+                log_warning(f"Failed to signal SSE subscribers for continue-run {_run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
+
+
 def acontinue_run_dispatch(  # type: ignore
     team: "Team",
     run_response: Optional[TeamRunOutput] = None,
@@ -6390,11 +6538,13 @@ def acontinue_run_dispatch(  # type: ignore
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
 
-    Routes to _acontinue_run or _acontinue_run_stream based on stream option.
+    Routes between _acontinue_run, _acontinue_run_stream, and
+    _acontinue_run_background_stream based on the stream and background options.
     """
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
@@ -6455,6 +6605,31 @@ def acontinue_run_dispatch(  # type: ignore
         run_context.metadata = opts.metadata
 
     response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+
+    if background:
+        if not team.db:
+            raise ValueError(
+                "Background execution requires a database to be configured on the team for run persistence."
+            )
+        if opts.stream:
+            # background=True, stream=True: run in background task, yield SSE strings via queue
+            return _acontinue_run_background_stream(  # type: ignore[return-value]
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                requirements=requirements,
+                run_id=run_id_resolved,
+                user_id=user_id,
+                session_id=session_id_resolved,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        # background=True, stream=False is not supported for continue_run yet —
+        # fall through to the regular non-streaming path to preserve prior behavior.
 
     if opts.stream:
         return _acontinue_run_stream(
