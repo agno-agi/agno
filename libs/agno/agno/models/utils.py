@@ -219,6 +219,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Together(id=model_id)
 
+    elif model_provider == "tzafon":
+        from agno.models.tzafon import Tzafon
+
+        return Tzafon(id=model_id)
+
     elif model_provider == "vercel":
         from agno.models.vercel import V0
 
