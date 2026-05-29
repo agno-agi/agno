@@ -1,4 +1,4 @@
-from agno.tools.google.auth.callback import create_oauth_router, handle_oauth_callback
+from agno.tools.google.auth.callback import create_oauth_router
 from agno.tools.google.auth.context import (
     get_cache_key,
     get_current_creds,
@@ -21,7 +21,6 @@ __all__ = [
     "get_current_service",
     "get_token_db",
     "google_authenticate",
-    "handle_oauth_callback",
     "persist_google_token",
     "save_token",
     "valid_auth_token_db",

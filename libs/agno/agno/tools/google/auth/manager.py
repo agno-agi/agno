@@ -3,6 +3,7 @@
 GoogleAuthManager holds config and scope registry.
 Callback handling lives in callback.py.
 """
+
 from os import getenv
 from typing import TYPE_CHECKING, Dict, List, Optional
 
