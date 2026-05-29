@@ -1,15 +1,15 @@
-from agno.tools.google.auth.config import GoogleAuthConfig
+from agno.tools.google.auth.config import GoogleAuth
 from agno.tools.google.auth.decorator import (
     get_cache_key,
     get_current_creds,
     get_current_service,
     google_authenticate,
 )
-from agno.tools.google.auth.manager import GoogleAuthManager
+from agno.tools.google.auth.manager import OAuthConfig
 
 __all__ = [
-    "GoogleAuthConfig",
-    "GoogleAuthManager",
+    "GoogleAuth",
+    "OAuthConfig",
     "get_cache_key",
     "get_current_creds",
     "get_current_service",

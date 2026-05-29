@@ -32,7 +32,7 @@ from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.tools.google.auth import GoogleAuthConfig, GoogleAuthManager
+from agno.tools.google.auth import GoogleAuth, OAuthConfig
 from agno.tools.google.gmail import GmailTools
 
 # ---------------------------------------------------------------------------
@@ -45,10 +45,10 @@ db = SqliteDb(db_file="tmp/google_oauth_server.db")
 # Shared Auth Config
 # ---------------------------------------------------------------------------
 
-auth = GoogleAuthConfig(
+auth = GoogleAuth(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
-    manager=GoogleAuthManager(
+    oauth_config=OAuthConfig(
         db=db,
         state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
         store_tokens=True,
@@ -65,9 +65,7 @@ gmail_agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
-        GmailTools(
-            auth_config=auth, include_tools=["get_latest_emails", "search_emails"]
-        ),
+        GmailTools(auth=auth, include_tools=["get_latest_emails", "search_emails"]),
     ],
     instructions="You are a Gmail assistant. Help users manage their email.",
     add_datetime_to_context=True,

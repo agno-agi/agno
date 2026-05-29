@@ -30,21 +30,24 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
-from agno.tools.google.auth import GoogleAuthManager, create_oauth_router
+from agno.tools.google import GoogleAuth, OAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 
 db = SqliteDb(db_file="tmp/slack_gmail_calendar.db")
 
 # Shared auth config — single OAuth consent covers Gmail + Calendar
-# enable_multi_user_oauth=True registers oauth_google tool and blocks browser fallback
-auth = GoogleAuthManager(
+# enable_multi_user_oauth=True: on auth failure, returns OAuth URL instead of browser fallback
+config = GoogleAuth(
     client_id=getenv("GOOGLE_CLIENT_ID"),
     client_secret=getenv("GOOGLE_CLIENT_SECRET"),
     redirect_uri=getenv("GOOGLE_REDIRECT_URI"),
-    state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
-    store_tokens=True,
-    enable_multi_user_oauth=True,
+    oauth_config=OAuthConfig(
+        db=db,
+        state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
+        store_tokens=True,
+        enable_multi_user_oauth=True,
+    ),
 )
 
 agent = Agent(
@@ -52,15 +55,12 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
-        GmailTools(
-            auth_config=auth, include_tools=["get_latest_emails", "search_emails"]
-        ),
-        GoogleCalendarTools(auth_config=auth),
+        GmailTools(auth=config, include_tools=["get_latest_emails", "search_emails"]),
+        GoogleCalendarTools(auth=config),
     ],
     instructions=(
         "You are a Google assistant in Slack with Gmail and Calendar access. "
-        "If any Google tool returns an authentication error, call oauth_google "
-        "and format the URL as: <URL|Click here to connect Google>"
+        "When authentication fails, share the OAuth URL with the user as a clickable link."
     ),
     markdown=True,
     add_datetime_to_context=True,
@@ -74,7 +74,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # Mount OAuth callback router
-app.include_router(create_oauth_router(auth, db=db))
+app.include_router(config.create_router())
 
 
 if __name__ == "__main__":

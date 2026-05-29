@@ -3,33 +3,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
-    from agno.tools.google.auth.config import GoogleAuthConfig
+    from agno.tools.google.auth.config import GoogleAuth
 
 
-class GoogleAuthManager:
-    """Agno integration for Google OAuth.
+class OAuthConfig:
+    """OAuth configuration for Google toolkits.
 
-    Adds multi-user token storage, encryption, scope registry, and router creation.
-    Nested inside GoogleAuthConfig to add Agno-specific behavior.
-
-    Features:
-    - Multi-user OAuth (auth fails with OAuth URL when user not authenticated)
-    - Token storage in database
-    - Token encryption
-    - FastAPI router for OAuth callback
-    - Scope registry across multiple toolkits
-
-    Example:
-        config = GoogleAuthConfig(
-            client_id=getenv("GOOGLE_CLIENT_ID"),
-            client_secret=getenv("GOOGLE_CLIENT_SECRET"),
-            redirect_uri="https://myapp.com/google/oauth/callback",
-            manager=GoogleAuthManager(
-                db=db,
-                state_secret=getenv("GOOGLE_OAUTH_STATE_SECRET"),
-                store_tokens=True,
-            ),
-        )
+    Configures multi-user token storage, encryption, scope registry, and router creation.
+    Pass as `oauth_config=` to GoogleAuth.
     """
 
     def __init__(
@@ -68,7 +49,7 @@ class GoogleAuthManager:
         existing = self._services.get(service, [])
         self._services[service] = list(set(existing) | set(scopes))
 
-    def create_router(self, config: "GoogleAuthConfig"):
+    def create_router(self, config: "GoogleAuth"):
         """Create FastAPI router for OAuth callback."""
         from agno.tools.google.auth.callback import create_oauth_router
 
@@ -99,6 +80,50 @@ class GoogleAuthManager:
                 token_data = encrypt_dict(token_data, key=self._token_encryption_key)
 
             self._db.upsert_auth_token(
+                {
+                    "provider": "google",
+                    "user_id": user_id,
+                    "service": "google",
+                    "token_data": token_data,
+                    "granted_scopes": granted_scopes,
+                    "pkce_verifier": None,
+                    "pkce_state_id": None,
+                    "pkce_expires_at": None,
+                }
+            )
+            return True
+        except NotImplementedError:
+            log_debug("DB does not support auth token storage")
+            return False
+        except Exception as e:
+            log_error(f"Failed to persist Google token: {e}")
+            return False
+
+    async def apersist_token(
+        self,
+        creds: Any,
+        user_id: Optional[str],
+    ) -> bool:
+        """Async variant of persist_token."""
+        import json
+
+        from agno.utils.log import log_debug, log_error
+
+        if self._db is None:
+            return False
+        try:
+            token_data: Dict[str, Any] = json.loads(creds.to_json())
+            if self._services:
+                granted_scopes = sorted({s for scope_list in self._services.values() for s in scope_list})
+            else:
+                granted_scopes = token_data.get("scopes", [])
+
+            if self._encrypt_tokens:
+                from agno.utils.encryption import encrypt_dict
+
+                token_data = encrypt_dict(token_data, key=self._token_encryption_key)
+
+            await self._db.upsert_auth_token(
                 {
                     "provider": "google",
                     "user_id": user_id,

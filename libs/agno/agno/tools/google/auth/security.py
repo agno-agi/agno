@@ -4,7 +4,7 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
-    from agno.tools.google.auth.config import GoogleAuthConfig
+    from agno.tools.google.auth.config import GoogleAuth
 
 
 def verify_jwt_state(state: str, secret: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
@@ -60,8 +60,30 @@ def verify_pkce(
     return code_verifier, None
 
 
+async def averify_pkce(
+    db: "BaseDb",
+    user_id: Optional[str],
+    state_id: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Async variant of verify_pkce."""
+    try:
+        row = await db.get_auth_token("google", user_id, "google")
+    except Exception as e:
+        log_error(f"Failed to retrieve PKCE state: {e}")
+        return None, "Failed to verify OAuth state"
+
+    if not row or row.get("pkce_state_id") != state_id:
+        return None, "OAuth session expired. Please try again."
+
+    code_verifier = row.get("pkce_verifier")
+    if not code_verifier:
+        return None, "OAuth session corrupted"
+
+    return code_verifier, None
+
+
 def build_scopes(
-    config: "GoogleAuthConfig",
+    config: "GoogleAuth",
     services: List[str],
 ) -> Tuple[List[str], Optional[str]]:
     """Build scope list from registered services.
@@ -70,10 +92,10 @@ def build_scopes(
         (scopes, None) on success
         ([], error_message) on failure
     """
-    if not config.manager:
-        return [], "No manager configured"
+    if not config.oauth_config:
+        return [], "No oauth_config configured"
 
-    services_registry = config.manager._services
+    services_registry = config.oauth_config._services
     if config.include_granted_scopes:
         scopes = [s for svc_scopes in services_registry.values() for s in svc_scopes]
     else:
@@ -87,7 +109,7 @@ def build_scopes(
 
 
 def exchange_code(
-    config: "GoogleAuthConfig",
+    config: "GoogleAuth",
     code: str,
     code_verifier: str,
     scopes: List[str],

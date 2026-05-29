@@ -18,18 +18,23 @@ Run:
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
+from agno.tools.google import GoogleAuth, OAuthConfig
 from agno.tools.google.gmail import GmailTools
+
+db = SqliteDb(db_file="tmp/gmail_tokens.db")
+
+auth = GoogleAuth(
+    oauth_config=OAuthConfig(
+        db=db,
+        store_tokens=True,
+    ),
+)
 
 agent = Agent(
     name="Gmail Agent",
     model=OpenAIResponses(id="gpt-5.4"),
-    db=SqliteDb(db_file="tmp/gmail_tokens.db"),
-    tools=[
-        GmailTools(
-            store_token_in_db=True,
-            include_tools=["get_latest_emails", "search_emails"],
-        )
-    ],
+    db=db,
+    tools=[GmailTools(auth=auth, include_tools=["get_latest_emails", "search_emails"])],
     instructions="You are a Gmail assistant. Show sender, subject, and brief preview for each email.",
     markdown=True,
 )

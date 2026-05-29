@@ -1814,3 +1814,11 @@ class AsyncBaseDb(ABC):
             Number of approvals updated.
         """
         raise NotImplementedError
+
+    # --- Auth Tokens (Optional) ---
+
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError

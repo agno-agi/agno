@@ -63,6 +63,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
         create_schema: bool = True,
     ):
         """
@@ -121,6 +122,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -415,6 +417,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
+
+        if table_type == "auth_tokens":
+            self.auth_tokens_table = await self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -3613,3 +3623,61 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # --- Auth Tokens ---
+
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            effective_user_id = user_id or ""
+            async with self.async_session_factory() as sess:
+                result = (
+                    await sess.execute(
+                        select(table).where(
+                            table.c.provider == provider,
+                            table.c.user_id == effective_user_id,
+                            table.c.service == service,
+                        )
+                    )
+                ).fetchone()
+                if not result:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            data["id"] = str(uuid4())
+            data["user_id"] = data.get("user_id") or ""
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = postgresql.insert(table).values(**data)
+                    set_dict: Dict[str, Any] = {"updated_at": stmt.excluded.updated_at}
+                    if token.get("token_data") != {}:
+                        set_dict["token_data"] = stmt.excluded.token_data
+                    if token.get("granted_scopes") not in (None, []):
+                        set_dict["granted_scopes"] = stmt.excluded.granted_scopes
+                    if "pkce_verifier" in token:
+                        set_dict["pkce_verifier"] = stmt.excluded.pkce_verifier
+                        set_dict["pkce_state_id"] = stmt.excluded.pkce_state_id
+                        set_dict["pkce_expires_at"] = stmt.excluded.pkce_expires_at
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["provider", "user_id", "service"],
+                        set_=set_dict,
+                    )
+                    await sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_error(f"Error upserting auth token: {e}")
+            raise

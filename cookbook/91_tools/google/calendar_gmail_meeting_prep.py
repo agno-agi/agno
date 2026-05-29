@@ -10,8 +10,8 @@ Workflow:
   3. Searches Gmail for recent threads involving those attendees
   4. Produces structured prep brief: who's coming, recent topics, open threads
 
-Why GoogleAuthManager?
-  Two toolkits (Calendar + Gmail) need different OAuth scopes. GoogleAuthManager
+Why shared GoogleAuth?
+  Two toolkits (Calendar + Gmail) need different OAuth scopes. A shared GoogleAuth
   consolidates them into ONE consent screen instead of two separate prompts.
 
 Authentication (env vars):
@@ -29,12 +29,11 @@ Run:
   .venvs/demo/bin/python cookbook/91_tools/google/calendar_gmail_meeting_prep.py
 """
 
-from os import getenv
 from typing import List, Literal, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuthManager
+from agno.tools.google.auth import GoogleAuth, OAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from pydantic import BaseModel, Field
@@ -83,9 +82,8 @@ class MeetingPrepBrief(BaseModel):
 
 
 # Shared auth config — single OAuth consent covers Calendar + Gmail
-auth = GoogleAuthManager(
-    client_id=getenv("GOOGLE_CLIENT_ID"),
-    client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+auth = GoogleAuth(
+    oauth_config=OAuthConfig(),
 )
 
 agent = Agent(
@@ -93,13 +91,13 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         GoogleCalendarTools(
-            auth_config=auth,
+            auth=auth,
             create_event=False,
             update_event=False,
             delete_event=False,
         ),
         GmailTools(
-            auth_config=auth,
+            auth=auth,
             include_tools=[
                 "search_emails",
                 "get_emails_by_context",

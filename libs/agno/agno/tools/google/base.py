@@ -7,7 +7,7 @@ from agno.tools.google.auth import get_current_service
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth import GoogleAuthConfig
+    from agno.tools.google.auth import GoogleAuth
 
 
 class GoogleToolkit(Toolkit):
@@ -47,11 +47,11 @@ class GoogleToolkit(Toolkit):
         token_path: Optional[str] = None,
         credentials_path: Optional[str] = None,
         # New: unified auth config
-        auth: Optional["GoogleAuthConfig"] = None,
+        auth: Optional["GoogleAuth"] = None,
         # Legacy params (use auth= instead)
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        auth_config: Optional["GoogleAuthConfig"] = None,
+        auth_config: Optional["GoogleAuth"] = None,
         store_token_in_db: bool = False,
         oauth_port: Optional[int] = 0,
         login_hint: Optional[str] = None,
@@ -75,9 +75,9 @@ class GoogleToolkit(Toolkit):
         self._legacy_store_token_in_db = store_token_in_db
         self._db: Optional[Any] = None
 
-        # Register service scopes with manager
-        if self._auth and self._auth.manager and self.google_service_name:
-            self._auth.manager.register_service(self.google_service_name, self.scopes)
+        # Register service scopes with oauth_config
+        if self._auth and self._auth.oauth_config and self.google_service_name:
+            self._auth.oauth_config.register_service(self.google_service_name, self.scopes)
 
     @property
     def service(self) -> Any:
@@ -156,9 +156,9 @@ class GoogleToolkit(Toolkit):
 
         try:
             token_data = row["token_data"]
-            manager = self._auth.manager if self._auth else None
+            oauth_cfg = self._auth.oauth_config if self._auth else None
             if is_encrypted(token_data):
-                key = manager._token_encryption_key if manager else None
+                key = oauth_cfg._token_encryption_key if oauth_cfg else None
                 token_data = decrypt_dict(token_data, key=key)
             effective_scopes = row.get("granted_scopes") or self.scopes
             creds = Credentials.from_authorized_user_info(token_data, effective_scopes)
@@ -168,8 +168,8 @@ class GoogleToolkit(Toolkit):
         if creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                if manager:
-                    manager.persist_token(creds=creds, user_id=user_id)
+                if oauth_cfg:
+                    oauth_cfg.persist_token(creds=creds, user_id=user_id)
             except Exception:
                 # Token refresh failed — needs re-authentication
                 return None
@@ -195,8 +195,8 @@ class GoogleToolkit(Toolkit):
             return self._get_service_account_creds(service_account_path)
 
         # 3. DB lookup
-        manager = self._auth.manager if self._auth else None
-        db = manager._db if manager and manager._store_tokens else None
+        oauth_cfg = self._auth.oauth_config if self._auth else None
+        db = oauth_cfg._db if oauth_cfg and oauth_cfg._store_tokens else None
         if db:
             creds = self._load_from_db(db, user_id)
             if creds:
@@ -229,9 +229,9 @@ class GoogleToolkit(Toolkit):
             return creds
 
         # 5. Interactive OAuth (local only)
-        manager = self._auth.manager if self._auth else None
-        if manager and manager._services:
-            consent_scopes = sorted({s for scope_list in manager._services.values() for s in scope_list})
+        oauth_cfg = self._auth.oauth_config if self._auth else None
+        if oauth_cfg and oauth_cfg._services:
+            consent_scopes = sorted({s for scope_list in oauth_cfg._services.values() for s in scope_list})
         else:
             consent_scopes = self.scopes
 
@@ -267,12 +267,12 @@ class GoogleToolkit(Toolkit):
 
         # Save to DB or file
         if creds and creds.valid:
-            mgr = self._auth.manager if self._auth else None
+            oauth_cfg = self._auth.oauth_config if self._auth else None
             if (
-                mgr
-                and mgr._store_tokens
-                and mgr._db
-                and mgr.persist_token(creds=creds, user_id=user_id)
+                oauth_cfg
+                and oauth_cfg._store_tokens
+                and oauth_cfg._db
+                and oauth_cfg.persist_token(creds=creds, user_id=user_id)
             ):
                 log_debug(f"{self.google_service_name.title()} credentials saved to DB")
             else:

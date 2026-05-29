@@ -2,12 +2,12 @@
 Google Workspace Agent (Gmail + Calendar + Drive)
 =================================================
 
-Multi-toolkit agent with Gmail, Calendar, and Drive. Uses shared GoogleAuthManager
+Multi-toolkit agent with Gmail, Calendar, and Drive. Uses shared GoogleAuth
 so all three APIs are authorized in ONE OAuth consent flow.
 
-Why GoogleAuthManager?
+Why shared GoogleAuth?
   When using multiple Google toolkits, each needs different OAuth scopes.
-  GoogleAuthManager consolidates them into a single consent screen.
+  A shared GoogleAuth consolidates them into a single consent screen.
   Without it, you'd get separate OAuth prompts for each toolkit.
 
 Authentication (env vars):
@@ -26,11 +26,9 @@ Run:
   .venvs/demo/bin/python cookbook/91_tools/google/google_workspace_agent.py
 """
 
-from os import getenv
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuthManager
+from agno.tools.google.auth import GoogleAuth, OAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -40,9 +38,8 @@ from agno.tools.google.gmail import GmailTools
 # ---------------------------------------------------------------------------
 # Pass the same instance to all Google toolkits for combined OAuth consent.
 
-auth = GoogleAuthManager(
-    client_id=getenv("GOOGLE_CLIENT_ID"),
-    client_secret=getenv("GOOGLE_CLIENT_SECRET"),
+auth = GoogleAuth(
+    oauth_config=OAuthConfig(),
 )
 
 agent = Agent(
@@ -50,17 +47,17 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         GmailTools(
-            auth_config=auth,
+            auth=auth,
             include_tools=["get_latest_emails", "search_emails", "create_draft_email"],
         ),
         GoogleCalendarTools(
-            auth_config=auth,
+            auth=auth,
             create_event=False,
             update_event=False,
             delete_event=False,
         ),
         GoogleDriveTools(
-            auth_config=auth,
+            auth=auth,
             include_tools=["list_files", "search_files", "read_file"],
         ),
     ],

@@ -24,12 +24,10 @@ Run:
   .venvs/demo/bin/python cookbook/91_tools/google/google_workspace_with_db.py
 """
 
-from os import getenv
-
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuthManager
+from agno.tools.google.auth import GoogleAuth, OAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -46,10 +44,11 @@ db = SqliteDb(db_file="tmp/google_workspace.db")
 # Pass the same instance to all Google toolkits for combined OAuth consent.
 # encrypt_tokens=True would encrypt tokens at rest (recommended for prod)
 
-auth = GoogleAuthManager(
-    client_id=getenv("GOOGLE_CLIENT_ID"),
-    client_secret=getenv("GOOGLE_CLIENT_SECRET"),
-    store_tokens=True,
+auth = GoogleAuth(
+    oauth_config=OAuthConfig(
+        db=db,
+        store_tokens=True,
+    ),
 )
 
 agent = Agent(
@@ -58,17 +57,17 @@ agent = Agent(
     db=db,
     tools=[
         GmailTools(
-            auth_config=auth,
+            auth=auth,
             include_tools=["get_latest_emails", "search_emails"],
         ),
         GoogleCalendarTools(
-            auth_config=auth,
+            auth=auth,
             create_event=False,
             update_event=False,
             delete_event=False,
         ),
         GoogleDriveTools(
-            auth_config=auth,
+            auth=auth,
             include_tools=["list_files", "search_files"],
         ),
     ],
