@@ -145,6 +145,7 @@ reportlab = ["reportlab"]
 salesforce = ["simple-salesforce"]
 scrapegraph = ["scrapegraph-py>=2.0.0"]
 todoist = ["todoist-api-python"]
+tzafon = ["tzafon"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
@@ -289,6 +290,7 @@ tools = [
   "agno[redshift]",
   "agno[reportlab]",
   "agno[trafilatura]",
+  "agno[tzafon]",
   "agno[neo4j]",
 ]
 
@@ -572,6 +574,7 @@ module = [
   "todoist_api_python.*",
   "tweepy.*",
   "twilio.*",
+  "tzafon.*",
   "tzlocal.*",
   "upstash_vector.*",
   "urllib3.*",
