@@ -66,12 +66,12 @@ def store_pkce_state(
     code_verifier: str,
     state_id: str,
     expires_at: int,
-    scopes: Optional[list] = None,
 ) -> bool:
-    """Store PKCE state for OAuth flow, preserving existing token_data.
+    """Store PKCE state for OAuth flow, preserving existing token_data and granted_scopes.
 
     Passes token_data={} and granted_scopes=[] to signal upsert_auth_token
     to preserve existing values on conflict, avoiding read-modify-write races.
+    Requested scopes live in the OAuth URL and signed JWT, not in the PKCE row.
     """
     if db is None:
         return False
@@ -81,7 +81,7 @@ def store_pkce_state(
         "user_id": user_id,
         "service": service,
         "token_data": {},  # Empty = preserve existing on conflict
-        "granted_scopes": scopes if scopes else [],  # Empty = preserve existing on conflict
+        "granted_scopes": [],  # Empty = preserve existing on conflict
         "pkce_verifier": code_verifier,
         "pkce_state_id": state_id,
         "pkce_expires_at": expires_at,

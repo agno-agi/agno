@@ -55,7 +55,7 @@ except ImportError:
         "Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
 
-from agno.tools.google.auth import get_current_service, google_authenticate
+from agno.tools.google.state import get_current_service, google_authenticate
 from agno.tools.google.base import GoogleToolkit
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\

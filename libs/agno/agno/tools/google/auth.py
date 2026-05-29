@@ -1,281 +1,10 @@
-import inspect
-import json
 import os
-from contextvars import ContextVar
-from functools import wraps
 from typing import Any, Dict, List, Optional
 
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.oauth_state import verify_state
 
-# Per-call service, creds, and user_id storage for stateless toolkit access
-_google_service: ContextVar[Any] = ContextVar("google_service", default=None)
-_google_creds: ContextVar[Any] = ContextVar("google_creds", default=None)
-_google_user_id: ContextVar[Optional[str]] = ContextVar("google_user_id", default=None)
-
-
-def google_authenticate(service_name: str):
-    """Shared auth decorator for all Google toolkits.
-
-    Each toolkit creates a module-level alias:
-        authenticate = google_authenticate("gmail")
-
-    Expects the toolkit class to define:
-        - _resolve_creds(run_context, agent): Returns credentials (stateless)
-        - _build_service(creds): Returns build(api_name, api_version, credentials=creds)
-
-    The decorator resolves credentials and builds a fresh service per-call,
-    passing both run_context and agent to the wrapped method for stateless access.
-    """
-
-    def decorator(func):
-        # Expose hidden framework params (run_context, agent) so the framework:
-        # (1) builds the LLM tool schema from the original typed params (hidden ones stripped)
-        # (2) injects run_context (user_id) and agent (agent.db for token storage) at call time
-        # See function.py excluded_params and _build_entrypoint_args for the injection path.
-        sig = inspect.signature(func)
-        params = list(sig.parameters.values())
-        for name in ("run_context", "agent"):
-            if name not in sig.parameters:
-                params.append(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=None))
-        exposed_sig = sig.replace(parameters=params)
-
-        @wraps(func)
-        def wrapper(self, *args, run_context=None, agent=None, **kwargs):
-            try:
-                creds = self._resolve_creds(run_context, agent)
-            except Exception as e:
-                log_error(f"{service_name.title()} authentication failed: {str(e)}")
-                return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
-
-            try:
-                service = self._build_service(creds)
-            except Exception as e:
-                log_error(f"{service_name.title()} service initialization failed: {str(e)}")
-                return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
-
-            # Store service, creds, and user_id in contextvars — async/thread safe
-            user_id = getattr(run_context, "user_id", None) if run_context else None
-            service_token = _google_service.set(service)
-            creds_token = _google_creds.set(creds)
-            user_id_token = _google_user_id.set(user_id)
-            try:
-                return func(self, *args, **kwargs)
-            finally:
-                _google_service.reset(service_token)
-                _google_creds.reset(creds_token)
-                _google_user_id.reset(user_id_token)
-
-        wrapper.__signature__ = exposed_sig  # type: ignore[attr-defined]
-        return wrapper
-
-    return decorator
-
-
-def get_current_service() -> Any:
-    """Get the Google API service for the current call.
-
-    Used by toolkit methods to access the per-call service built by @google_authenticate.
-    Returns None if called outside a decorated method.
-    """
-    return _google_service.get()
-
-
-def get_current_creds() -> Any:
-    """Get the Google credentials for the current call.
-
-    Used by toolkit methods that need to build additional services (e.g., Drive API
-    for sheets duplication) with the same credentials resolved by @google_authenticate.
-    Returns None if called outside a decorated method.
-    """
-    return _google_creds.get()
-
-
-def get_current_user_id() -> Optional[str]:
-    """Get the user_id for the current call.
-
-    Used by toolkit methods to key per-user caches (e.g., label cache in Gmail).
-    Returns None if called outside a decorated method or in single-user mode.
-    """
-    return _google_user_id.get()
-
-
-def get_cache_key() -> Optional[str]:
-    """Get a cache key for the current user. Returns None in single-user mode."""
-    return _google_user_id.get()
-
-
-def _persist_google_token(
-    db: Any,
-    creds: Any,
-    user_id: Optional[str],
-    services_registry: Optional[Dict[str, List[str]]] = None,
-    auth_config: Optional["GoogleAuthManager"] = None,
-) -> bool:
-    """Upsert a Google credentials row.
-
-    services_registry: if provided, granted_scopes is the union of its values
-    so multiple toolkits sharing one GoogleAuth consent agree on scope.
-    Otherwise falls back to whatever scopes creds.to_json() reports.
-
-    auth_config: if provided, handles token encryption before storage.
-    """
-    if db is None:
-        return False
-    try:
-        token_data: Dict[str, Any] = json.loads(creds.to_json())
-        if services_registry:
-            granted_scopes = sorted({s for scope_list in services_registry.values() for s in scope_list})
-        else:
-            granted_scopes = token_data.get("scopes", [])
-
-        if auth_config and auth_config._encrypt_tokens:
-            from agno.utils.encryption import encrypt_dict
-
-            token_data = encrypt_dict(token_data, key=auth_config._token_encryption_key)
-
-        db.upsert_auth_token(
-            {
-                "provider": "google",
-                "user_id": user_id,
-                "service": "google",
-                "token_data": token_data,
-                "granted_scopes": granted_scopes,
-                "pkce_verifier": None,
-                "pkce_state_id": None,
-                "pkce_expires_at": None,
-            }
-        )
-        return True
-    except NotImplementedError:
-        log_debug("DB does not support auth token storage")
-        return False
-    except Exception as e:
-        log_error(f"Failed to persist Google token: {e}")
-        return False
-
-
-def _valid_auth_token_db(db: Any) -> Any:
-    """Return db if it supports auth token CRUD, else None.
-
-    Gates the sync BaseDb subclass that overrides get_auth_token — an AsyncBaseDb
-    would return unawaited coroutines to sync callers.
-    """
-    if db is None:
-        return None
-
-    from agno.db.base import AsyncBaseDb, BaseDb
-
-    if isinstance(db, AsyncBaseDb):
-        log_warning(
-            "Async database detected but Google OAuth requires sync DB for token storage. "
-            "Token persistence will be disabled. Use a sync DB (e.g., SqliteDb, PgDb) for multi-user OAuth."
-        )
-        return None
-
-    if isinstance(db, BaseDb) and type(db).get_auth_token is not BaseDb.get_auth_token:
-        return db
-    return None
-
-
-def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
-    """Resolve the DB to use for token storage. Returns None if no DB available.
-
-    Storage is opt-in via either:
-    - toolkit.store_token_in_db=True (simple single-toolkit pattern)
-    - auth_config._store_tokens=True (multi-toolkit pattern via manager)
-
-    DB comes from agent.db (set by framework when agent has a db configured).
-    """
-    ga = getattr(toolkit, "auth_config", None)
-    manager_wants_db = ga is not None and getattr(ga, "_store_tokens", False)
-    toolkit_wants_db = getattr(toolkit, "store_token_in_db", False)
-
-    if not manager_wants_db and not toolkit_wants_db:
-        return None
-
-    return _valid_auth_token_db(getattr(agent, "db", None))
-
-
-def load_token(
-    toolkit: Any,
-    scopes: list,
-    user_id: Optional[str] = None,
-    agent: Optional[Any] = None,
-) -> bool:
-    """Fetch credentials from DB, refresh if expired, set toolkit.creds. Returns True on success."""
-    db = get_token_db(toolkit, agent=agent)
-    if db is None:
-        return False
-    try:
-        row = db.get_auth_token("google", user_id, "google")
-    except NotImplementedError:
-        return False
-    except Exception as e:
-        log_debug(f"DB load failed for google: {e}")
-        return False
-    if not row:
-        return False
-
-    # Check required scopes are included in granted scopes
-    granted = set(row.get("granted_scopes") or [])
-    required = set(scopes)
-    if required and not required.issubset(granted):
-        missing = required - granted
-        raise PermissionError(
-            f"Token missing required scopes: {', '.join(missing)}. Please re-authenticate to grant access."
-        )
-
-    try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-
-        from agno.utils.encryption import decrypt_dict, is_encrypted
-
-        token_data = row["token_data"]
-        if is_encrypted(token_data):
-            auth_config = getattr(toolkit, "auth_config", None)
-            key = auth_config._token_encryption_key if auth_config else None
-            token_data = decrypt_dict(token_data, key=key)
-
-        # Prefer stored granted_scopes (the full consent union) over the caller's
-        # required scopes — a single-service toolkit must not narrow a shared token.
-        effective_scopes = row.get("granted_scopes") or scopes
-        creds = Credentials.from_authorized_user_info(token_data, effective_scopes)
-    except (ValueError, KeyError, ImportError) as e:
-        log_debug(f"Could not reconstruct google credentials: {e}")
-        return False
-
-    if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            save_token(toolkit, creds, user_id=user_id, agent=agent)
-        except Exception as e:
-            log_debug(f"Token refresh failed: {e}")
-            return False
-
-    if not creds.valid:
-        return False
-
-    toolkit.creds = creds
-    return True
-
-
-def save_token(
-    toolkit: Any,
-    creds: Any,
-    user_id: Optional[str] = None,
-    agent: Optional[Any] = None,
-) -> bool:
-    """Persist credentials to DB. Returns True on success."""
-    auth_config = getattr(toolkit, "auth_config", None)
-    return _persist_google_token(
-        db=get_token_db(toolkit, agent=agent),
-        creds=creds,
-        user_id=user_id,
-        services_registry=auth_config._services if auth_config else None,
-        auth_config=auth_config,
-    )
+from agno.tools.google.tokens import _persist_google_token, _valid_auth_token_db
 
 
 class GoogleAuthManager:
@@ -319,7 +48,7 @@ class GoogleAuthManager:
         # Service account authentication (alternative to OAuth)
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        # Token storage config (moved from toolkit and DB layers)
+        # Token storage config
         store_tokens: bool = False,
         encrypt_tokens: bool = False,
         token_encryption_key: Optional[str] = None,
@@ -327,36 +56,24 @@ class GoogleAuthManager:
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
         self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
-        # Set by auto-wiring from agent.db, or explicitly via db= param
         self._db: Optional[Any] = db
         self._services: Dict[str, List[str]] = {}
-        # True once get_oauth_router() has mounted a callback handler — toolkits read this
-        # to choose interface mode (raise, let LLM handle OAuth) vs cookbook mode (browser).
         self._callback_configured: bool = False
-        # Shared HMAC secret for signing the state JWT. Must match across workers.
         self._state_secret = state_secret or os.getenv("GOOGLE_OAUTH_STATE_SECRET")
-        # When True, Google carries prior grants for the same OAuth client into the
-        # response — convenient for multi-toolkit, but per-scope revocation moves to
-        # myaccount.google.com rather than clearing a scope-narrow row here.
         self._include_granted_scopes = include_granted_scopes
         self._state_ttl_seconds = state_ttl_seconds
-        # Enterprise OAuth parameters
         self._hosted_domain = hosted_domain or os.getenv("GOOGLE_HOSTED_DOMAIN")
         self._access_type = access_type
-        # Route path for OAuth callback (default: /google/oauth/callback)
         self._callback_path = callback_path or os.getenv("GOOGLE_OAUTH_CALLBACK_PATH", "/google/oauth/callback")
         self._prompt = prompt
         self._login_hint = login_hint
-        # Service account auth (when set, OAuth is skipped)
         self._service_account_path = service_account_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._delegated_user = delegated_user or os.getenv("GOOGLE_DELEGATED_USER")
-        # Token storage config
         self._store_tokens = store_tokens
         self._encrypt_tokens = encrypt_tokens
         self._token_encryption_key = token_encryption_key
 
     def register_service(self, service: str, scopes: List[str]) -> None:
-        # Union scopes if service already registered (multiple toolkits, different scopes)
         existing = self._services.get(service, [])
         self._services[service] = list(set(existing) | set(scopes))
 
@@ -380,7 +97,7 @@ class GoogleAuthManager:
             Dict with status, user_id, and services that were authorized.
         """
         try:
-            import jwt  # imported for the exception type
+            import jwt
         except ImportError:
             return {
                 "error": "PyJWT is required for OAuth state verification. "
@@ -407,7 +124,6 @@ class GoogleAuthManager:
             log_warning("OAuth callback missing state_id — possible replay of pre-PKCE token")
             return {"error": "Invalid state: missing state_id"}
 
-        # Retrieve PKCE verifier from DB and verify state_id matches
         try:
             row = db.get_auth_token("google", user_id, "google")
         except Exception as e:
@@ -418,7 +134,6 @@ class GoogleAuthManager:
             log_warning(f"No PKCE state found for user={user_id}")
             return {"error": "OAuth session expired or invalid. Please try again."}
 
-        # Read PKCE from dedicated columns
         stored_state_id = row.get("pkce_state_id")
         code_verifier = row.get("pkce_verifier")
         pkce_expires_at = row.get("pkce_expires_at")
@@ -431,7 +146,6 @@ class GoogleAuthManager:
             log_warning(f"Missing code_verifier for user={user_id}")
             return {"error": "OAuth session corrupted. Please try again."}
 
-        # Check PKCE expiry
         import time
 
         if pkce_expires_at and int(time.time()) > pkce_expires_at:
@@ -441,9 +155,6 @@ class GoogleAuthManager:
         try:
             from google_auth_oauthlib.flow import Flow
 
-            # include_granted_scopes=true may return scopes beyond this flow's request;
-            # pass the union and disable strict-match. false mode passes just this flow's
-            # scopes and lets oauthlib verify the response shape normally.
             if self._include_granted_scopes:
                 scopes: list = []
                 for svc_scopes in self._services.values():
@@ -470,7 +181,6 @@ class GoogleAuthManager:
             if self._include_granted_scopes:
                 flow.oauth2session.scope = None
 
-            # PKCE: pass code_verifier to token exchange
             flow.fetch_token(code=code, code_verifier=code_verifier)
             creds = flow.credentials
 
@@ -515,7 +225,6 @@ class GoogleAuthManager:
                 "Set it via environment variable or GoogleAuthManager(state_secret=...)."
             )
 
-        # Resolve db: explicit param > GoogleAuth(db=...) > fail
         resolved_db = _valid_auth_token_db(db) or _valid_auth_token_db(self._db)
         if resolved_db is None:
             raise RuntimeError(
@@ -532,7 +241,6 @@ class GoogleAuthManager:
         router = APIRouter(tags=["Google OAuth"])
         google_auth = self
         callback_path: str = self._callback_path or "/google/oauth/callback"
-        # Captured in closure — survives restarts, works across workers
         callback_db = resolved_db
 
         @router.get(callback_path)

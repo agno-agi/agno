@@ -4853,10 +4853,6 @@ class SqliteDb(BaseDb):
 
     # -- Auth Token methods --
 
-    @staticmethod
-    def _auth_token_id(provider: str, user_id: Optional[str], service: str) -> str:
-        return f"{provider}:{user_id or ''}:{service}"
-
     def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
         """
         Get an OAuth token from the database.
@@ -4873,9 +4869,16 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="auth_tokens")
             if table is None:
                 return None
-            token_id = self._auth_token_id(provider, user_id, service)
+            # Use empty string for NULL user_id to match unique constraint
+            effective_user_id = user_id or ""
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == token_id)).fetchone()
+                result = sess.execute(
+                    select(table).where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                ).fetchone()
                 if not result:
                     return None
                 return dict(result._mapping)
@@ -4901,7 +4904,9 @@ class SqliteDb(BaseDb):
             if table is None:
                 raise RuntimeError("Failed to get or create auth_tokens table")
             data = {**token}
-            data["id"] = self._auth_token_id(data["provider"], data.get("user_id"), data["service"])
+            data["id"] = str(uuid4())
+            # Use empty string for NULL user_id to satisfy NOT NULL + unique constraint
+            data["user_id"] = data.get("user_id") or ""
             now = int(time.time())
             data.setdefault("created_at", now)
             data["updated_at"] = now
@@ -4917,7 +4922,10 @@ class SqliteDb(BaseDb):
                     set_dict["pkce_verifier"] = stmt.excluded.pkce_verifier
                     set_dict["pkce_state_id"] = stmt.excluded.pkce_state_id
                     set_dict["pkce_expires_at"] = stmt.excluded.pkce_expires_at
-                stmt = stmt.on_conflict_do_update(index_elements=["id"], set_=set_dict)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["provider", "user_id", "service"],
+                    set_=set_dict,
+                )
                 sess.execute(stmt)
             return data
         except Exception as e:

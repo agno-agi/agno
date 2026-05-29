@@ -112,7 +112,7 @@ class GoogleOAuthTools(Toolkit):
             )
 
         # Resolve DB for PKCE state storage
-        from agno.tools.google.auth import _valid_auth_token_db as _valid_oauth_db
+        from agno.tools.google.tokens import _valid_auth_token_db as _valid_oauth_db
 
         # Priority: agent.db first (matches get_token_db), then auth_config._db
         db = _valid_oauth_db(getattr(agent, "db", None) if agent else None) or _valid_oauth_db(ga._db)
@@ -148,7 +148,7 @@ class GoogleOAuthTools(Toolkit):
                 }
             )
 
-        # Store PKCE state in DB (preserves existing token_data if present)
+        # Store PKCE state in DB (preserves existing token_data and granted_scopes)
         expires_at = int(time.time()) + ga._state_ttl_seconds
         if not store_pkce_state(
             db=db,
@@ -158,7 +158,6 @@ class GoogleOAuthTools(Toolkit):
             code_verifier=code_verifier,
             state_id=state_id,
             expires_at=expires_at,
-            scopes=list(scopes),
         ):
             return json.dumps({"error": "Failed to store PKCE state"})
 

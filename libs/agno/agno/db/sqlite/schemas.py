@@ -272,7 +272,7 @@ APPROVAL_TABLE_SCHEMA = {
 AUTH_TOKEN_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "provider": {"type": String, "nullable": False, "index": True},
-    "user_id": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": False, "index": True},  # Empty string for single-user mode
     "service": {"type": String, "nullable": False, "index": True},
     "token_data": {"type": JSON, "nullable": False},
     "granted_scopes": {"type": JSON, "nullable": True},
@@ -281,6 +281,9 @@ AUTH_TOKEN_TABLE_SCHEMA = {
     "pkce_expires_at": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {"name": "uq_auth_token_provider_user_service", "columns": ["provider", "user_id", "service"]}
+    ],
 }
 
 

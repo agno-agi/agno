@@ -3,7 +3,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import _persist_google_token, get_current_service, get_token_db, save_token
+from agno.tools.google.state import get_current_service
+from agno.tools.google.tokens import _persist_google_token, get_token_db, save_token
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
