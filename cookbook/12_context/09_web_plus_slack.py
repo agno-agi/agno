@@ -9,7 +9,7 @@ Workflow the agent performs:
   1. Pull recent messages from an engineering Slack channel
      (``query_slack`` → ``get_channel_history``).
   2. For each topic it surfaces, find a current external reference
-     (``query_web`` → Exa search).
+     (``query_web`` → Parallel search).
   3. Return a briefing tying each internal thread to a supporting
      external source.
 
@@ -19,9 +19,10 @@ provider's query — is the payoff of multi-provider. Parallel
 
 Requires:
     OPENAI_API_KEY
-    EXA_API_KEY        (https://dashboard.exa.ai/)
+    PARALLEL_API_KEY   (https://platform.parallel.ai/)
     SLACK_BOT_TOKEN    (or SLACK_TOKEN fallback; scopes: channels:read,
                         channels:history, users:read)
+    pip install parallel-web
 """
 
 from __future__ import annotations
@@ -30,17 +31,18 @@ import asyncio
 
 from agno.agent import Agent
 from agno.context.slack import SlackContextProvider
-from agno.context.web import ExaBackend, WebContextProvider
+from agno.context.web import ParallelBackend, WebContextProvider
 from agno.models.openai import OpenAIResponses
 
 # Sub-agents do the tool work — cheaper model. Outer agent synthesizes.
 provider_model = OpenAIResponses(id="gpt-5.4-mini")
 
-web = WebContextProvider(backend=ExaBackend(), model=provider_model)
+backend = ParallelBackend()  # reads PARALLEL_API_KEY from env
+web = WebContextProvider(backend=backend, model=provider_model)
 slack = SlackContextProvider(model=provider_model)
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[*web.get_tools(), *slack.get_tools()],
     instructions="\n".join([web.instructions(), slack.instructions()]),
     markdown=True,
