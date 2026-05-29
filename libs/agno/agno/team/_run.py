@@ -4807,6 +4807,28 @@ def _has_team_level_requirements(requirements: List[Any]) -> bool:
     return any(getattr(req, "member_agent_id", None) is None for req in requirements)
 
 
+def _member_continue_kwargs_from_run_context(run_context: Optional[RunContext]) -> Dict[str, Any]:
+    """Build kwargs to forward team run_context state to a member's continue_run call.
+
+    Without this, member tools resumed via continue_run would lose access to the
+    dependencies/metadata/knowledge_filters the team carried at pause time
+    (see https://github.com/agno-agi/agno/issues/8135). The member's session_state
+    is rehydrated from the shared DB session, so it does not need to be forwarded
+    here (and `Agent.acontinue_run` does not accept a `session_state` parameter).
+    """
+    if run_context is None:
+        return {}
+
+    kwargs: Dict[str, Any] = {}
+    if run_context.dependencies is not None:
+        kwargs["dependencies"] = run_context.dependencies
+    if run_context.metadata is not None:
+        kwargs["metadata"] = run_context.metadata
+    if run_context.knowledge_filters is not None:
+        kwargs["knowledge_filters"] = run_context.knowledge_filters
+    return kwargs
+
+
 def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
@@ -4859,6 +4881,10 @@ def _route_requirements_to_members(
                         member_run_output = mr
                         break
 
+        # Forward team's run_context state to the member so dependencies and
+        # session_state remain accessible to member tools after continue_run.
+        member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+
         if member_run_output is not None:
             # Update requirements and tool executions on the member's run output
             member_run_output.requirements = reqs
@@ -4870,6 +4896,7 @@ def _route_requirements_to_members(
             member_response = member.continue_run(
                 run_response=member_run_output,  # type: ignore[arg-type]
                 session_id=session.session_id,
+                **member_continue_kwargs,
             )
         else:
             # Fallback: use run_id (requires DB or cached session)
@@ -4878,6 +4905,7 @@ def _route_requirements_to_members(
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
+                **member_continue_kwargs,
             )
 
         # Check if member is still paused (chained HITL)
@@ -4951,6 +4979,10 @@ def _route_requirements_to_members_stream(
                         member_run_output = mr
                         break
 
+        # Forward team's run_context state to the member so dependencies and
+        # session_state remain accessible to member tools after continue_run.
+        member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -4964,6 +4996,7 @@ def _route_requirements_to_members_stream(
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
+                **member_continue_kwargs,
             )
         else:
             member_run_id = reqs[0].member_run_id if reqs else None
@@ -4974,6 +5007,7 @@ def _route_requirements_to_members_stream(
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
+                **member_continue_kwargs,
             )
 
         # Iterate the member's streaming response — yield intermediate events,
@@ -5059,6 +5093,10 @@ async def _aroute_requirements_to_members(
                         member_run_output = mr
                         break
 
+        # Forward team's run_context state to the member so dependencies and
+        # session_state remain accessible to member tools after continue_run.
+        member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5069,6 +5107,7 @@ async def _aroute_requirements_to_members(
             member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_response=member_run_output,  # type: ignore[arg-type]
                 session_id=session.session_id,
+                **member_continue_kwargs,
             )
         else:
             member_run_id = reqs[0].member_run_id if reqs else None
@@ -5076,6 +5115,7 @@ async def _aroute_requirements_to_members(
                 run_id=member_run_id,
                 requirements=reqs,
                 session_id=session.session_id,
+                **member_continue_kwargs,
             )
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -5161,6 +5201,10 @@ async def _aroute_requirements_to_members_stream(
                         member_run_output = mr
                         break
 
+        # Forward team's run_context state to the member so dependencies and
+        # session_state remain accessible to member tools after continue_run.
+        member_continue_kwargs = _member_continue_kwargs_from_run_context(run_context)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5174,6 +5218,7 @@ async def _aroute_requirements_to_members_stream(
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
+                **member_continue_kwargs,
             )
         else:
             member_run_id = reqs[0].member_run_id if reqs else None
@@ -5184,6 +5229,7 @@ async def _aroute_requirements_to_members_stream(
                 stream=True,
                 stream_events=stream_events or team.stream_member_events,
                 yield_run_output=True,
+                **member_continue_kwargs,
             )
 
         # Iterate the member's async streaming response — yield intermediate events,
@@ -6328,6 +6374,154 @@ def _continue_run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+async def _acontinue_run_background_stream(
+    team: Team,
+    run_context: RunContext,
+    session_id: str,
+    run_response: Optional[TeamRunOutput] = None,
+    run_id: Optional[str] = None,
+    requirements: Optional[List[Any]] = None,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming continue-run that survives client disconnections.
+
+    Mirrors _arun_background_stream but drives _acontinue_run_stream instead of
+    _arun_stream. Used for HITL scenarios where a paused run resumes and the
+    client needs reconnection support.
+
+    Without this, team.acontinue_run(background=True, stream=True) would route
+    to _acontinue_run_stream and yield raw TeamRunOutputEvent objects directly
+    into FastAPI's StreamingResponse, which calls .encode() per chunk and
+    raises::
+
+        AttributeError: 'RunContinuedEvent' object has no attribute 'encode'
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _acontinue_run_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+    """
+    from agno.team._session import asave_session
+    from agno.team._storage import _aread_or_create_session, _update_metadata
+
+    _run_id = run_id or (run_response.run_id if run_response else None)
+    if not _run_id:
+        raise ValueError("run_id is required for background streaming continue-run")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    _update_metadata(team, session=team_session)
+
+    if run_response is not None:
+        run_response.status = RunStatus.running
+        team_session.upsert_run(run_response=run_response)
+    await asave_session(team, session=team_session)
+
+    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _acontinue_run_stream(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                requirements=requirements,
+                run_id=_run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output or False,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                if isinstance(event, TeamRunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(_run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        _run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
+
+        except Exception:
+            log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                if run_response is not None:
+                    run_response.status = RunStatus.error
+                    team_session.upsert_run(run_response=run_response)
+                    await asave_session(team, session=team_session)
+            except Exception:
+                log_error(
+                    f"Failed to persist error state for background continue-run stream {_run_id}",
+                    exc_info=True,
+                )
+
+        finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
+
+            # Mark run completed in event buffer
+            try:
+                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                event_buffer.set_run_completed(_run_id, final_status)
+            except Exception:
+                log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(_run_id))
+            except (Exception, asyncio.CancelledError):
+                log_warning(f"Failed to signal SSE subscribers for continue-run {_run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
+
+
 def acontinue_run_dispatch(  # type: ignore
     team: "Team",
     run_response: Optional[TeamRunOutput] = None,
@@ -6344,11 +6538,13 @@ def acontinue_run_dispatch(  # type: ignore
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
+    background: bool = False,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
 
-    Routes to _acontinue_run or _acontinue_run_stream based on stream option.
+    Routes between _acontinue_run, _acontinue_run_stream, and
+    _acontinue_run_background_stream based on the stream and background options.
     """
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
@@ -6409,6 +6605,31 @@ def acontinue_run_dispatch(  # type: ignore
         run_context.metadata = opts.metadata
 
     response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+
+    if background:
+        if not team.db:
+            raise ValueError(
+                "Background execution requires a database to be configured on the team for run persistence."
+            )
+        if opts.stream:
+            # background=True, stream=True: run in background task, yield SSE strings via queue
+            return _acontinue_run_background_stream(  # type: ignore[return-value]
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                requirements=requirements,
+                run_id=run_id_resolved,
+                user_id=user_id,
+                session_id=session_id_resolved,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        # background=True, stream=False is not supported for continue_run yet —
+        # fall through to the regular non-streaming path to preserve prior behavior.
 
     if opts.stream:
         return _acontinue_run_stream(
