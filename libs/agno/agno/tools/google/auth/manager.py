@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.oauth_state import verify_state
 
-from agno.tools.google.tokens import _persist_google_token, _valid_auth_token_db
+from agno.tools.google.auth.tokens import persist_google_token, valid_auth_token_db
 
 
 class GoogleAuthManager:
@@ -188,7 +188,7 @@ class GoogleAuthManager:
             log_error(f"OAuth token exchange failed: {e}")
             return {"error": f"Token exchange failed: {e}"}
 
-        stored = _persist_google_token(
+        stored = persist_google_token(
             db=db,
             creds=creds,
             user_id=user_id,
@@ -225,7 +225,7 @@ class GoogleAuthManager:
                 "Set it via environment variable or GoogleAuthManager(state_secret=...)."
             )
 
-        resolved_db = _valid_auth_token_db(db) or _valid_auth_token_db(self._db)
+        resolved_db = valid_auth_token_db(db) or valid_auth_token_db(self._db)
         if resolved_db is None:
             raise RuntimeError(
                 "GoogleAuth.get_oauth_router() requires a DB with auth token support. "

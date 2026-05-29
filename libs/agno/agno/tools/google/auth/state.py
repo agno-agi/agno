@@ -21,55 +21,31 @@ _google_context: ContextVar[Optional[GoogleCallContext]] = ContextVar("google_co
 
 
 def get_current_service() -> Any:
-    """Get the Google API service for the current call.
-
-    Used by toolkit methods to access the per-call service built by @google_authenticate.
-    Returns None if called outside a decorated method.
-    """
+    """Return the Google API service for the current call, or None if outside decorator."""
     ctx = _google_context.get()
     return ctx.service if ctx else None
 
 
 def get_current_creds() -> Any:
-    """Get the Google credentials for the current call.
-
-    Used by toolkit methods that need to build additional services (e.g., Drive API
-    for sheets duplication) with the same credentials resolved by @google_authenticate.
-    Returns None if called outside a decorated method.
-    """
+    """Return the Google credentials for the current call, or None if outside decorator."""
     ctx = _google_context.get()
     return ctx.creds if ctx else None
 
 
 def get_current_user_id() -> Optional[str]:
-    """Get the user_id for the current call.
-
-    Used by toolkit methods to key per-user caches (e.g., label cache in Gmail).
-    Returns None if called outside a decorated method or in single-user mode.
-    """
+    """Return the user_id for the current call, or None in single-user mode."""
     ctx = _google_context.get()
     return ctx.user_id if ctx else None
 
 
 def get_cache_key() -> Optional[str]:
-    """Get a cache key for the current user. Returns None in single-user mode."""
+    """Return a cache key for the current user, or None in single-user mode."""
     ctx = _google_context.get()
     return ctx.user_id if ctx else None
 
 
 def google_authenticate(service_name: str):
-    """Shared auth decorator for all Google toolkits.
-
-    Each toolkit creates a module-level alias:
-        authenticate = google_authenticate("gmail")
-
-    Expects the toolkit class to define:
-        - _resolve_creds(run_context, agent): Returns credentials (stateless)
-        - _build_service(creds): Returns build(api_name, api_version, credentials=creds)
-
-    The decorator resolves credentials and builds a fresh service per-call,
-    passing both run_context and agent to the wrapped method for stateless access.
-    """
+    """Decorator that resolves credentials and builds a fresh service per-call."""
 
     def decorator(func):
         sig = inspect.signature(func)

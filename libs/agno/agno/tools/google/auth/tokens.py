@@ -4,12 +4,8 @@ from typing import Any, Dict, List, Optional
 from agno.utils.log import log_debug, log_error, log_warning
 
 
-def _valid_auth_token_db(db: Any) -> Any:
-    """Return db if it supports auth token CRUD, else None.
-
-    Gates the sync BaseDb subclass that overrides get_auth_token — an AsyncBaseDb
-    would return unawaited coroutines to sync callers.
-    """
+def valid_auth_token_db(db: Any) -> Any:
+    """Return db if it supports sync auth token CRUD, else None."""
     if db is None:
         return None
 
@@ -28,14 +24,7 @@ def _valid_auth_token_db(db: Any) -> Any:
 
 
 def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
-    """Resolve the DB to use for token storage. Returns None if no DB available.
-
-    Storage is opt-in via either:
-    - toolkit.store_token_in_db=True (simple single-toolkit pattern)
-    - auth_config._store_tokens=True (multi-toolkit pattern via manager)
-
-    DB comes from agent.db (set by framework when agent has a db configured).
-    """
+    """Resolve the DB for token storage, or None if not configured."""
     ga = getattr(toolkit, "auth_config", None)
     manager_wants_db = ga is not None and getattr(ga, "_store_tokens", False)
     toolkit_wants_db = getattr(toolkit, "store_token_in_db", False)
@@ -43,24 +32,17 @@ def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
     if not manager_wants_db and not toolkit_wants_db:
         return None
 
-    return _valid_auth_token_db(getattr(agent, "db", None))
+    return valid_auth_token_db(getattr(agent, "db", None))
 
 
-def _persist_google_token(
+def persist_google_token(
     db: Any,
     creds: Any,
     user_id: Optional[str],
     services_registry: Optional[Dict[str, List[str]]] = None,
     auth_config: Optional[Any] = None,
 ) -> bool:
-    """Upsert a Google credentials row.
-
-    services_registry: if provided, granted_scopes is the union of its values
-    so multiple toolkits sharing one GoogleAuth consent agree on scope.
-    Otherwise falls back to whatever scopes creds.to_json() reports.
-
-    auth_config: if provided, handles token encryption before storage.
-    """
+    """Upsert Google credentials to DB. Returns True on success."""
     if db is None:
         return False
     try:
@@ -102,7 +84,7 @@ def load_token(
     user_id: Optional[str] = None,
     agent: Optional[Any] = None,
 ) -> bool:
-    """Fetch credentials from DB, refresh if expired, set toolkit.creds. Returns True on success."""
+    """Load credentials from DB, refresh if expired. Returns True on success."""
     db = get_token_db(toolkit, agent=agent)
     if db is None:
         return False
@@ -165,7 +147,7 @@ def save_token(
 ) -> bool:
     """Persist credentials to DB. Returns True on success."""
     auth_config = getattr(toolkit, "auth_config", None)
-    return _persist_google_token(
+    return persist_google_token(
         db=get_token_db(toolkit, agent=agent),
         creds=creds,
         user_id=user_id,

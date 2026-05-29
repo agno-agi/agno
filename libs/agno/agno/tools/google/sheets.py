@@ -47,7 +47,7 @@ A token.json file will be created to store the authentication credentials for fu
 import json
 from typing import Any, Dict, List, Optional, Union
 
-from agno.tools.google.state import get_current_creds, google_authenticate
+from agno.tools.google.auth import get_current_creds, google_authenticate
 from agno.tools.google.base import GoogleToolkit
 
 try:

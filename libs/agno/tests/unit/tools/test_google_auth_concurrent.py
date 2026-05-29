@@ -53,8 +53,8 @@ import pytest
 from google.oauth2.credentials import Credentials
 
 from agno.db.sqlite import SqliteDb
-from agno.tools.google.state import get_current_creds, google_authenticate
-from agno.tools.google.tokens import get_token_db
+from agno.tools.google.auth import get_current_creds, google_authenticate
+from agno.tools.google.auth import get_token_db
 from agno.tools.toolkit import Toolkit
 from agno.utils.callables import ainvoke_callable_factory
 

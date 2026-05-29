@@ -112,7 +112,7 @@ class GoogleOAuthTools(Toolkit):
             )
 
         # Resolve DB for PKCE state storage
-        from agno.tools.google.tokens import _valid_auth_token_db as _valid_oauth_db
+        from agno.tools.google.auth import valid_auth_token_db as _valid_oauth_db
 
         # Priority: agent.db first (matches get_token_db), then auth_config._db
         db = _valid_oauth_db(getattr(agent, "db", None) if agent else None) or _valid_oauth_db(ga._db)
