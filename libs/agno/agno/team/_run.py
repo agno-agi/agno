@@ -2861,11 +2861,11 @@ async def _arun_tasks_stream(
             await _acleanup_and_store(team, run_response=run_response, session=team_session)
         yield run_error
 
-    except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+    except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
         run_response = _handle_team_run_cancellation(
             run_response, KeyboardInterrupt(), run_messages, session=team_session
         )
-        # Build terminal events first so they are stored on the run (matches cancel_run())
+        # Build terminal events first so they are stored on the run
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
             team,
             run_response,
@@ -2873,8 +2873,9 @@ async def _arun_tasks_stream(
             run_context=run_context,
         )
         if team_session is not None:
-            if isinstance(cancel_exc, asyncio.CancelledError):
-                # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+            if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                # Client disconnect: persist on a detached task so the cancel scope can't abort the write.
+                # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
                 _persist_cancelled_team_run_in_background(
                     team, run_response=run_response, session=team_session, run_context=run_context
                 )
@@ -2884,7 +2885,7 @@ async def _arun_tasks_stream(
                     team, run_response=run_response, session=team_session, run_context=run_context
                 )
         # Re-raise on disconnect (client gone); yield the terminal events on Ctrl-C
-        if isinstance(cancel_exc, asyncio.CancelledError):
+        if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
             raise
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
@@ -3975,11 +3976,11 @@ async def _arun_stream(
 
                 break
 
-            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+            except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
-                # Build terminal events first so they are stored on the run (matches cancel_run())
+                # Build terminal events first so they are stored on the run
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -3987,8 +3988,9 @@ async def _arun_stream(
                     run_context=run_context,
                 )
                 if team_session is not None:
-                    if isinstance(cancel_exc, asyncio.CancelledError):
-                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+                    if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write.
+                        # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
                         _persist_cancelled_team_run_in_background(
                             team, run_response=run_response, session=team_session, run_context=run_context
                         )
@@ -3998,7 +4000,7 @@ async def _arun_stream(
                             team, run_response=run_response, session=team_session, run_context=run_context
                         )
                 # Re-raise on disconnect (client gone); yield the terminal events on Ctrl-C
-                if isinstance(cancel_exc, asyncio.CancelledError):
+                if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
                     raise
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
@@ -7886,14 +7888,14 @@ async def _acontinue_run_stream(
                 yield run_error
                 break
 
-            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+            except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
-                # Build terminal events first so they are stored on the run (matches cancel_run())
+                # Build terminal events first so they are stored on the run
                 cancelled_event, completed_event = _build_team_cancel_terminal_events(
                     team,
                     run_response,
@@ -7901,8 +7903,9 @@ async def _acontinue_run_stream(
                     run_context=run_context,
                 )
                 if team_session is not None:
-                    if isinstance(cancel_exc, asyncio.CancelledError):
-                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+                    if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write.
+                        # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
                         _persist_cancelled_team_run_in_background(
                             team, run_response=run_response, session=team_session, run_context=run_context
                         )
@@ -7912,7 +7915,7 @@ async def _acontinue_run_stream(
                             team, run_response=run_response, session=team_session, run_context=run_context
                         )
                 # Re-raise on disconnect (client gone); yield the terminal events on Ctrl-C
-                if isinstance(cancel_exc, asyncio.CancelledError):
+                if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
                     raise
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore

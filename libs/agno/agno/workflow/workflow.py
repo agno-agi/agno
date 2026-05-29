@@ -192,7 +192,7 @@ WorkflowStep = Union[
 
 def _normalize_workflow_cancellation_reason(
     workflow_run_response: WorkflowRunOutput,
-    error: Union[RunCancelledException, asyncio.CancelledError, KeyboardInterrupt],
+    error: Union[RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit],
 ) -> str:
     """Return a non-empty, human-readable reason for a cancelled workflow run."""
     if isinstance(error, RunCancelledException):
@@ -3901,7 +3901,7 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
-            except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
+            except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
@@ -3941,8 +3941,9 @@ class Workflow:
                     )
 
                 # Client disconnect: persist on a detached task, then re-raise.
+                # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
                 # cancel_run() and Ctrl-C fall through to the inline persist below.
-                if isinstance(e, asyncio.CancelledError):
+                if isinstance(e, (asyncio.CancelledError, GeneratorExit)):
                     self._persist_cancelled_run_in_background(workflow_run_response, workflow_session)
                     raise
 
@@ -9001,7 +9002,7 @@ class Workflow:
             )
             finalize_workflow_completion(workflow_run_response, state)
 
-        except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
+        except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
@@ -9018,8 +9019,9 @@ class Workflow:
                 )
 
             # Client disconnect: persist on a detached task, then re-raise.
+            # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
             # cancel_run() and Ctrl-C fall through to the inline persist below.
-            if isinstance(e, asyncio.CancelledError):
+            if isinstance(e, (asyncio.CancelledError, GeneratorExit)):
                 self._persist_cancelled_run_in_background(workflow_run_response, session)
                 raise
 
