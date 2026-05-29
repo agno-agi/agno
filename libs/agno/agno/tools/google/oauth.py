@@ -2,7 +2,6 @@
 
 import json
 import secrets
-import time
 from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 from urllib.parse import urlencode
 
@@ -77,7 +76,6 @@ def oauth_google(
         state = sign_state(
             {"user_id": user_id, "services": list(services), "state_id": state_id},
             secret=auth_config._state_secret,
-            ttl_seconds=auth_config._state_ttl_seconds,
         )
     except ImportError:
         return json.dumps(
@@ -88,7 +86,6 @@ def oauth_google(
         )
 
     # Store PKCE state in DB
-    expires_at = int(time.time()) + auth_config._state_ttl_seconds
     if not store_pkce_state(
         db=db,
         provider="google",
@@ -96,7 +93,6 @@ def oauth_google(
         service="google",
         code_verifier=code_verifier,
         state_id=state_id,
-        expires_at=expires_at,
     ):
         return json.dumps({"error": "Failed to store PKCE state"})
 

@@ -22,7 +22,6 @@ class GoogleAuthManager:
         redirect_uri: Optional[str] = None,
         db: Optional["BaseDb"] = None,
         state_secret: Optional[str] = None,
-        state_ttl_seconds: int = 600,
         include_granted_scopes: bool = False,
         # Enterprise OAuth parameters
         hosted_domain: Optional[str] = None,
@@ -53,7 +52,6 @@ class GoogleAuthManager:
         # --- State and security ---
         self._db: Optional["BaseDb"] = db
         self._state_secret = state_secret or getenv("GOOGLE_OAUTH_STATE_SECRET")
-        self._state_ttl_seconds = state_ttl_seconds
 
         # --- Multi-user OAuth ---
         self.enable_multi_user_oauth = enable_multi_user_oauth

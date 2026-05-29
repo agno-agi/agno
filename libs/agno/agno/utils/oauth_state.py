@@ -65,7 +65,6 @@ def store_pkce_state(
     service: str,
     code_verifier: str,
     state_id: str,
-    expires_at: int,
 ) -> bool:
     """Store PKCE state for OAuth flow, preserving existing token_data and granted_scopes.
 
@@ -84,7 +83,6 @@ def store_pkce_state(
         "granted_scopes": [],  # Empty = preserve existing on conflict
         "pkce_verifier": code_verifier,
         "pkce_state_id": state_id,
-        "pkce_expires_at": expires_at,
     }
 
     try:
