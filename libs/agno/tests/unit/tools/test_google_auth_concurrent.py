@@ -105,7 +105,7 @@ class _MockGmailToolkit(Toolkit):
         return MagicMock()
 
     @google_authenticate("gmail")
-    def bearer_header(self) -> str:
+    def bearer_header(self, agent: Any, run_context: Any) -> str:
         # Materialize the Authorization header exactly the way
         # google-api-python-client does before issuing a request.
         # Stateless: access creds via contextvar, not self.creds
@@ -116,7 +116,7 @@ class _MockGmailToolkit(Toolkit):
         return headers["authorization"]
 
     @google_authenticate("gmail")
-    def bearer_header_with_yield(self) -> str:
+    def bearer_header_with_yield(self, agent: Any, run_context: Any) -> str:
         # Same as above, but sleeps briefly between auth and apply to force
         # interleaving on thread-pool executors. Amplifies any race window.
         time.sleep(0.01)

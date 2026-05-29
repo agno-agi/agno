@@ -1,4 +1,3 @@
-import inspect
 import json
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -32,12 +31,6 @@ def get_current_creds() -> Any:
     return ctx.creds if ctx else None
 
 
-def get_current_user_id() -> Optional[str]:
-    """Return the user_id for the current call, or None in single-user mode."""
-    ctx = _google_context.get()
-    return ctx.user_id if ctx else None
-
-
 def get_cache_key() -> Optional[str]:
     """Return a cache key for the current user, or None in single-user mode."""
     ctx = _google_context.get()
@@ -45,20 +38,27 @@ def get_cache_key() -> Optional[str]:
 
 
 def google_authenticate(service_name: str):
-    """Decorator that resolves credentials and builds a fresh service per-call."""
+    """Decorator that resolves credentials and builds a fresh service per-call.
+
+    Methods using this decorator MUST have `agent` and `run_context` as their first
+    two parameters after `self`, following the DaytonaTools/MemoryTools pattern:
+
+        @google_authenticate("gmail")
+        def get_latest_emails(self, agent: Agent, run_context: RunContext, count: int) -> str:
+
+    The framework injects these params automatically (function.py:898-905) and they are
+    excluded from the LLM tool schema (function.py:441-451).
+
+    - agent: provides agent.db for token storage/lookup
+    - run_context: provides user_id for per-user credential isolation
+    """
+    from agno.run.base import RunContext
 
     def decorator(func):
-        sig = inspect.signature(func)
-        params = list(sig.parameters.values())
-        for name in ("run_context", "agent"):
-            if name not in sig.parameters:
-                params.append(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=None))
-        exposed_sig = sig.replace(parameters=params)
-
         @wraps(func)
-        def wrapper(self, *args, run_context=None, agent=None, **kwargs):
+        def wrapper(self, agent: Optional[Any] = None, run_context: Optional[RunContext] = None, *args, **kwargs):
             try:
-                creds = self._resolve_creds(run_context, agent)
+                creds = self._resolve_creds(run_context, agent=agent)
             except Exception as e:
                 log_error(f"{service_name.title()} authentication failed: {str(e)}")
                 return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
@@ -73,11 +73,10 @@ def google_authenticate(service_name: str):
             ctx = GoogleCallContext(service=service, creds=creds, user_id=user_id)
             token = _google_context.set(ctx)
             try:
-                return func(self, *args, **kwargs)
+                return func(self, agent, run_context, *args, **kwargs)
             finally:
                 _google_context.reset(token)
 
-        wrapper.__signature__ = exposed_sig  # type: ignore[attr-defined]
         return wrapper
 
     return decorator

@@ -47,6 +47,8 @@ A token.json file will be created to store the authentication credentials for fu
 import json
 from typing import Any, Dict, List, Optional, Union
 
+from agno.agent.agent import Agent
+from agno.run.base import RunContext
 from agno.tools.google.auth import get_current_creds, google_authenticate
 from agno.tools.google.base import GoogleToolkit
 
@@ -174,7 +176,13 @@ class GoogleSheetsTools(GoogleToolkit):
         )
 
     @authenticate
-    def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:
+    def read_sheet(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: Optional[str] = None,
+        spreadsheet_range: Optional[str] = None,
+    ) -> str:
         """
         Read values from a Google Sheet. Prioritizes instance attributes over method parameters.
 
@@ -203,7 +211,7 @@ class GoogleSheetsTools(GoogleToolkit):
             return f"Error reading Google Sheet: {e}"
 
     @authenticate
-    def create_sheet(self, title: str) -> str:
+    def create_sheet(self, agent: Agent, run_context: RunContext, title: str) -> str:
         """
         Create a Google Sheet with a given title.
 
@@ -229,7 +237,12 @@ class GoogleSheetsTools(GoogleToolkit):
 
     @authenticate
     def update_sheet(
-        self, data: List[List[Any]], spreadsheet_id: Optional[str] = None, range_name: Optional[str] = None
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        data: List[List[Any]],
+        spreadsheet_id: Optional[str] = None,
+        range_name: Optional[str] = None,
     ) -> str:
         """Updates a Google Sheet with the provided data.
 
@@ -264,7 +277,12 @@ class GoogleSheetsTools(GoogleToolkit):
 
     @authenticate
     def create_duplicate_sheet(
-        self, source_id: str, new_title: Optional[str] = None, copy_permissions: bool = True
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        source_id: str,
+        new_title: Optional[str] = None,
+        copy_permissions: bool = True,
     ) -> str:
         """Duplicate a Google Spreadsheet using the Google Drive API's copy feature.
         This ensures an exact duplicate including formatting and data.

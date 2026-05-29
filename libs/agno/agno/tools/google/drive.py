@@ -42,6 +42,8 @@ import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
+from agno.agent.agent import Agent
+from agno.run.base import RunContext
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error
@@ -396,7 +398,14 @@ class GoogleDriveTools(GoogleToolkit):
     # TODO(deprecate): Duplicates search_files logic. Separate impl required so @authenticate
     # receives run_context directly. Consolidate into search_files once decorator supports passthrough.
     @authenticate
-    def list_files(self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None) -> str:
+    def list_files(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        query: Optional[str] = None,
+        page_size: int = 10,
+        page_token: Optional[str] = None,
+    ) -> str:
         """
         List recent files and folders from Google Drive.
 
@@ -444,7 +453,12 @@ class GoogleDriveTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def alist_files(
-        self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        query: Optional[str] = None,
+        page_size: int = 10,
+        page_token: Optional[str] = None,
     ) -> str:
         """
         List recent files and folders from Google Drive (async).
@@ -457,10 +471,19 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing file metadata or error message
         """
-        return await asyncio.to_thread(self.list_files, query=query, page_size=page_size, page_token=page_token)
+        return await asyncio.to_thread(
+            self.list_files, agent, run_context, query=query, page_size=page_size, page_token=page_token
+        )
 
     @authenticate
-    def search_files(self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None) -> str:
+    def search_files(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        query: Optional[str] = None,
+        max_results: int = 10,
+        page_token: Optional[str] = None,
+    ) -> str:
         """
         Search Google Drive using a query expression.
         Searches in file name, type, folder, owner, and modification date.
@@ -521,7 +544,12 @@ class GoogleDriveTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def asearch_files(
-        self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        query: Optional[str] = None,
+        max_results: int = 10,
+        page_token: Optional[str] = None,
     ) -> str:
         """
         Search Google Drive using a query expression (async).
@@ -534,10 +562,12 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing matching files and metadata or error message
         """
-        return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
+        return await asyncio.to_thread(
+            self.search_files, agent, run_context, query=query, max_results=max_results, page_token=page_token
+        )
 
     @authenticate
-    def read_file(self, file_id: str) -> str:
+    def read_file(self, agent: Agent, run_context: RunContext, file_id: str) -> str:
         """
         Read a Drive file and return its text content.
 
@@ -651,7 +681,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not read Google Drive file {file_id}: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aread_file(self, file_id: str) -> str:
+    async def aread_file(self, agent: Agent, run_context: RunContext, file_id: str) -> str:
         """
         Read a Drive file and return its text content (async).
 
@@ -661,10 +691,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing file metadata and text content or error message
         """
-        return await asyncio.to_thread(self.read_file, file_id)
+        return await asyncio.to_thread(self.read_file, agent, run_context, file_id)
 
     @authenticate
-    def upload_file(self, file_path: Union[str, Path]) -> str:
+    def upload_file(self, agent: Agent, run_context: RunContext, file_path: Union[str, Path]) -> str:
         """
         Upload a local file to Google Drive.
 
@@ -700,7 +730,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not upload file '{path}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aupload_file(self, file_path: Union[str, Path]) -> str:
+    async def aupload_file(self, agent: Agent, run_context: RunContext, file_path: Union[str, Path]) -> str:
         """
         Upload a local file to Google Drive (async).
 
@@ -710,10 +740,12 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string with uploaded file metadata (id, name, webViewLink)
         """
-        return await asyncio.to_thread(self.upload_file, file_path)
+        return await asyncio.to_thread(self.upload_file, agent, run_context, file_path)
 
     @authenticate
-    def download_file(self, file_id: str, export_format: Optional[str] = None) -> str:
+    def download_file(
+        self, agent: Agent, run_context: RunContext, file_id: str, export_format: Optional[str] = None
+    ) -> str:
         """
         Download a Drive file and save it locally.
 
@@ -775,7 +807,9 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not download file '{file_id}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def adownload_file(self, file_id: str, export_format: Optional[str] = None) -> str:
+    async def adownload_file(
+        self, agent: Agent, run_context: RunContext, file_id: str, export_format: Optional[str] = None
+    ) -> str:
         """
         Download a Drive file and save it locally (async).
 
@@ -786,4 +820,4 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing saved file path and status or error message
         """
-        return await asyncio.to_thread(self.download_file, file_id, export_format=export_format)
+        return await asyncio.to_thread(self.download_file, agent, run_context, file_id, export_format=export_format)

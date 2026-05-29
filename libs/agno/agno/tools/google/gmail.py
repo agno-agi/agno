@@ -71,6 +71,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
+from agno.agent.agent import Agent
+from agno.run.base import RunContext
 from agno.tools.google.auth import get_cache_key, google_authenticate
 from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error
@@ -396,7 +398,7 @@ class GmailTools(GoogleToolkit):
         return "\n\n".join(formatted_emails)
 
     @authenticate
-    def get_latest_emails(self, count: int) -> str:
+    def get_latest_emails(self, agent: Agent, run_context: RunContext, count: int) -> str:
         """
         Get the latest X emails from the user's inbox.
 
@@ -416,7 +418,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error retrieving latest emails: {type(error).__name__}: {error}"
 
     @authenticate
-    def get_emails_from_user(self, user: str, count: int) -> str:
+    def get_emails_from_user(self, agent: Agent, run_context: RunContext, user: str, count: int) -> str:
         """
         Get X number of emails from a specific user (name or email).
 
@@ -438,7 +440,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error retrieving emails from {user}: {type(error).__name__}: {error}"
 
     @authenticate
-    def get_unread_emails(self, count: int) -> str:
+    def get_unread_emails(self, agent: Agent, run_context: RunContext, count: int) -> str:
         """
         Get the X number of latest unread emails from the user's inbox.
 
@@ -458,7 +460,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error retrieving unread emails: {type(error).__name__}: {error}"
 
     @authenticate
-    def get_emails_by_thread(self, thread_id: str) -> str:
+    def get_emails_by_thread(self, agent: Agent, run_context: RunContext, thread_id: str) -> str:
         """
         Retrieve all emails from a specific thread.
 
@@ -479,7 +481,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error retrieving emails from thread {thread_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def get_starred_emails(self, count: int) -> str:
+    def get_starred_emails(self, agent: Agent, run_context: RunContext, count: int) -> str:
         """
         Get X number of starred emails from the user's inbox.
 
@@ -499,7 +501,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error retrieving starred emails: {type(error).__name__}: {error}"
 
     @authenticate
-    def get_emails_by_context(self, context: str, count: int) -> str:
+    def get_emails_by_context(self, agent: Agent, run_context: RunContext, context: str, count: int) -> str:
         """
         Get X number of emails matching a specific context or search term.
 
@@ -521,7 +523,12 @@ class GmailTools(GoogleToolkit):
 
     @authenticate
     def get_emails_by_date(
-        self, start_date: str, range_in_days: Optional[int] = None, num_emails: Optional[int] = 10
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        start_date: str,
+        range_in_days: Optional[int] = None,
+        num_emails: Optional[int] = 10,
     ) -> str:
         """Get emails from a date or date range.
 
@@ -552,6 +559,8 @@ class GmailTools(GoogleToolkit):
     @authenticate
     def create_draft_email(
         self,
+        agent: Agent,
+        run_context: RunContext,
         to: str,
         subject: str,
         body: str,
@@ -617,6 +626,8 @@ class GmailTools(GoogleToolkit):
     @authenticate
     def send_email(
         self,
+        agent: Agent,
+        run_context: RunContext,
         to: str,
         subject: str,
         body: str,
@@ -681,6 +692,8 @@ class GmailTools(GoogleToolkit):
     @authenticate
     def send_email_reply(
         self,
+        agent: Agent,
+        run_context: RunContext,
         thread_id: str,
         message_id: str,
         to: str,
@@ -739,7 +752,7 @@ class GmailTools(GoogleToolkit):
             return f"Error sending reply: {type(error).__name__}: {error}"
 
     @authenticate
-    def search_emails(self, query: str, count: int) -> str:
+    def search_emails(self, agent: Agent, run_context: RunContext, query: str, count: int) -> str:
         """
         Get X number of emails based on a given natural text query.
         Searches in to, from, cc, subject and email body contents.
@@ -761,7 +774,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error retrieving emails with query '{query}': {type(error).__name__}: {error}"
 
     @authenticate
-    def mark_email_as_read(self, message_id: str) -> str:
+    def mark_email_as_read(self, agent: Agent, run_context: RunContext, message_id: str) -> str:
         """
         Mark a specific email as read by removing the 'UNREAD' label.
         This is crucial for long polling scenarios to prevent processing the same email multiple times.
@@ -786,7 +799,7 @@ class GmailTools(GoogleToolkit):
             return f"Error marking email {message_id} as read: {type(error).__name__}: {error}"
 
     @authenticate
-    def mark_email_as_unread(self, message_id: str) -> str:
+    def mark_email_as_unread(self, agent: Agent, run_context: RunContext, message_id: str) -> str:
         """
         Mark a specific email as unread by adding the 'UNREAD' label.
         This is useful for flagging emails that need attention or re-processing.
@@ -811,7 +824,7 @@ class GmailTools(GoogleToolkit):
             return f"Error marking email {message_id} as unread: {type(error).__name__}: {error}"
 
     @authenticate
-    def star_email(self, message_id: str) -> str:
+    def star_email(self, agent: Agent, run_context: RunContext, message_id: str) -> str:
         """Add a star to an email message.
 
         Args:
@@ -830,7 +843,7 @@ class GmailTools(GoogleToolkit):
             return f"Error starring email {message_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def unstar_email(self, message_id: str) -> str:
+    def unstar_email(self, agent: Agent, run_context: RunContext, message_id: str) -> str:
         """Remove the star from an email message.
 
         Args:
@@ -849,7 +862,7 @@ class GmailTools(GoogleToolkit):
             return f"Error unstarring email {message_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def archive_email(self, message_id: str) -> str:
+    def archive_email(self, agent: Agent, run_context: RunContext, message_id: str) -> str:
         """Archive an email by removing it from the inbox. The email is NOT deleted and can still be found via search.
 
         Args:
@@ -868,7 +881,7 @@ class GmailTools(GoogleToolkit):
             return f"Error archiving email {message_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def list_custom_labels(self) -> str:
+    def list_custom_labels(self, agent: Agent, run_context: RunContext) -> str:
         """
         List only user-created custom labels (filters out system labels) in a numbered format.
 
@@ -895,7 +908,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error: {type(e).__name__}: {e}"
 
     @authenticate
-    def apply_label(self, context: str, label_name: str, count: int = 10) -> str:
+    def apply_label(self, agent: Agent, run_context: RunContext, context: str, label_name: str, count: int = 10) -> str:
         """
         Find emails matching a context (search query) and apply a label, creating it if necessary.
 
@@ -945,7 +958,9 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error: {type(e).__name__}: {e}"
 
     @authenticate
-    def remove_label(self, context: str, label_name: str, count: int = 10) -> str:
+    def remove_label(
+        self, agent: Agent, run_context: RunContext, context: str, label_name: str, count: int = 10
+    ) -> str:
         """
         Remove a label from emails matching a context (search query).
 
@@ -991,7 +1006,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error: {type(e).__name__}: {e}"
 
     @authenticate
-    def delete_custom_label(self, label_name: str, confirm: bool = False) -> str:
+    def delete_custom_label(self, agent: Agent, run_context: RunContext, label_name: str, confirm: bool = False) -> str:
         """
         Delete a custom label (with safety confirmation).
 
@@ -1351,7 +1366,9 @@ class GmailTools(GoogleToolkit):
     # -- New tools ----------------------------------------------------------------
 
     @authenticate
-    def get_message(self, message_id: str, download_attachments: bool = False) -> str:
+    def get_message(
+        self, agent: Agent, run_context: RunContext, message_id: str, download_attachments: bool = False
+    ) -> str:
         """Get a single email message by its ID with full content including headers, body, and attachment metadata.
 
         Args:
@@ -1380,7 +1397,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def get_thread(self, thread_id: str) -> str:
+    def get_thread(self, agent: Agent, run_context: RunContext, thread_id: str) -> str:
         """Get all messages in a Gmail thread as structured JSON.
 
         Args:
@@ -1408,7 +1425,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def search_threads(self, query: str, count: int = 10) -> str:
+    def search_threads(self, agent: Agent, run_context: RunContext, query: str, count: int = 10) -> str:
         """Search Gmail threads using Gmail query syntax. Returns thread IDs and snippets, not full message content.
 
         Args:
@@ -1439,6 +1456,8 @@ class GmailTools(GoogleToolkit):
     @authenticate
     def modify_thread_labels(
         self,
+        agent: Agent,
+        run_context: RunContext,
         thread_id: str,
         add_labels: Optional[str] = None,
         remove_labels: Optional[str] = None,
@@ -1476,7 +1495,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def trash_thread(self, thread_id: str) -> str:
+    def trash_thread(self, agent: Agent, run_context: RunContext, thread_id: str) -> str:
         """Move an entire thread to the trash. All messages in the conversation will be trashed.
 
         Args:
@@ -1497,7 +1516,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def get_draft(self, draft_id: str) -> str:
+    def get_draft(self, agent: Agent, run_context: RunContext, draft_id: str) -> str:
         """Get a draft email by its ID with full message content.
 
         Args:
@@ -1524,7 +1543,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def list_drafts(self, count: int = 10) -> str:
+    def list_drafts(self, agent: Agent, run_context: RunContext, count: int = 10) -> str:
         """List draft emails in the mailbox.
 
         Args:
@@ -1547,7 +1566,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def send_draft(self, draft_id: str) -> str:
+    def send_draft(self, agent: Agent, run_context: RunContext, draft_id: str) -> str:
         """Send an existing draft email.
 
         Args:
@@ -1576,6 +1595,8 @@ class GmailTools(GoogleToolkit):
     @authenticate
     def update_draft(
         self,
+        agent: Agent,
+        run_context: RunContext,
         draft_id: str,
         to: str,
         subject: str,
@@ -1641,7 +1662,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
     @authenticate
-    def list_labels(self) -> str:
+    def list_labels(self, agent: Agent, run_context: RunContext) -> str:
         """List all Gmail labels (system and custom) with message and thread counts.
 
         Returns:
@@ -1680,6 +1701,8 @@ class GmailTools(GoogleToolkit):
     @authenticate
     def modify_message_labels(
         self,
+        agent: Agent,
+        run_context: RunContext,
         message_id: str,
         add_labels: Optional[str] = None,
         remove_labels: Optional[str] = None,
@@ -1718,7 +1741,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def trash_message(self, message_id: str, undo: bool = False) -> str:
+    def trash_message(self, agent: Agent, run_context: RunContext, message_id: str, undo: bool = False) -> str:
         """Move a message to trash, or restore it from trash with undo=True.
 
         Args:
@@ -1745,7 +1768,9 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def download_attachment(self, message_id: str, attachment_id: str, filename: str) -> str:
+    def download_attachment(
+        self, agent: Agent, run_context: RunContext, message_id: str, attachment_id: str, filename: str
+    ) -> str:
         """Download an email attachment to disk. Use get_message first to find attachment IDs.
 
         Args:

@@ -45,6 +45,9 @@ import uuid
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
+from agno.agent.agent import Agent
+from agno.run.base import RunContext
+
 try:
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
@@ -55,7 +58,7 @@ except ImportError:
         "Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
 
-from agno.tools.google.auth import get_current_service, google_authenticate
+from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
@@ -188,13 +191,13 @@ class GoogleSlidesTools(GoogleToolkit):
     @property
     def slides_service(self):
         """Per-call Slides API service."""
-        svc = get_current_service()
+        svc = self.service
         return svc["slides"] if svc else None
 
     @property
     def drive_service(self):
         """Per-call Drive API service."""
-        svc = get_current_service()
+        svc = self.service
         return svc["drive"] if svc else None
 
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:
@@ -285,7 +288,7 @@ class GoogleSlidesTools(GoogleToolkit):
         return obj_id
 
     @authenticate
-    def create_presentation(self, title: str) -> str:
+    def create_presentation(self, agent: Agent, run_context: RunContext, title: str) -> str:
         """
         Creates a blank Google Slides presentation.
 
@@ -311,7 +314,9 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def get_presentation(self, presentation_id: str, fields: Optional[str] = None) -> str:
+    def get_presentation(
+        self, agent: Agent, run_context: RunContext, presentation_id: str, fields: Optional[str] = None
+    ) -> str:
         """
         Fetches a presentation's full metadata and content by ID.
 
@@ -332,7 +337,9 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def list_presentations(self, page_size: int = 20, page_token: Optional[str] = None) -> str:
+    def list_presentations(
+        self, agent: Agent, run_context: RunContext, page_size: int = 20, page_token: Optional[str] = None
+    ) -> str:
         """
         Lists all Google Slides presentations accessible to the authenticated account.
 
@@ -363,7 +370,7 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def delete_presentation(self, presentation_id: str) -> str:
+    def delete_presentation(self, agent: Agent, run_context: RunContext, presentation_id: str) -> str:
         """
         Permanently deletes a presentation via the Google Drive API.
 
@@ -385,6 +392,8 @@ class GoogleSlidesTools(GoogleToolkit):
     @authenticate
     def add_slide(
         self,
+        agent: Agent,
+        run_context: RunContext,
         presentation_id: str,
         layout: str = "TITLE_AND_BODY",
         title: Optional[str] = None,
@@ -513,7 +522,7 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def delete_slide(self, presentation_id: str, slide_id: str) -> str:
+    def delete_slide(self, agent: Agent, run_context: RunContext, presentation_id: str, slide_id: str) -> str:
         """
         Removes a slide from the presentation.
 
@@ -536,7 +545,7 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def duplicate_slide(self, presentation_id: str, slide_id: str) -> str:
+    def duplicate_slide(self, agent: Agent, run_context: RunContext, presentation_id: str, slide_id: str) -> str:
         """
         Duplicates a slide, inserting the copy after the original.
 
@@ -561,6 +570,8 @@ class GoogleSlidesTools(GoogleToolkit):
     @authenticate
     def move_slides(
         self,
+        agent: Agent,
+        run_context: RunContext,
         presentation_id: str,
         slide_ids: List[str],
         insertion_index: int,
@@ -603,6 +614,8 @@ class GoogleSlidesTools(GoogleToolkit):
     @authenticate
     def add_text_box(
         self,
+        agent: Agent,
+        run_context: RunContext,
         presentation_id: str,
         slide_id: str,
         text: str,
@@ -672,6 +685,8 @@ class GoogleSlidesTools(GoogleToolkit):
     @authenticate
     def add_table(
         self,
+        agent: Agent,
+        run_context: RunContext,
         presentation_id: str,
         slide_id: str,
         rows: int,
@@ -736,6 +751,8 @@ class GoogleSlidesTools(GoogleToolkit):
     @authenticate
     def set_background_image(
         self,
+        agent: Agent,
+        run_context: RunContext,
         presentation_id: str,
         slide_id: str,
         image_url: str,
@@ -783,7 +800,7 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def read_all_text(self, presentation_id: str) -> str:
+    def read_all_text(self, agent: Agent, run_context: RunContext, presentation_id: str) -> str:
         """
         Extracts all text from every slide in the presentation.
 
@@ -818,7 +835,7 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def get_slide_thumbnail(self, presentation_id: str, slide_id: str) -> str:
+    def get_slide_thumbnail(self, agent: Agent, run_context: RunContext, presentation_id: str, slide_id: str) -> str:
         """
         Returns the thumbnail image URL for a specific slide.
 
@@ -849,7 +866,7 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def get_presentation_metadata(self, presentation_id: str) -> str:
+    def get_presentation_metadata(self, agent: Agent, run_context: RunContext, presentation_id: str) -> str:
         """
         Fetches lightweight metadata about a presentation.
 
@@ -921,7 +938,7 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def get_page(self, presentation_id: str, page_object_id: str) -> str:
+    def get_page(self, agent: Agent, run_context: RunContext, presentation_id: str, page_object_id: str) -> str:
         """
         Retrieves the full content of a specific slide by its object ID.
 
@@ -949,7 +966,7 @@ class GoogleSlidesTools(GoogleToolkit):
             return json.dumps({"error": str(e)})
 
     @authenticate
-    def get_slide_text(self, presentation_id: str, page_object_id: str) -> str:
+    def get_slide_text(self, agent: Agent, run_context: RunContext, presentation_id: str, page_object_id: str) -> str:
         """
         Extracts the text content from a single slide.
 
@@ -982,6 +999,8 @@ class GoogleSlidesTools(GoogleToolkit):
     @authenticate
     def insert_youtube_video(
         self,
+        agent: Agent,
+        run_context: RunContext,
         presentation_id: str,
         slide_id: str,
         video_id: str,
@@ -1037,6 +1056,8 @@ class GoogleSlidesTools(GoogleToolkit):
     @authenticate
     def insert_drive_video(
         self,
+        agent: Agent,
+        run_context: RunContext,
         presentation_id: str,
         slide_id: str,
         file_id: str,
