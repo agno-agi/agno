@@ -169,6 +169,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return MoonShot(id=model_id)
 
+    elif model_provider == "xiaomi":
+        from agno.models.xiaomi import MiMo
+
+        return MiMo(id=model_id)
+
     elif model_provider == "n1n":
         from agno.models.n1n import N1N
 
