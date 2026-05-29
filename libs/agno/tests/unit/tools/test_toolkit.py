@@ -1,13 +1,16 @@
 """Unit tests for Toolkit class."""
 
+import inspect
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 
+from agno.knowledge.reader.pdf_reader import _clean_page_numbers
 from agno.tools import Toolkit, tool
 from agno.tools.function import Function
+from agno.tools.searxng import Searxng
 
 
 def example_func(a: int, b: int) -> int:
@@ -868,12 +871,6 @@ def test_check_path_restrict_false_returns_false_on_nul_byte(basic_toolkit):
 # a signature check (parameter default is `None`), so a future revert in
 # either dimension trips CI immediately.
 # ---------------------------------------------------------------------------
-
-import inspect
-
-from agno.knowledge.reader.pdf_reader import _clean_page_numbers
-from agno.tools.searxng import Searxng
-from agno.tools.toolkit import Toolkit
 
 
 def test_toolkit_default_tools_is_not_shared_between_instances():
