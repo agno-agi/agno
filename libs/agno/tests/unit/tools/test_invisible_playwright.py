@@ -1,7 +1,7 @@
 """Unit tests for InvisiblePlaywrightTools."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,31 +20,36 @@ def mock_invisible():
 
 
 def test_initialization_default():
-    """Default init enables only scrape_url."""
+    """Default init enables scrape_url in both sync + async dicts.
+
+    Sync + async tools share the same name (agno Toolkit convention: the
+    LLM sees one tool name, runtime picks the sync or async impl).
+    """
     tools = InvisiblePlaywrightTools()
     assert tools.name == "invisible_playwright_tools"
-    fn_names = [f.name for f in tools.functions.values()]
-    assert "scrape_url" in fn_names
-    assert "crawl_site" not in fn_names
-    assert "search_web" not in fn_names
+    assert "scrape_url" in tools.functions
+    assert "scrape_url" in tools.async_functions
+    assert "crawl_site" not in tools.functions
+    assert "search_web" not in tools.functions
 
 
 def test_initialization_all_flag():
-    """all=True enables every tool."""
+    """all=True enables every tool in both sync + async dicts."""
     tools = InvisiblePlaywrightTools(all=True)
-    fn_names = [f.name for f in tools.functions.values()]
-    assert "scrape_url" in fn_names
-    assert "crawl_site" in fn_names
-    assert "search_web" in fn_names
+    for n in ("scrape_url", "crawl_site", "search_web"):
+        assert n in tools.functions, f"missing sync {n}"
+        assert n in tools.async_functions, f"missing async {n}"
 
 
 def test_initialization_individual_flags():
-    """Each enable_* flag registers its method."""
+    """Each enable_* flag registers its sync + async pair."""
     tools = InvisiblePlaywrightTools(enable_scrape=False, enable_crawl=True, enable_search=True)
-    fn_names = [f.name for f in tools.functions.values()]
-    assert "scrape_url" not in fn_names
-    assert "crawl_site" in fn_names
-    assert "search_web" in fn_names
+    assert "scrape_url" not in tools.functions
+    assert "scrape_url" not in tools.async_functions
+    assert "crawl_site" in tools.functions
+    assert "crawl_site" in tools.async_functions
+    assert "search_web" in tools.functions
+    assert "search_web" in tools.async_functions
 
 
 def test_initialization_custom_options():
@@ -283,4 +288,119 @@ def test_launch_forwards_options(mock_invisible):
         proxy={"server": "p:1"},
         locale="fr-FR",
         timezone="Europe/Paris",
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+#  Async surface tests (mirror sync tests, use AsyncMock + asyncio).
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def mock_async_invisible():
+    """Mock the AsyncInvisiblePlaywright context manager."""
+    with patch("agno.tools.invisible_playwright.AsyncInvisiblePlaywright") as mock_cls:
+        mock_browser = MagicMock()
+        mock_page = MagicMock()
+        # Async methods on the page
+        mock_page.goto = AsyncMock()
+        mock_page.content = AsyncMock(return_value="<html>async-hello</html>")
+        mock_page.wait_for_selector = AsyncMock()
+        mock_page.query_selector_all = AsyncMock(return_value=[])
+        mock_browser.new_page = AsyncMock(return_value=mock_page)
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_browser)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+        yield {"cls": mock_cls, "browser": mock_browser, "page": mock_page}
+
+
+@pytest.mark.asyncio
+async def test_ascrape_url_empty():
+    tools = InvisiblePlaywrightTools()
+    assert await tools.ascrape_url("") == "Error: No URL provided"
+
+
+@pytest.mark.asyncio
+async def test_ascrape_url_success(mock_async_invisible):
+    tools = InvisiblePlaywrightTools()
+    result = await tools.ascrape_url("https://example.com")
+    assert result == "<html>async-hello</html>"
+    mock_async_invisible["page"].goto.assert_awaited_once_with("https://example.com")
+
+
+@pytest.mark.asyncio
+async def test_ascrape_url_with_wait_selector(mock_async_invisible):
+    tools = InvisiblePlaywrightTools()
+    await tools.ascrape_url("https://example.com", wait_for_selector=".content")
+    mock_async_invisible["page"].wait_for_selector.assert_awaited_once_with(".content")
+
+
+@pytest.mark.asyncio
+async def test_ascrape_url_truncation(mock_async_invisible):
+    mock_async_invisible["page"].content = AsyncMock(return_value="x" * 200)
+    tools = InvisiblePlaywrightTools(max_length=50)
+    result = await tools.ascrape_url("https://example.com")
+    assert result.endswith("...")
+    assert len(result) == 53
+
+
+@pytest.mark.asyncio
+async def test_ascrape_url_error(mock_async_invisible):
+    mock_async_invisible["page"].goto = AsyncMock(side_effect=RuntimeError("net err"))
+    tools = InvisiblePlaywrightTools()
+    result = await tools.ascrape_url("https://example.com")
+    assert result.startswith("Error fetching https://example.com:")
+
+
+@pytest.mark.asyncio
+async def test_acrawl_site_empty():
+    tools = InvisiblePlaywrightTools(enable_crawl=True)
+    assert await tools.acrawl_site("") == "Error: No URL provided"
+
+
+@pytest.mark.asyncio
+async def test_acrawl_site_single_page(mock_async_invisible):
+    """One page, no anchors -> one entry in results JSON."""
+    mock_async_invisible["page"].content = AsyncMock(return_value="<html>solo</html>")
+    mock_async_invisible["page"].query_selector_all = AsyncMock(return_value=[])
+    tools = InvisiblePlaywrightTools(enable_crawl=True, max_pages=5)
+    raw = await tools.acrawl_site("https://example.com")
+    data = json.loads(raw)
+    assert data == {"https://example.com": "<html>solo</html>"}
+
+
+@pytest.mark.asyncio
+async def test_asearch_web_empty():
+    tools = InvisiblePlaywrightTools(enable_search=True)
+    assert await tools.asearch_web("") == "Error: No query provided"
+
+
+@pytest.mark.asyncio
+async def test_asearch_web_unsupported_engine(mock_async_invisible):
+    tools = InvisiblePlaywrightTools(enable_search=True, search_engine="google")
+    result = await tools.asearch_web("python")
+    assert "unsupported search engine 'google'" in result
+
+
+@pytest.mark.asyncio
+async def test_asearch_web_error(mock_async_invisible):
+    mock_async_invisible["page"].goto = AsyncMock(side_effect=RuntimeError("timeout"))
+    tools = InvisiblePlaywrightTools(enable_search=True)
+    result = await tools.asearch_web("python")
+    assert result.startswith("Error searching for 'python':")
+
+
+def test_alaunch_forwards_options(mock_async_invisible):
+    """_alaunch builds AsyncInvisiblePlaywright with stored options."""
+    import asyncio
+
+    tools = InvisiblePlaywrightTools(
+        seed=11, headless=False, proxy={"server": "p:2"}, locale="de-DE", timezone="Europe/Berlin"
+    )
+    asyncio.run(tools.ascrape_url("https://example.com"))
+    mock_async_invisible["cls"].assert_called_once_with(
+        seed=11,
+        headless=False,
+        proxy={"server": "p:2"},
+        locale="de-DE",
+        timezone="Europe/Berlin",
     )
