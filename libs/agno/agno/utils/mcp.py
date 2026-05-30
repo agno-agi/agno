@@ -90,7 +90,7 @@ def get_entrypoint_for_tool(
             if result.isError:
                 return ToolResult(
                     content=f"Error from MCP tool '{tool_name}': {result.content}",
-                    meta=result.meta,
+                    metadata=result.meta,
                 )
 
             # Process the result content
@@ -170,7 +170,7 @@ def get_entrypoint_for_tool(
 
             return ToolResult(
                 content=response_str.strip(),
-                meta=result.meta,
+                metadata=result.meta,
                 images=images if images else None,
             )
         except Exception as e:

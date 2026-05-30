@@ -953,7 +953,7 @@ async def test_mcp_tool_result_preserves_meta():
     result = await entrypoint()
 
     assert result.content == "hello"
-    assert result.meta == {"trace_id": "abc-123"}
+    assert result.metadata == {"trace_id": "abc-123"}
 
 
 @pytest.mark.asyncio
@@ -975,14 +975,14 @@ async def test_mcp_tool_error_result_preserves_meta():
     result = await entrypoint()
 
     assert "Error from MCP tool 'get_data'" in result.content
-    assert result.meta == {"trace_id": "err-456"}
+    assert result.metadata == {"trace_id": "err-456"}
 
 
-def test_tool_result_model_dump_roundtrip_preserves_meta():
-    tool_result = ToolResult(content="hello", meta={"trace_id": "abc-123"})
+def test_tool_result_model_dump_roundtrip_preserves_metadata():
+    tool_result = ToolResult(content="hello", metadata={"trace_id": "abc-123"})
     payload = tool_result.model_dump()
     restored = ToolResult.model_validate(payload)
-    assert restored.meta == {"trace_id": "abc-123"}
+    assert restored.metadata == {"trace_id": "abc-123"}
 # =============================================================================
 # Tool-argument-name collision tests
 # =============================================================================
