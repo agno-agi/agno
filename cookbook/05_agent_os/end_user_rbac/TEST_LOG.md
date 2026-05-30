@@ -66,3 +66,50 @@ attempting to mint a token carrying `tokens:issue`).
 **Result:** _pending_
 
 ---
+
+### 05_governance_crud.py
+
+**Status:** NOT YET RUN
+
+**Description:** Boots `governance=True` AgentOS, creates two templates, two
+end-users, lists/updates/deletes them, prints audit log entries.
+
+**Result:** _pending_
+
+---
+
+### 06_governed_issuance_and_revocation.py
+
+**Status:** NOT YET RUN
+
+**Description:** Registers alice on free-tier, mints a token via
+`POST /end-users/alice/tokens`, hits `/agents` (200), revokes via
+`DELETE /tokens/{jti}`, sleeps past cache TTL, hits `/agents` again (401).
+
+**Result:** _pending_
+
+---
+
+### 07_tier_upgrade.py
+
+**Status:** NOT YET RUN
+
+**Description:** Free-tier alice gets a token, upgrades to pro via PATCH, a
+new token is minted with pro scopes; old token revoked. Audit log shows the
+tier change.
+
+**Result:** _pending_
+
+---
+
+### 08_nia_onboarding_e2e.py
+
+**Status:** NOT YET RUN
+
+**Description:** Full Nia journey: bootstrap → templates → onboard three
+customers → each chats → tier upgrade → audit log review → per-user data
+isolation confirmation.
+
+**Result:** _pending_
+
+---

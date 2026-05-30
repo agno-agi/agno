@@ -44,6 +44,7 @@ from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
+from agno.os.routers.governance import get_governance_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
@@ -222,6 +223,7 @@ class AgentOS:
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
+        governance: bool = False,
     ):
         """Initialize AgentOS.
 
@@ -255,6 +257,12 @@ class AgentOS:
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
             internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
+            governance: Whether to enable Track B governance (persisted end-users, scope
+                templates, audit log, token revocation). Requires a SQLAlchemy-backed
+                ``db`` (Postgres or SQLite). When True, AgentOS auto-creates governance
+                tables and exposes the ``/scope-templates``, ``/end-users``,
+                ``/audit-log``, and ``DELETE /tokens/{jti}`` endpoints, and wires
+                revocation checks into ``JWTMiddleware``.
 
         """
         if not agents and not workflows and not teams and not knowledge and not db:
@@ -303,6 +311,10 @@ class AgentOS:
         # RBAC
         self.authorization = authorization
         self.authorization_config = authorization_config
+
+        # Track B governance — persisted end-users + scope templates + audit + revocation
+        self.governance: bool = governance
+        self._governance_store: Optional[Any] = None  # lazily constructed in _get_governance_store
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -462,6 +474,11 @@ class AgentOS:
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
         self._add_router(app, get_tokens_router(self, settings=self.settings))
+
+        # Track B governance — registered only when enabled and the DB supports it
+        gov_store = self._get_governance_store()
+        if gov_store is not None:
+            self._add_router(app, get_governance_router(self, store=gov_store, settings=self.settings))
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -882,6 +899,29 @@ class AgentOS:
 
         return fastapi_app
 
+    def _get_governance_store(self) -> Optional[Any]:
+        """Return the GovernanceStore for Track B, lazily constructing it.
+
+        Returns None when governance is disabled or when the configured ``db``
+        does not expose a SQLAlchemy engine (the few non-SQL backends).
+        """
+        if not self.governance:
+            return None
+        if self._governance_store is not None:
+            return self._governance_store
+        engine = getattr(self.db, "db_engine", None)
+        if engine is None:
+            log_warning(
+                "AgentOS(governance=True) requires a SQLAlchemy-backed db (Postgres or SQLite). "
+                "Governance endpoints will be disabled for this run."
+            )
+            return None
+        from agno.os.governance import GovernanceStore
+
+        schema = getattr(self.db, "db_schema", None)
+        self._governance_store = GovernanceStore(engine=engine, schema=schema)
+        return self._governance_store
+
     def issue_token(
         self,
         subject: str,
@@ -1034,6 +1074,17 @@ class AgentOS:
         # so manual app.add_middleware(JWTMiddleware) defaults stay backwards-compatible.
         if user_isolation:
             middleware_kwargs["user_isolation"] = True
+
+        # Track B: wire revocation if governance is enabled and the store is ready.
+        gov_store = self._get_governance_store()
+        if gov_store is not None:
+
+            def _revocation_check(jti: str) -> bool:
+                token = gov_store.get_token(jti)
+                return token is not None and token.revoked_at is not None
+
+            middleware_kwargs["revocation_check"] = _revocation_check
+
         fastapi_app.add_middleware(JWTMiddleware, **middleware_kwargs)
 
     def get_routes(self) -> List[Any]:

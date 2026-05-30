@@ -494,6 +494,26 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         # The caller (typically the developer's backend) must hold `tokens:issue`.
         # Never grant `tokens:issue` to end-users themselves.
         "POST /tokens": ["tokens:issue"],
+        # Governance (Track B: persisted end-users + scope templates + audit)
+        # Scope templates — reusable bundles of scopes (e.g. "free-tier")
+        "GET /scope-templates": ["templates:read"],
+        "GET /scope-templates/*": ["templates:read"],
+        "POST /scope-templates": ["templates:write"],
+        "PATCH /scope-templates/*": ["templates:write"],
+        "DELETE /scope-templates/*": ["templates:delete"],
+        # End-users — Nia's customers, each assigned a template
+        "GET /end-users": ["users:read"],
+        "GET /end-users/*": ["users:read"],
+        "POST /end-users": ["users:write"],
+        "PATCH /end-users/*": ["users:write"],
+        "DELETE /end-users/*": ["users:delete"],
+        # Governed token issuance — derives scopes from the user's template
+        "POST /end-users/*/tokens": ["tokens:issue"],
+        "GET /end-users/*/tokens": ["tokens:read"],
+        # Token revocation
+        "DELETE /tokens/*": ["tokens:revoke"],
+        # Audit log — read-only
+        "GET /audit-log": ["audit:read"],
         # Component endpoints (Studio)
         "GET /components": ["components:read"],
         "GET /components/*": ["components:read"],

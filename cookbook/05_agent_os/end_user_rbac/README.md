@@ -121,19 +121,59 @@ The token's audience (`aud`) is pinned to the AgentOS `id` so it cannot be
 replayed against a different OS instance. Every token also includes a `jti`
 (unique JWT ID) for revocation/audit purposes.
 
-## Going to Track B
+## Track B: User Governance & RBAC (the $2k/mo product)
 
-Once Track B ships, the recommended path is:
+Track B layers persisted state on top of the Track A primitives. Enable it by
+passing `governance=True` to `AgentOS(...)`. AgentOS auto-creates four tables
+(`os_scope_templates`, `os_end_users`, `os_api_tokens`, `os_audit_log`) on
+your existing `db` adapter — no extra DB connection.
 
-```python
-# Track A (today)
-token = agent_os.issue_token(subject="alice", scopes=[...])
+### What you get
 
-# Track B (coming)
-agent_os.users.create(id="alice", template="pro-tier")
-token = agent_os.users.issue_token(subject="alice")
-# scopes are derived from the assigned template; revocation/audit are managed
-```
+- **Scope templates** — name a bundle of scopes once (`free-tier`,
+  `pro-tier`), reuse forever.
+- **Persisted end-users** — register each customer once with a template
+  assignment; mint tokens for them on every login without re-stating scopes.
+- **Token revocation** — `DELETE /tokens/{jti}` revokes a token; the next
+  request 401s once the in-process cache TTL (~30s) expires.
+- **Audit log** — every governance event and every minted/revoked token is
+  recorded. `GET /audit-log` answers the SOC2-style "who did what?" question.
+- **Soft delete** — `DELETE /end-users/{id}` flips the user to `deleted` and
+  revokes all of their active tokens. Audit history is preserved forever.
 
-The Track A primitive will continue to work — Track B's helpers will sit on
-top of it.
+### Track B examples
+
+| # | File | What it demonstrates |
+|---|------|----------------------|
+| 5 | [`05_governance_crud.py`](05_governance_crud.py) | Templates and end-user CRUD basics. |
+| 6 | [`06_governed_issuance_and_revocation.py`](06_governed_issuance_and_revocation.py) | Mint a token from a template, use it, revoke it, watch the next request 401. |
+| 7 | [`07_tier_upgrade.py`](07_tier_upgrade.py) | Move alice from `free-tier` to `pro-tier`; new tokens reflect new scopes automatically. |
+| 8 | [`08_nia_onboarding_e2e.py`](08_nia_onboarding_e2e.py) | The full "Nia onboards three customers and watches the audit log" story. |
+
+### Endpoint summary
+
+| Method + path | Required scope | Notes |
+|---------------|----------------|-------|
+| `GET    /scope-templates` | `templates:read` | |
+| `POST   /scope-templates` | `templates:write` | Refuses templates that grant `tokens:issue` |
+| `PATCH  /scope-templates/{id}` | `templates:write` | |
+| `DELETE /scope-templates/{id}` | `templates:delete` | Refuses delete while users reference it |
+| `GET    /end-users` | `users:read` | Filter by `status` / `template_id` |
+| `POST   /end-users` | `users:write` | |
+| `PATCH  /end-users/{id}` | `users:write` | Tier change happens here |
+| `DELETE /end-users/{id}` | `users:delete` | Soft delete + revoke tokens |
+| `POST   /end-users/{id}/tokens` | `tokens:issue` | Mints using user's template scopes |
+| `GET    /end-users/{id}/tokens` | `tokens:read` | |
+| `DELETE /tokens/{jti}` | `tokens:revoke` | |
+| `GET    /audit-log` | `audit:read` | Filter by `external_id` / `action` / `limit` |
+
+### Operator vs Nia: who calls what
+
+- **Operator** (the AgentOS administrator) holds an `agent_os:admin` token.
+  Mints the bootstrap token for Nia, manages Nia's tenancy.
+- **Nia's backend** holds the bootstrap token (long-lived, lives in their env
+  var). Calls every governance endpoint above. Never gives this token to
+  end-users.
+- **End-users** (Nia's customers) hold short-lived tokens minted from their
+  template. They never touch `/scope-templates`, `/end-users`, `/tokens/*` or
+  `/audit-log` — the scopes on their tokens don't allow it.

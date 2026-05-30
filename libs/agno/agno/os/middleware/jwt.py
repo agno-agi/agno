@@ -415,6 +415,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
         user_isolation: bool = False,
+        revocation_check: Optional[Any] = None,
+        revocation_cache_ttl_seconds: float = 30.0,
     ):
         """
         Initialize the JWT middleware.
@@ -531,6 +533,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
         )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
         self.user_isolation = user_isolation
+
+        # Track B revocation: callable that returns True if a jti is revoked.
+        # Cached in-process for ``revocation_cache_ttl_seconds`` to keep the
+        # hot path off the DB. Used by AgentOS when governance is enabled.
+        self.revocation_check = revocation_check
+        self.revocation_cache_ttl_seconds = revocation_cache_ttl_seconds
+        self._revocation_cache: Dict[str, tuple] = {}
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
@@ -787,7 +796,33 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.scopes = scopes
             request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
+            request.state.jti = payload.get("jti")
             request.state.authorization_enabled = self.authorization or False
+
+            # Track B: enforce revocation if a check is registered. Uses a small
+            # in-process TTL cache so the hot path doesn't hit the DB per request.
+            if self.revocation_check is not None and request.state.jti:
+                import time as _time
+
+                jti = request.state.jti
+                cached = self._revocation_cache.get(jti)
+                now_ts = _time.monotonic()
+                if cached and now_ts - cached[1] < self.revocation_cache_ttl_seconds:
+                    is_revoked = cached[0]
+                else:
+                    try:
+                        is_revoked = bool(self.revocation_check(jti))
+                    except Exception as exc:  # never fail-open on errors
+                        log_warning(f"Revocation check failed for jti={jti}: {exc}")
+                        is_revoked = False
+                    self._revocation_cache[jti] = (is_revoked, now_ts)
+                if is_revoked:
+                    return self._create_error_response(
+                        status_code=401,
+                        detail="Token revoked",
+                        origin=origin,
+                        cors_allowed_origins=cors_allowed_origins,
+                    )
             # Expose admin scope so downstream helpers (e.g. get_scoped_user_id)
             # honour custom admin scopes configured via JWTMiddleware(admin_scope=...).
             request.state.admin_scope = self.admin_scope
