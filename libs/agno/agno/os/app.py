@@ -53,6 +53,7 @@ from agno.os.routers.registry import get_registry_router
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
+from agno.os.routers.tokens import get_tokens_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
@@ -460,6 +461,7 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
+        self._add_router(app, get_tokens_router(self, settings=self.settings))
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -879,6 +881,78 @@ class AgentOS:
         fastapi_app.add_middleware(TrailingSlashMiddleware)
 
         return fastapi_app
+
+    def issue_token(
+        self,
+        subject: str,
+        scopes: List[str],
+        ttl_seconds: int = 3600,
+        session_id: Optional[str] = None,
+        extra_claims: Optional[Dict[str, Any]] = None,
+        signing_key: Optional[str] = None,
+        token_id: Optional[str] = None,
+    ) -> str:
+        """Mint a short-lived HS256 JWT scoped to this AgentOS instance.
+
+        Designed for the end-user RBAC case: a developer's backend calls this to
+        hand a scoped token to one of their end-users. The token's ``aud`` is
+        pinned to this AgentOS ID so it cannot be replayed against a different
+        instance, and ``sub`` carries the end-user identifier that
+        ``user_isolation`` uses to scope DB reads/writes.
+
+        Args:
+            subject: The end-user identifier. Stored in the ``sub`` claim and
+                used by ``user_isolation`` to scope data access.
+            scopes: List of Agno scope strings (e.g. ``["agents:run", "sessions:read"]``).
+            ttl_seconds: Token lifetime. Defaults to 1 hour. Keep short — these
+                tokens are handed to end-users.
+            session_id: Optional session ID to bind the token to a single session.
+            extra_claims: Optional extra claims (e.g. ``jti`` for revocation in Track B).
+            signing_key: Override the signing key. If omitted, uses
+                ``AGNO_JWT_SIGNING_KEY`` env, then falls back to the first key
+                in ``authorization_config.verification_keys``.
+            token_id: Optional explicit ``jti`` (JWT ID). If omitted and not in
+                ``extra_claims``, a random UUID is generated so every token is
+                uniquely identifiable for revocation/audit.
+
+        Returns:
+            A signed JWT as a string.
+
+        Raises:
+            ValueError: If no signing key is available.
+        """
+        from datetime import datetime, timedelta, timezone
+        from os import getenv as _getenv
+        from uuid import uuid4 as _uuid4
+
+        import jwt as pyjwt
+
+        key = signing_key or _getenv("AGNO_JWT_SIGNING_KEY")
+        if not key and self.authorization_config and self.authorization_config.verification_keys:
+            algorithm = (self.authorization_config.algorithm or "HS256").upper()
+            if algorithm == "HS256":
+                key = self.authorization_config.verification_keys[0]
+        if not key:
+            raise ValueError(
+                "No signing key configured. Set AGNO_JWT_SIGNING_KEY, pass signing_key=, "
+                "or configure AuthorizationConfig(verification_keys=[...], algorithm='HS256')."
+            )
+
+        now = datetime.now(timezone.utc)
+        payload: Dict[str, Any] = {
+            "sub": subject,
+            "scopes": list(scopes),
+            "aud": self.id,
+            "iat": now,
+            "exp": now + timedelta(seconds=ttl_seconds),
+            "jti": token_id or str(_uuid4()),
+        }
+        if session_id is not None:
+            payload["session_id"] = session_id
+        if extra_claims:
+            payload.update(extra_claims)
+
+        return pyjwt.encode(payload, key, algorithm="HS256")
 
     def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
         from agno.os.middleware.jwt import JWTMiddleware, JWTValidator

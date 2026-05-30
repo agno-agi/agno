@@ -490,6 +490,10 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /knowledge/*/sources/*/files": ["knowledge:read"],
         # Registry (read-only)
         "GET /registry": ["registry:read"],
+        # Token issuance (Track A: end-user RBAC)
+        # The caller (typically the developer's backend) must hold `tokens:issue`.
+        # Never grant `tokens:issue` to end-users themselves.
+        "POST /tokens": ["tokens:issue"],
         # Component endpoints (Studio)
         "GET /components": ["components:read"],
         "GET /components/*": ["components:read"],
