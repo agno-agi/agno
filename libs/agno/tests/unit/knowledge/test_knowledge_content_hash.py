@@ -584,3 +584,107 @@ def test_document_content_hash_fallback_to_content_hash():
     assert hash1 != hash2
     # Same content should produce same hash
     assert hash1 == hash3
+
+
+def test_github_same_path_different_repos_produces_different_hashes():
+    """Two GitHub uploads with the same file path but different repos must not collide."""
+    from agno.knowledge.remote_content.github import GitHubConfig
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    cfg = GitHubConfig(id="gh", name="GH", branch="main")
+
+    content_a = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgA/x"))
+    content_b = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgB/y"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_github_same_repo_same_path_produces_same_hash():
+    """Deduplication still works when the full source identity matches."""
+    from agno.knowledge.remote_content.github import GitHubConfig
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    cfg = GitHubConfig(id="gh", name="GH", branch="main")
+
+    content_a = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgA/x"))
+    content_b = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgA/x"))
+
+    assert knowledge._build_content_hash(content_a) == knowledge._build_content_hash(content_b)
+
+
+def test_github_different_branches_produces_different_hashes():
+    """A branch override is part of the source identity and must affect the hash."""
+    from agno.knowledge.remote_content.github import GitHubConfig
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    cfg = GitHubConfig(id="gh", name="GH", repo="orgA/x")
+
+    content_a = Content(name="README.md", remote_content=cfg.file("README.md", branch="main"))
+    content_b = Content(name="README.md", remote_content=cfg.file("README.md", branch="dev"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_s3_same_key_different_buckets_produces_different_hashes():
+    """Same S3 key pulled from two different buckets must not collide."""
+    from agno.knowledge.remote_content.remote_content import S3Content
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(name="report.pdf", remote_content=S3Content(bucket_name="bucket-a", key="report.pdf"))
+    content_b = Content(name="report.pdf", remote_content=S3Content(bucket_name="bucket-b", key="report.pdf"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_gcs_same_blob_different_buckets_produces_different_hashes():
+    """Same GCS blob name pulled from two different buckets must not collide."""
+    from agno.knowledge.remote_content.remote_content import GCSContent
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(name="data.csv", remote_content=GCSContent(bucket_name="bucket-a", blob_name="data.csv"))
+    content_b = Content(name="data.csv", remote_content=GCSContent(bucket_name="bucket-b", blob_name="data.csv"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_azure_blob_same_blob_different_configs_produces_different_hashes():
+    """Same Azure blob name from two different configs (different containers) must not collide."""
+    from agno.knowledge.remote_content.remote_content import AzureBlobContent
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(name="file.txt", remote_content=AzureBlobContent(config_id="az-a", blob_name="file.txt"))
+    content_b = Content(name="file.txt", remote_content=AzureBlobContent(config_id="az-b", blob_name="file.txt"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_sharepoint_same_path_different_sites_produces_different_hashes():
+    """Same SharePoint file path from two different sites must not collide."""
+    from agno.knowledge.remote_content.remote_content import SharePointContent
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(
+        name="spec.docx",
+        remote_content=SharePointContent(config_id="sp", site_path="/sites/a", file_path="spec.docx"),
+    )
+    content_b = Content(
+        name="spec.docx",
+        remote_content=SharePointContent(config_id="sp", site_path="/sites/b", file_path="spec.docx"),
+    )
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_non_remote_content_hash_unchanged():
+    """Pure URL / path content (no remote_content) retains its prior hash — backward compat."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(url="https://example.com/doc.pdf", name="Doc")
+    content_b = Content(url="https://example.com/doc.pdf", name="Doc")
+
+    # Identical (no remote_content on either) → identical hash, preserves dedup behavior.
+    assert knowledge._build_content_hash(content_a) == knowledge._build_content_hash(content_b)

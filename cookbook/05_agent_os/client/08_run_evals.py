@@ -148,9 +148,52 @@ async def get_eval_details():
         print(f"Error getting eval: {e}")
 
 
+async def run_reliability_eval():
+    """Run a reliability evaluation with subset matching and argument validation."""
+    print("\n" + "=" * 60)
+    print("Running Reliability Evaluation")
+    print("=" * 60)
+
+    client = AgentOSClient(base_url="http://localhost:7777")
+
+    # Get available agents
+    config = await client.aget_config()
+    if not config.agents:
+        print("No agents available")
+        return
+
+    agent_id = config.agents[0].id
+    print(f"Evaluating agent: {agent_id}")
+
+    # Run reliability eval with subset matching
+    try:
+        eval_result = await client.run_eval(
+            agent_id=agent_id,
+            eval_type=EvalType.RELIABILITY,
+            input_text="What is 10 * 5?",
+            expected_tool_calls=["multiply"],
+            allow_additional_tool_calls=True,
+            expected_tool_call_arguments={"multiply": {"a": 10, "b": 5}},
+        )
+
+        if eval_result:
+            print(f"\nEval ID: {eval_result.id}")
+            print(f"Eval Type: {eval_result.eval_type}")
+            print(f"Eval Data: {eval_result.eval_data}")
+            print(f"Eval Input: {eval_result.eval_input}")
+        else:
+            print("Evaluation returned no result")
+
+    except Exception as e:
+        print(f"Error running eval: {e}")
+        if hasattr(e, "response"):
+            print(f"Response: {e.response.text}")
+
+
 async def main():
     await run_accuracy_eval()
     await run_performance_eval()
+    await run_reliability_eval()
     await list_eval_runs()
     await get_eval_details()
 

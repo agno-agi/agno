@@ -28,7 +28,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields
+from agno.db.utils import deserialize_session, deserialize_session_json_fields, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -59,6 +59,8 @@ class MongoDb(BaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        schedules_collection: Optional[str] = None,
+        schedule_runs_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -76,6 +78,8 @@ class MongoDb(BaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            schedules_collection (Optional[str]): Name of the collection to store schedules.
+            schedule_runs_collection (Optional[str]): Name of the collection to store schedule runs.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -97,6 +101,8 @@ class MongoDb(BaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            schedules_table=schedules_collection,
+            schedule_runs_table=schedule_runs_collection,
         )
 
         _client: Optional[MongoClient] = db_client
@@ -152,6 +158,8 @@ class MongoDb(BaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("schedules", self.schedules_table_name),
+            ("schedule_runs", self.schedule_runs_table_name),
         ]
 
         for collection_type, collection_name in collections_to_create:
@@ -257,6 +265,28 @@ class MongoDb(BaseDb):
                 )
             return self.spans_collection
 
+        if table_type == "schedules":
+            if not hasattr(self, "schedules_collection"):
+                if self.schedules_table_name is None:
+                    raise ValueError("Schedules collection was not provided on initialization")
+                self.schedules_collection = self._get_or_create_collection(
+                    collection_name=self.schedules_table_name,
+                    collection_type="schedules",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.schedules_collection
+
+        if table_type == "schedule_runs":
+            if not hasattr(self, "schedule_runs_collection"):
+                if self.schedule_runs_table_name is None:
+                    raise ValueError("Schedule runs collection was not provided on initialization")
+                self.schedule_runs_collection = self._get_or_create_collection(
+                    collection_name=self.schedule_runs_table_name,
+                    collection_type="schedule_runs",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.schedule_runs_collection
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_collection(
@@ -287,7 +317,7 @@ class MongoDb(BaseDb):
             return collection
 
         except Exception as e:
-            log_error(f"Error getting collection {collection_name}: {e}")
+            log_error(f"Error getting collection {collection_name}: {str(e)}")
             raise
 
     def get_latest_schema_version(self):
@@ -330,7 +360,7 @@ class MongoDb(BaseDb):
                 return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -352,13 +382,13 @@ class MongoDb(BaseDb):
             log_debug(f"Successfully deleted {result.deleted_count} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -366,9 +396,9 @@ class MongoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get. If None, auto-detected from record.
             user_id (Optional[str]): The ID of the user to get the session for.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -395,17 +425,10 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
-            log_error(f"Exception reading session: {e}")
+            log_error(f"Exception reading session: {str(e)}")
             raise e
 
     def get_sessions(
@@ -456,7 +479,7 @@ class MongoDb(BaseDb):
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
-                query["session_type"] = session_type
+                query["session_type"] = session_type.value if hasattr(session_type, "value") else session_type
             if component_id is not None:
                 if session_type == SessionType.AGENT:
                     query["agent_id"] = component_id
@@ -464,6 +487,12 @@ class MongoDb(BaseDb):
                     query["team_id"] = component_id
                 elif session_type == SessionType.WORKFLOW:
                     query["workflow_id"] = component_id
+                elif session_type is None:
+                    query["$or"] = [
+                        {"agent_id": component_id},
+                        {"team_id": component_id},
+                        {"workflow_id": component_id},
+                    ]
             if start_timestamp is not None:
                 query["created_at"] = {"$gte": start_timestamp}
             if end_timestamp is not None:
@@ -499,31 +528,16 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
-            for record in sessions_raw:
-                if session_type == SessionType.AGENT.value:
-                    agent_session = AgentSession.from_dict(record)
-                    if agent_session is not None:
-                        sessions.append(agent_session)
-                elif session_type == SessionType.TEAM.value:
-                    team_session = TeamSession.from_dict(record)
-                    if team_session is not None:
-                        sessions.append(team_session)
-                elif session_type == SessionType.WORKFLOW.value:
-                    workflow_session = WorkflowSession.from_dict(record)
-                    if workflow_session is not None:
-                        sessions.append(workflow_session)
-
-            return sessions
+            return deserialize_sessions(session_type, sessions_raw)
 
         except Exception as e:
-            log_error(f"Exception reading sessions: {e}")
+            log_error(f"Exception reading sessions: {str(e)}")
             raise e
 
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -532,10 +546,10 @@ class MongoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to rename.
-            session_type (SessionType): The type of session to rename.
+            session_type (Optional[SessionType]): The type of session to rename.
             session_name (str): The new name of the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -553,6 +567,8 @@ class MongoDb(BaseDb):
             query: Dict[str, Any] = {"session_id": session_id}
             if user_id is not None:
                 query["user_id"] = user_id
+            if session_type is not None:
+                query["session_type"] = session_type.value
             try:
                 result = collection.find_one_and_update(
                     query,
@@ -576,15 +592,10 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return deserialized_session
 
-            if session_type == SessionType.AGENT.value:
-                return AgentSession.from_dict(deserialized_session)
-            elif session_type == SessionType.TEAM.value:
-                return TeamSession.from_dict(deserialized_session)
-            else:
-                return WorkflowSession.from_dict(deserialized_session)
+            return deserialize_session(session_type, deserialized_session)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             raise e
 
     def upsert_session(
@@ -725,7 +736,7 @@ class MongoDb(BaseDb):
                 return WorkflowSession.from_dict(session)  # type: ignore
 
         except Exception as e:
-            log_error(f"Exception upserting session: {e}")
+            log_error(f"Exception upserting session: {str(e)}")
             raise e
 
     def upsert_sessions(
@@ -859,7 +870,7 @@ class MongoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {str(e)}")
 
             # Fallback to individual upserts
             return [
@@ -903,7 +914,7 @@ class MongoDb(BaseDb):
                 log_debug(f"No memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting memory: {e}")
+            log_error(f"Error deleting memory: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -931,11 +942,14 @@ class MongoDb(BaseDb):
                 log_debug(f"No memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting memories: {e}")
+            log_error(f"Error deleting memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: The topics.
@@ -948,11 +962,12 @@ class MongoDb(BaseDb):
             if collection is None:
                 return []
 
-            topics = collection.distinct("topics", {})
+            match_filter: Dict[str, Any] = {} if user_id is None else {"user_id": user_id}
+            topics = collection.distinct("topics", match_filter)
             return [topic for topic in topics if topic]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error(f"Exception reading from collection: {str(e)}")
             raise e
 
     def get_user_memory(
@@ -991,7 +1006,7 @@ class MongoDb(BaseDb):
             return UserMemory.from_dict(result_filtered)
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error(f"Exception reading from collection: {str(e)}")
             raise e
 
     def get_user_memories(
@@ -1070,7 +1085,7 @@ class MongoDb(BaseDb):
             return [UserMemory.from_dict({k: v for k, v in record.items() if k != "_id"}) for record in records]
 
         except Exception as e:
-            log_error(f"Exception reading from collection: {e}")
+            log_error(f"Exception reading from collection: {str(e)}")
             raise e
 
     def get_user_memory_stats(
@@ -1138,7 +1153,7 @@ class MongoDb(BaseDb):
             return formatted_results, total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -1189,7 +1204,7 @@ class MongoDb(BaseDb):
             return UserMemory.from_dict(update_doc_filtered)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_error(f"Exception upserting user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -1273,7 +1288,7 @@ class MongoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {str(e)}")
 
             # Fallback to individual upserts
             return [
@@ -1298,7 +1313,7 @@ class MongoDb(BaseDb):
             collection.delete_many({})
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # -- Cultural Knowledge methods --
@@ -1316,7 +1331,7 @@ class MongoDb(BaseDb):
             collection.delete_many({})
 
         except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {e}")
+            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -1337,7 +1352,7 @@ class MongoDb(BaseDb):
             log_debug(f"Deleted cultural knowledge with ID: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -1373,7 +1388,7 @@ class MongoDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(result_filtered)
 
         except Exception as e:
-            log_error(f"Error getting cultural knowledge: {e}")
+            log_error(f"Error getting cultural knowledge: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -1449,7 +1464,7 @@ class MongoDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
 
         except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {e}")
+            log_error(f"Error getting all cultural knowledge: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -1503,7 +1518,7 @@ class MongoDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(doc_filtered)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # -- Metrics methods --
@@ -1538,7 +1553,7 @@ class MongoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception reading from sessions collection: {e}")
+            log_error(f"Exception reading from sessions collection: {str(e)}")
             return []
 
     def _get_metrics_calculation_starting_date(self, collection: Collection) -> Optional[date]:
@@ -1563,7 +1578,7 @@ class MongoDb(BaseDb):
             return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
         except Exception as e:
-            log_error(f"Exception getting metrics calculation starting date: {e}")
+            log_error(f"Exception getting metrics calculation starting date: {str(e)}")
             return None
 
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -1622,7 +1637,7 @@ class MongoDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Error calculating metrics: {e}")
+            log_error(f"Error calculating metrics: {str(e)}")
             raise e
 
     def get_metrics(
@@ -1655,7 +1670,7 @@ class MongoDb(BaseDb):
             return records, latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_error(f"Error getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -1679,7 +1694,7 @@ class MongoDb(BaseDb):
             log_debug(f"Deleted knowledge content with id '{id}'")
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1706,7 +1721,7 @@ class MongoDb(BaseDb):
             return KnowledgeRow.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -1766,7 +1781,7 @@ class MongoDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1792,7 +1807,7 @@ class MongoDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_error(f"Error upserting knowledge content: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -1816,7 +1831,7 @@ class MongoDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -1834,7 +1849,7 @@ class MongoDb(BaseDb):
                 log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -1852,7 +1867,7 @@ class MongoDb(BaseDb):
                 log_debug(f"Deleted {result.deleted_count} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise e
 
     def get_eval_run_raw(self, eval_run_id: str) -> Optional[Dict[str, Any]]:
@@ -1866,7 +1881,7 @@ class MongoDb(BaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_run(self, eval_run_id: str, deserialize: Optional[bool] = True) -> Optional[EvalRunRecord]:
@@ -1900,7 +1915,7 @@ class MongoDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -1995,7 +2010,7 @@ class MongoDb(BaseDb):
             return [EvalRunRecord.model_validate(row) for row in records]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -2033,7 +2048,7 @@ class MongoDb(BaseDb):
             return EvalRunRecord.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error updating eval run name {eval_run_id}: {e}")
+            log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
             raise e
 
     def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
@@ -2174,13 +2189,17 @@ class MongoDb(BaseDb):
                                 "else": {"$max": ["$end_time", trace_dict.get("end_time")]},
                             }
                         },
-                        # Preserve existing non-null context values using $ifNull
-                        "run_id": {"$ifNull": [trace.run_id, "$run_id"]},
-                        "session_id": {"$ifNull": [trace.session_id, "$session_id"]},
-                        "user_id": {"$ifNull": [trace.user_id, "$user_id"]},
-                        "agent_id": {"$ifNull": [trace.agent_id, "$agent_id"]},
-                        "team_id": {"$ifNull": [trace.team_id, "$team_id"]},
-                        "workflow_id": {"$ifNull": [trace.workflow_id, "$workflow_id"]},
+                        # Preserve existing non-null context values: $ifNull returns
+                        # the first non-null arg, so put the existing field first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": {"$ifNull": ["$run_id", trace.run_id]},
+                        "session_id": {"$ifNull": ["$session_id", trace.session_id]},
+                        "user_id": {"$ifNull": ["$user_id", trace.user_id]},
+                        "agent_id": {"$ifNull": ["$agent_id", trace.agent_id]},
+                        "team_id": {"$ifNull": ["$team_id", trace.team_id]},
+                        "workflow_id": {"$ifNull": ["$workflow_id", trace.workflow_id]},
                     }
                 },
                 {
@@ -2279,7 +2298,7 @@ class MongoDb(BaseDb):
             )
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2340,7 +2359,7 @@ class MongoDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -2439,7 +2458,7 @@ class MongoDb(BaseDb):
             return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -2551,7 +2570,7 @@ class MongoDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -2569,7 +2588,7 @@ class MongoDb(BaseDb):
             collection.insert_one(span.to_dict())
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2589,7 +2608,7 @@ class MongoDb(BaseDb):
             collection.insert_many(span_dicts)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2615,7 +2634,7 @@ class MongoDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -2660,8 +2679,225 @@ class MongoDb(BaseDb):
             return spans
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
+
+    # -- Scheduler methods --
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            result = collection.find_one({"id": schedule_id})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            result = collection.find_one({"name": name})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return [], 0
+
+            query: Dict[str, Any] = {}
+            if enabled is not None:
+                query["enabled"] = enabled
+
+            total_count = collection.count_documents(query)
+
+            offset = (page - 1) * limit
+            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            schedules = list(cursor)
+            for schedule in schedules:
+                schedule.pop("_id", None)
+            return schedules, total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection = self._get_collection(table_type="schedules", create_collection_if_not_found=True)
+            if collection is None:
+                raise RuntimeError("Failed to get or create schedules collection")
+
+            collection.insert_one(schedule_data)
+            schedule_data.pop("_id", None)
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {e}")
+            raise e
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            kwargs["updated_at"] = int(time.time())
+            result = collection.update_one({"id": schedule_id}, {"$set": kwargs})
+            if result.matched_count == 0:
+                return None
+            return self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            schedules_collection = self._get_collection(table_type="schedules")
+            if schedules_collection is None:
+                return False
+
+            runs_collection = self._get_collection(table_type="schedule_runs")
+            if runs_collection is not None:
+                runs_collection.delete_many({"schedule_id": schedule_id})
+
+            result = schedules_collection.delete_one({"id": schedule_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            result = collection.find_one_and_update(
+                {
+                    "enabled": True,
+                    "next_run_at": {"$lte": now},
+                    "$or": [
+                        {"locked_by": None},
+                        {"locked_at": {"$lte": stale_lock_threshold}},
+                    ],
+                },
+                {"$set": {"locked_by": worker_id, "locked_at": now}},
+                sort=[("next_run_at", 1)],
+                return_document=ReturnDocument.AFTER,
+            )
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return False
+
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+
+            result = collection.update_one({"id": schedule_id}, {"$set": updates})
+            return result.matched_count > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection = self._get_collection(table_type="schedule_runs", create_collection_if_not_found=True)
+            if collection is None:
+                raise RuntimeError("Failed to get or create schedule runs collection")
+
+            collection.insert_one(run_data)
+            run_data.pop("_id", None)
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {e}")
+            raise e
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return None
+
+            result = collection.update_one({"id": schedule_run_id}, {"$set": kwargs})
+            if result.matched_count == 0:
+                return None
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return None
+            result = collection.find_one({"id": run_id})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return [], 0
+
+            query = {"schedule_id": schedule_id}
+            total_count = collection.count_documents(query)
+
+            offset = (page - 1) * limit
+            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            runs = list(cursor)
+            for run in runs:
+                run.pop("_id", None)
+            return runs, total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
 
     # -- Learning methods (stubs) --
     def get_learning(

@@ -31,11 +31,19 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
-from agno.models.message import Message
+from agno.reasoning.step import ReasoningStep
+from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
+from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
+from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
+from agno.run.agent import ReasoningStepEvent as AgentReasoningStepEvent
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
+from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
+from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
+from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
+from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 
 
@@ -80,8 +88,9 @@ class EventBuffer:
     current_text_message_id: str = ""  # ID of the current text message context (for tool call parenting)
     next_text_message_id: str = ""  # Pre-generated ID for the next text message
     pending_tool_calls_parent_id: str = ""  # Parent message ID for pending tool calls
-    reasoning_message_id: str = ""  # ID of the active reasoning message (empty = no reasoning in progress)
-    _last_snapshot: Optional[Dict[str, Any]] = field(default=None, repr=False)
+    reasoning_message_id: Optional[str] = None  # Active reasoning session ID, set by reasoning_started
+    reasoning_step_count: int = 0  # Step counter for ReasoningTools (reset each session)
+    _last_snapshot: Optional[Dict[str, Any]] = field(default=None, repr=False)  # Snapshot of last state for delta computation
 
     def __init__(self):
         self.active_tool_call_ids = set()
@@ -89,7 +98,8 @@ class EventBuffer:
         self.current_text_message_id = ""
         self.next_text_message_id = str(uuid.uuid4())
         self.pending_tool_calls_parent_id = ""
-        self.reasoning_message_id = ""
+        self.reasoning_message_id = None
+        self.reasoning_step_count = 0
         self._last_snapshot = None
 
     def start_tool_call(self, tool_call_id: str) -> None:
@@ -124,26 +134,15 @@ class EventBuffer:
         """Clear the pending parent ID when a new text message starts."""
         self.pending_tool_calls_parent_id = ""
 
+    def start_reasoning(self) -> str:
+        """Start a new reasoning session and return its message ID."""
+        self.reasoning_message_id = str(uuid.uuid4())
+        self.reasoning_step_count = 0
+        return self.reasoning_message_id
+
     def set_state_snapshot(self, state: Dict[str, Any]) -> None:
         """Store deep copy of current state for delta computation."""
         self._last_snapshot = copy.deepcopy(state)
-
-    def ensure_reasoning_started(self) -> List[BaseEvent]:
-        """Ensure reasoning phase is started, auto-starting if needed.
-
-        Returns events to emit (ReasoningStart + ReasoningMessageStart) if auto-started,
-        or an empty list if reasoning is already in progress.
-        """
-        if self.reasoning_message_id:
-            return []
-        reasoning_msg_id = str(uuid.uuid4())
-        self.reasoning_message_id = reasoning_msg_id
-        return [
-            ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_msg_id),
-            ReasoningMessageStartEvent(
-                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_msg_id, role="assistant"
-            ),
-        ]
 
     def compute_state_delta(self, current_state: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
         """Compute JSON Patch delta between last snapshot and current state.
@@ -164,47 +163,46 @@ class EventBuffer:
             log_warning(f"Failed to compute state delta: {e}")
             return None
 
+    def next_reasoning_step(self) -> int:
+        """Increment and return the current reasoning step number."""
+        self.reasoning_step_count += 1
+        return self.reasoning_step_count
 
-def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
-    """Convert AG-UI messages to Agno messages."""
-    # First pass: collect all tool_call_ids that have results
-    tool_call_ids_with_results: Set[str] = set()
-    for msg in messages:
-        if msg.role == "tool" and msg.tool_call_id:
-            tool_call_ids_with_results.add(msg.tool_call_id)
+    def ensure_reasoning_started(self) -> Tuple[str, bool]:
+        """Return the active reasoning session ID, starting one if needed.
+        Returns (reasoning_id, is_new) where is_new is True if a new session was created.
+        """
+        if self.reasoning_message_id is not None:
+            return self.reasoning_message_id, False
+        return self.start_reasoning(), True
 
-    # Second pass: convert messages
-    result: List[Message] = []
-    seen_tool_call_ids: Set[str] = set()
+    def end_reasoning(self) -> None:
+        """End the active reasoning session."""
+        self.reasoning_message_id = None
+        self.reasoning_step_count = 0
 
-    for msg in messages:
-        if msg.role == "tool":
-            # Deduplicate tool results - keep only first occurrence
-            if msg.tool_call_id in seen_tool_call_ids:
-                log_debug(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
-                continue
-            seen_tool_call_ids.add(msg.tool_call_id)
-            result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
 
-        elif msg.role == "assistant":
-            tool_calls = None
-            if msg.tool_calls:
-                # Filter tool_calls to only those with results in this message sequence
-                filtered_calls = [call for call in msg.tool_calls if call.id in tool_call_ids_with_results]
-                if filtered_calls:
-                    tool_calls = [call.model_dump() for call in filtered_calls]
-            result.append(Message(role="assistant", content=msg.content, tool_calls=tool_calls))
+def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
+    """Extract the last user message content from AG-UI messages.
 
-        elif msg.role == "user":
-            result.append(Message(role="user", content=msg.content))
-
-        elif msg.role == "system":
-            pass  # Skip - agent builds its own system message from configuration
-
-        else:
-            log_warning(f"Unknown AGUI message role: {msg.role}")
-
-    return result
+    AG-UI frontends send the full conversation history on every request.
+    The agent manages its own history via session DB, so we only need the
+    latest user message as input — matching the REST API pattern.
+    """
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content is not None:
+            # UserMessage.content is Union[str, List[InputContent]]
+            if isinstance(msg.content, str):
+                return msg.content
+            # Multimodal: extract text parts
+            if isinstance(msg.content, list):
+                text_parts = []
+                for part in msg.content:
+                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "\n".join(text_parts)
+    return ""
 
 
 def extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
@@ -258,66 +256,30 @@ def _create_state_delta_events(
     return [StateDeltaEvent(type=EventType.STATE_DELTA, delta=ops)]
 
 
-def _handle_reasoning_event(
-    chunk: Union[RunOutputEvent, TeamRunOutputEvent],
-    event_buffer: EventBuffer,
-) -> List[BaseEvent]:
-    """Handle all reasoning-related events and return AG-UI events to emit."""
-    events: List[BaseEvent] = []
+def _format_reasoning_step_delta(step: Optional[ReasoningStep], step_number: int = 0) -> str:
+    """Format a single ReasoningStep as a text delta for REASONING_MESSAGE_CONTENT.
 
-    if chunk.event in (RunEvent.reasoning_started, TeamRunEvent.reasoning_started):
-        events.extend(event_buffer.ensure_reasoning_started())
-
-    elif chunk.event in (RunEvent.reasoning_content_delta, TeamRunEvent.reasoning_content_delta):
-        delta_text = getattr(chunk, "reasoning_content", "") or ""
-        if delta_text:
-            events.extend(event_buffer.ensure_reasoning_started())
-            events.append(
-                ReasoningMessageContentEvent(
-                    type=EventType.REASONING_MESSAGE_CONTENT,
-                    message_id=event_buffer.reasoning_message_id,
-                    delta=delta_text,
-                )
-            )
-
-    elif chunk.event in (RunEvent.reasoning_step, TeamRunEvent.reasoning_step):
-        delta_text = getattr(chunk, "reasoning_content", "") or ""
-        if not delta_text:
-            raw_content = getattr(chunk, "content", None)
-            if raw_content is not None:
-                delta_text = get_text_from_message(raw_content)
-        if delta_text:
-            events.extend(event_buffer.ensure_reasoning_started())
-            events.append(
-                ReasoningMessageContentEvent(
-                    type=EventType.REASONING_MESSAGE_CONTENT,
-                    message_id=event_buffer.reasoning_message_id,
-                    delta=delta_text,
-                )
-            )
-
-    elif chunk.event in (RunEvent.reasoning_completed, TeamRunEvent.reasoning_completed):
-        raw_content = getattr(chunk, "content", None)
-        if raw_content is not None:
-            final_text = get_text_from_message(raw_content)
-            if final_text and event_buffer.reasoning_message_id:
-                events.append(
-                    ReasoningMessageContentEvent(
-                        type=EventType.REASONING_MESSAGE_CONTENT,
-                        message_id=event_buffer.reasoning_message_id,
-                        delta=final_text,
-                    )
-                )
-        if event_buffer.reasoning_message_id:
-            events.append(
-                ReasoningMessageEndEvent(
-                    type=EventType.REASONING_MESSAGE_END, message_id=event_buffer.reasoning_message_id
-                )
-            )
-            events.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=event_buffer.reasoning_message_id))
-            event_buffer.reasoning_message_id = ""
-
-    return events
+    ReasoningStepEvent.content holds a ReasoningStep object (title, reasoning,
+    action, result, confidence). We format just this one step — NOT the
+    accumulated reasoning_content field, which duplicates prior steps.
+    """
+    if step is None:
+        return ""
+    parts: List[str] = []
+    title = step.title or "Thinking"
+    if step_number > 0:
+        parts.append(f"## Step {step_number}: {title}")
+    else:
+        parts.append(f"## {title}")
+    if step.reasoning:
+        parts.append(step.reasoning)
+    if step.action:
+        parts.append(f"Action: {step.action}")
+    if step.result:
+        parts.append(f"Result: {step.result}")
+    if step.confidence is not None:
+        parts.append(f"Confidence: {step.confidence}")
+    return "\n".join(parts) + "\n\n" if parts else ""
 
 
 def _create_events_from_chunk(
@@ -334,7 +296,7 @@ def _create_events_from_chunk(
         chunk: The event chunk to process
         message_id: Current message identifier
         message_started: Whether a message is currently active
-        event_buffer: Event buffer for tracking tool call state
+        event_buffer: Event buffer for tracking tool call state (includes reasoning session state)
         run_state: Mutable dict reference to the agent's session state (for delta tracking)
 
     Returns:
@@ -462,18 +424,64 @@ def _create_events_from_chunk(
                 # Emit state delta after tool call completion (state may have been mutated by the tool)
                 events_to_emit.extend(_create_state_delta_events(run_state, event_buffer))
 
-    # Handle reasoning events (agent + team)
-    elif chunk.event in (
-        RunEvent.reasoning_started,
-        TeamRunEvent.reasoning_started,
-        RunEvent.reasoning_content_delta,
-        TeamRunEvent.reasoning_content_delta,
-        RunEvent.reasoning_step,
-        TeamRunEvent.reasoning_step,
-        RunEvent.reasoning_completed,
-        TeamRunEvent.reasoning_completed,
-    ):
-        events_to_emit.extend(_handle_reasoning_event(chunk, event_buffer))
+    # Handle reasoning — isinstance() dispatch for Agent and Team event types.
+    # Two producers: native model reasoning (o4-mini, Claude extended thinking)
+    # emits ReasoningContentDeltaEvent with true streaming deltas, while
+    # ReasoningTools (think/analyze) emits ReasoningStepEvent with a ReasoningStep object.
+    elif isinstance(chunk, (AgentReasoningStartedEvent, TeamReasoningStartedEvent)):
+        reasoning_id = event_buffer.start_reasoning()
+        events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
+        events_to_emit.append(
+            ReasoningMessageStartEvent(
+                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+            )
+        )
+
+    elif isinstance(chunk, (AgentReasoningContentDeltaEvent, TeamReasoningContentDeltaEvent)):
+        # Native model reasoning — chunk.reasoning_content is a true streaming delta
+        reasoning_id, is_new = event_buffer.ensure_reasoning_started()
+        if is_new:
+            events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
+            events_to_emit.append(
+                ReasoningMessageStartEvent(
+                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                )
+            )
+        if chunk.reasoning_content:
+            events_to_emit.append(
+                ReasoningMessageContentEvent(
+                    type=EventType.REASONING_MESSAGE_CONTENT, message_id=reasoning_id, delta=chunk.reasoning_content
+                )
+            )
+
+    elif isinstance(chunk, (AgentReasoningStepEvent, TeamReasoningStepEvent)):
+        # ReasoningTools — chunk.reasoning_content is accumulated (all steps so far),
+        # so we format chunk.content (the single ReasoningStep) as the delta instead
+        reasoning_id, is_new = event_buffer.ensure_reasoning_started()
+        if is_new:
+            events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
+            events_to_emit.append(
+                ReasoningMessageStartEvent(
+                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                )
+            )
+        step_num = event_buffer.next_reasoning_step()
+        delta = _format_reasoning_step_delta(chunk.content, step_num)
+        if delta:
+            events_to_emit.append(
+                ReasoningMessageContentEvent(
+                    type=EventType.REASONING_MESSAGE_CONTENT, message_id=reasoning_id, delta=delta
+                )
+            )
+
+    elif isinstance(chunk, (AgentReasoningCompletedEvent, TeamReasoningCompletedEvent)):
+        if event_buffer.reasoning_message_id is not None:
+            reasoning_id = event_buffer.reasoning_message_id
+            events_to_emit.append(
+                ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=reasoning_id)
+            )
+            events_to_emit.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=reasoning_id))
+            event_buffer.end_reasoning()
 
     # Handle custom events
     elif chunk.event in (RunEvent.custom_event, TeamRunEvent.custom_event):
@@ -514,6 +522,16 @@ def _create_completion_events(
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit: List[BaseEvent] = []
+
+    # Close orphaned reasoning session if stream ended mid-reasoning
+    if event_buffer.reasoning_message_id is not None:
+        events_to_emit.append(
+            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=event_buffer.reasoning_message_id)
+        )
+        events_to_emit.append(
+            ReasoningEndEvent(type=EventType.REASONING_END, message_id=event_buffer.reasoning_message_id)
+        )
+        event_buffer.end_reasoning()
 
     # End remaining active tool calls if needed
     for tool_call_id in list(event_buffer.active_tool_call_ids):

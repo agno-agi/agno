@@ -164,8 +164,8 @@ def test_read_url_successful(mock_httpx_get, sample_read_url_response):
 
 
 @patch("agno.tools.jina.httpx.get")
-@patch("agno.tools.jina.logger")
-def test_read_url_http_error(mock_logger, mock_httpx_get):
+@patch("agno.tools.jina.log_error")
+def test_read_url_http_error(mock_log_error, mock_httpx_get):
     """Test read_url with HTTP error"""
     mock_httpx_get.side_effect = httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
 
@@ -174,12 +174,12 @@ def test_read_url_http_error(mock_logger, mock_httpx_get):
 
     assert "Error reading URL" in result
     assert "HTTP Error" in result
-    mock_logger.error.assert_called_once()
+    mock_log_error.assert_called_once()
 
 
 @patch("agno.tools.jina.httpx.get")
-@patch("agno.tools.jina.logger")
-def test_read_url_connection_error(mock_logger, mock_httpx_get):
+@patch("agno.tools.jina.log_error")
+def test_read_url_connection_error(mock_log_error, mock_httpx_get):
     """Test read_url with connection error"""
     mock_httpx_get.side_effect = httpx.ConnectError("Connection failed")
 
@@ -188,7 +188,7 @@ def test_read_url_connection_error(mock_logger, mock_httpx_get):
 
     assert "Error reading URL" in result
     assert "Connection failed" in result
-    mock_logger.error.assert_called_once()
+    mock_log_error.assert_called_once()
 
 
 @patch("agno.tools.jina.httpx.get")
@@ -233,8 +233,8 @@ def test_search_query_successful(mock_httpx_post, sample_search_query_response):
 
 
 @patch("agno.tools.jina.httpx.post")
-@patch("agno.tools.jina.logger")
-def test_search_query_http_error(mock_logger, mock_httpx_post):
+@patch("agno.tools.jina.log_error")
+def test_search_query_http_error(mock_log_error, mock_httpx_post):
     """Test search_query with HTTP error"""
     mock_httpx_post.side_effect = httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
 
@@ -243,7 +243,7 @@ def test_search_query_http_error(mock_logger, mock_httpx_post):
 
     assert "Error performing search" in result
     assert "HTTP Error" in result
-    mock_logger.error.assert_called_once()
+    mock_log_error.assert_called_once()
 
 
 @patch("agno.tools.jina.httpx.post")

@@ -21,18 +21,47 @@ from typing import (
     Union,
     cast,
 )
+from uuid import uuid4
 
 from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.exceptions import RunCancelledException
 from agno.filters import FilterExpr
 from agno.knowledge.types import KnowledgeFilter
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
 from agno.models.message import Message, MessageReferences
 from agno.run import RunContext
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import (
+    RunCancelledEvent as AgentRunCancelledEvent,
+)
+from agno.run.agent import (
+    RunCompletedEvent as AgentRunCompletedEvent,
+)
+from agno.run.agent import (
+    RunErrorEvent as AgentRunErrorEvent,
+)
+from agno.run.agent import (
+    RunOutput,
+    RunOutputEvent,
+)
+from agno.run.cancel import (
+    aregister_member_run,
+    raise_if_cancelled,
+    register_member_drain_task,
+    register_member_run,
+)
+from agno.run.team import (
+    RunCancelledEvent as TeamMemberRunCancelledEvent,
+)
+from agno.run.team import (
+    RunCompletedEvent as TeamMemberRunCompletedEvent,
+)
+from agno.run.team import (
+    RunErrorEvent as TeamMemberRunErrorEvent,
+)
 from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
@@ -56,6 +85,33 @@ from agno.utils.team import (
     format_member_agent_task,
 )
 from agno.utils.timer import Timer
+
+# Terminal events emitted by a member (Agent or sub-Team); forwarded even when draining after cancel.
+_MEMBER_TERMINAL_EVENT_TYPES = (
+    AgentRunCancelledEvent,
+    AgentRunCompletedEvent,
+    AgentRunErrorEvent,
+    TeamMemberRunCancelledEvent,
+    TeamMemberRunCompletedEvent,
+    TeamMemberRunErrorEvent,
+)
+
+
+def _cascading_cancel_run(run_id: str) -> bool:
+    """Cancel a run and cascade through children if it's a sub-team.
+
+    Lazy import to avoid circular dependency with `agno.team._run`.
+    """
+    from agno.team._run import cancel_run as _team_cancel_run
+
+    return _team_cancel_run(run_id)
+
+
+async def _acascading_cancel_run(run_id: str) -> bool:
+    """Async variant of :func:`_cascading_cancel_run`."""
+    from agno.team._run import acancel_run as _team_acancel_run
+
+    return await _team_acancel_run(run_id)
 
 
 def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None, async_mode: bool = False) -> Function:
@@ -560,67 +616,108 @@ def _get_delegate_task_function(
 
         member_session_state_copy = copy(run_context.session_state)
 
-        if stream:
-            member_agent_run_response_stream = member_agent.run(
-                input=member_agent_task if not history else history,
-                user_id=user_id,
-                # All members have the same session_id
-                session_id=session.session_id,
-                session_state=member_session_state_copy,  # Send a copy to the agent
-                images=images,
-                videos=videos,
-                audio=audio,
-                files=files,
-                stream=True,
-                stream_events=stream_events or team.stream_member_events,
-                debug_mode=debug_mode,
-                dependencies=run_context.dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
-                metadata=run_context.metadata,
-                add_session_state_to_context=add_session_state_to_context,
-                knowledge_filters=run_context.knowledge_filters
-                if not member_agent.knowledge_filters and member_agent.knowledge
-                else None,
-                yield_run_output=True,
-            )
-            member_agent_run_response = None
-            for member_agent_run_output_event in member_agent_run_response_stream:
-                # Do NOT break out of the loop, Iterator need to exit properly
-                if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
-                    member_agent_run_response = member_agent_run_output_event  # type: ignore
-                    continue  # Don't yield TeamRunOutput or RunOutput, only yield events
-
-                # Check if the run is cancelled
-                check_if_run_cancelled(member_agent_run_output_event)
-
-                # Yield the member event directly
-                member_agent_run_output_event.parent_run_id = (
-                    member_agent_run_output_event.parent_run_id or run_response.run_id
+        member_agent_run_response = None
+        try:
+            if stream:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    register_member_run(run_response.run_id, member_run_id)
+                member_agent_run_response_stream = member_agent.run(
+                    input=member_agent_task if not history else history,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session.session_id,
+                    session_state=member_session_state_copy,  # Send a copy to the agent
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=True,
+                    stream_events=stream_events or team.stream_member_events,
+                    debug_mode=debug_mode,
+                    dependencies=run_context.dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    metadata=run_context.metadata,
+                    add_session_state_to_context=add_session_state_to_context,
+                    knowledge_filters=run_context.knowledge_filters
+                    if not member_agent.knowledge_filters and member_agent.knowledge
+                    else None,
+                    run_id=member_run_id,
+                    yield_run_output=True,
                 )
-                yield member_agent_run_output_event  # type: ignore
-        else:
-            member_agent_run_response = member_agent.run(  # type: ignore
-                input=member_agent_task if not history else history,  # type: ignore
-                user_id=user_id,
-                # All members have the same session_id
-                session_id=session.session_id,
-                session_state=member_session_state_copy,  # Send a copy to the agent
-                images=images,
-                videos=videos,
-                audio=audio,
-                files=files,
-                stream=False,
-                debug_mode=debug_mode,
-                dependencies=run_context.dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                metadata=run_context.metadata,
-                knowledge_filters=run_context.knowledge_filters
-                if not member_agent.knowledge_filters and member_agent.knowledge
-                else None,
-            )
+                draining_after_cancel = False
+                for member_agent_run_output_event in member_agent_run_response_stream:
+                    # Do NOT break out of the loop, Iterator need to exit properly
+                    if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
+                        member_agent_run_response = member_agent_run_output_event  # type: ignore
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-            check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                    if isinstance(member_agent_run_output_event, _MEMBER_TERMINAL_EVENT_TYPES):
+                        member_agent_run_output_event.parent_run_id = (
+                            member_agent_run_output_event.parent_run_id or run_response.run_id
+                        )
+                        yield member_agent_run_output_event  # type: ignore
+                        if member_agent_run_output_event.is_cancelled:
+                            draining_after_cancel = True
+                        continue
+
+                    if draining_after_cancel:
+                        continue
+
+                    member_agent_run_output_event.parent_run_id = (
+                        member_agent_run_output_event.parent_run_id or run_response.run_id
+                    )
+                    yield member_agent_run_output_event  # type: ignore
+
+                    try:
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            _cascading_cancel_run(member_run_id)
+                        draining_after_cancel = True
+                        continue
+                if draining_after_cancel:
+                    raise RunCancelledException("")
+            else:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    register_member_run(run_response.run_id, member_run_id)
+                member_agent_run_response = member_agent.run(  # type: ignore
+                    input=member_agent_task if not history else history,  # type: ignore
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session.session_id,
+                    session_state=member_session_state_copy,  # Send a copy to the agent
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=False,
+                    debug_mode=debug_mode,
+                    dependencies=run_context.dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=run_context.metadata,
+                    knowledge_filters=run_context.knowledge_filters
+                    if not member_agent.knowledge_filters and member_agent.knowledge
+                    else None,
+                    run_id=member_run_id,
+                )
+
+                check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                # Also check if the parent team's run was cancelled while the member was executing
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
+        except RunCancelledException:
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
+            )
+            raise
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -686,10 +783,16 @@ def _get_delegate_task_function(
             str: The result of the delegated task.
         """
 
+        # Let the team's cancel handler await this task so add_member_run lands
+        # on run_response before _acleanup_and_store persists.
+        _current_task = asyncio.current_task()
+        if _current_task is not None and run_response is not None and run_response.run_id:
+            register_member_drain_task(run_response.run_id, _current_task)
+
         # Find the member agent using the helper function
         result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
-            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context)}"
+            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context, async_mode=True)}"
             return
 
         _, member_agent = result
@@ -700,66 +803,107 @@ def _get_delegate_task_function(
 
         member_session_state_copy = copy(run_context.session_state)
 
-        if stream:
-            member_agent_run_response_stream = member_agent.arun(  # type: ignore
-                input=member_agent_task if not history else history,
-                user_id=user_id,
-                # All members have the same session_id
-                session_id=session.session_id,
-                session_state=member_session_state_copy,  # Send a copy to the agent
-                images=images,
-                videos=videos,
-                audio=audio,
-                files=files,
-                stream=True,
-                stream_events=stream_events or team.stream_member_events,
-                debug_mode=debug_mode,
-                dependencies=run_context.dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                metadata=run_context.metadata,
-                knowledge_filters=run_context.knowledge_filters
-                if not member_agent.knowledge_filters and member_agent.knowledge
-                else None,
-                yield_run_output=True,
-            )
-            member_agent_run_response = None
-            async for member_agent_run_response_event in member_agent_run_response_stream:
-                # Do NOT break out of the loop, AsyncIterator need to exit properly
-                if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
-                    member_agent_run_response = member_agent_run_response_event  # type: ignore
-                    continue  # Don't yield TeamRunOutput or RunOutput, only yield events
+        member_agent_run_response = None
+        try:
+            if stream:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    await aregister_member_run(run_response.run_id, member_run_id)
+                member_agent_run_response_stream = member_agent.arun(  # type: ignore
+                    input=member_agent_task if not history else history,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session.session_id,
+                    session_state=member_session_state_copy,  # Send a copy to the agent
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=True,
+                    stream_events=stream_events or team.stream_member_events,
+                    debug_mode=debug_mode,
+                    dependencies=run_context.dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=run_context.metadata,
+                    knowledge_filters=run_context.knowledge_filters
+                    if not member_agent.knowledge_filters and member_agent.knowledge
+                    else None,
+                    run_id=member_run_id,
+                    yield_run_output=True,
+                )
+                draining_after_cancel = False
+                async for member_agent_run_response_event in member_agent_run_response_stream:
+                    # Do NOT break out of the loop, AsyncIterator need to exit properly
+                    if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
+                        member_agent_run_response = member_agent_run_response_event  # type: ignore
+                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                # Check if the run is cancelled
-                check_if_run_cancelled(member_agent_run_response_event)
+                    if isinstance(member_agent_run_response_event, _MEMBER_TERMINAL_EVENT_TYPES):
+                        member_agent_run_response_event.parent_run_id = (
+                            member_agent_run_response_event.parent_run_id or run_response.run_id
+                        )
+                        yield member_agent_run_response_event  # type: ignore
+                        if member_agent_run_response_event.is_cancelled:
+                            draining_after_cancel = True
+                        continue
 
-                # Yield the member event directly
-                member_agent_run_response_event.parent_run_id = getattr(
-                    member_agent_run_response_event, "parent_run_id", None
-                ) or (run_response.run_id if run_response is not None else None)
-                yield member_agent_run_response_event  # type: ignore
-        else:
-            member_agent_run_response = await member_agent.arun(  # type: ignore
-                input=member_agent_task if not history else history,
-                user_id=user_id,
-                # All members have the same session_id
-                session_id=session.session_id,
-                session_state=member_session_state_copy,  # Send a copy to the agent
-                images=images,
-                videos=videos,
-                audio=audio,
-                files=files,
-                stream=False,
-                debug_mode=debug_mode,
-                dependencies=run_context.dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                metadata=run_context.metadata,
-                knowledge_filters=run_context.knowledge_filters
-                if not member_agent.knowledge_filters and member_agent.knowledge
-                else None,
+                    if draining_after_cancel:
+                        continue
+
+                    member_agent_run_response_event.parent_run_id = member_agent_run_response_event.parent_run_id or (
+                        run_response.run_id if run_response is not None else None
+                    )
+                    yield member_agent_run_response_event  # type: ignore
+
+                    try:
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            await _acascading_cancel_run(member_run_id)
+                        draining_after_cancel = True
+                        continue
+                if draining_after_cancel:
+                    raise RunCancelledException("")
+            else:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    await aregister_member_run(run_response.run_id, member_run_id)
+                member_agent_run_response = await member_agent.arun(  # type: ignore
+                    input=member_agent_task if not history else history,
+                    user_id=user_id,
+                    # All members have the same session_id
+                    session_id=session.session_id,
+                    session_state=member_session_state_copy,  # Send a copy to the agent
+                    images=images,
+                    videos=videos,
+                    audio=audio,
+                    files=files,
+                    stream=False,
+                    debug_mode=debug_mode,
+                    dependencies=run_context.dependencies,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    metadata=run_context.metadata,
+                    knowledge_filters=run_context.knowledge_filters
+                    if not member_agent.knowledge_filters and member_agent.knowledge
+                    else None,
+                    run_id=member_run_id,
+                )
+                check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                # Also check if the parent team's run was cancelled while the member was executing
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
+        except RunCancelledException:
+            use_team_logger()
+            _process_delegate_task_to_member(
+                member_agent_run_response,
+                member_agent,
+                member_agent_task,  # type: ignore
+                member_session_state_copy,  # type: ignore
             )
-            check_if_run_cancelled(member_agent_run_response)  # type: ignore
+            raise
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -829,68 +973,109 @@ def _get_delegate_task_function(
             member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
 
             member_session_state_copy = copy(run_context.session_state)
-            if stream:
-                member_agent_run_response_stream = member_agent.run(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=True,
-                    stream_events=stream_events or team.stream_member_events,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    yield_run_output=True,
-                )
-                member_agent_run_response = None
-                for member_agent_run_response_chunk in member_agent_run_response_stream:
-                    # Do NOT break out of the loop, Iterator need to exit properly
-                    if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
-                        member_agent_run_response = member_agent_run_response_chunk  # type: ignore
-                        continue  # Don't yield TeamRunOutput or RunOutput, only yield events
-
-                    # Check if the run is cancelled
-                    check_if_run_cancelled(member_agent_run_response_chunk)
-
-                    # Yield the member event directly
-                    member_agent_run_response_chunk.parent_run_id = member_agent_run_response_chunk.parent_run_id or (
-                        run_response.run_id if run_response is not None else None
+            member_agent_run_response = None
+            try:
+                if stream:
+                    member_run_id = str(uuid4())
+                    if run_response.run_id is not None:
+                        register_member_run(run_response.run_id, member_run_id)
+                    member_agent_run_response_stream = member_agent.run(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,  # Send a copy to the agent
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=True,
+                        stream_events=stream_events or team.stream_member_events,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        run_id=member_run_id,
+                        yield_run_output=True,
                     )
-                    yield member_agent_run_response_chunk  # type: ignore
+                    draining_after_cancel = False
+                    for member_agent_run_response_chunk in member_agent_run_response_stream:
+                        # Do NOT break out of the loop, Iterator need to exit properly
+                        if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
+                            member_agent_run_response = member_agent_run_response_chunk  # type: ignore
+                            continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-            else:
-                member_agent_run_response = member_agent.run(  # type: ignore
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    # All members have the same session_id
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,  # Send a copy to the agent
-                    images=images,
-                    videos=videos,
-                    audio=audio,
-                    files=files,
-                    stream=False,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
+                        if isinstance(member_agent_run_response_chunk, _MEMBER_TERMINAL_EVENT_TYPES):
+                            member_agent_run_response_chunk.parent_run_id = (
+                                member_agent_run_response_chunk.parent_run_id
+                                or (run_response.run_id if run_response is not None else None)
+                            )
+                            yield member_agent_run_response_chunk  # type: ignore
+                            if member_agent_run_response_chunk.is_cancelled:
+                                draining_after_cancel = True
+                            continue
+
+                        if draining_after_cancel:
+                            continue
+
+                        member_agent_run_response_chunk.parent_run_id = (
+                            member_agent_run_response_chunk.parent_run_id
+                            or (run_response.run_id if run_response is not None else None)
+                        )
+                        yield member_agent_run_response_chunk  # type: ignore
+
+                        try:
+                            if run_response.run_id is not None:
+                                raise_if_cancelled(run_response.run_id)
+                        except RunCancelledException:
+                            if member_run_id:
+                                _cascading_cancel_run(member_run_id)
+                            draining_after_cancel = True
+                            continue
+                    if draining_after_cancel:
+                        raise RunCancelledException("")
+
+                else:
+                    member_run_id = str(uuid4())
+                    if run_response.run_id is not None:
+                        register_member_run(run_response.run_id, member_run_id)
+                    member_agent_run_response = member_agent.run(  # type: ignore
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,  # Send a copy to the agent
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        run_id=member_run_id,
+                    )
+
+                    check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                    if run_response.run_id is not None:
+                        raise_if_cancelled(run_response.run_id)
+            except RunCancelledException:
+                _process_delegate_task_to_member(
+                    member_agent_run_response,
+                    member_agent,
+                    member_agent_task,  # type: ignore
+                    member_session_state_copy,  # type: ignore
                 )
-
-                check_if_run_cancelled(member_agent_run_response)  # type: ignore
+                raise
 
             # Check if the member run is paused (HITL)
             if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -949,6 +1134,12 @@ def _get_delegate_task_function(
         """
         from agno.utils.callables import get_resolved_members
 
+        # Let the team's cancel handler await this task so add_member_run lands
+        # on run_response before _acleanup_and_store persists.
+        _current_task = asyncio.current_task()
+        if _current_task is not None and run_response is not None and run_response.run_id:
+            register_member_drain_task(run_response.run_id, _current_task)
+
         resolved_members = get_resolved_members(team, run_context) or []
 
         if stream:
@@ -960,6 +1151,9 @@ def _get_delegate_task_function(
                 member_agent_task, history = _setup_delegate_task_to_member(member_agent=agent, task=task)  # type: ignore
                 member_session_state_copy = copy(run_context.session_state)
 
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    await aregister_member_run(run_response.run_id, member_run_id)
                 member_stream = agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -979,23 +1173,49 @@ def _get_delegate_task_function(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
+                    run_id=member_run_id,
                     yield_run_output=True,
                 )
                 member_agent_run_response = None
                 try:
                     try:
+                        draining_after_cancel = False
                         async for member_agent_run_output_event in member_stream:
                             # Do NOT break out of the loop, AsyncIterator need to exit properly
                             if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
                                 member_agent_run_response = member_agent_run_output_event  # type: ignore
                                 continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
-                            check_if_run_cancelled(member_agent_run_output_event)
+                            if isinstance(member_agent_run_output_event, _MEMBER_TERMINAL_EVENT_TYPES):
+                                member_agent_run_output_event.parent_run_id = (
+                                    member_agent_run_output_event.parent_run_id
+                                    or (run_response.run_id if run_response is not None else None)
+                                )
+                                await queue.put(member_agent_run_output_event)
+                                if member_agent_run_output_event.is_cancelled:
+                                    draining_after_cancel = True
+                                continue
+
+                            if draining_after_cancel:
+                                continue
+
                             member_agent_run_output_event.parent_run_id = (
                                 member_agent_run_output_event.parent_run_id
                                 or (run_response.run_id if run_response is not None else None)
                             )
                             await queue.put(member_agent_run_output_event)
+
+                            # Check if the parent team's run is cancelled - propagate to member
+                            try:
+                                if run_response.run_id is not None:
+                                    raise_if_cancelled(run_response.run_id)
+                            except RunCancelledException:
+                                if member_run_id:
+                                    await _acascading_cancel_run(member_run_id)
+                                draining_after_cancel = True
+                                continue
+                        if draining_after_cancel:
+                            raise RunCancelledException("")
                     finally:
                         # Check if the member run is paused (HITL)
                         if member_agent_run_response is not None and member_agent_run_response.is_paused:
@@ -1042,6 +1262,13 @@ def _get_delegate_task_function(
                 for t in tasks:
                     with contextlib.suppress(Exception, asyncio.CancelledError):
                         await t
+
+            # Re-raise any member RunCancelledException so the team's outer loop sees the cancel.
+            for t in tasks:
+                if t.done() and not t.cancelled():
+                    exc = t.exception()
+                    if isinstance(exc, RunCancelledException):
+                        raise exc
         else:
             # Non-streaming concurrent run of members; collect results when done
             tasks = []
@@ -1057,28 +1284,43 @@ def _get_delegate_task_function(
                 ) -> tuple[str, Optional[Union[Agent, "Team"]], Optional[Union[RunOutput, TeamRunOutput]]]:
                     member_session_state_copy = copy(run_context.session_state)
 
-                    member_agent_run_response = await member_agent.arun(
-                        input=member_agent_task if not history else history,
-                        user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=False,
-                        stream_events=stream_events,
-                        debug_mode=debug_mode,
-                        knowledge_filters=run_context.knowledge_filters
-                        if not member_agent.knowledge_filters and member_agent.knowledge
-                        else None,
-                        dependencies=run_context.dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
-                        add_session_state_to_context=add_session_state_to_context,
-                        metadata=run_context.metadata,
-                    )
-                    check_if_run_cancelled(member_agent_run_response)
+                    try:
+                        member_run_id = str(uuid4())
+                        if run_response.run_id is not None:
+                            await aregister_member_run(run_response.run_id, member_run_id)
+                        member_agent_run_response = await member_agent.arun(
+                            input=member_agent_task if not history else history,
+                            user_id=user_id,
+                            # All members have the same session_id
+                            session_id=session.session_id,
+                            session_state=member_session_state_copy,  # Send a copy to the agent
+                            images=images,
+                            videos=videos,
+                            audio=audio,
+                            files=files,
+                            stream=False,
+                            stream_events=stream_events,
+                            debug_mode=debug_mode,
+                            knowledge_filters=run_context.knowledge_filters
+                            if not member_agent.knowledge_filters and member_agent.knowledge
+                            else None,
+                            dependencies=run_context.dependencies,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
+                            metadata=run_context.metadata,
+                            run_id=member_run_id,
+                        )
+                        check_if_run_cancelled(member_agent_run_response)
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        _process_delegate_task_to_member(
+                            member_agent_run_response,
+                            member_agent,
+                            member_agent_task,  # type: ignore
+                            member_session_state_copy,  # type: ignore
+                        )
+                        raise
 
                     member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
 
@@ -1140,7 +1382,18 @@ def _get_delegate_task_function(
 
                 tasks.append(run_member_agent)  # type: ignore
 
-            results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
+            # return_exceptions=True preserves siblings' partial state if one member raises cancel.
+            raw_results = await asyncio.gather(*[task() for task in tasks], return_exceptions=True)  # type: ignore
+            for raw in raw_results:
+                if isinstance(raw, RunCancelledException):
+                    raise raw
+            results = []
+            for raw in raw_results:
+                if isinstance(raw, BaseException):
+                    member_name_fallback = f"agent_{raw_results.index(raw)}"
+                    results.append((f"Agent {member_name_fallback}: Error - {raw!s}", None, None))
+                else:
+                    results.append(raw)
             # Propagate pauses sequentially after all members complete
             for result_text, paused_agent, paused_run_response in results:
                 if paused_agent is not None and paused_run_response is not None:
@@ -1274,7 +1527,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -1304,7 +1557,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -1336,7 +1589,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -1362,7 +1615,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -1432,7 +1685,7 @@ def get_relevant_docs_from_knowledge(
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
             return team.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
+            log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e
     # Use knowledge protocol's retrieve method
     try:
@@ -1457,7 +1710,7 @@ def get_relevant_docs_from_knowledge(
 
         return [doc.to_dict() for doc in relevant_docs]
     except Exception as e:
-        log_warning(f"Error retrieving from knowledge base: {e}")
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
         raise e
 
 
@@ -1525,7 +1778,7 @@ async def aget_relevant_docs_from_knowledge(
 
             return result
         except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
+            log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e
 
     # Use knowledge protocol's retrieve method
@@ -1559,5 +1812,5 @@ async def aget_relevant_docs_from_knowledge(
 
         return [doc.to_dict() for doc in relevant_docs]
     except Exception as e:
-        log_warning(f"Error retrieving from knowledge base: {e}")
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
         raise e

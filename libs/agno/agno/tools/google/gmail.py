@@ -68,12 +68,12 @@ import re
 import tempfile
 import textwrap
 from datetime import datetime, timedelta
-from functools import wraps
 from os import getenv
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
+from agno.tools.google.auth import google_authenticate
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -93,22 +93,7 @@ except ImportError:
     )
 
 
-def authenticate(func):
-    """Decorator to ensure authentication before executing a function."""
-
-    @wraps(func)
-    def wrapper(self, *args, **kwargs):
-        try:
-            if not self.creds or not self.creds.valid:
-                self._auth()
-            if not self.service:
-                self.service = build("gmail", "v1", credentials=self.creds)
-        except Exception as e:
-            log_error(f"Gmail authentication failed: {e}")
-            return json.dumps({"error": f"Gmail authentication failed: {e}"})
-        return func(self, *args, **kwargs)
-
-    return wrapper
+authenticate = google_authenticate("gmail")
 
 
 def validate_email(email: str) -> bool:
@@ -133,6 +118,13 @@ GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
     - `from:me` — emails sent by the user
     - Combine with spaces (AND): `from:me newer_than:7d has:attachment`""")
 
+GMAIL_COMPOSE_INSTRUCTIONS = textwrap.dedent("""
+    ## Composing Emails
+    - **New email:** `send_email(to, subject, body)` or `create_draft_email(to, subject, body)`
+    - **Reply (send now):** `send_email_reply(message_id, body)` keeps the message in the thread
+    - **Reply (draft):** `create_draft_email(to, subject, body, thread_id=..., message_id=...)` \
+creates a draft reply in the thread. Get thread_id and message_id from the original message first.""")
+
 
 class GmailTools(Toolkit):
     # Default scopes for Gmail API access
@@ -150,7 +142,7 @@ class GmailTools(Toolkit):
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
         scopes: Optional[List[str]] = None,
-        port: Optional[int] = None,
+        port: int = 0,
         login_hint: Optional[str] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
@@ -207,7 +199,7 @@ class GmailTools(Toolkit):
             service_account_path (Optional[str]): Path to a service account JSON key file. When provided (or GOOGLE_SERVICE_ACCOUNT_FILE env var is set), service account auth is used instead of OAuth. Requires delegated_user for Gmail.
             delegated_user (Optional[str]): Email of the user to impersonate via domain-wide delegation. Required when using service account auth. Can also be set via GOOGLE_DELEGATED_USER env var.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
+            port (int): Port for OAuth local server. 0 = auto-select available port. Defaults to 0.
             login_hint (Optional[str]): Email to pre-select in the OAuth consent screen. Defaults to None.
             include_html (bool): If True, return raw HTML body instead of stripping tags. Defaults to False.
             max_body_length (Optional[int]): Truncate message bodies to this length. Defaults to None (no truncation).
@@ -216,8 +208,12 @@ class GmailTools(Toolkit):
             instructions (Optional[str]): Custom instructions for the toolkit. If None, uses DEFAULT_INSTRUCTIONS.
             add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
         """
+        # Build instructions dynamically based on enabled tools
+        has_compose = create_draft_email or send_email or send_email_reply or send_draft or update_draft
         if instructions is None:
             self.instructions = GMAIL_QUERY_INSTRUCTIONS
+            if has_compose:
+                self.instructions += GMAIL_COMPOSE_INSTRUCTIONS
         else:
             self.instructions = instructions
 
@@ -237,7 +233,6 @@ class GmailTools(Toolkit):
         self.max_batch_size = max(min(max_batch_size, 100), 1)
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
         self._label_cache: Optional[Dict[str, str]] = None
-
         tools: List[Any] = []
         # Reading emails
         if get_latest_emails:
@@ -370,6 +365,9 @@ class GmailTools(Toolkit):
             if modify_scope not in self.scopes:
                 raise ValueError(f"The scope {modify_scope} is required for email modification operations")
 
+    def _build_service(self):
+        return build("gmail", "v1", credentials=self.creds)
+
     def _auth(self) -> None:
         """Authenticate with Gmail API using service account (priority) or OAuth flow."""
         if self.creds and self.creds.valid:
@@ -429,10 +427,10 @@ class GmailTools(Toolkit):
             else:
                 flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
             # prompt=consent forces Google to return a refresh_token every time
-            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
+            oauth_kwargs: Dict[str, Any] = {"prompt": "consent", "port": self.port}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
-            self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
+            self.creds = flow.run_local_server(**oauth_kwargs)
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
@@ -1438,10 +1436,10 @@ class GmailTools(Toolkit):
                         )
             return json.dumps(result)
         except HttpError as e:
-            log_error(f"Failed to get message {message_id}: {e}")
+            log_error(f"Failed to get message {message_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1466,10 +1464,10 @@ class GmailTools(Toolkit):
                 }
             )
         except HttpError as e:
-            log_error(f"Failed to get thread {thread_id}: {e}")
+            log_error(f"Failed to get thread {thread_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1495,10 +1493,10 @@ class GmailTools(Toolkit):
                 }
             )
         except HttpError as e:
-            log_error(f"Thread search failed: {e}")
+            log_error(f"Thread search failed: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1534,10 +1532,10 @@ class GmailTools(Toolkit):
             result = service.users().threads().modify(userId="me", id=thread_id, body=body).execute()  # type: ignore
             return json.dumps({"threadId": result["id"], "labelIds": result.get("labelIds", [])})
         except HttpError as e:
-            log_error(f"Failed to modify labels on thread {thread_id}: {e}")
+            log_error(f"Failed to modify labels on thread {thread_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1555,10 +1553,10 @@ class GmailTools(Toolkit):
             service.users().threads().trash(userId="me", id=thread_id).execute()  # type: ignore
             return json.dumps({"threadId": thread_id, "action": "trashed"})
         except HttpError as e:
-            log_error(f"Failed to trash thread {thread_id}: {e}")
+            log_error(f"Failed to trash thread {thread_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1582,10 +1580,10 @@ class GmailTools(Toolkit):
                 }
             )
         except HttpError as e:
-            log_error(f"Failed to get draft {draft_id}: {e}")
+            log_error(f"Failed to get draft {draft_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1605,10 +1603,10 @@ class GmailTools(Toolkit):
             drafts = results.get("drafts", [])
             return json.dumps({"drafts": drafts, "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts))})
         except HttpError as e:
-            log_error(f"Failed to list drafts: {e}")
+            log_error(f"Failed to list drafts: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1632,10 +1630,10 @@ class GmailTools(Toolkit):
                 }
             )
         except HttpError as e:
-            log_error(f"Failed to send draft {draft_id}: {e}")
+            log_error(f"Failed to send draft {draft_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1699,10 +1697,10 @@ class GmailTools(Toolkit):
             result = service.users().drafts().update(userId="me", id=draft_id, body={"message": mime}).execute()  # type: ignore
             return json.dumps({"draftId": result["id"]})
         except HttpError as e:
-            log_error(f"Failed to update draft {draft_id}: {e}")
+            log_error(f"Failed to update draft {draft_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Failed to update draft {draft_id}: {e}")
+            log_error(f"Failed to update draft {draft_id}: {str(e)}")
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
     @authenticate
@@ -1736,10 +1734,10 @@ class GmailTools(Toolkit):
                 )
             return json.dumps({"labels": formatted, "count": len(formatted)})
         except HttpError as e:
-            log_error(f"Failed to list labels: {e}")
+            log_error(f"Failed to list labels: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1776,10 +1774,10 @@ class GmailTools(Toolkit):
             result = service.users().messages().modify(userId="me", id=message_id, body=body).execute()  # type: ignore
             return json.dumps({"id": result["id"], "labelIds": result.get("labelIds", [])})
         except HttpError as e:
-            log_error(f"Failed to modify labels on message {message_id}: {e}")
+            log_error(f"Failed to modify labels on message {message_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1803,10 +1801,10 @@ class GmailTools(Toolkit):
                 return json.dumps({"id": message_id, "action": "trashed"})
         except HttpError as e:
             action_name = "untrash" if undo else "trash"
-            log_error(f"Failed to {action_name} message {message_id}: {e}")
+            log_error(f"Failed to {action_name} message {message_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1825,8 +1823,8 @@ class GmailTools(Toolkit):
             local_path = self._download_attachment_file(message_id, attachment_id, filename)
             return json.dumps({"localPath": local_path, "filename": filename, "messageId": message_id})
         except HttpError as e:
-            log_error(f"Failed to download attachment from {message_id}: {e}")
+            log_error(f"Failed to download attachment from {message_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
