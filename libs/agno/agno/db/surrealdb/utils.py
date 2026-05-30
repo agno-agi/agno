@@ -39,6 +39,8 @@ def query(
     record_type: type[RecordType],
 ) -> Sequence[RecordType]:
     response = _query_aux(client, query, vars)
+    if response is None:
+        return []
     if isinstance(response, list):
         if dataclasses.is_dataclass(record_type) and hasattr(record_type, "from_dict"):
             return [getattr(record_type, "from_dict").__call__(x) for x in response]
