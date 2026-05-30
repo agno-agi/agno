@@ -1193,7 +1193,9 @@ class Milvus(VectorDb):
             # Vector fields are listed explicitly because some Milvus versions exclude
             # them from output_fields=["*"].
             search_expr = f'content_id == "{content_id}"'
-            output_fields = ["*", "dense_vector", "sparse_vector"] if self.search_type == SearchType.hybrid else ["*", "vector"]
+            output_fields = (
+                ["*", "dense_vector", "sparse_vector"] if self.search_type == SearchType.hybrid else ["*", "vector"]
+            )
             results = self.client.query(
                 collection_name=self.collection,
                 filter=search_expr,

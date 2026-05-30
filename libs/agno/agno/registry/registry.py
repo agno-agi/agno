@@ -34,6 +34,9 @@ class Registry:
     vector_dbs: List[VectorDb] = field(default_factory=list)
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
+    knowledge: List[Any] = field(default_factory=list)
+    memory_managers: List[Any] = field(default_factory=list)
+    session_summary_managers: List[Any] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
@@ -81,6 +84,12 @@ class Registry:
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
 
+    def get_knowledge(self, name: str) -> Optional[Any]:
+        """Get a knowledge instance by name from the registry."""
+        if self.knowledge:
+            return next((k for k in self.knowledge if getattr(k, "name", None) == name), None)
+        return None
+
     def get_agent(self, agent_id: str) -> Optional[Agent]:
         """Get an agent by id from the registry."""
         if self.agents:
@@ -103,6 +112,42 @@ class Registry:
         """Get the set of all team IDs in this registry."""
         if self.teams:
             return {tid for t in self.teams if (tid := getattr(t, "id", None)) is not None}
+        return set()
+
+    def get_knowledge_names(self) -> Set[str]:
+        """Get the set of all knowledge names in this registry."""
+        if self.knowledge:
+            return {kn for k in self.knowledge if (kn := getattr(k, "name", None)) is not None}
+        return set()
+
+    def get_memory_manager(self, manager_id: str) -> Optional[Any]:
+        """Get a memory manager by id."""
+        if self.memory_managers:
+            return next(
+                (m for m in self.memory_managers if getattr(m, "id", None) == manager_id),
+                None,
+            )
+        return None
+
+    def get_session_summary_manager(self, manager_id: str) -> Optional[Any]:
+        """Get a session summary manager by id."""
+        if self.session_summary_managers:
+            return next(
+                (m for m in self.session_summary_managers if getattr(m, "id", None) == manager_id),
+                None,
+            )
+        return None
+
+    def get_memory_manager_ids(self) -> Set[str]:
+        """Get the set of all memory manager ids."""
+        if self.memory_managers:
+            return {mid for m in self.memory_managers if (mid := getattr(m, "id", None)) is not None}
+        return set()
+
+    def get_session_summary_manager_ids(self) -> Set[str]:
+        """Get the set of all session summary manager ids."""
+        if self.session_summary_managers:
+            return {mid for m in self.session_summary_managers if (mid := getattr(m, "id", None)) is not None}
         return set()
 
     def get_all_component_ids(self) -> Set[str]:
