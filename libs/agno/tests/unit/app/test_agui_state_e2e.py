@@ -13,7 +13,7 @@ import pytest
 from fastapi import APIRouter, FastAPI
 
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os.interfaces.agui.router import attach_routes
 from agno.run.agent import (
     RunCompletedEvent,
@@ -53,7 +53,7 @@ def increment_counter(amount: int = 1) -> str:
 def agent():
     return Agent(
         name="StateTestAgent",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
         tools=[increment_counter],
         instructions="You are a test agent.",
         markdown=False,

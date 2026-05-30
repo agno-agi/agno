@@ -90,7 +90,9 @@ class EventBuffer:
     pending_tool_calls_parent_id: str = ""  # Parent message ID for pending tool calls
     reasoning_message_id: Optional[str] = None  # Active reasoning session ID, set by reasoning_started
     reasoning_step_count: int = 0  # Step counter for ReasoningTools (reset each session)
-    _last_snapshot: Optional[Dict[str, Any]] = field(default=None, repr=False)  # Snapshot of last state for delta computation
+    _last_snapshot: Optional[Dict[str, Any]] = field(
+        default=None, repr=False
+    )  # Snapshot of last state for delta computation
 
     def __init__(self):
         self.active_tool_call_ids = set()
@@ -542,16 +544,6 @@ def _create_completion_events(
             )
             events_to_emit.append(end_event)
 
-    # Close any in-progress reasoning phase
-    if event_buffer.reasoning_message_id:
-        events_to_emit.append(
-            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=event_buffer.reasoning_message_id)
-        )
-        events_to_emit.append(
-            ReasoningEndEvent(type=EventType.REASONING_END, message_id=event_buffer.reasoning_message_id)
-        )
-        event_buffer.reasoning_message_id = ""
-
     # End the message and run, denoting the end of the session
     if message_started:
         end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
@@ -614,10 +606,11 @@ def _create_completion_events(
 
     # Emit final state snapshot before finishing the run (only if frontend opted into state tracking)
     if run_state is not None:
-        # Use session_state from RunCompletedEvent (authoritative) if available, otherwise fall back to run_state
+        # Use session_state from RunCompletedEvent (authoritative) if available, otherwise fall back to run_state.
+        # Deep-copy so the emitted event doesn't alias the live agent state (consistent with set_state_snapshot).
         authoritative_state = getattr(chunk, "session_state", None)
         final_state = authoritative_state if authoritative_state is not None else run_state
-        snapshot_event = StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=final_state)
+        snapshot_event = StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(final_state))
         events_to_emit.append(snapshot_event)
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)

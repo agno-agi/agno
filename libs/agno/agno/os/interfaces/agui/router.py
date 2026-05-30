@@ -1,5 +1,6 @@
 """Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
 
+import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
 
@@ -52,7 +53,8 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
 
         # Emit initial state snapshot if state is provided
         if session_state is not None:
-            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=session_state)
+            # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
         # Request streaming response from agent
         response_stream = agent.arun(  # type: ignore
@@ -99,7 +101,8 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
 
         # Emit initial state snapshot if state is provided
         if session_state is not None:
-            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=session_state)
+            # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
         # Request streaming response from team
         response_stream = team.arun(  # type: ignore
