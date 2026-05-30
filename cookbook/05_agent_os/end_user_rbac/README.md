@@ -15,15 +15,16 @@ unmanaged primitive that Track B builds on top of.
 ## Prerequisites
 
 ```bash
-export AGNO_JWT_SIGNING_KEY="a-long-random-string-at-least-32-chars-please"
+export AGNO_JWT_SIGNING_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
 export OPENAI_API_KEY="..."
 ./scripts/demo_setup.sh   # if not already done
 ```
 
 `AGNO_JWT_SIGNING_KEY` is the symmetric (HS256) secret that AgentOS uses to
-both sign tokens via `issue_token()` and verify incoming tokens. In production
-prefer a long random value (>= 32 bytes); for local testing any non-empty
-string works.
+both sign tokens via `issue_token()` and verify incoming tokens. It must be at
+least **32 bytes** (RFC 7518 §3.2 minimum for HS256) — `issue_token()` raises
+if the key is shorter. The `secrets.token_urlsafe(48)` snippet above gives you
+a 64-character URL-safe string; that's well over the minimum.
 
 ## Examples
 

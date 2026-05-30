@@ -978,6 +978,16 @@ class AgentOS:
                 "or configure AuthorizationConfig(verification_keys=[...], algorithm='HS256')."
             )
 
+        # RFC 7518 §3.2: HMAC-SHA256 keys must be at least 32 bytes. PyJWT emits
+        # an InsecureKeyLengthWarning otherwise; we promote that to a hard error
+        # so weak keys never make it to production.
+        if len(key.encode("utf-8")) < 32:
+            raise ValueError(
+                f"AGNO_JWT_SIGNING_KEY is too short ({len(key.encode('utf-8'))} bytes). "
+                "HS256 requires at least 32 bytes per RFC 7518 §3.2. Generate one with "
+                "e.g. `python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
+            )
+
         now = datetime.now(timezone.utc)
         payload: Dict[str, Any] = {
             "sub": subject,
