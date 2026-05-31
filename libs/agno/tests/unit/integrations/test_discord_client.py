@@ -1,24 +1,27 @@
+"""Unit tests for the Discord integration (agno.integrations.discord)."""
+
 import inspect
 
-from agno.integrations.discord.client import DiscordClient
+import pytest
+
+pytest.importorskip("discord")
+
+from agno.integrations.discord.client import DiscordClient  # noqa: E402
 
 
-def test_on_message_does_not_block_event_loop_for_attachments():
-    """Regression test: the async ``on_message`` handler must not use the
-    synchronous, blocking ``requests.get`` to download attachments.
+def test_on_message_reads_attachments_without_blocking_the_event_loop():
+    """The async ``on_message`` handler must download attachments without a
+    synchronous, blocking network call.
 
-    A blocking network call inside the coroutine freezes the entire asyncio
-    event loop for the duration of the download, stalling every other Discord
-    message and concurrent agent run. The fix downloads attachments with
-    discord.py's native async ``await media.read()`` instead.
+    ``requests.get`` is blocking; calling it inside a coroutine freezes the
+    whole asyncio event loop for the duration of the download. The handler must
+    instead use discord.py's native async ``await media.read()``.
     """
     # ``on_message`` is a closure defined inside ``_setup_events``; its source
-    # is included when we read the enclosing method's source.
+    # is captured when we read the enclosing method's source.
     source = inspect.getsource(DiscordClient._setup_events)
 
-    # The blocking download must be gone.
     assert "requests.get(" not in source
-    # Attachments must be read via the non-blocking, authenticated async API.
     assert "await media.read()" in source
 
 
