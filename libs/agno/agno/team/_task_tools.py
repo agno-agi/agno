@@ -18,13 +18,36 @@ from typing import (
     Sequence,
     Union,
 )
+from uuid import uuid4
 
 from agno.agent import Agent
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import (
+    RunCancelledEvent as AgentRunCancelledEvent,
+)
+from agno.run.agent import (
+    RunCompletedEvent as AgentRunCompletedEvent,
+)
+from agno.run.agent import (
+    RunErrorEvent as AgentRunErrorEvent,
+)
+from agno.run.agent import (
+    RunOutput,
+    RunOutputEvent,
+)
 from agno.run.base import RunStatus
+from agno.run.cancel import aregister_member_run, raise_if_cancelled, register_member_run
+from agno.run.team import (
+    RunCancelledEvent as TeamMemberRunCancelledEvent,
+)
+from agno.run.team import (
+    RunCompletedEvent as TeamMemberRunCompletedEvent,
+)
+from agno.run.team import (
+    RunErrorEvent as TeamMemberRunErrorEvent,
+)
 from agno.run.team import (
     TaskCreatedEvent,
     TaskUpdatedEvent,
@@ -32,6 +55,10 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
+from agno.team._default_tools import (
+    _acascading_cancel_run,
+    _cascading_cancel_run,
+)
 from agno.team.task import TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
 from agno.utils.events import (
@@ -49,6 +76,16 @@ from agno.utils.response import check_if_run_cancelled
 from agno.utils.team import (
     add_interaction_to_team_run_context,
     format_member_agent_task,
+)
+
+# Terminal events emitted by a member (Agent or sub-Team); forwarded even when draining after cancel.
+_MEMBER_TERMINAL_EVENT_TYPES = (
+    AgentRunCancelledEvent,
+    AgentRunCompletedEvent,
+    AgentRunErrorEvent,
+    TeamMemberRunCancelledEvent,
+    TeamMemberRunCompletedEvent,
+    TeamMemberRunErrorEvent,
 )
 
 
@@ -406,6 +443,9 @@ def _get_task_management_tools(
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             if stream:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    register_member_run(run_response.run_id, member_run_id)
                 member_stream = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -425,16 +465,39 @@ def _get_task_management_tools(
                     knowledge_filters=run_context.knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    run_id=member_run_id,
                     yield_run_output=True,
                 )
+                draining_after_cancel = False
                 for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
-                    check_if_run_cancelled(event)
+                    if isinstance(event, _MEMBER_TERMINAL_EVENT_TYPES):
+                        event.parent_run_id = event.parent_run_id or run_response.run_id
+                        yield event
+                        if event.is_cancelled:
+                            draining_after_cancel = True
+                        continue
+                    if draining_after_cancel:
+                        continue
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            _cascading_cancel_run(member_run_id)
+                        draining_after_cancel = True
+                        continue
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
+                if draining_after_cancel:
+                    raise RunCancelledException("")
             else:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    register_member_run(run_response.run_id, member_run_id)
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -453,9 +516,18 @@ def _get_task_management_tools(
                     knowledge_filters=run_context.knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    run_id=member_run_id,
                 )
                 check_if_run_cancelled(member_run_response)
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            use_team_logger()
+            _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+            # Preserve any partial member content as task.result before re-raising
+            if member_run_response is not None and member_run_response.content:
+                task.result = str(member_run_response.content)
+                save_task_list(run_context.session_state, task_list)
             raise
         except Exception as e:
             task.status = TaskStatus.failed
@@ -550,6 +622,9 @@ def _get_task_management_tools(
             member_agent_task, history = _setup_member_for_task(member_agent, member_task_description)
 
             if stream:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    await aregister_member_run(run_response.run_id, member_run_id)
                 member_stream = member_agent.arun(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -569,16 +644,39 @@ def _get_task_management_tools(
                     knowledge_filters=run_context.knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    run_id=member_run_id,
                     yield_run_output=True,
                 )
+                draining_after_cancel = False
                 async for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
-                    check_if_run_cancelled(event)
+                    if isinstance(event, _MEMBER_TERMINAL_EVENT_TYPES):
+                        event.parent_run_id = event.parent_run_id or run_response.run_id
+                        yield event
+                        if event.is_cancelled:
+                            draining_after_cancel = True
+                        continue
+                    if draining_after_cancel:
+                        continue
+                    # Check if the parent team's run is cancelled - propagate to member
+                    try:
+                        if run_response.run_id is not None:
+                            raise_if_cancelled(run_response.run_id)
+                    except RunCancelledException:
+                        if member_run_id:
+                            await _acascading_cancel_run(member_run_id)
+                        draining_after_cancel = True
+                        continue
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
+                if draining_after_cancel:
+                    raise RunCancelledException("")
             else:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    await aregister_member_run(run_response.run_id, member_run_id)
                 member_run_response = await member_agent.arun(  # type: ignore[misc]
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -597,9 +695,18 @@ def _get_task_management_tools(
                     knowledge_filters=run_context.knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    run_id=member_run_id,
                 )
                 check_if_run_cancelled(member_run_response)
+                if run_response.run_id is not None:
+                    raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
+            use_team_logger()
+            _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
+            # Preserve any partial member content as task.result before re-raising
+            if member_run_response is not None and member_run_response.content:
+                task.result = str(member_run_response.content)
+                save_task_list(run_context.session_state, task_list)
             raise
         except Exception as e:
             task.status = TaskStatus.failed
@@ -704,6 +811,9 @@ def _get_task_management_tools(
             thread_files = list(_files)
 
             try:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    register_member_run(run_response.run_id, member_run_id)
                 member_run_response = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -722,6 +832,7 @@ def _get_task_management_tools(
                     knowledge_filters=run_context.knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    run_id=member_run_id,
                 )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_agent_task, None)
             except RunCancelledException:
@@ -821,6 +932,9 @@ def _get_task_management_tools(
                                 _emit_task_updated(task_obj, "in_progress", result=task_obj.result)
                             )
                         results_text.append(f"Task [{tid}] completed with no content.")
+                except RunCancelledException:
+                    # Cancel must propagate up; otherwise the team marks the task failed.
+                    raise
                 except Exception as e:
                     task_obj.status = TaskStatus.failed
                     task_obj.result = f"Unexpected error: {e}"
@@ -903,6 +1017,9 @@ def _get_task_management_tools(
             task_files = list(_files)
 
             try:
+                member_run_id = str(uuid4())
+                if run_response.run_id is not None:
+                    await aregister_member_run(run_response.run_id, member_run_id)
                 member_run_response = await member_agent.arun(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -921,6 +1038,7 @@ def _get_task_management_tools(
                     knowledge_filters=run_context.knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    run_id=member_run_id,
                 )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_agent_task, None)
             except RunCancelledException:
@@ -933,6 +1051,11 @@ def _get_task_management_tools(
             *[_run_single_task_async(task_obj, member_agent) for task_obj, member_agent in tasks_to_run],
             return_exceptions=True,
         )
+
+        # Re-raise any RunCancelledException so the team-level cancel propagates.
+        for gather_result in gather_results:
+            if isinstance(gather_result, RunCancelledException):
+                raise gather_result
 
         results_text: List[str] = []
         modified_states: List[Dict[str, Any]] = []
