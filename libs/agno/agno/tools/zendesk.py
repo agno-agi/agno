@@ -2,6 +2,7 @@ import json
 import re
 from os import getenv
 from typing import Any, List, Optional
+from urllib.parse import quote_plus
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
@@ -71,7 +72,7 @@ class ZendeskTools(Toolkit):
         log_debug(f"Searching Zendesk for: {search_string}")
 
         auth = (self.username, self.password)
-        url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={search_string}"
+        url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={quote_plus(search_string)}"
         try:
             response = requests.get(url, auth=auth)
             response.raise_for_status()

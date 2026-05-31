@@ -245,7 +245,7 @@ class AgentSession:
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return self.get_messages(skip_roles=["system", "tool"], last_n_runs=last_n_runs)
+        return self.get_messages(skip_roles=["system", "tool"], skip_statuses=[], last_n_runs=last_n_runs)
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""
