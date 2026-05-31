@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 try:
-    from seltz import Includes, Seltz  # noqa: F401
+    from seltz import Seltz  # noqa: F401
     from seltz.exceptions import (
         SeltzAPIError,
         SeltzAuthenticationError,
@@ -118,6 +118,25 @@ def test_search_default_limit(seltz_tools, mock_seltz_client):
         mock_seltz_client.search.assert_called_with(
             query="test query",
             includes=mock_includes_instance,
+            context=None,
+            profile=None,
+        )
+
+
+def test_search_uses_max_results_with_current_seltz_sdk(seltz_tools, mock_seltz_client):
+    """Test search uses max_results when the installed SDK does not expose Includes."""
+    mock_response = Mock()
+    mock_response.documents = [create_mock_document(url="https://example.com")]
+    mock_seltz_client.search.return_value = mock_response
+
+    with patch("agno.tools.seltz.Includes", None):
+        result = seltz_tools.search_seltz("test query", max_documents=3)
+        result_data = json.loads(result)
+
+        assert len(result_data) == 1
+        mock_seltz_client.search.assert_called_with(
+            query="test query",
+            max_results=3,
             context=None,
             profile=None,
         )

@@ -6,7 +6,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_error, log_info, logger
 
 try:
-    from seltz import Includes, Seltz
+    from seltz import Seltz
     from seltz.exceptions import (
         SeltzAPIError,
         SeltzAuthenticationError,
@@ -18,6 +18,11 @@ try:
     )
 except ImportError as exc:
     raise ImportError("`seltz` not installed. Please install using `pip install seltz`") from exc
+
+try:
+    from seltz import Includes
+except ImportError:
+    Includes = None  # type: ignore[assignment]
 
 
 class SeltzTools(Toolkit):
@@ -124,13 +129,17 @@ class SeltzTools(Toolkit):
             if self.show_results:
                 log_info(f"Searching Seltz for: {query}")
 
-            includes = Includes(max_documents=limit)
-            response = self.client.search(
-                query=query,
-                includes=includes,
-                context=search_context,
-                profile=self.profile,
-            )
+            search_kwargs: dict[str, Any] = {
+                "query": query,
+                "context": search_context,
+                "profile": self.profile,
+            }
+            if Includes is not None:
+                search_kwargs["includes"] = Includes(max_documents=limit)
+            else:
+                search_kwargs["max_results"] = limit
+
+            response = self.client.search(**search_kwargs)
             result = self._parse_documents(response.documents)
 
             if self.show_results:
