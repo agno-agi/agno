@@ -4,7 +4,7 @@ Custom OpenTelemetry SpanExporter that writes traces to Agno database.
 
 import asyncio
 from collections import defaultdict
-from typing import Dict, List, Sequence, Union
+from typing import Dict, List, Sequence, Set, Union
 
 from opentelemetry.sdk.trace import ReadableSpan  # type: ignore
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult  # type: ignore
@@ -27,6 +27,7 @@ class DatabaseSpanExporter(SpanExporter):
         """
         self.db = db
         self._shutdown = False
+        self._background_tasks: Set[asyncio.Task] = set()
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         """
@@ -106,40 +107,46 @@ class DatabaseSpanExporter(SpanExporter):
     def _export_async(self, spans_by_trace: Dict[str, List[Span]]) -> None:
         """Handle async database export"""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're in an async context, schedule the coroutine
-                asyncio.create_task(self._do_async_export(spans_by_trace))
-            else:
-                # No running loop, run in new loop
-                loop.run_until_complete(self._do_async_export(spans_by_trace))
+            loop = asyncio.get_running_loop()
         except RuntimeError:
             # No event loop, create new one
             try:
                 asyncio.run(self._do_async_export(spans_by_trace))
             except Exception as e:
                 log_error(f"Failed to export async traces: {str(e)}")
+            return
+
+        # We're in an async context, schedule the coroutine and keep a strong
+        # reference until it completes so exceptions are observed.
+        task = loop.create_task(self._do_async_export(spans_by_trace))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._handle_background_task_done)
+
+    def _handle_background_task_done(self, task: asyncio.Task) -> None:
+        """Release completed async export tasks and observe their exceptions."""
+        self._background_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            log_error(f"Failed to export async traces: {str(e)}")
 
     async def _do_async_export(self, spans_by_trace: Dict[str, List[Span]]) -> None:
         """Actually perform the async export"""
-        try:
-            # Create trace and span records for each trace
-            for trace_id, spans in spans_by_trace.items():
-                # Create trace record (aggregate of all spans)
-                trace = create_trace_from_spans(spans)
-                if trace:
-                    create_trace_result = self.db.upsert_trace(trace)  # type: ignore
-                    if create_trace_result is not None:
-                        await create_trace_result
+        # Create trace and span records for each trace
+        for trace_id, spans in spans_by_trace.items():
+            # Create trace record (aggregate of all spans)
+            trace = create_trace_from_spans(spans)
+            if trace:
+                create_trace_result = self.db.upsert_trace(trace)  # type: ignore
+                if create_trace_result is not None:
+                    await create_trace_result
 
-                # Create span records
-                create_spans_result = self.db.create_spans(spans)  # type: ignore
-                if create_spans_result is not None:
-                    await create_spans_result
-
-        except Exception as e:
-            log_error(f"Failed to do async export: {str(e)}")
-            raise
+            # Create span records
+            create_spans_result = self.db.create_spans(spans)  # type: ignore
+            if create_spans_result is not None:
+                await create_spans_result
 
     def shutdown(self) -> None:
         """Shutdown the exporter"""
