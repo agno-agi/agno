@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import get_current_service, google_authenticate
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -134,7 +134,7 @@ class GoogleMeetTools(Toolkit):
             self.instructions = instructions
 
         self.creds = creds
-        self.service: Optional[Resource] = None
+        self._service: Optional[Resource] = None
         self.credentials_path = credentials_path
         self.token_path = token_path
         self.service_account_path = service_account_path
@@ -243,8 +243,24 @@ class GoogleMeetTools(Toolkit):
             if self.token_path:
                 token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
 
+    @property
+    def service(self) -> Any:
+        """Per-call service from contextvar. Set by @google_authenticate decorator."""
+        return get_current_service()
+
+    def _resolve_creds(self, run_context=None, agent=None):
+        """Resolve credentials - delegates to _auth() for backward compat."""
+        self._auth()
+        return self.creds
+
+    def _build_service(self, creds=None):
+        """Build the Meet service with resolved credentials."""
+        if creds is None:
+            creds = self.creds
+        return build("meet", "v2", credentials=creds)
+
     @authenticate
-    def create_meeting_space(self) -> str:
+    def create_meeting_space(self, agent=None, run_context=None) -> str:
         """Create a new Google Meet space and return a shareable meeting URL.
 
         The meeting space is owned by the authenticated user. The returned meeting_uri
@@ -272,7 +288,7 @@ class GoogleMeetTools(Toolkit):
             return json.dumps({"error": f"Unexpected error creating Meet space: {e}"})
 
     @authenticate
-    def get_meeting_space(self, name: str) -> str:
+    def get_meeting_space(self, agent, run_context, name: str) -> str:
         """Get details for an existing Google Meet space.
 
         Args:
@@ -294,7 +310,7 @@ class GoogleMeetTools(Toolkit):
             return json.dumps({"error": f"Unexpected error fetching Meet space: {e}"})
 
     @authenticate
-    def list_conference_records(self, filter: Optional[str] = None, page_size: int = 25) -> str:
+    def list_conference_records(self, agent, run_context, filter: Optional[str] = None, page_size: int = 25) -> str:
         """List past Google Meet conferences organized by the authenticated user.
 
         Results are ordered by start time, most recent first. Only conferences where
@@ -326,7 +342,7 @@ class GoogleMeetTools(Toolkit):
             return json.dumps({"error": f"Unexpected error listing conference records: {e}"})
 
     @authenticate
-    def get_conference_record(self, name: str) -> str:
+    def get_conference_record(self, agent, run_context, name: str) -> str:
         """Get details for a specific past Google Meet conference.
 
         Args:
@@ -347,7 +363,7 @@ class GoogleMeetTools(Toolkit):
             return json.dumps({"error": f"Unexpected error fetching conference record: {e}"})
 
     @authenticate
-    def list_participants(self, parent: str, page_size: int = 100) -> str:
+    def list_participants(self, agent, run_context, parent: str, page_size: int = 100) -> str:
         """List participants of a past Google Meet conference.
 
         Args:
@@ -378,7 +394,7 @@ class GoogleMeetTools(Toolkit):
             return json.dumps({"error": f"Unexpected error listing participants: {e}"})
 
     @authenticate
-    def list_recordings(self, parent: str) -> str:
+    def list_recordings(self, agent, run_context, parent: str) -> str:
         """List recordings for a past Google Meet conference.
 
         Recordings are produced asynchronously and may take several minutes to appear
@@ -409,7 +425,7 @@ class GoogleMeetTools(Toolkit):
             return json.dumps({"error": f"Unexpected error listing recordings: {e}"})
 
     @authenticate
-    def list_transcripts(self, parent: str) -> str:
+    def list_transcripts(self, agent, run_context, parent: str) -> str:
         """List transcripts for a past Google Meet conference.
 
         Transcripts are produced asynchronously and may take several minutes to appear
@@ -439,7 +455,7 @@ class GoogleMeetTools(Toolkit):
             return json.dumps({"error": f"Unexpected error listing transcripts: {e}"})
 
     @authenticate
-    def list_transcript_entries(self, parent: str, page_size: int = 100) -> str:
+    def list_transcript_entries(self, agent, run_context, parent: str, page_size: int = 100) -> str:
         """List transcript entries (individual spoken lines) for a Meet transcript.
 
         Args:
@@ -474,7 +490,7 @@ class GoogleMeetTools(Toolkit):
             return json.dumps({"error": f"Unexpected error listing transcript entries: {e}"})
 
     @authenticate
-    def end_active_conference(self, name: str) -> str:
+    def end_active_conference(self, agent, run_context, name: str) -> str:
         """End the active conference on a meeting space. Cannot be undone.
 
         Disconnects all participants from the ongoing conference. The meeting space

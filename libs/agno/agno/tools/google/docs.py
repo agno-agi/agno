@@ -58,6 +58,8 @@ except ImportError:
         "Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
 
+from agno.agent.agent import Agent
+from agno.run.base import RunContext
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_error
@@ -194,7 +196,7 @@ class GoogleDocsTools(GoogleToolkit):
         return "".join(parts)
 
     @authenticate
-    def create_document(self, title: str) -> str:
+    def create_document(self, agent: Agent, run_context: RunContext, title: str) -> str:
         """
         Create a new Google Doc.
 
@@ -225,7 +227,7 @@ class GoogleDocsTools(GoogleToolkit):
         return await asyncio.to_thread(self.create_document, title=title)
 
     @authenticate
-    def get_document(self, document_id: str) -> str:
+    def get_document(self, agent: Agent, run_context: RunContext, document_id: str) -> str:
         """
         Fetch the full JSON structure of a Google Doc.
 
@@ -253,7 +255,7 @@ class GoogleDocsTools(GoogleToolkit):
         return await asyncio.to_thread(self.get_document, document_id=document_id)
 
     @authenticate
-    def get_document_text(self, document_id: str) -> str:
+    def get_document_text(self, agent: Agent, run_context: RunContext, document_id: str) -> str:
         """
         Fetch a Google Doc and return only its plain text body.
 
@@ -286,7 +288,9 @@ class GoogleDocsTools(GoogleToolkit):
         return await asyncio.to_thread(self.get_document_text, document_id=document_id)
 
     @authenticate
-    def batch_update(self, document_id: str, requests: List[Dict[str, Any]]) -> str:
+    def batch_update(
+        self, agent: Agent, run_context: RunContext, document_id: str, requests: List[Dict[str, Any]]
+    ) -> str:
         """
         Apply a batch of update requests to a Google Doc.
 
@@ -322,7 +326,7 @@ class GoogleDocsTools(GoogleToolkit):
         return await asyncio.to_thread(self.batch_update, document_id=document_id, requests=requests)
 
     @authenticate
-    def append_text(self, document_id: str, text: str) -> str:
+    def append_text(self, agent: Agent, run_context: RunContext, document_id: str, text: str) -> str:
         """
         Append plain text to the end of a Google Doc.
 
@@ -368,7 +372,9 @@ class GoogleDocsTools(GoogleToolkit):
         return await asyncio.to_thread(self.append_text, document_id=document_id, text=text)
 
     @authenticate
-    def export_as_pdf(self, document_id: str, filename: Optional[str] = None) -> str:
+    def export_as_pdf(
+        self, agent: Agent, run_context: RunContext, document_id: str, filename: Optional[str] = None
+    ) -> str:
         """
         Export a Google Doc as a PDF, saved under the toolkit's export_dir sandbox.
 
@@ -421,7 +427,7 @@ class GoogleDocsTools(GoogleToolkit):
         return await asyncio.to_thread(self.export_as_pdf, document_id=document_id, filename=filename)
 
     @authenticate
-    def delete_document(self, document_id: str) -> str:
+    def delete_document(self, agent: Agent, run_context: RunContext, document_id: str) -> str:
         """
         Move a Google Doc to the Drive trash.
 

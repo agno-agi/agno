@@ -26,10 +26,13 @@ Scopes:
 import textwrap
 from typing import Any, Dict, List, Optional, Union
 
+from agno.agent.agent import Agent
+from agno.run.base import RunContext
+
 try:
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from googleapiclient.discovery import Resource, build
+    from googleapiclient.discovery import Resource
     from googleapiclient.errors import HttpError
 except ImportError:
     raise ImportError(
@@ -39,7 +42,7 @@ except ImportError:
 
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_error
 
 PEOPLE_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Google People tools for looking up contacts and directory information.
@@ -150,7 +153,7 @@ class GooglePeopleTools(GoogleToolkit):
         return result
 
     @authenticate
-    def search_contacts(self, query: str, page_size: int = 10) -> str:
+    def search_contacts(self, agent: Agent, run_context: RunContext, query: str, page_size: int = 10) -> str:
         """Search the user's contacts by name, email, or phone.
 
         Args:
@@ -190,7 +193,7 @@ class GooglePeopleTools(GoogleToolkit):
             return str({"error": str(e)})
 
     @authenticate
-    def get_contact(self, resource_name: str) -> str:
+    def get_contact(self, agent: Agent, run_context: RunContext, resource_name: str) -> str:
         """Get detailed information for a specific contact.
 
         Args:
@@ -221,7 +224,14 @@ class GooglePeopleTools(GoogleToolkit):
             return str({"error": str(e)})
 
     @authenticate
-    def list_directory_people(self, query: str = "", page_size: int = 20, page_token: Optional[str] = None) -> str:
+    def list_directory_people(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        query: str = "",
+        page_size: int = 20,
+        page_token: Optional[str] = None,
+    ) -> str:
         """List people in the organization directory (Google Workspace only).
 
         Args:
@@ -277,7 +287,7 @@ class GooglePeopleTools(GoogleToolkit):
             return str({"error": str(e)})
 
     @authenticate
-    def get_person(self, resource_name: str) -> str:
+    def get_person(self, agent: Agent, run_context: RunContext, resource_name: str) -> str:
         """Get profile information for a person by resource name.
 
         Works for both contacts (people/c123) and directory entries (people/account_id).

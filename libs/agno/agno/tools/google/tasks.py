@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import get_current_service, google_authenticate
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -133,7 +133,7 @@ class GoogleTasksTools(Toolkit):
             self.instructions = instructions
 
         self.creds = creds
-        self.service: Optional[Resource] = None
+        self._service: Optional[Resource] = None
         self.credentials_path = credentials_path
         self.token_path = token_path
         self.service_account_path = service_account_path
@@ -272,8 +272,24 @@ class GoogleTasksTools(Toolkit):
             log_debug("Successfully authenticated with Google Tasks API.")
             log_info(f"Token file path: {token_file}")
 
+    @property
+    def service(self) -> Any:
+        """Per-call service from contextvar. Set by @google_authenticate decorator."""
+        return get_current_service()
+
+    def _resolve_creds(self, run_context=None, agent=None):
+        """Resolve credentials - delegates to _auth() for backward compat."""
+        self._auth()
+        return self.creds
+
+    def _build_service(self, creds=None):
+        """Build the Tasks service with resolved credentials."""
+        if creds is None:
+            creds = self.creds
+        return build("tasks", "v1", credentials=creds)
+
     @authenticate
-    def list_task_lists(self, max_results: int = 100) -> str:
+    def list_task_lists(self, agent=None, run_context=None, max_results: int = 100) -> str:
         """
         List all task lists for the authenticated user.
 
@@ -295,7 +311,7 @@ class GoogleTasksTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def get_task_list(self, task_list_id: str) -> str:
+    def get_task_list(self, agent, run_context, task_list_id: str) -> str:
         """
         Retrieve a single task list by its ID.
 
@@ -316,6 +332,8 @@ class GoogleTasksTools(Toolkit):
     @authenticate
     def list_tasks(
         self,
+        agent,
+        run_context,
         task_list_id: str,
         max_results: int = 100,
         show_completed: bool = True,
@@ -375,7 +393,7 @@ class GoogleTasksTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def get_task(self, task_list_id: str, task_id: str) -> str:
+    def get_task(self, agent, run_context, task_list_id: str, task_id: str) -> str:
         """
         Retrieve a single task by its ID.
 
@@ -395,7 +413,7 @@ class GoogleTasksTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def create_task_list(self, title: str) -> str:
+    def create_task_list(self, agent, run_context, title: str) -> str:
         """
         Create a new task list.
 
@@ -415,7 +433,7 @@ class GoogleTasksTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def update_task_list(self, task_list_id: str, title: str) -> str:
+    def update_task_list(self, agent, run_context, task_list_id: str, title: str) -> str:
         """
         Rename an existing task list.
 
@@ -436,7 +454,7 @@ class GoogleTasksTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def delete_task_list(self, task_list_id: str) -> str:
+    def delete_task_list(self, agent, run_context, task_list_id: str) -> str:
         """
         Delete an entire task list and all its tasks. Irreversible.
 
@@ -458,6 +476,8 @@ class GoogleTasksTools(Toolkit):
     @authenticate
     def create_task(
         self,
+        agent,
+        run_context,
         task_list_id: str,
         title: str,
         notes: Optional[str] = None,
@@ -503,6 +523,8 @@ class GoogleTasksTools(Toolkit):
     @authenticate
     def update_task(
         self,
+        agent,
+        run_context,
         task_list_id: str,
         task_id: str,
         title: Optional[str] = None,
@@ -550,7 +572,7 @@ class GoogleTasksTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def complete_task(self, task_list_id: str, task_id: str) -> str:
+    def complete_task(self, agent, run_context, task_list_id: str, task_id: str) -> str:
         """
         Mark a task as completed. Convenience wrapper around update_task.
 
@@ -573,6 +595,8 @@ class GoogleTasksTools(Toolkit):
     @authenticate
     def move_task(
         self,
+        agent,
+        run_context,
         task_list_id: str,
         task_id: str,
         parent: Optional[str] = None,
@@ -610,7 +634,7 @@ class GoogleTasksTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def delete_task(self, task_list_id: str, task_id: str) -> str:
+    def delete_task(self, agent, run_context, task_list_id: str, task_id: str) -> str:
         """
         Delete a task from a task list. Irreversible.
 
@@ -631,7 +655,7 @@ class GoogleTasksTools(Toolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def clear_completed_tasks(self, task_list_id: str) -> str:
+    def clear_completed_tasks(self, agent, run_context, task_list_id: str) -> str:
         """
         Hide all completed tasks from the default view of a task list.
         The tasks are not deleted — they are marked as hidden and can still be fetched
