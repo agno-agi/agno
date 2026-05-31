@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agno.tools.invisible_playwright import InvisiblePlaywrightTools
+# invisible_playwright is an optional dependency (extras = "invisible_playwright").
+# Skip the whole module when it isn't installed so CI without the extra reports
+# skipped, not a collection error.
+pytest.importorskip("invisible_playwright")
+
+from agno.tools.invisible_playwright import InvisiblePlaywrightTools  # noqa: E402
 
 
 @pytest.fixture
