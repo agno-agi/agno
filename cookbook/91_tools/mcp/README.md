@@ -32,6 +32,13 @@ This example shows how to use the MCP agent to perform sequential thinking.
 
 This example shows how to create an agent that uses MCP and Gemini 2.5 Pro to search for Airbnb listings.
 
+8. Formula workbook with Bilig WorkPaper (`bilig_workpaper.py`)
+
+This example connects Agno to a local Bilig WorkPaper MCP server over stdio. It
+edits a workbook input cell, reads the recalculated formula output, and confirms
+the JSON document was persisted. The default smoke path runs without an LLM API
+key; use `--agent` when you want an OpenAI-backed agent to drive the same tools.
+
 
 ## Getting Started
 
@@ -56,6 +63,7 @@ export OPENAI_API_KEY="your_openai_api_key"
 ```bash
 python filesystem.py
 python github.py
+python bilig_workpaper.py
 ```
 
 ## How It Works
