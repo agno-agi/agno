@@ -176,6 +176,32 @@ def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
     return ""
 
 
+def extract_agui_context(context: Optional[List[Any]]) -> Optional[List[Dict[str, Any]]]:
+    """Convert AG-UI context entries into serializable context records."""
+    if not context:
+        return None
+
+    context_entries: List[Dict[str, Any]] = []
+    for index, item in enumerate(context, start=1):
+        description = getattr(item, "description", None)
+        value = getattr(item, "value", None)
+
+        if isinstance(item, dict):
+            description = item.get("description", description)
+            value = item.get("value", value)
+
+        description = description if isinstance(description, str) and description else f"context_{index}"
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+
+        context_entries.append({"description": description, "value": value})
+
+    return context_entries or None
+
+
 def extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
     """Given a response stream chunk, find and extract the content."""
 

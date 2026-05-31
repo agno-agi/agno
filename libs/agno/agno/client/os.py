@@ -584,9 +584,13 @@ class AgentOSClient:
         if files:
             data["files"] = json.dumps([f.model_dump() for f in files])
 
-        # Add kwargs to data, serializing dicts as JSON
+        # Add kwargs to data, serializing structured values as JSON
         for key, value in kwargs.items():
-            if isinstance(value, dict):
+            if key == "additional_input" and isinstance(value, list):
+                data[key] = json.dumps(
+                    [item.model_dump(mode="json") if hasattr(item, "model_dump") else item for item in value]
+                )
+            elif isinstance(value, dict):
                 data[key] = json.dumps(value)
             else:
                 data[key] = value
@@ -645,7 +649,11 @@ class AgentOSClient:
             data["files"] = json.dumps([f.model_dump() for f in files])
 
         for key, value in kwargs.items():
-            if isinstance(value, dict):
+            if key == "additional_input" and isinstance(value, list):
+                data[key] = json.dumps(
+                    [item.model_dump(mode="json") if hasattr(item, "model_dump") else item for item in value]
+                )
+            elif isinstance(value, dict):
                 data[key] = json.dumps(value)
             else:
                 data[key] = value
@@ -856,9 +864,13 @@ class AgentOSClient:
         if files:
             data["files"] = json.dumps(files)
 
-        # Add kwargs to data, serializing dicts as JSON
+        # Add kwargs to data, serializing structured values as JSON
         for key, value in kwargs.items():
-            if isinstance(value, dict):
+            if key == "additional_input" and isinstance(value, list):
+                data[key] = json.dumps(
+                    [item.model_dump(mode="json") if hasattr(item, "model_dump") else item for item in value]
+                )
+            elif isinstance(value, dict):
                 data[key] = json.dumps(value)
             else:
                 data[key] = value
@@ -916,9 +928,13 @@ class AgentOSClient:
         if files:
             data["files"] = json.dumps(files)
 
-        # Add kwargs to data, serializing dicts as JSON
+        # Add kwargs to data, serializing structured values as JSON
         for key, value in kwargs.items():
-            if isinstance(value, dict):
+            if key == "additional_input" and isinstance(value, list):
+                data[key] = json.dumps(
+                    [item.model_dump(mode="json") if hasattr(item, "model_dump") else item for item in value]
+                )
+            elif isinstance(value, dict):
                 data[key] = json.dumps(value)
             else:
                 data[key] = value

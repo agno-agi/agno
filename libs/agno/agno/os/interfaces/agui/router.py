@@ -1,7 +1,8 @@
 """Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
 
+import json
 import uuid
-from typing import AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, List, Optional, Union
 
 from agno.utils.log import log_error
 
@@ -21,13 +22,30 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
+from agno.models.message import Message
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
+    extract_agui_context,
     extract_agui_user_input,
     validate_agui_state,
 )
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+
+
+def _additional_input_from_agui_context(context: Any) -> Optional[List[Message]]:
+    agui_context = extract_agui_context(context)
+    if agui_context is None:
+        return None
+
+    context_json = json.dumps({"agui_context": agui_context}, indent=2, ensure_ascii=False)
+    return [
+        Message(
+            role="user",
+            content=f"<additional context>\n{context_json}\n</additional context>",
+            add_to_agent_memory=False,
+        )
+    ]
 
 
 async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
@@ -38,6 +56,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — agent manages history via session DB.
         user_input = extract_agui_user_input(run_input.messages or [])
+        additional_input = _additional_input_from_agui_context(getattr(run_input, "context", None))
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -49,7 +68,10 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(run_input.state, run_input.thread_id)
 
-        # Request streaming response from agent
+        run_kwargs = {}
+        if additional_input is not None:
+            run_kwargs["additional_input"] = additional_input
+
         response_stream = agent.arun(  # type: ignore
             input=user_input,
             session_id=run_input.thread_id,
@@ -58,6 +80,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
             user_id=user_id,
             session_state=session_state,
             run_id=run_id,
+            **run_kwargs,
         )
 
         # Stream the response content in AG-UI format
@@ -81,6 +104,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — team manages history via session DB.
         user_input = extract_agui_user_input(input.messages or [])
+        additional_input = _additional_input_from_agui_context(getattr(input, "context", None))
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Look for user_id in input.forwarded_props
@@ -91,7 +115,10 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(input.state, input.thread_id)
 
-        # Request streaming response from team
+        run_kwargs = {}
+        if additional_input is not None:
+            run_kwargs["additional_input"] = additional_input
+
         response_stream = team.arun(  # type: ignore
             input=user_input,
             session_id=input.thread_id,
@@ -100,6 +127,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             user_id=user_id,
             session_state=session_state,
             run_id=run_id,
+            **run_kwargs,
         )
 
         # Stream the response content in AG-UI format

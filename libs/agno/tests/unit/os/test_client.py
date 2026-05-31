@@ -13,10 +13,12 @@ Tests cover:
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+import json
 
 import pytest
 
 from agno.client import AgentOSClient
+from agno.models.message import Message
 
 
 def test_init_with_base_url():
@@ -81,6 +83,29 @@ async def test_post_method():
         call_args = mock_http_client.request.call_args
         assert call_args[0][0] == "POST"
         assert result == {"created": True}
+
+
+@pytest.mark.asyncio
+async def test_run_agent_serializes_additional_input_messages(monkeypatch):
+    client = AgentOSClient(base_url="http://localhost:7777")
+    message = Message(role="user", content="request context", add_to_agent_memory=False)
+    captured = {}
+
+    async def fake_apost(endpoint, data=None, headers=None, as_form=False):
+        captured["endpoint"] = endpoint
+        captured["data"] = data
+        captured["as_form"] = as_form
+        return {"run_id": "run-id"}
+
+    monkeypatch.setattr(client, "_apost", fake_apost)
+
+    await client.run_agent("agent-id", "hello", additional_input=[message])
+
+    assert captured["endpoint"] == "/agents/agent-id/runs"
+    assert captured["as_form"] is True
+    additional_input = json.loads(captured["data"]["additional_input"])
+    assert additional_input[0]["content"] == "request context"
+    assert additional_input[0]["add_to_agent_memory"] is False
 
 
 @pytest.mark.asyncio

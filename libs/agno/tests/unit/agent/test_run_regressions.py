@@ -3,9 +3,10 @@ from typing import Any, Optional
 
 import pytest
 
-from agno.agent import _init, _messages, _response, _run, _session, _storage, _tools
+from agno.agent import _init, _managers, _messages, _response, _run, _session, _storage, _tools
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
+from agno.models.message import Message
 from agno.run import RunContext
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
@@ -51,7 +52,7 @@ def _patch_sync_dispatch_dependencies(
 
 
 def test_run_dispatch_cleans_up_registered_run_on_setup_failure(monkeypatch: pytest.MonkeyPatch):
-    agent = Agent(name="test-agent")
+    agent = Agent(name="test-agent", build_context=False)
     _patch_sync_dispatch_dependencies(agent, monkeypatch, runs=[])
 
     def failing_initialize_agent(debug_mode=None):
@@ -105,6 +106,48 @@ def test_run_dispatch_does_not_reset_cancellation_before_impl(monkeypatch: pytes
 
     assert observed["cancelled_before_model"] is True
     assert run_id not in get_active_runs()
+
+
+def test_get_run_messages_accepts_runtime_additional_input():
+    agent = Agent(name="test-agent", system_message=Message(role="system", content="system"))
+    extra_message = Message(role="user", content="request context")
+    run_response = RunOutput(run_id="run-extra", session_id="session-extra")
+    run_context = RunContext(run_id="run-extra", session_id="session-extra")
+    session = AgentSession(session_id="session-extra", runs=[])
+
+    run_messages = _messages.get_run_messages(
+        agent,
+        run_response=run_response,
+        run_context=run_context,
+        input="question",
+        session=session,
+        additional_input=[extra_message],
+    )
+
+    assert extra_message in run_messages.extra_messages
+    assert run_response.additional_input == [extra_message]
+    assert run_messages.user_message is not None
+    assert run_messages.user_message.content == "question"
+
+
+def test_make_memories_skips_extra_messages_marked_non_memory():
+    class MemoryManager:
+        def __init__(self):
+            self.messages = None
+
+        def create_user_memories(self, **kwargs):
+            self.messages = kwargs.get("messages")
+
+    memory_manager = MemoryManager()
+    agent = Agent(name="test-agent", update_memory_on_run=True)
+    agent.memory_manager = memory_manager  # type: ignore[assignment]
+    persistent_message = Message(role="user", content="remember this")
+    transient_message = Message(role="user", content="do not remember this", add_to_agent_memory=False)
+    run_messages = RunMessages(extra_messages=[transient_message, persistent_message])
+
+    _managers.make_memories(agent, run_messages)
+
+    assert memory_manager.messages == [persistent_message]
 
 
 def test_continue_run_dispatch_handles_none_session_runs(monkeypatch: pytest.MonkeyPatch):

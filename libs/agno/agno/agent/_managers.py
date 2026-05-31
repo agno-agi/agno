@@ -67,7 +67,9 @@ def make_memories(
         non_empty_messages = [
             msg
             for msg in parsed_messages
-            if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+            if msg.add_to_agent_memory
+            and msg.content
+            and (not isinstance(msg.content, str) or msg.content.strip() != "")
         ]
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:
@@ -122,7 +124,9 @@ async def amake_memories(
         non_empty_messages = [
             msg
             for msg in parsed_messages
-            if msg.content and (not isinstance(msg.content, str) or msg.content.strip() != "")
+            if msg.add_to_agent_memory
+            and msg.content
+            and (not isinstance(msg.content, str) or msg.content.strip() != "")
         ]
         if len(non_empty_messages) > 0:
             if agent.memory_manager is not None and agent.update_memory_on_run:

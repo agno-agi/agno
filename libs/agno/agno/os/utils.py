@@ -108,6 +108,21 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             kwargs.pop("metadata")
             log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {str(e)}")
 
+    if additional_input := kwargs.get("additional_input"):
+        try:
+            if isinstance(additional_input, str):
+                from agno.models.message import Message
+
+                additional_input_data = json.loads(additional_input)
+                if isinstance(additional_input_data, list):
+                    kwargs["additional_input"] = [Message.model_validate(message) for message in additional_input_data]
+        except json.JSONDecodeError as e:
+            kwargs.pop("additional_input")
+            log_warning(f"Invalid additional_input parameter couldn't be loaded: {additional_input}: {str(e)}")
+        except Exception as e:
+            kwargs.pop("additional_input")
+            log_warning(f"Invalid additional_input message payload: {str(e)}")
+
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
             if isinstance(knowledge_filters, str):

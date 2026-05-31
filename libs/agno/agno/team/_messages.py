@@ -856,12 +856,19 @@ def _get_run_messages(
         run_messages.messages.append(system_message)
 
     # 2. Add extra messages to run_messages if provided
+    additional_input = kwargs.pop("additional_input", None)
+    all_additional_input = []
     if team.additional_input is not None:
+        all_additional_input.extend(team.additional_input)
+    if additional_input is not None:
+        all_additional_input.extend(additional_input)
+
+    if all_additional_input:
         messages_to_add_to_run_response: List[Message] = []
         if run_messages.extra_messages is None:
             run_messages.extra_messages = []
 
-        for _m in team.additional_input:
+        for _m in all_additional_input:
             if isinstance(_m, Message):
                 messages_to_add_to_run_response.append(_m)
                 run_messages.messages.append(_m)
@@ -991,12 +998,19 @@ async def _aget_run_messages(
         run_messages.messages.append(system_message)
 
     # 2. Add extra messages to run_messages if provided
+    additional_input = kwargs.pop("additional_input", None)
+    all_additional_input = []
     if team.additional_input is not None:
+        all_additional_input.extend(team.additional_input)
+    if additional_input is not None:
+        all_additional_input.extend(additional_input)
+
+    if all_additional_input:
         messages_to_add_to_run_response: List[Message] = []
         if run_messages.extra_messages is None:
             run_messages.extra_messages = []
 
-        for _m in team.additional_input:
+        for _m in all_additional_input:
             if isinstance(_m, Message):
                 messages_to_add_to_run_response.append(_m)
                 run_messages.messages.append(_m)

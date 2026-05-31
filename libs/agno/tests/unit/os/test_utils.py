@@ -1,6 +1,7 @@
 """Unit tests for OS utility functions."""
 
 import io
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -8,9 +9,11 @@ import pytest
 from starlette.datastructures import Headers, UploadFile
 
 from agno.media import File
+from agno.models.message import Message
 from agno.os.utils import (
     DOCUMENT_MIME_TYPES,
     classify_upload_file,
+    get_request_kwargs,
     process_document,
     to_utc_datetime,
 )
@@ -106,6 +109,28 @@ def _make_upload_file(filename: str, content_type: Optional[str], data: bytes = 
     """Build an UploadFile mirroring what Starlette passes the routers from a multipart upload."""
     headers = Headers({"content-type": content_type}) if content_type is not None else Headers({})
     return UploadFile(filename=filename, file=io.BytesIO(data), headers=headers)
+
+
+class _FakeRequest:
+    def __init__(self, form_data):
+        self._form_data = form_data
+
+    async def form(self):
+        return self._form_data
+
+
+async def _run_endpoint(message: str):
+    return message
+
+
+@pytest.mark.asyncio
+async def test_get_request_kwargs_deserializes_additional_input_messages():
+    message = Message(role="user", content="request context", add_to_agent_memory=False)
+    request = _FakeRequest({"message": "hello", "additional_input": json.dumps([message.model_dump(mode="json")])})
+
+    kwargs = await get_request_kwargs(request, _run_endpoint)
+
+    assert kwargs["additional_input"] == [message]
 
 
 # Single source of truth for the document formats the API accepts: (extension, canonical MIME).

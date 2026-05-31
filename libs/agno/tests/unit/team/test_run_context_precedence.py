@@ -2,11 +2,12 @@ from typing import Any, Optional
 
 import pytest
 
+from agno.models.message import Message
 from agno.run import RunContext
 from agno.run.cancel import cleanup_run
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
-from agno.team import _init, _response, _run, _run_options, _storage, _utils
+from agno.team import _init, _messages, _response, _run, _run_options, _storage, _utils
 from agno.team.team import Team
 
 
@@ -71,6 +72,28 @@ def _patch_team_dispatch_dependencies(team: Team, monkeypatch: pytest.MonkeyPatc
             else team.output_schema,
         ),
     )
+
+
+def test_get_run_messages_accepts_runtime_additional_input_for_team():
+    team = Team(name="test-team", members=[], system_message=Message(role="system", content="system"))
+    extra_message = Message(role="user", content="request context")
+    run_response = TeamRunOutput(run_id="run-extra", session_id="session-extra")
+    run_context = RunContext(run_id="run-extra", session_id="session-extra")
+    session = TeamSession(session_id="session-extra", runs=[])
+
+    run_messages = _messages._get_run_messages(
+        team,
+        run_response=run_response,
+        run_context=run_context,
+        input_message="question",
+        session=session,
+        additional_input=[extra_message],
+    )
+
+    assert extra_message in run_messages.extra_messages
+    assert run_response.additional_input == [extra_message]
+    assert run_messages.user_message is not None
+    assert run_messages.user_message.content == "question"
 
 
 def test_run_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
