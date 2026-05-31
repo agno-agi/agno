@@ -1,6 +1,6 @@
 # Google Tools Cookbooks
 
-Agents for Gmail, Google Calendar, Google Drive, Google Slides, Google Docs, Google Tasks, and Google Meet using OAuth or service account authentication.
+Agents for Gmail, Google Calendar, Google Drive, Google Slides, Google Docs, Google Tasks, Google Meet, and Google People using OAuth or service account authentication.
 
 ## Quick Start
 
@@ -80,6 +80,7 @@ Go to **APIs & Services > Enable APIs and Services** and enable:
 | `GoogleDocsTools` | Google Docs API + Google Drive API |
 | `GoogleTasksTools` | Google Tasks API |
 | `GoogleMeetTools` | Google Meet API |
+| `GooglePeopleTools` | People API |
 
 ### 3. Create OAuth Credentials
 
@@ -178,6 +179,12 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 | File | Description |
 |------|-------------|
 | `meet_tools.py` | Create meeting spaces, list recordings, get transcripts |
+
+### People
+
+| File | Description |
+|------|-------------|
+| `people_tools.py` | Search contacts, lookup directory people (Workspace), resolve names to emails |
 
 ### Combined / Auth
 
