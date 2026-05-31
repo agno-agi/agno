@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -1179,8 +1180,11 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
-    async def get_all_memory_topics(self) -> List[str]:
+    async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of memory topics.
@@ -1191,11 +1195,24 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return []
 
             async with self.async_session_factory() as sess, sess.begin():
-                # Select topics from all results
-                stmt = select(table.c.topics)
-                result = (await sess.execute(stmt)).fetchall()
+                stmt = select(table.c.topics).where(table.c.topics.is_not(None))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                rows = (await sess.execute(stmt)).fetchall()
 
-                return list(set([record[0] for record in result]))
+                topics_set: set = set()
+                for row in rows:
+                    raw = row[0]
+                    if not raw:
+                        continue
+                    if isinstance(raw, str):
+                        try:
+                            raw = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                    if isinstance(raw, list):
+                        topics_set.update(raw)
+                return list(topics_set)
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
