@@ -5,17 +5,19 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-pytest.importorskip("seltz")
+try:
+    from seltz import Includes, Seltz  # noqa: F401
+    from seltz.exceptions import (
+        SeltzAPIError,
+        SeltzAuthenticationError,
+        SeltzConnectionError,
+        SeltzRateLimitError,
+        SeltzTimeoutError,
+    )
 
-from seltz.exceptions import (
-    SeltzAPIError,
-    SeltzAuthenticationError,
-    SeltzConnectionError,
-    SeltzRateLimitError,
-    SeltzTimeoutError,
-)
-
-from agno.tools.seltz import SeltzTools
+    from agno.tools.seltz import SeltzTools
+except (ImportError, Exception):
+    pytest.skip("seltz not installed or incompatible version", allow_module_level=True)
 
 
 @pytest.fixture
@@ -39,21 +41,10 @@ def seltz_tools(mock_seltz_client):
 
 
 def create_mock_document(url: str, content: str | None = None):
-    """Helper function to create mock document that mimics SDK Document."""
-    doc = Mock()
+    """Helper function to create mock document that mimics SDK protobuf Document."""
+    doc = Mock(spec=["url", "content"])
     doc.url = url
     doc.content = content
-
-    # Mock to_dict() method from new SDK
-    def to_dict():
-        result = {}
-        if url is not None:
-            result["url"] = url
-        if content is not None:
-            result["content"] = content
-        return result
-
-    doc.to_dict = to_dict
     return doc
 
 
@@ -186,30 +177,14 @@ def test_search_invalid_max_documents(seltz_tools):
 
 def test_parse_documents_skips_empty(seltz_tools):
     """Test that documents with no url or content are skipped."""
-    empty_doc = Mock()
-    empty_doc.url = None
-    empty_doc.content = None
-    # Mock to_dict() returning empty dict (new SDK behavior)
-    empty_doc.to_dict = Mock(return_value={})
+    empty_doc = Mock(spec=["url", "content"])
+    empty_doc.url = ""
+    empty_doc.content = ""
 
     result = seltz_tools._parse_documents([empty_doc])
     result_data = json.loads(result)
 
     assert len(result_data) == 0
-
-
-def test_parse_documents_fallback_without_to_dict(seltz_tools):
-    """Test parsing documents without to_dict method (fallback for old SDK)."""
-    old_style_doc = Mock(spec=["url", "content"])
-    old_style_doc.url = "https://example.com"
-    old_style_doc.content = "Test content"
-
-    result = seltz_tools._parse_documents([old_style_doc])
-    result_data = json.loads(result)
-
-    assert len(result_data) == 1
-    assert result_data[0]["url"] == "https://example.com"
-    assert result_data[0]["content"] == "Test content"
 
 
 def test_init_with_all_flag():

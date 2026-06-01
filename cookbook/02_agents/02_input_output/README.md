@@ -12,6 +12,7 @@ Examples for input formats, validation schemas, streaming, and structured output
 - `response_as_variable.py` - Capture agent response as a variable.
 - `save_to_file.py` - Save agent responses to a file automatically.
 - `streaming.py` - Stream agent responses token by token.
+- `followup_suggestions.py` - Get a response with AI-generated follow-up suggestions.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).

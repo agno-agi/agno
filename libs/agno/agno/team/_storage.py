@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import db_from_dict
+from agno.db.utils import resolve_db_from_config
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
@@ -56,7 +56,7 @@ from agno.utils.string import generate_id_from_name
 
 
 def get_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -64,16 +64,17 @@ def get_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
 
 
 async def aget_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -81,12 +82,13 @@ async def aget_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
 
 
 def get_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
@@ -169,7 +171,7 @@ def _read_session(
         session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         return session  # type: ignore
     except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -189,7 +191,7 @@ async def _aread_session(
             session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
         return session  # type: ignore
     except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -201,7 +203,7 @@ def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]
             raise ValueError("Db not initialized")
         return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
     return None
 
 
@@ -217,7 +219,7 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
         else:
             return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
     return None
 
 
@@ -496,6 +498,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_datetime_to_context"] = team.add_datetime_to_context
     if team.add_location_to_context:
         config["add_location_to_context"] = team.add_location_to_context
+    if team.datetime_format is not None:
+        config["datetime_format"] = team.datetime_format
     if team.timezone_identifier is not None:
         config["timezone_identifier"] = team.timezone_identifier
     if team.add_name_to_context:
@@ -516,9 +520,14 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_dependencies_to_context"] = team.add_dependencies_to_context
 
     # --- Knowledge settings ---
-    # TODO: implement knowledge serialization
-    # if team.knowledge is not None:
-    #     config["knowledge"] = team.knowledge.to_dict()
+    # Knowledge is a non-serializable object (it holds live db/vector_db connections),
+    # so we store a reference by name and resolve it from the registry on load.
+    if team.knowledge is not None:
+        knowledge_name = getattr(team.knowledge, "name", None)
+        if knowledge_name is not None:
+            config["knowledge"] = {"name": knowledge_name}
+        else:
+            log_warning("Team knowledge has no name; it cannot be referenced from the registry and will not be saved.")
     if team.knowledge_filters is not None:
         config["knowledge_filters"] = team.knowledge_filters
     if team.enable_agentic_knowledge_filters:
@@ -548,7 +557,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
             except Exception as e:
-                log_warning(f"Could not serialize tool {tool}: {e}")
+                log_warning(f"Could not serialize tool {tool}: {str(e)}")
         if serialized_tools:
             config["tools"] = serialized_tools
     if team.tool_choice is not None:
@@ -813,21 +822,11 @@ def from_dict(
 
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):
-        db_data = config["db"]
-        db_id = db_data.get("id")
-
-        # First try to get the db from the registry (preferred - reuses existing connection)
-        if registry and db_id:
-            registry_db = registry.get_db(db_id)
-            if registry_db is not None:
-                config["db"] = registry_db
-            else:
-                del config["db"]
+        resolved = resolve_db_from_config(config["db"], registry=registry)
+        if resolved is not None:
+            config["db"] = resolved
         else:
-            # No registry or no db_id, fall back to creating from dict
-            config["db"] = db_from_dict(db_data)
-            if config["db"] is None:
-                del config["db"]
+            del config["db"]
 
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -859,10 +858,16 @@ def from_dict(
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
     # --- Handle Knowledge reconstruction ---
-    # TODO: implement knowledge deserialization
-    # if "knowledge" in config and isinstance(config["knowledge"], dict):
-    #     from agno.knowledge import Knowledge
-    #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+    # Knowledge is stored as a reference by name and resolved from the registry,
+    # since it holds live db/vector_db connections that cannot be serialized.
+    if "knowledge" in config and isinstance(config["knowledge"], dict):
+        knowledge_name = config["knowledge"].get("name")
+        resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
+        if resolved_knowledge is not None:
+            config["knowledge"] = resolved_knowledge
+        else:
+            log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
+            del config["knowledge"]
 
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
@@ -917,6 +922,7 @@ def from_dict(
             markdown=config.get("markdown", False),
             add_datetime_to_context=config.get("add_datetime_to_context", False),
             add_location_to_context=config.get("add_location_to_context", False),
+            datetime_format=config.get("datetime_format"),
             timezone_identifier=config.get("timezone_identifier"),
             add_name_to_context=config.get("add_name_to_context", False),
             add_member_tools_to_context=config.get("add_member_tools_to_context", False),
@@ -927,7 +933,7 @@ def from_dict(
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context", False),
             # --- Knowledge settings ---
-            # knowledge=config.get("knowledge"),  # TODO
+            knowledge=config.get("knowledge"),
             knowledge_filters=config.get("knowledge_filters"),
             enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
             add_knowledge_to_context=config.get("add_knowledge_to_context", False),
@@ -1077,7 +1083,7 @@ def save(
         return config["version"]
 
     except Exception as e:
-        log_error(f"Error saving Team to database: {e}")
+        log_error(f"Error saving Team to database: {str(e)}")
         raise
 
 
@@ -1101,7 +1107,11 @@ def _hydrate_from_graph(
 
     team = cls.from_dict(config, db=db, registry=registry)
     team.id = graph["component"]["component_id"]
-    team.db = db
+    # Only fall back to the caller-provided db if the config didn't
+    # reconstruct one. Otherwise we'd clobber any custom table names
+    # (session_table, memory_table, ...) that were serialized with the team.
+    if team.db is None:
+        team.db = db
 
     # Hydrate members from graph children
     team.members = []
@@ -1120,7 +1130,8 @@ def _hydrate_from_graph(
         if member_type == "agent":
             agent = Agent.from_dict(child_config)
             agent.id = child_graph["component"]["component_id"]
-            agent.db = db
+            if agent.db is None:
+                agent.db = db
             team.members.append(agent)
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph

@@ -7,6 +7,8 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
     CompressionCompletedEvent,
     CompressionStartedEvent,
+    FollowupsCompletedEvent,
+    FollowupsStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ModelRequestCompletedEvent,
@@ -44,6 +46,8 @@ from agno.run.agent import (
 from agno.run.requirement import RunRequirement
 from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
 from agno.run.team import CompressionStartedEvent as TeamCompressionStartedEvent
+from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
+from agno.run.team import FollowupsStartedEvent as TeamFollowupsStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ModelRequestCompletedEvent as TeamModelRequestCompletedEvent
@@ -119,6 +123,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -145,6 +150,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -226,6 +232,7 @@ def create_team_run_cancelled_event(from_run_response: TeamRunOutput, reason: st
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+        content=from_run_response.content or reason,
     )
 
 
@@ -261,6 +268,7 @@ def create_run_cancelled_event(from_run_response: RunOutput, reason: str) -> Run
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+        content=from_run_response.content or reason,
     )
 
 
@@ -591,6 +599,7 @@ def create_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 
@@ -607,6 +616,7 @@ def create_team_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 
@@ -741,6 +751,30 @@ def create_parser_model_response_completed_event(
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
+    )
+
+
+def create_followups_started_event(
+    from_run_response: RunOutput,
+) -> FollowupsStartedEvent:
+    return FollowupsStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_followups_completed_event(
+    from_run_response: RunOutput,
+    followups: Optional[List[str]] = None,
+) -> FollowupsCompletedEvent:
+    return FollowupsCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        followups=followups,
     )
 
 
@@ -947,6 +981,30 @@ def create_team_compression_completed_event(
         tool_results_compressed=tool_results_compressed,
         original_size=original_size,
         compressed_size=compressed_size,
+    )
+
+
+def create_team_followups_started_event(
+    from_run_response: TeamRunOutput,
+) -> TeamFollowupsStartedEvent:
+    return TeamFollowupsStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_followups_completed_event(
+    from_run_response: TeamRunOutput,
+    followups: Optional[List[str]] = None,
+) -> TeamFollowupsCompletedEvent:
+    return TeamFollowupsCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        followups=followups,
     )
 
 

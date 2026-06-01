@@ -171,6 +171,9 @@ class TeamRunEvent(str, Enum):
     compression_started = "TeamCompressionStarted"
     compression_completed = "TeamCompressionCompleted"
 
+    followups_started = "TeamFollowupsStarted"
+    followups_completed = "TeamFollowupsCompleted"
+
     run_paused = "TeamRunPaused"
     run_continued = "TeamRunContinued"
 
@@ -199,6 +202,8 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     step_name: Optional[str] = None
     step_index: Optional[int] = None
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
 
     # For backwards compatibility
     content: Optional[Any] = None
@@ -272,6 +277,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -420,6 +426,7 @@ class ToolCallCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+    files: Optional[List[File]] = None  # Files produced by the tool call
 
 
 @dataclass
@@ -489,6 +496,17 @@ class CompressionCompletedEvent(BaseTeamRunEvent):
     tool_results_compressed: Optional[int] = None
     original_size: Optional[int] = None
     compressed_size: Optional[int] = None
+
+
+@dataclass
+class FollowupsStartedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.followups_started.value
+
+
+@dataclass
+class FollowupsCompletedEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.followups_completed.value
+    followups: Optional[List[str]] = None
 
 
 @dataclass
@@ -638,6 +656,8 @@ TeamRunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    FollowupsStartedEvent,
+    FollowupsCompletedEvent,
     TaskIterationStartedEvent,
     TaskIterationCompletedEvent,
     TaskStateUpdatedEvent,
@@ -680,6 +700,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.followups_started.value: FollowupsStartedEvent,
+    TeamRunEvent.followups_completed.value: FollowupsCompletedEvent,
     TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,
     TeamRunEvent.task_iteration_completed.value: TaskIterationCompletedEvent,
     TeamRunEvent.task_state_updated.value: TaskStateUpdatedEvent,
@@ -736,6 +758,7 @@ class TeamRunOutput:
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None
+    followups: Optional[List[str]] = None
     model_provider_data: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
@@ -796,6 +819,7 @@ class TeamRunOutput:
                 "reasoning_messages",
                 "references",
                 "requirements",
+                "followups",
             ]
         }
         if self.events is not None:
@@ -824,6 +848,9 @@ class TeamRunOutput:
 
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if self.followups is not None:
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]
@@ -873,8 +900,8 @@ class TeamRunOutput:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response to json: {str(e)}")
             raise
 
         if indent is None:

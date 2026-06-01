@@ -60,6 +60,24 @@ class OpenRouterResponses(OpenResponses):
     # OpenRouter's Responses API is stateless
     store: Optional[bool] = False
 
+    def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        OpenRouter models should not receive a `reasoning` block unless the caller
+        explicitly opts in. Some hosted models, including Gemini 3.1 Pro Preview,
+        reject requests when an empty reasoning object is sent.
+        """
+        if self.reasoning is None and self.reasoning_effort is None and self.reasoning_summary is None:
+            return base_params
+
+        reasoning: Dict[str, Any] = dict(self.reasoning or {})
+        if self.reasoning_effort is not None:
+            reasoning["effort"] = self.reasoning_effort
+        if self.reasoning_summary is not None:
+            reasoning["summary"] = self.reasoning_summary
+
+        base_params["reasoning"] = reasoning
+        return base_params
+
     def _get_client_params(self) -> Dict[str, Any]:
         """
         Returns client parameters for API requests, checking for OPENROUTER_API_KEY.

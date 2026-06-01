@@ -64,18 +64,18 @@ def set_telemetry(agent: Agent) -> None:
 
 
 def set_default_model(agent: Agent) -> None:
-    # Use the default Model (OpenAIChat) if no model is provided
+    # Use the default Model (OpenAIResponses) if no model is provided
     if agent.model is None:
         try:
-            from agno.models.openai import OpenAIChat
+            from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError as e:
             log_exception(e)
             raise ImportError(
                 "Agno agents use `openai` as the default model provider. Please provide a `model` or install `openai`."
             ) from e
 
-        log_info("Setting default model to OpenAI Chat")
-        agent.model = OpenAIChat(id="gpt-4o")
+        log_info("Setting default model to OpenAI Responses")
+        agent.model = OpenAIResponses(id="gpt-5.4")
 
 
 def set_culture_manager(agent: Agent) -> None:
@@ -151,6 +151,10 @@ def set_learning_machine(agent: Agent) -> None:
             agent.learning.model = agent.model
         agent._learning = agent.learning
 
+        # PROPOSE/HITL modes need chat history for multi-turn confirmation
+        if agent._learning.requires_history and not agent.add_history_to_context:
+            agent.add_history_to_context = True
+
 
 def set_session_summary_manager(agent: Agent) -> None:
     if agent.enable_session_summaries and agent.session_summary_manager is None:
@@ -225,6 +229,9 @@ def get_models(agent: Agent) -> None:
         agent.output_model = get_model(agent.output_model)
         if agent.output_model is not None:
             agent.output_model.model_type = ModelType.OUTPUT_MODEL
+
+    if agent.fallback_config is not None:
+        agent.fallback_config.resolve_models()
 
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
