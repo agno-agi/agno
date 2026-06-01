@@ -139,23 +139,28 @@ class TestEmptyBodyResume:
 
         assert called["continue_run"] is True
 
-    def test_resume_completed_run_with_empty_body(self, monkeypatch: pytest.MonkeyPatch):
-        """A COMPLETED run with no unresolved requirements can be advanced
-        with empty body (degenerate but valid — caller may want to retry)."""
+    def test_resume_completed_run_with_empty_body_auto_forks(self, monkeypatch: pytest.MonkeyPatch):
+        """A COMPLETED run continued with empty body must auto-fork: a new
+        ``run_id`` is created so the source COMPLETED row is preserved with
+        its original metrics. Reusing the same run_id would corrupt the
+        "1 run = 1 model loop" invariant.
+        """
         completed_run = RunOutput(
             run_id="run-done",
             session_id="session-1",
             status=RunStatus.completed,
             tools=[],
             requirements=None,
-            messages=[],
+            messages=[Message(role="user", content="hi"), Message(role="assistant", content="hello")],
         )
         agent = _make_agent(monkeypatch, runs=[completed_run])
 
-        called = {"continue_run": False}
+        captured: dict = {}
 
         def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
-            called["continue_run"] = True
+            captured["run_id"] = run_response.run_id
+            captured["forked_from_run_id"] = run_response.forked_from_run_id
+            captured["forked_from_message_index"] = run_response.forked_from_message_index
             return run_response
 
         monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
@@ -167,7 +172,15 @@ class TestEmptyBodyResume:
             stream=False,
         )
 
-        assert called["continue_run"] is True
+        # New run_id (auto-fork)
+        assert captured["run_id"] != "run-done"
+        # Lineage recorded
+        assert captured["forked_from_run_id"] == "run-done"
+        # Forked at end-of-messages (no truncation since no checkpoint specified)
+        assert captured["forked_from_message_index"] == 2
+        # Source run preserved — its status is still COMPLETED, run_id unchanged
+        assert completed_run.status == RunStatus.completed
+        assert completed_run.run_id == "run-done"
 
     def test_resume_run_with_completed_tools_no_requirements(self, monkeypatch: pytest.MonkeyPatch):
         """A run that completed several tool batches but has no pending HITL
@@ -1196,13 +1209,18 @@ class TestRegenerateSugar:
         assert captured["run_id"] != "run-A"
         assert captured["forked_from"] == "run-A"
 
-    def test_regenerate_without_preserve_is_destructive(self, monkeypatch: pytest.MonkeyPatch):
+    def test_regenerate_always_forks(self, monkeypatch: pytest.MonkeyPatch):
+        """``regenerate=True`` ALWAYS creates a new run_id (1-run-1-loop
+        invariant). ``preserve_original`` is a separate concern about
+        whether the source is hidden from history, not whether to fork.
+        """
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
         captured: dict = {}
 
         def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
             captured["run_id"] = run_response.run_id
+            captured["forked_from"] = run_response.forked_from_run_id
             return run_response
 
         monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
@@ -1215,8 +1233,12 @@ class TestRegenerateSugar:
             stream=False,
         )
 
-        # Without preserve_original → in-place rewrite, same run_id.
-        assert captured["run_id"] == "run-A"
+        # New run_id with lineage recorded — preserves the source row.
+        assert captured["run_id"] != "run-A"
+        assert captured["forked_from"] == "run-A"
+        # Source run is untouched (still COMPLETED, original run_id).
+        assert run.run_id == "run-A"
+        assert run.status == RunStatus.completed
 
     def test_regenerate_conflicts_with_explicit_from_checkpoint(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()

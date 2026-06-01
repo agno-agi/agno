@@ -135,6 +135,11 @@ async def main() -> None:
 
     # -------------------------------------------------------------------
     # 3. Resume the crashed run via /continue.
+    #
+    # The crashed run is RUNNING (its model loop never completed), so we
+    # resume in-place — same run_id. (If the run had been COMPLETED already,
+    # /continue would auto-fork to preserve the original — see 04_regenerate
+    # for that flow.)
     # -------------------------------------------------------------------
     print("=" * 70)
     print("STEP 3: /continue resumes from the last checkpoint")
@@ -145,7 +150,9 @@ async def main() -> None:
         session_id=session_id,
     )
 
-    print(f"  run_id:                          {resumed.run_id}  (same as crashed run)")
+    print(
+        f"  run_id:                          {resumed.run_id}  (same as crashed run — in-place resume)"
+    )
     print(f"  status:                          {resumed.status}")
     print(f"  total tool batches:              {len(resumed.tools or [])}")
     print(f"  total messages:                  {len(resumed.messages or [])}")

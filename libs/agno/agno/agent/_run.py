@@ -2998,7 +2998,11 @@ def _normalize_regenerate_params(
         raise ValueError("`regenerate=True` requires a loaded run_response to compute the checkpoint.")
 
     resolved_input = additional_instructions if additional_instructions is not None else input
-    return (preserve_original, _find_regenerate_checkpoint(run_response), resolved_input)
+    # ``regenerate`` ALWAYS forks. The 1-run-1-loop invariant demands a new
+    # run_id whenever the source run's loop has already completed —
+    # ``preserve_original`` controls a separate concern (whether the source
+    # is marked REGENERATED and hidden from history), not whether to fork.
+    return (True, _find_regenerate_checkpoint(run_response), resolved_input)
 
 
 def _maybe_append_input_message(run_response: RunOutput, new_input: Optional[str], agent: Agent) -> None:
@@ -3198,6 +3202,21 @@ def continue_run_dispatch(
         )
         original_run_id_for_lineage = run_response.run_id if regenerate else None
 
+        # Auto-fork on COMPLETED: continuing a COMPLETED run must NOT reuse the
+        # source run_id — that would mix two model loops into one persisted row
+        # (corrupted metrics, lying timestamps, ambiguous audit trail).
+        # Implicit fork preserves the "1 run = 1 model loop" invariant: the
+        # source stays untouched, a sibling run takes over.
+        #
+        # Triggers whenever the source run is COMPLETED and no explicit
+        # fork/checkpoint was passed (those already produce a new run_id).
+        # RUNNING/ERROR/PAUSED runs continue in-place because their loop
+        # never actually finished — there's no second loop to fork off into.
+        _auto_forking_on_completed = False
+        if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+            fork = True
+            _auto_forking_on_completed = True
+
         # Apply fork/truncate before validation so the rest of the dispatch operates
         # on the modified state (time-travel + forking land before HITL checks).
         # NOTE: for fork=True, ``run_response.run_id`` becomes a new UUID. The local
@@ -3240,14 +3259,17 @@ def continue_run_dispatch(
             # 1. The run has unresolved HITL requirements → try admin-approval
             #    resolution; if none, the caller must provide tools/requirements.
             # 2. The run has no unresolved requirements → just resume from current
-            #    state (mid-flight resume, ERROR retry, time-travel, etc.). This
-            #    is the unified /continue path (ADR-003, ADR-004).
+            #    state (mid-flight resume, ERROR retry, time-travel, auto-fork
+            #    on COMPLETED, etc.). This is the unified /continue path
+            #    (ADR-003, ADR-004).
             has_unresolved_requirements = any(not req.is_resolved() for req in (run_response.requirements or []))
             if has_unresolved_requirements:
                 from agno.run.approval import check_and_apply_approval_resolution
 
                 try:
-                    # This will apply resolution_data to tools if approval is resolved
+                    # This will apply resolution_data to tools if approval is resolved.
+                    # Approval lookup still uses the ORIGINAL run_id, even when we
+                    # auto-forked — the fork inherits the original's resolved approval.
                     check_and_apply_approval_resolution(agent.db, run_id, run_response)
                 except RuntimeError:
                     # No resolved approval found — caller must provide requirements/tools
@@ -4329,6 +4351,15 @@ async def _acontinue_run(
                     )
                     original_run_id_for_lineage = run_response.run_id if regenerate else None
 
+                    # Auto-fork on COMPLETED — preserves the "1 run = 1 model loop"
+                    # invariant. Continuing a run whose model loop already
+                    # completed MUST produce a new run_id; otherwise the
+                    # persisted row would mix two loops' metrics. The only
+                    # in-place resumes are mid-flight ones (RUNNING / ERROR /
+                    # PAUSED — the loop never actually finished).
+                    if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+                        fork = True
+
                     # Apply fork/truncate before validation so the rest of the dispatch operates
                     # on the modified state. The local ``run_id`` continues to refer to the
                     # original run (used for HITL approval lookups); ``run_response.run_id``
@@ -4769,6 +4800,15 @@ async def _acontinue_run_stream(
                         input=input,
                     )
                     original_run_id_for_lineage = run_response.run_id if regenerate else None
+
+                    # Auto-fork on COMPLETED — preserves the "1 run = 1 model loop"
+                    # invariant. Continuing a run whose model loop already
+                    # completed MUST produce a new run_id; otherwise the
+                    # persisted row would mix two loops' metrics. The only
+                    # in-place resumes are mid-flight ones (RUNNING / ERROR /
+                    # PAUSED — the loop never actually finished).
+                    if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+                        fork = True
 
                     # Apply fork/truncate before validation so the rest of the dispatch operates
                     # on the modified state. The local ``run_id`` continues to refer to the

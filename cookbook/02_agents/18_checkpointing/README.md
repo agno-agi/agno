@@ -32,15 +32,18 @@ crash-recoverable workflows, not for chatty agents.
 |---|---|
 | `tools=[...]` (PAUSED + HITL) | Apply tool results, resume |
 | empty + resolved admin approval | Apply resolution, resume |
-| empty (RUNNING / ERROR / COMPLETED) | Resume from last persisted state |
-| `input="..."` | Append a new user message before resuming |
+| empty + RUNNING / ERROR | **Resume in place** — the original loop never completed, so we continue the same `run_id` |
+| empty + COMPLETED | **Auto-fork** — a new `run_id` is created, source is preserved. Prevents two model loops from sharing one row. |
+| `input="..."` | Append a new user message before resuming (auto-forks if source is COMPLETED) |
 | `from_checkpoint=K` | Truncate messages to length K, then resume (**destructive**) |
 | `from_checkpoint=K, fork=True` | Clone with a new `run_id`, truncate, resume as sibling |
-| `regenerate=True` | Sugar: drop the last assistant turn and replay |
-| `regenerate=True, additional_instructions="..."` | Replay with steering text appended |
-| `regenerate=True, preserve_original=True` | Non-destructive replay (creates a fork, marks the old run `REGENERATED`) |
+| `regenerate=True` | **Always forks.** Drops the last assistant turn, fresh `run_id`, source preserved |
+| `regenerate=True, additional_instructions="..."` | Same, with steering text appended |
+| `regenerate=True, preserve_original=True` | Same + mark source `REGENERATED` so it's hidden from future history |
 
-The first three resume; the rest rewrite. They compose:
+**The 1-run-1-loop invariant.** Whenever a model loop has already finished (status COMPLETED), `/continue` produces a new `run_id`. This is structural — there's no way to mix two model loops' metrics into one row. Only mid-flight resumes (RUNNING / ERROR / PAUSED — the loop never actually finished) stay on the same `run_id`.
+
+These compose:
 
 ```python
 await agent.acontinue_run(
@@ -53,14 +56,11 @@ await agent.acontinue_run(
 
 ## When to use which "redo last response"
 
-There are three ways to express "redo the last response of this run." Pick by
-how much control you need:
-
 | You want | Use |
 |---|---|
-| "Redo the last response" (drop the assistant reply, replay) | `regenerate=True` |
-| Same, but keep the old one too | `regenerate=True, preserve_original=True` |
-| Same, but with a steering message | `regenerate=True, additional_instructions="..."` |
+| "Redo the last response" (drop assistant reply, fresh run_id) | `regenerate=True` |
+| Same, and hide the original from future history | `regenerate=True, preserve_original=True` |
+| Same, with a steering message | `regenerate=True, additional_instructions="..."` |
 | Drop the last *3* messages, not just the assistant reply | `from_checkpoint=K` (raw) |
 | Drop messages *and* keep the old run | `from_checkpoint=K, fork=True` |
 
