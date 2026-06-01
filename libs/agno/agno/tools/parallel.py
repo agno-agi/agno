@@ -23,7 +23,13 @@ class CustomJSONEncoder(json.JSONEncoder):
 
 class ParallelTools(Toolkit):
     """
-    ParallelTools provides access to Parallel's web APIs optimized for AI agents.
+    ParallelTools provides access to Parallel's web search and extraction APIs.
+
+    Parallel offers powerful APIs optimized for AI agents:
+    - Search API: AI-optimized web search that returns relevant excerpts tailored for LLMs
+    - Extract API: Extract content from specific URLs in clean markdown format, handling JavaScript-heavy pages and PDFs
+    - Task API: Deep research with structured output and citations (enable_task=True)
+    - Monitor API: Track topics over time and get notified of changes (enable_monitor=True)
 
     Args:
         api_key (Optional[str]): Parallel API key. If not provided, will use PARALLEL_API_KEY environment variable.
@@ -32,16 +38,19 @@ class ParallelTools(Toolkit):
         enable_task (bool): Enable Task API (deep research). Default is False.
         enable_monitor (bool): Enable Monitor API (web tracking). Default is False.
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        max_results (int): Default maximum number of results for search operations. Default is 10.
+        max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
+        beta_version (str): Beta API version header. Default is "search-extract-2025-10-10".
+        mode (Optional[str]): Default search mode. Options: "one-shot" or "agentic". Default is None.
+        include_domains (Optional[List[str]]): Default domains to restrict results to. Default is None.
+        exclude_domains (Optional[List[str]]): Default domains to exclude from results. Default is None.
+        max_age_seconds (Optional[int]): Default cache age threshold (minimum 600). Default is None.
+        disable_cache_fallback (Optional[bool]): Default cache fallback behavior. Default is None.
         default_processor (str): Default processor for Task API. Default is "base".
         default_monitor_processor (str): Default processor for Monitor API. Options: "lite", "base". Default is "lite".
         default_monitor_frequency (str): Default frequency for monitors. Options: "1h", "1d", "1w", "30d". Default is "1d".
         default_timeout (int): Default timeout for task results in seconds. Default is 300.
         default_output_schema (Optional[Dict[str, Any]]): Schema for structured output. Use {"type": "json", "json_schema": {...}} or {"type": "auto"}. Default is None.
-        max_results (int): Default maximum number of results for search operations. Default is 10.
-        max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
-        mode (Optional[str]): Default search mode. Options: "one-shot", "agentic", or "fast". Default is None.
-        include_domains (Optional[List[str]]): Default domains to restrict results to. Default is None.
-        exclude_domains (Optional[List[str]]): Default domains to exclude from results. Default is None.
     """
 
     def __init__(
@@ -52,58 +61,52 @@ class ParallelTools(Toolkit):
         enable_task: bool = False,
         enable_monitor: bool = False,
         all: bool = False,
-        default_processor: str = "base",
-        default_monitor_processor: Literal["lite", "base"] = "lite",
-        default_monitor_frequency: str = "1d",
-        default_timeout: int = 300,
-        default_output_schema: Optional[Dict[str, Any]] = None,
         max_results: int = 10,
         max_chars_per_result: int = 10000,
+        beta_version: str = "search-extract-2025-10-10",
         mode: Optional[str] = None,
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
         max_age_seconds: Optional[int] = None,
         disable_cache_fallback: Optional[bool] = None,
+        default_processor: str = "base",
+        default_monitor_processor: Literal["lite", "base"] = "lite",
+        default_monitor_frequency: str = "1d",
+        default_timeout: int = 300,
+        default_output_schema: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         self.api_key: Optional[str] = api_key or getenv("PARALLEL_API_KEY")
         if not self.api_key:
             log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")
 
-        self.default_processor = default_processor
-        self.default_monitor_processor = default_monitor_processor
-        self.default_monitor_frequency = default_monitor_frequency
-        self.default_timeout = default_timeout
-        self.default_output_schema = default_output_schema
         self.max_results = max_results
         self.max_chars_per_result = max_chars_per_result
+        self.beta_version = beta_version
         self.mode = mode
         self.include_domains = include_domains
         self.exclude_domains = exclude_domains
         self.max_age_seconds = max_age_seconds
         self.disable_cache_fallback = disable_cache_fallback
+        self.default_processor = default_processor
+        self.default_monitor_processor = default_monitor_processor
+        self.default_monitor_frequency = default_monitor_frequency
+        self.default_timeout = default_timeout
+        self.default_output_schema = default_output_schema
 
-        self.parallel_client = ParallelClient(api_key=self.api_key)
+        self.parallel_client = ParallelClient(
+            api_key=self.api_key, default_headers={"parallel-beta": self.beta_version}
+        )
 
         tools: List[Any] = []
-        # Search & Extract
         if all or enable_search:
             tools.append(self.parallel_search)
         if all or enable_extract:
             tools.append(self.parallel_extract)
-        # Task API
         if all or enable_task:
             tools.extend([self.run_task, self.create_task, self.get_task_result, self.get_task_status])
-        # Monitor API
         if all or enable_monitor:
-            tools.extend(
-                [
-                    self.create_monitor,
-                    self.list_monitors,
-                    self.get_monitor_events,
-                    self.cancel_monitor,
-                ]
-            )
+            tools.extend([self.create_monitor, self.list_monitors, self.get_monitor_events, self.cancel_monitor])
 
         super().__init__(name="parallel_tools", tools=tools, **kwargs)
 
@@ -114,17 +117,17 @@ class ParallelTools(Toolkit):
         max_results: Optional[int] = None,
         max_chars_per_result: Optional[int] = None,
     ) -> str:
-        """
-        Search the web with a natural language objective. Provide at least one of objective or search_queries.
+        """Use this function to search the web using Parallel's Search API with a natural language objective.
+        You must provide at least one of objective or search_queries.
 
         Args:
-            objective (Optional[str]): Natural-language description of what to find
-            search_queries (Optional[List[str]]): Traditional keyword queries with search operators
-            max_results (Optional[int]): Upper bound on results returned
-            max_chars_per_result (Optional[int]): Upper bound on characters per url for excerpts
+            objective (Optional[str]): Natural-language description of what the web search is trying to find.
+            search_queries (Optional[List[str]]): Traditional keyword queries with optional search operators.
+            max_results (Optional[int]): Upper bound on results returned. Overrides constructor default.
+            max_chars_per_result (Optional[int]): Upper bound on total characters per url for excerpts.
 
         Returns:
-            str: JSON with search results containing URLs, titles, publish dates, and excerpts
+            str: A JSON formatted string containing the search results with URLs, titles, publish dates, and relevant excerpts.
         """
         try:
             if not objective and not search_queries:
@@ -227,20 +230,19 @@ class ParallelTools(Toolkit):
         full_content: bool = False,
         max_chars_for_full_content: Optional[int] = None,
     ) -> str:
-        """
-        Extract content from specific URLs.
+        """Use this function to extract content from specific URLs using Parallel's Extract API.
 
         Args:
-            urls (List[str]): List of public URLs to extract content from
-            objective (Optional[str]): Search focus to guide content extraction
-            search_queries (Optional[List[str]]): Keywords for targeting relevant content
-            excerpts (bool): Include relevant text snippets (default: True)
-            max_chars_per_excerpt (Optional[int]): Character limit per url for excerpts
-            full_content (bool): Include complete page text (default: False)
-            max_chars_for_full_content (Optional[int]): Character limit per url for full content
+            urls (List[str]): List of public URLs to extract content from.
+            objective (Optional[str]): Search focus to guide content extraction.
+            search_queries (Optional[List[str]]): Keywords for targeting relevant content.
+            excerpts (bool): Include relevant text snippets.
+            max_chars_per_excerpt (Optional[int]): Upper bound on total characters per url. Only used when excerpts is True.
+            full_content (bool): Include complete page text.
+            max_chars_for_full_content (Optional[int]): Limit on characters per url. Only used when full_content is True.
 
         Returns:
-            str: JSON with extracted content including titles, publish dates, excerpts/full content
+            str: A JSON formatted string containing extracted content with titles, publish dates, excerpts and/or full content.
         """
         try:
             if not urls:
@@ -329,7 +331,9 @@ class ParallelTools(Toolkit):
             log_error(f"Error extracting from Parallel: {str(e)}")
             return json.dumps({"error": f"Extract failed: {str(e)}"}, indent=2)
 
-    # Task API
+    # -------------------------------------------------------------------------
+    # Task API — Deep research with structured output and citations
+    # -------------------------------------------------------------------------
 
     def run_task(self, input: str) -> str:
         """
@@ -478,6 +482,7 @@ class ParallelTools(Toolkit):
                     "created_at": task_run.created_at,
                     "modified_at": task_run.modified_at,
                 },
+                cls=CustomJSONEncoder,
                 indent=2,
             )
 
@@ -485,7 +490,9 @@ class ParallelTools(Toolkit):
             log_error(f"Error getting status for task {run_id}: {str(e)}")
             return json.dumps({"error": f"Get status failed: {str(e)}"}, indent=2)
 
-    # Monitor API
+    # -------------------------------------------------------------------------
+    # Monitor API — Track topics over time and get notified of changes
+    # -------------------------------------------------------------------------
 
     def create_monitor(self, query: str) -> str:
         """
