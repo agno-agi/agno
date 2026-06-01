@@ -752,8 +752,7 @@ def _get_delegate_task_function(
                         yield tool_str.rstrip(",")
 
                 elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    # TODO(#7036): model_dump_json also ASCII-escapes by default; needs a
-                    # separate fix once confirmed that non-ASCII content reaches this branch.
+                    # TODO: model_dump_json ASCII-escapes by default; fix once reachability confirmed.
                     yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                 else:
                     import json
@@ -937,8 +936,7 @@ def _get_delegate_task_function(
                     ):
                         yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
                 elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                    # TODO(#7036): model_dump_json also ASCII-escapes by default; needs a
-                    # separate fix once confirmed that non-ASCII content reaches this branch.
+                    # TODO: model_dump_json ASCII-escapes by default; fix once reachability confirmed.
                     yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                 else:
                     import json
@@ -1108,7 +1106,7 @@ def _get_delegate_task_function(
                         ):
                             yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
                     elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
-                        # TODO(#7036): model_dump_json also ASCII-escapes by default.
+                        # TODO: model_dump_json ASCII-escapes by default; fix once reachability confirmed.
                         yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
                     else:
                         import json
@@ -1368,7 +1366,7 @@ def _get_delegate_task_function(
                                 )
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
                             return (
-                                # TODO(#7036): model_dump_json also ASCII-escapes by default.
+                                # TODO: model_dump_json ASCII-escapes by default; fix once reachability confirmed.
                                 f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}",  # type: ignore
                                 None,
                                 None,
@@ -1466,16 +1464,13 @@ def _format_results(
     docs: Optional[List[Union[Dict[str, Any], str]]],
     references_format: str = "json",
 ) -> str:
-    """Serialize knowledge-base docs for injection into the LLM context.
+    """Serialize knowledge-base search results for the LLM context.
 
-    Uses ensure_ascii=False / allow_unicode=True so that non-ASCII characters
-    (Chinese, Arabic, Cyrillic, …) are preserved as-is rather than being
-    escaped to \\uXXXX sequences, which cause model hallucinations on
-    languages that rely on character shape (issue #7036).
+    ensure_ascii=False / allow_unicode=True preserves non-ASCII characters
+    verbatim; escaping to \\uXXXX causes hallucinations for scripts that rely
+    on character shape (Chinese, Arabic, Cyrillic, …).
 
     Mirror of agent._default_tools._format_results — keep the two in sync.
-    Unknown format values fall through to YAML; callers should pass only
-    "json" or "yaml" (the values of Agent/Team.references_format).
     """
     if not docs:
         return "No documents found"
@@ -1486,9 +1481,8 @@ def _format_results(
 
         return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
     else:
-        import yaml
-
         import logging
+        import yaml
 
         logging.getLogger(__name__).warning("Unknown references_format %r — falling back to YAML", references_format)
         return yaml.dump(docs, default_flow_style=False, allow_unicode=True)

@@ -104,15 +104,11 @@ def _format_results(
     docs: Optional[List[Union[Dict[str, Any], str]]],
     references_format: str = "json",
 ) -> str:
-    """Serialize knowledge-base docs for injection into the LLM context.
+    """Serialize knowledge-base search results for the LLM context.
 
-    Uses ensure_ascii=False / allow_unicode=True so that non-ASCII characters
-    (Chinese, Arabic, Cyrillic, …) are preserved as-is rather than being
-    escaped to \\uXXXX sequences, which cause model hallucinations on
-    languages that rely on character shape (issue #7036).
-
-    Unknown format values fall through to YAML; callers should pass only
-    "json" or "yaml" (the values of Agent/Team.references_format).
+    ensure_ascii=False / allow_unicode=True preserves non-ASCII characters
+    verbatim; escaping to \\uXXXX causes hallucinations for scripts that rely
+    on character shape (Chinese, Arabic, Cyrillic, …).
     """
     if not docs:
         return "No documents found"
@@ -125,8 +121,8 @@ def _format_results(
 
         return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
     else:
-        import yaml
         import logging
+        import yaml
 
         logging.getLogger(__name__).warning("Unknown references_format %r — falling back to YAML", references_format)
         return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
