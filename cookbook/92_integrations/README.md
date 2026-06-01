@@ -7,6 +7,9 @@ Integration examples showing how to connect Agno agents with external platforms 
 ### [a2a](./a2a/)
 A2A (Agent-to-Agent) protocol examples, including a basic server/client flow.
 
+### [bindu-Quiz-Agent](./bindu-Quiz-Agent/)
+An intelligent educational assessment agent that automatically generates Multiple Choice Questions (MCQs) from any provided text content using OpenRouter and the Bindu framework.
+
 ### [discord](./discord/)
 Discord bot examples, including media handling and memory-enabled bots.
 
