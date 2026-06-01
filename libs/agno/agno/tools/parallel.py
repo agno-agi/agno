@@ -29,7 +29,7 @@ class ParallelTools(Toolkit):
     - Search API: AI-optimized web search that returns relevant excerpts tailored for LLMs
     - Extract API: Extract content from specific URLs in clean markdown format, handling JavaScript-heavy pages and PDFs
     - Task API: Deep research with structured output and citations (enable_task=True)
-    - Monitor API: Track topics over time and get notified of changes (enable_monitor=True)
+    - Monitor API: Track topics over time, get notified of changes, update settings (enable_monitor=True)
 
     Args:
         api_key (Optional[str]): Parallel API key. If not provided, will use PARALLEL_API_KEY environment variable.
@@ -106,7 +106,16 @@ class ParallelTools(Toolkit):
         if all or enable_task:
             tools.extend([self.run_task, self.create_task, self.get_task_result, self.get_task_status])
         if all or enable_monitor:
-            tools.extend([self.create_monitor, self.list_monitors, self.get_monitor_events, self.cancel_monitor])
+            tools.extend(
+                [
+                    self.create_monitor,
+                    self.get_monitor,
+                    self.update_monitor,
+                    self.list_monitors,
+                    self.get_monitor_events,
+                    self.cancel_monitor,
+                ]
+            )
 
         super().__init__(name="parallel_tools", tools=tools, **kwargs)
 
@@ -203,7 +212,7 @@ class ParallelTools(Toolkit):
                         "title": getattr(result, "title", ""),
                         "url": getattr(result, "url", ""),
                         "publish_date": getattr(result, "publish_date", ""),
-                        "excerpt": getattr(result, "excerpt", ""),
+                        "excerpts": getattr(result, "excerpts", []),
                     }
                     results_list.append(formatted_result)
                 formatted_results["results"] = results_list
@@ -335,6 +344,31 @@ class ParallelTools(Toolkit):
     # Task API — Deep research with structured output and citations
     # -------------------------------------------------------------------------
 
+    def _format_task_output(self, run_id: str, task_result: Any) -> Dict[str, Any]:
+        """Format task result output with content and basis citations."""
+        output_data: Dict[str, Any] = {
+            "run_id": run_id,
+            "status": task_result.run.status,
+            "processor": task_result.run.processor,
+        }
+
+        if hasattr(task_result.output, "content"):
+            output_data["content"] = task_result.output.content
+        if hasattr(task_result.output, "basis"):
+            output_data["basis"] = [
+                {
+                    "field": b.field,
+                    "confidence": getattr(b, "confidence", None),
+                    "citations": [
+                        {"url": c.url, "title": getattr(c, "title", None), "excerpts": getattr(c, "excerpts", None)}
+                        for c in getattr(b, "citations", [])
+                    ],
+                }
+                for b in task_result.output.basis
+            ]
+
+        return output_data
+
     def run_task(self, input: str) -> str:
         """
         Run a deep research task and wait for results with citations.
@@ -357,27 +391,7 @@ class ParallelTools(Toolkit):
             task_run = self.parallel_client.task_run.create(**task_params)
             task_result = self.parallel_client.task_run.result(task_run.run_id, api_timeout=self.default_timeout)
 
-            output_data: Dict[str, Any] = {
-                "run_id": task_run.run_id,
-                "status": task_result.run.status,
-                "processor": task_result.run.processor,
-            }
-
-            if hasattr(task_result.output, "content"):
-                output_data["content"] = task_result.output.content
-            if hasattr(task_result.output, "basis"):
-                output_data["basis"] = [
-                    {
-                        "field": b.field,
-                        "confidence": getattr(b, "confidence", None),
-                        "citations": [
-                            {"url": c.url, "title": getattr(c, "title", None), "excerpts": getattr(c, "excerpts", None)}
-                            for c in getattr(b, "citations", [])
-                        ],
-                    }
-                    for b in task_result.output.basis
-                ]
-
+            output_data = self._format_task_output(task_run.run_id, task_result)
             return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
@@ -433,27 +447,7 @@ class ParallelTools(Toolkit):
         try:
             task_result = self.parallel_client.task_run.result(run_id, api_timeout=self.default_timeout)
 
-            output_data: Dict[str, Any] = {
-                "run_id": run_id,
-                "status": task_result.run.status,
-                "processor": task_result.run.processor,
-            }
-
-            if hasattr(task_result.output, "content"):
-                output_data["content"] = task_result.output.content
-            if hasattr(task_result.output, "basis"):
-                output_data["basis"] = [
-                    {
-                        "field": b.field,
-                        "confidence": getattr(b, "confidence", None),
-                        "citations": [
-                            {"url": c.url, "title": getattr(c, "title", None), "excerpts": getattr(c, "excerpts", None)}
-                            for c in getattr(b, "citations", [])
-                        ],
-                    }
-                    for b in task_result.output.basis
-                ]
-
+            output_data = self._format_task_output(run_id, task_result)
             return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
@@ -535,6 +529,84 @@ class ParallelTools(Toolkit):
         except Exception as e:
             log_error(f"Error creating monitor for query '{query}': {str(e)}")
             return json.dumps({"error": f"Create monitor failed: {str(e)}"}, indent=2)
+
+    def get_monitor(self, monitor_id: str) -> str:
+        """
+        Retrieve a specific monitor by ID.
+
+        Args:
+            monitor_id (str): The monitor's unique identifier
+
+        Returns:
+            str: JSON with monitor configuration including status, frequency, query, and settings
+        """
+        try:
+            monitor = self.parallel_client.monitor.retrieve(monitor_id)
+
+            result: Dict[str, Any] = {
+                "monitor_id": monitor.monitor_id,
+                "type": monitor.type,
+                "status": monitor.status,
+                "frequency": monitor.frequency,
+                "processor": monitor.processor,
+                "created_at": str(monitor.created_at),
+                "last_run_at": monitor.last_run_at,
+            }
+            if monitor.type == "event_stream" and hasattr(monitor.settings, "query"):
+                result["query"] = monitor.settings.query
+
+            return json.dumps(result, indent=2)
+
+        except Exception as e:
+            log_error(f"Error retrieving monitor {monitor_id}: {str(e)}")
+            return json.dumps({"error": f"Get monitor failed: {str(e)}"}, indent=2)
+
+    def update_monitor(
+        self,
+        monitor_id: str,
+        frequency: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> str:
+        """
+        Update a monitor's frequency or query. Cannot update cancelled monitors.
+
+        Args:
+            monitor_id (str): The monitor's unique identifier
+            frequency (Optional[str]): New frequency (e.g., "1h", "1d", "1w", "30d")
+            query (Optional[str]): New search query (only for event_stream monitors)
+
+        Returns:
+            str: JSON with updated monitor configuration
+        """
+        try:
+            update_params: Dict[str, Any] = {}
+            if frequency is not None:
+                update_params["frequency"] = frequency
+            if query is not None:
+                update_params["type"] = "event_stream"
+                update_params["settings"] = {"query": query}
+
+            if not update_params:
+                return json.dumps({"error": "At least one of frequency or query must be provided"}, indent=2)
+
+            monitor = self.parallel_client.monitor.update(monitor_id, **update_params)
+
+            result: Dict[str, Any] = {
+                "monitor_id": monitor.monitor_id,
+                "type": monitor.type,
+                "status": monitor.status,
+                "frequency": monitor.frequency,
+                "processor": monitor.processor,
+                "updated": True,
+            }
+            if monitor.type == "event_stream" and hasattr(monitor.settings, "query"):
+                result["query"] = monitor.settings.query
+
+            return json.dumps(result, indent=2)
+
+        except Exception as e:
+            log_error(f"Error updating monitor {monitor_id}: {str(e)}")
+            return json.dumps({"error": f"Update monitor failed: {str(e)}"}, indent=2)
 
     def list_monitors(
         self,
@@ -636,16 +708,26 @@ class ParallelTools(Toolkit):
             events = []
             for event in response.events:
                 event_data: Dict[str, Any] = {
-                    "event_type": getattr(event, "type", None),
+                    "event_id": getattr(event, "event_id", None),
+                    "event_type": getattr(event, "event_type", None),
                     "event_group_id": getattr(event, "event_group_id", None),
-                    "created_at": str(getattr(event, "created_at", "")),
+                    "event_date": getattr(event, "event_date", None),
                 }
-                if hasattr(event, "content"):
-                    event_data["content"] = event.content
-                if hasattr(event, "citations"):
-                    event_data["citations"] = [
-                        {"url": c.url, "title": getattr(c, "title", None)} for c in event.citations
-                    ]
+                if hasattr(event, "output"):
+                    if hasattr(event.output, "content"):
+                        event_data["content"] = event.output.content
+                    if hasattr(event.output, "basis"):
+                        event_data["basis"] = [
+                            {
+                                "field": b.field,
+                                "confidence": getattr(b, "confidence", None),
+                                "citations": [
+                                    {"url": c.url, "title": getattr(c, "title", None)}
+                                    for c in getattr(b, "citations", [])
+                                ],
+                            }
+                            for b in event.output.basis
+                        ]
                 events.append(event_data)
 
             return json.dumps({"events": events, "has_more": response.next_cursor is not None}, indent=2)

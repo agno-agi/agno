@@ -2,7 +2,7 @@
 Parallel Company Research
 =============================
 
-Deep research with structured output and citations.
+Deep research with structured output and citations using the Task API.
 
 Prerequisites:
 - pip install parallel-web
@@ -14,17 +14,28 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 
 # ---------------------------------------------------------------------------
-# Create Agent
+# Output Schema Types
+# ---------------------------------------------------------------------------
+# The Task API supports three output schema formats:
+#
+# 1. Auto schema (default) - Let Parallel infer structure from the task
+#    default_output_schema={"type": "auto"}
+#
+# 2. JSON schema - Enforce a specific structure with JSON Schema
+#    default_output_schema={"type": "json", "json_schema": {...}}
+#
+# 3. String schema - Simple text description of expected output
+#    default_output_schema="Return the company name, valuation, and investors"
 # ---------------------------------------------------------------------------
 
-# Example 1: Deep research with default settings
+# Example 1: Default settings (auto schema)
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[ParallelTools(enable_task=True)],
     markdown=True,
 )
 
-# Example 2: Research with higher quality processor
+# Example 2: Higher quality processor (pro tier)
 thorough_agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
@@ -36,8 +47,20 @@ thorough_agent = Agent(
     markdown=True,
 )
 
-# Example 3: Research with structured output schema
-structured_agent = Agent(
+# Example 3: Explicit auto schema
+auto_schema_agent = Agent(
+    model=OpenAIResponses(id="gpt-5.4"),
+    tools=[
+        ParallelTools(
+            enable_task=True,
+            default_output_schema={"type": "auto"},
+        )
+    ],
+    markdown=True,
+)
+
+# Example 4: JSON schema for structured output
+json_schema_agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         ParallelTools(
@@ -54,6 +77,18 @@ structured_agent = Agent(
                     },
                 },
             },
+        )
+    ],
+    markdown=True,
+)
+
+# Example 5: String schema (natural language description)
+string_schema_agent = Agent(
+    model=OpenAIResponses(id="gpt-5.4"),
+    tools=[
+        ParallelTools(
+            enable_task=True,
+            default_output_schema="Return the company name, current valuation estimate, most recent funding round details, and list of key investors",
         )
     ],
     markdown=True,

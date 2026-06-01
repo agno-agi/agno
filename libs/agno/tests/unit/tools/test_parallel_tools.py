@@ -34,7 +34,7 @@ def test_parallel_search(parallel_tools):
                     "title": "Test Title",
                     "url": "https://example.com",
                     "publish_date": "2025-01-01",
-                    "excerpt": "Test excerpt content",
+                    "excerpts": ["Test excerpt content"],
                 }
             ],
         }
@@ -294,6 +294,50 @@ def test_list_monitors(monitor_tools):
     assert result_dict["has_more"] is False
 
 
+def test_get_monitor(monitor_tools):
+    """Test get_monitor function."""
+    mock_monitor = Mock()
+    mock_monitor.monitor_id = "test-monitor-id"
+    mock_monitor.type = "event_stream"
+    mock_monitor.status = "active"
+    mock_monitor.frequency = "1d"
+    mock_monitor.processor = "lite"
+    mock_monitor.created_at = "2026-01-01T00:00:00Z"
+    mock_monitor.last_run_at = None
+    mock_monitor.settings = Mock()
+    mock_monitor.settings.query = "Test query"
+
+    monitor_tools.parallel_client.monitor.retrieve = Mock(return_value=mock_monitor)
+
+    result = monitor_tools.get_monitor(monitor_id="test-monitor-id")
+    result_dict = json.loads(result)
+
+    assert result_dict["monitor_id"] == "test-monitor-id"
+    assert result_dict["status"] == "active"
+    assert result_dict["query"] == "Test query"
+
+
+def test_update_monitor(monitor_tools):
+    """Test update_monitor function."""
+    mock_monitor = Mock()
+    mock_monitor.monitor_id = "test-monitor-id"
+    mock_monitor.type = "event_stream"
+    mock_monitor.status = "active"
+    mock_monitor.frequency = "1h"
+    mock_monitor.processor = "lite"
+    mock_monitor.settings = Mock()
+    mock_monitor.settings.query = "Updated query"
+
+    monitor_tools.parallel_client.monitor.update = Mock(return_value=mock_monitor)
+
+    result = monitor_tools.update_monitor(monitor_id="test-monitor-id", frequency="1h")
+    result_dict = json.loads(result)
+
+    assert result_dict["monitor_id"] == "test-monitor-id"
+    assert result_dict["frequency"] == "1h"
+    assert result_dict["updated"] is True
+
+
 def test_cancel_monitor(monitor_tools):
     """Test cancel_monitor function."""
     mock_monitor = Mock()
@@ -312,12 +356,16 @@ def test_cancel_monitor(monitor_tools):
 
 def test_get_monitor_events(monitor_tools):
     """Test get_monitor_events function."""
+    mock_output = Mock()
+    mock_output.content = {"summary": "New AI funding announced"}
+    mock_output.basis = []
+
     mock_event = Mock()
-    mock_event.type = "new_content"
+    mock_event.event_id = "test-event-id"
+    mock_event.event_type = "event_stream"
     mock_event.event_group_id = "test-group-id"
-    mock_event.created_at = "2026-01-01T00:00:00Z"
-    mock_event.content = {"summary": "New AI funding announced"}
-    mock_event.citations = []
+    mock_event.event_date = "2026-01-01"
+    mock_event.output = mock_output
 
     mock_response = Mock()
     mock_response.events = [mock_event]
@@ -329,7 +377,9 @@ def test_get_monitor_events(monitor_tools):
     result_dict = json.loads(result)
 
     assert len(result_dict["events"]) == 1
-    assert result_dict["events"][0]["event_type"] == "new_content"
+    assert result_dict["events"][0]["event_type"] == "event_stream"
+    assert result_dict["events"][0]["event_date"] == "2026-01-01"
+    assert result_dict["events"][0]["content"] == {"summary": "New AI funding announced"}
     assert result_dict["has_more"] is False
 
 
