@@ -11,13 +11,13 @@ from agno.tools.parallel import ParallelTools
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
-    tools=[ParallelTools(enable_monitor=True, default_monitor_frequency="6h")],
+    tools=[ParallelTools(enable_monitor=True)],
     markdown=True,
 )
 
 # Create a monitor and list all monitors
 agent.print_response(
-    "Create a monitor to track 'AI startup funding announcements' with 6-hour frequency. "
+    "Create a monitor to track 'AI startup funding announcements'. "
     "Then list all my active monitors.",
     stream=True,
 )

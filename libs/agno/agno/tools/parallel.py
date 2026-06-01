@@ -1,15 +1,3 @@
-"""
-ParallelTools — AI-optimized web search, extraction, deep research, and monitoring.
-
-Setup:
-1. Install: `pip install parallel-web`
-2. Set env var: `PARALLEL_API_KEY=<your-api-key>`
-   OR pass `api_key=<value>` to constructor.
-
-Credentials:
-- Get your API key from https://parallel.ai/dashboard
-"""
-
 import json
 from os import getenv
 from typing import Any, Dict, List, Literal, Optional
@@ -34,28 +22,23 @@ class CustomJSONEncoder(json.JSONEncoder):
 
 
 class ParallelTools(Toolkit):
-    """ParallelTools provides access to Parallel's web APIs optimized for AI agents.
-
-    APIs available:
-    - Search API: AI-optimized web search with relevant excerpts
-    - Extract API: Extract content from URLs in clean markdown format
-    - Task API: Deep research and data enrichment with structured output
-    - Monitor API: Continuous web tracking with scheduled runs and webhooks
+    """
+    ParallelTools provides access to Parallel's web APIs optimized for AI agents.
 
     Args:
-        api_key: Parallel API key. Defaults to env var `PARALLEL_API_KEY`.
-        enable_search: Enable Search API. Defaults to True.
-        enable_extract: Enable Extract API. Defaults to True.
-        enable_task: Enable Task API (deep research). Defaults to False.
-        enable_monitor: Enable Monitor API (web tracking). Defaults to False.
-        all: Enable all tools. Defaults to False.
-        default_processor: Default processor for tasks. Options: "basic", "standard", "pro", "ultra". Defaults to "standard".
-        default_monitor_frequency: Default frequency for monitors (e.g., "1h", "6h", "1d"). Defaults to "1d".
-        max_results: Default max results for search. Defaults to 10.
-        max_chars_per_result: Default max chars per result. Defaults to 10000.
-        mode: Default search mode ("one-shot" or "agentic"). Defaults to None.
-        include_domains: Restrict results to these domains. Defaults to None.
-        exclude_domains: Exclude results from these domains. Defaults to None.
+        api_key (Optional[str]): Parallel API key. If not provided, will use PARALLEL_API_KEY environment variable.
+        enable_search (bool): Enable Search API functionality. Default is True.
+        enable_extract (bool): Enable Extract API functionality. Default is True.
+        enable_task (bool): Enable Task API (deep research). Default is False.
+        enable_monitor (bool): Enable Monitor API (web tracking). Default is False.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        default_processor (str): Default processor for tasks. Options: "lite", "base", "core", "pro", "ultra", "ultra8x". Default is "base".
+        default_monitor_frequency (str): Default frequency for monitors. Options: "1h", "1d", "1w", "30d". Default is "1d".
+        max_results (int): Default maximum number of results for search operations. Default is 10.
+        max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
+        mode (Optional[str]): Default search mode. Options: "basic" or "advanced". Default is None.
+        include_domains (Optional[List[str]]): Default domains to restrict results to. Default is None.
+        exclude_domains (Optional[List[str]]): Default domains to exclude from results. Default is None.
     """
 
     def __init__(
@@ -66,7 +49,7 @@ class ParallelTools(Toolkit):
         enable_task: bool = False,
         enable_monitor: bool = False,
         all: bool = False,
-        default_processor: str = "standard",
+        default_processor: str = "base",
         default_monitor_frequency: str = "1d",
         max_results: int = 10,
         max_chars_per_result: int = 10000,
@@ -356,7 +339,7 @@ class ParallelTools(Toolkit):
 
         Args:
             input: Natural language research query (e.g., "What is the latest funding round for Stripe?").
-            processor: Processing tier - "basic", "standard", "pro", or "ultra". Higher tiers are more thorough but cost more.
+            processor: Processing tier - "lite", "base", "core", "pro", "ultra", "ultra8x". Higher tiers are more thorough but cost more.
             output_schema: Optional JSON schema for structured output. If not provided, the API infers an appropriate schema.
             timeout_seconds: Maximum time to wait for results in seconds. Defaults to 300 (5 min).
 
@@ -409,19 +392,16 @@ class ParallelTools(Toolkit):
         input: str,
         processor: Optional[str] = None,
         output_schema: Optional[Dict[str, Any]] = None,
-        webhook_url: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
     ) -> str:
         """Create a research task without waiting for results. Returns run_id for later retrieval.
 
-        Use this for long-running tasks or when you want webhook notification on completion.
-        Retrieve results later with get_task_result().
+        Use this for long-running tasks. Retrieve results later with get_task_result().
 
         Args:
             input: Natural language research query or JSON object describing the task.
-            processor: Processing tier - "basic", "standard", "pro", or "ultra".
+            processor: Processing tier - "lite", "base", "core", "pro", "ultra", "ultra8x".
             output_schema: Optional JSON schema for structured output.
-            webhook_url: URL to receive POST notification when task completes.
             metadata: Key-value pairs stored with the task (max 16 char keys, 512 char values).
 
         Returns:
@@ -437,8 +417,6 @@ class ParallelTools(Toolkit):
 
             if output_schema is not None:
                 task_params["task_spec"] = {"output_schema": output_schema}
-            if webhook_url is not None:
-                task_params["webhook"] = {"url": webhook_url}
             if metadata is not None:
                 task_params["metadata"] = metadata
 
@@ -534,27 +512,25 @@ class ParallelTools(Toolkit):
         query: str,
         frequency: Optional[str] = None,
         processor: Literal["lite", "base"] = "lite",
-        webhook_url: Optional[str] = None,
         output_schema: Optional[Dict[str, Any]] = None,
         include_backfill: bool = False,
         metadata: Optional[Dict[str, str]] = None,
     ) -> str:
         """Create an event_stream monitor to track a search query for material changes.
 
-        The monitor runs immediately on creation, then on the configured schedule.
-        Events are emitted when material changes are detected.
+        The monitor runs on the configured schedule. Use get_monitor_events() to retrieve
+        detected changes. Combine with SchedulerTools for automated polling.
 
         Args:
             query: Search query to monitor for changes (e.g., "AI startup funding rounds").
-            frequency: How often to check - "1h", "6h", "1d", "7d", etc. Range: 1h to 30d.
+            frequency: How often to check. Options: "1h", "1d", "1w", "30d". Default is "1d".
             processor: "lite" (fast/cheap) or "base" (more thorough). Defaults to "lite".
-            webhook_url: URL to receive POST notifications when changes are detected.
             output_schema: Optional JSON schema for structured events.
             include_backfill: If True, first run includes recent historical events.
-            metadata: Key-value pairs echoed in webhooks (max 16 char keys, 512 char values).
+            metadata: Key-value pairs stored with the monitor (max 16 char keys, 512 char values).
 
         Returns:
-            JSON string with monitor_id, status, frequency, and next_run_at.
+            JSON string with monitor_id, status, frequency, and created_at.
         """
         try:
             monitor_frequency = frequency or self.default_monitor_frequency
@@ -572,8 +548,6 @@ class ParallelTools(Toolkit):
                 "settings": settings,
             }
 
-            if webhook_url is not None:
-                monitor_params["webhook"] = {"url": webhook_url}
             if metadata is not None:
                 monitor_params["metadata"] = metadata
 
@@ -602,19 +576,18 @@ class ParallelTools(Toolkit):
         task_run_id: str,
         frequency: Optional[str] = None,
         processor: Literal["lite", "base"] = "lite",
-        webhook_url: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
     ) -> str:
         """Create a snapshot monitor to track changes in a task run's output.
 
         Use this to monitor when the output of a specific task would change if re-run.
+        Use get_monitor_events() to retrieve detected changes.
 
         Args:
             task_run_id: The task run whose output to monitor for changes.
-            frequency: How often to check - "1h", "6h", "1d", "7d", etc. Range: 1h to 30d.
+            frequency: How often to check. Options: "1h", "1d", "1w", "30d". Default is "1d".
             processor: "lite" (fast/cheap) or "base" (more thorough). Defaults to "lite".
-            webhook_url: URL to receive POST notifications when output changes.
-            metadata: Key-value pairs echoed in webhooks.
+            metadata: Key-value pairs stored with the monitor.
 
         Returns:
             JSON string with monitor_id, status, frequency, and task_run_id.
@@ -629,8 +602,6 @@ class ParallelTools(Toolkit):
                 "settings": {"task_run_id": task_run_id},
             }
 
-            if webhook_url is not None:
-                monitor_params["webhook"] = {"url": webhook_url}
             if metadata is not None:
                 monitor_params["metadata"] = metadata
 
@@ -679,7 +650,7 @@ class ParallelTools(Toolkit):
             response = self.parallel_client.monitor.list(**list_params)
 
             monitors = []
-            for m in response.data:
+            for m in response.monitors:
                 monitor_info: Dict[str, Any] = {
                     "monitor_id": m.monitor_id,
                     "type": m.type,
@@ -693,7 +664,7 @@ class ParallelTools(Toolkit):
                     monitor_info["query"] = m.settings.query
                 monitors.append(monitor_info)
 
-            return json.dumps({"monitors": monitors, "has_more": response.has_more}, indent=2)
+            return json.dumps({"monitors": monitors, "has_more": response.next_cursor is not None}, indent=2)
 
         except Exception as e:
             log_exception("Error listing monitors")
@@ -706,7 +677,7 @@ class ParallelTools(Toolkit):
             monitor_id: The monitor's unique identifier.
 
         Returns:
-            JSON string with full monitor details including settings and webhook info.
+            JSON string with full monitor details including settings.
         """
         try:
             monitor = self.parallel_client.monitor.retrieve(monitor_id)
@@ -726,8 +697,6 @@ class ParallelTools(Toolkit):
                 monitor_data["query"] = monitor.settings.query
             if monitor.type == "snapshot" and hasattr(monitor.settings, "task_run_id"):
                 monitor_data["task_run_id"] = monitor.settings.task_run_id
-            if monitor.webhook:
-                monitor_data["webhook_url"] = monitor.webhook.url
 
             return json.dumps(monitor_data, indent=2)
 
@@ -740,16 +709,14 @@ class ParallelTools(Toolkit):
         monitor_id: str,
         frequency: Optional[str] = None,
         query: Optional[str] = None,
-        webhook_url: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
     ) -> str:
         """Update a monitor's settings. Only event_stream monitors can update query.
 
         Args:
             monitor_id: The monitor's unique identifier.
-            frequency: New frequency (e.g., "1h", "6h", "1d").
+            frequency: New frequency. Options: "1h", "1d", "1w", "30d".
             query: New search query (event_stream monitors only).
-            webhook_url: New webhook URL.
             metadata: New metadata (replaces existing).
 
         Returns:
@@ -762,8 +729,6 @@ class ParallelTools(Toolkit):
             if query is not None:
                 update_params["type"] = "event_stream"
                 update_params["settings"] = {"query": query}
-            if webhook_url is not None:
-                update_params["webhook"] = {"url": webhook_url}
             if metadata is not None:
                 update_params["metadata"] = metadata
 
@@ -878,7 +843,7 @@ class ParallelTools(Toolkit):
                     ]
                 events.append(event_data)
 
-            return json.dumps({"events": events, "has_more": response.has_more}, indent=2)
+            return json.dumps({"events": events, "has_more": response.next_cursor is not None}, indent=2)
 
         except Exception as e:
             log_exception(f"Error getting events for monitor {monitor_id}")
