@@ -32,8 +32,11 @@ class ParallelTools(Toolkit):
         enable_task (bool): Enable Task API (deep research). Default is False.
         enable_monitor (bool): Enable Monitor API (web tracking). Default is False.
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
-        default_processor (str): Default processor for tasks. Options: "lite", "base", "core", "pro", "ultra", "ultra8x". Default is "base".
+        default_processor (str): Default processor for Task API. Default is "base".
+        default_monitor_processor (str): Default processor for Monitor API. Options: "lite", "base". Default is "lite".
         default_monitor_frequency (str): Default frequency for monitors. Options: "1h", "1d", "1w", "30d". Default is "1d".
+        default_timeout (int): Default timeout for task results in seconds. Default is 300.
+        default_output_schema (Optional[Dict[str, Any]]): Default JSON schema for structured output. Default is None.
         max_results (int): Default maximum number of results for search operations. Default is 10.
         max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
         mode (Optional[str]): Default search mode. Options: "one-shot", "agentic", or "fast". Default is None.
@@ -50,7 +53,10 @@ class ParallelTools(Toolkit):
         enable_monitor: bool = False,
         all: bool = False,
         default_processor: str = "base",
+        default_monitor_processor: Literal["lite", "base"] = "lite",
         default_monitor_frequency: str = "1d",
+        default_timeout: int = 300,
+        default_output_schema: Optional[Dict[str, Any]] = None,
         max_results: int = 10,
         max_chars_per_result: int = 10000,
         mode: Optional[str] = None,
@@ -65,7 +71,10 @@ class ParallelTools(Toolkit):
             log_error("PARALLEL_API_KEY not set. Please set the PARALLEL_API_KEY environment variable.")
 
         self.default_processor = default_processor
+        self.default_monitor_processor = default_monitor_processor
         self.default_monitor_frequency = default_monitor_frequency
+        self.default_timeout = default_timeout
+        self.default_output_schema = default_output_schema
         self.max_results = max_results
         self.max_chars_per_result = max_chars_per_result
         self.mode = mode
@@ -322,38 +331,27 @@ class ParallelTools(Toolkit):
 
     # Task API
 
-    def run_task(
-        self,
-        input: str,
-        processor: Optional[str] = None,
-        output_schema: Optional[Dict[str, Any]] = None,
-        timeout_seconds: int = 300,
-    ) -> str:
+    def run_task(self, input: str) -> str:
         """
         Run a deep research task and wait for results with citations.
 
         Args:
             input (str): Natural language research query (e.g., "What is the latest funding round for Stripe?")
-            processor (Optional[str]): Processing tier - "lite", "base", "core", "pro", "ultra", "ultra8x"
-            output_schema (Optional[Dict[str, Any]]): JSON schema for structured output
-            timeout_seconds (int): Maximum time to wait for results (default: 300)
 
         Returns:
             str: JSON with content, basis (citations with confidence), and run metadata
         """
         try:
-            task_processor = processor or self.default_processor
-
             task_params: Dict[str, Any] = {
                 "input": input,
-                "processor": task_processor,
+                "processor": self.default_processor,
             }
 
-            if output_schema is not None:
-                task_params["task_spec"] = {"output_schema": output_schema}
+            if self.default_output_schema is not None:
+                task_params["task_spec"] = {"output_schema": self.default_output_schema}
 
             task_run = self.parallel_client.task_run.create(**task_params)
-            task_result = self.parallel_client.task_run.result(task_run.run_id, api_timeout=timeout_seconds)
+            task_result = self.parallel_client.task_run.result(task_run.run_id, api_timeout=self.default_timeout)
 
             output_data: Dict[str, Any] = {
                 "run_id": task_run.run_id,
@@ -382,37 +380,24 @@ class ParallelTools(Toolkit):
             log_error(f"Error running task with input '{input[:100]}...': {str(e)}")
             return json.dumps({"error": f"Task failed: {str(e)}"}, indent=2)
 
-    def create_task(
-        self,
-        input: str,
-        processor: Optional[str] = None,
-        output_schema: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, str]] = None,
-    ) -> str:
+    def create_task(self, input: str) -> str:
         """
         Create a research task without waiting for results. Use get_task_result() to retrieve later.
 
         Args:
             input (str): Natural language research query
-            processor (Optional[str]): Processing tier - "lite", "base", "core", "pro", "ultra", "ultra8x"
-            output_schema (Optional[Dict[str, Any]]): JSON schema for structured output
-            metadata (Optional[Dict[str, str]]): Key-value pairs stored with the task
 
         Returns:
             str: JSON with run_id, status, interaction_id, and processor
         """
         try:
-            task_processor = processor or self.default_processor
-
             task_params: Dict[str, Any] = {
                 "input": input,
-                "processor": task_processor,
+                "processor": self.default_processor,
             }
 
-            if output_schema is not None:
-                task_params["task_spec"] = {"output_schema": output_schema}
-            if metadata is not None:
-                task_params["metadata"] = metadata
+            if self.default_output_schema is not None:
+                task_params["task_spec"] = {"output_schema": self.default_output_schema}
 
             task_run = self.parallel_client.task_run.create(**task_params)
 
@@ -431,19 +416,18 @@ class ParallelTools(Toolkit):
             log_error(f"Error creating task with input '{input[:100]}...': {str(e)}")
             return json.dumps({"error": f"Create task failed: {str(e)}"}, indent=2)
 
-    def get_task_result(self, run_id: str, timeout_seconds: int = 300) -> str:
+    def get_task_result(self, run_id: str) -> str:
         """
         Get the result of a task. Blocks until task completes or times out.
 
         Args:
             run_id (str): The task run identifier from create_task()
-            timeout_seconds (int): Maximum time to wait for completion (default: 300)
 
         Returns:
             str: JSON with content (structured output), basis (citations), and run status
         """
         try:
-            task_result = self.parallel_client.task_run.result(run_id, api_timeout=timeout_seconds)
+            task_result = self.parallel_client.task_run.result(run_id, api_timeout=self.default_timeout)
 
             output_data: Dict[str, Any] = {
                 "run_id": run_id,
@@ -503,47 +487,27 @@ class ParallelTools(Toolkit):
 
     # Monitor API
 
-    def create_monitor(
-        self,
-        query: str,
-        frequency: Optional[str] = None,
-        processor: Literal["lite", "base"] = "lite",
-        output_schema: Optional[Dict[str, Any]] = None,
-        include_backfill: bool = False,
-        metadata: Optional[Dict[str, str]] = None,
-    ) -> str:
+    def create_monitor(self, query: str) -> str:
         """
         Create a monitor to track a search query for changes over time.
 
         Args:
             query (str): Search query to monitor (e.g., "AI startup funding rounds")
-            frequency (Optional[str]): How often to check - "1h", "1d", "1w", "30d" (default: "1d")
-            processor (Literal["lite", "base"]): "lite" (fast) or "base" (thorough)
-            output_schema (Optional[Dict[str, Any]]): JSON schema for structured events
-            include_backfill (bool): If True, first run includes recent historical events
-            metadata (Optional[Dict[str, str]]): Key-value pairs stored with the monitor
 
         Returns:
             str: JSON with monitor_id, status, frequency, and created_at
         """
         try:
-            monitor_frequency = frequency or self.default_monitor_frequency
-
             settings: Dict[str, Any] = {"query": query}
-            if output_schema is not None:
-                settings["output_schema"] = output_schema
-            if include_backfill:
-                settings["include_backfill"] = True
+            if self.default_output_schema is not None:
+                settings["output_schema"] = self.default_output_schema
 
             monitor_params: Dict[str, Any] = {
                 "type": "event_stream",
-                "frequency": monitor_frequency,
-                "processor": processor,
+                "frequency": self.default_monitor_frequency,
+                "processor": self.default_monitor_processor,
                 "settings": settings,
             }
-
-            if metadata is not None:
-                monitor_params["metadata"] = metadata
 
             monitor = self.parallel_client.monitor.create(**monitor_params)
 
