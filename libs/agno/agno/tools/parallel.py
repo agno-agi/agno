@@ -104,7 +104,7 @@ class ParallelTools(Toolkit):
         if all or enable_extract:
             tools.append(self.parallel_extract)
         if all or enable_task:
-            tools.extend([self.run_task, self.create_task, self.get_task_result, self.get_task_status])
+            tools.extend([self.create_task, self.get_task_status, self.get_task_result])
         if all or enable_monitor:
             tools.extend(
                 [
@@ -369,48 +369,19 @@ class ParallelTools(Toolkit):
 
         return output_data
 
-    def run_task(self, input: str) -> str:
-        """
-        Run a deep research task and wait for results with citations.
-
-        Args:
-            input (str): Natural language research query (e.g., "What is the latest funding round for Stripe?")
-
-        Returns:
-            str: JSON with content, basis (citations with confidence), and run metadata
-        """
-        try:
-            task_params: Dict[str, Any] = {
-                "input": input,
-                "processor": self.default_processor,
-            }
-
-            if self.default_output_schema is not None:
-                task_params["task_spec"] = {"output_schema": self.default_output_schema}
-
-            task_run = self.parallel_client.task_run.create(**task_params)
-            task_result = self.parallel_client.task_run.result(task_run.run_id, api_timeout=self.default_timeout)
-
-            output_data = self._format_task_output(task_run.run_id, task_result)
-            return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
-
-        except Exception as e:
-            log_error(f"Error running task with input '{input[:100]}...': {str(e)}")
-            return json.dumps({"error": f"Task failed: {str(e)}"}, indent=2)
-
-    def create_task(self, input: str) -> str:
+    def create_task(self, query: str) -> str:
         """
         Create a research task without waiting for results. Use get_task_result() to retrieve later.
 
         Args:
-            input (str): Natural language research query
+            query (str): Natural language research query (e.g., "What is Anthropic's latest funding?")
 
         Returns:
             str: JSON with run_id, status, interaction_id, and processor
         """
         try:
             task_params: Dict[str, Any] = {
-                "input": input,
+                "input": query,
                 "processor": self.default_processor,
             }
 
@@ -431,7 +402,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Error creating task with input '{input[:100]}...': {str(e)}")
+            log_error(f"Error creating task with query '{query[:100]}...': {str(e)}")
             return json.dumps({"error": f"Create task failed: {str(e)}"}, indent=2)
 
     def get_task_result(self, run_id: str) -> str:

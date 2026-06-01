@@ -145,39 +145,6 @@ def task_tools(mock_parallel_client):
         return ParallelTools(api_key="test-api-key", enable_task=True)
 
 
-def test_run_task(task_tools):
-    """Test run_task function."""
-    mock_task_run = Mock()
-    mock_task_run.run_id = "test-run-id"
-
-    mock_task_result = Mock()
-    mock_task_result.run.status = "completed"
-    mock_task_result.run.processor = "base"
-    mock_task_result.output.content = {"answer": "Test answer"}
-    mock_task_result.output.basis = []
-
-    task_tools.parallel_client.task_run.create = Mock(return_value=mock_task_run)
-    task_tools.parallel_client.task_run.result = Mock(return_value=mock_task_result)
-
-    result = task_tools.run_task(input="What is the weather?")
-    result_dict = json.loads(result)
-
-    assert result_dict["run_id"] == "test-run-id"
-    assert result_dict["status"] == "completed"
-    assert result_dict["content"] == {"answer": "Test answer"}
-
-
-def test_run_task_error(task_tools):
-    """Test run_task error handling."""
-    task_tools.parallel_client.task_run.create = Mock(side_effect=Exception("API Error"))
-
-    result = task_tools.run_task(input="Test query")
-    result_dict = json.loads(result)
-
-    assert "error" in result_dict
-    assert "Task failed" in result_dict["error"]
-
-
 def test_create_task(task_tools):
     """Test create_task function."""
     mock_task_run = Mock()
@@ -189,7 +156,7 @@ def test_create_task(task_tools):
 
     task_tools.parallel_client.task_run.create = Mock(return_value=mock_task_run)
 
-    result = task_tools.create_task(input="Research AI trends")
+    result = task_tools.create_task(query="Research AI trends")
     result_dict = json.loads(result)
 
     assert result_dict["run_id"] == "test-run-id"
