@@ -90,13 +90,9 @@ class ParallelTools(Toolkit):
             tools.extend(
                 [
                     self.create_monitor,
-                    self.create_snapshot_monitor,
                     self.list_monitors,
-                    self.get_monitor,
-                    self.update_monitor,
-                    self.cancel_monitor,
-                    self.trigger_monitor,
                     self.get_monitor_events,
+                    self.cancel_monitor,
                 ]
             )
 
@@ -571,59 +567,6 @@ class ParallelTools(Toolkit):
             log_error(f"Error creating monitor for query '{query}'")
             return json.dumps({"error": f"Create monitor failed: {str(e)}"}, indent=2)
 
-    def create_snapshot_monitor(
-        self,
-        task_run_id: str,
-        frequency: Optional[str] = None,
-        processor: Literal["lite", "base"] = "lite",
-        metadata: Optional[Dict[str, str]] = None,
-    ) -> str:
-        """Create a snapshot monitor to track changes in a task run's output.
-
-        Use this to monitor when the output of a specific task would change if re-run.
-        Use get_monitor_events() to retrieve detected changes.
-
-        Args:
-            task_run_id: The task run whose output to monitor for changes.
-            frequency: How often to check. Options: "1h", "1d", "1w", "30d". Default is "1d".
-            processor: "lite" (fast/cheap) or "base" (more thorough). Defaults to "lite".
-            metadata: Key-value pairs stored with the monitor.
-
-        Returns:
-            JSON string with monitor_id, status, frequency, and task_run_id.
-        """
-        try:
-            monitor_frequency = frequency or self.default_monitor_frequency
-
-            monitor_params: Dict[str, Any] = {
-                "type": "snapshot",
-                "frequency": monitor_frequency,
-                "processor": processor,
-                "settings": {"task_run_id": task_run_id},
-            }
-
-            if metadata is not None:
-                monitor_params["metadata"] = metadata
-
-            monitor = self.parallel_client.monitor.create(**monitor_params)
-
-            return json.dumps(
-                {
-                    "monitor_id": monitor.monitor_id,
-                    "type": monitor.type,
-                    "status": monitor.status,
-                    "frequency": monitor.frequency,
-                    "processor": monitor.processor,
-                    "task_run_id": task_run_id,
-                    "created_at": str(monitor.created_at),
-                },
-                indent=2,
-            )
-
-        except Exception as e:
-            log_error(f"Error creating snapshot monitor for task {task_run_id}")
-            return json.dumps({"error": f"Create snapshot monitor failed: {str(e)}"}, indent=2)
-
     def list_monitors(
         self,
         status: Optional[Literal["active", "cancelled"]] = None,
@@ -670,88 +613,6 @@ class ParallelTools(Toolkit):
             log_error("Error listing monitors")
             return json.dumps({"error": f"List monitors failed: {str(e)}"}, indent=2)
 
-    def get_monitor(self, monitor_id: str) -> str:
-        """Get details of a specific monitor.
-
-        Args:
-            monitor_id: The monitor's unique identifier.
-
-        Returns:
-            JSON string with full monitor details including settings.
-        """
-        try:
-            monitor = self.parallel_client.monitor.retrieve(monitor_id)
-
-            monitor_data: Dict[str, Any] = {
-                "monitor_id": monitor.monitor_id,
-                "type": monitor.type,
-                "status": monitor.status,
-                "frequency": monitor.frequency,
-                "processor": monitor.processor,
-                "created_at": str(monitor.created_at),
-                "last_run_at": monitor.last_run_at,
-                "metadata": monitor.metadata,
-            }
-
-            if monitor.type == "event_stream" and hasattr(monitor.settings, "query"):
-                monitor_data["query"] = monitor.settings.query
-            if monitor.type == "snapshot" and hasattr(monitor.settings, "task_run_id"):
-                monitor_data["task_run_id"] = monitor.settings.task_run_id
-
-            return json.dumps(monitor_data, indent=2)
-
-        except Exception as e:
-            log_error(f"Error getting monitor {monitor_id}")
-            return json.dumps({"error": f"Get monitor failed: {str(e)}"}, indent=2)
-
-    def update_monitor(
-        self,
-        monitor_id: str,
-        frequency: Optional[str] = None,
-        query: Optional[str] = None,
-        metadata: Optional[Dict[str, str]] = None,
-    ) -> str:
-        """Update a monitor's settings. Only event_stream monitors can update query.
-
-        Args:
-            monitor_id: The monitor's unique identifier.
-            frequency: New frequency. Options: "1h", "1d", "1w", "30d".
-            query: New search query (event_stream monitors only).
-            metadata: New metadata (replaces existing).
-
-        Returns:
-            JSON string with updated monitor details.
-        """
-        try:
-            update_params: Dict[str, Any] = {}
-            if frequency is not None:
-                update_params["frequency"] = frequency
-            if query is not None:
-                update_params["type"] = "event_stream"
-                update_params["settings"] = {"query": query}
-            if metadata is not None:
-                update_params["metadata"] = metadata
-
-            if not update_params:
-                return json.dumps({"error": "No update parameters provided"}, indent=2)
-
-            monitor = self.parallel_client.monitor.update(monitor_id, **update_params)
-
-            return json.dumps(
-                {
-                    "monitor_id": monitor.monitor_id,
-                    "type": monitor.type,
-                    "status": monitor.status,
-                    "frequency": monitor.frequency,
-                    "updated": True,
-                },
-                indent=2,
-            )
-
-        except Exception as e:
-            log_error(f"Error updating monitor {monitor_id}")
-            return json.dumps({"error": f"Update monitor failed: {str(e)}"}, indent=2)
-
     def cancel_monitor(self, monitor_id: str) -> str:
         """Cancel a monitor permanently. This action cannot be undone.
 
@@ -776,34 +637,6 @@ class ParallelTools(Toolkit):
         except Exception as e:
             log_error(f"Error cancelling monitor {monitor_id}")
             return json.dumps({"error": f"Cancel monitor failed: {str(e)}"}, indent=2)
-
-    def trigger_monitor(self, monitor_id: str) -> str:
-        """Trigger an immediate run of a monitor outside its normal schedule.
-
-        The monitor's regular schedule is not affected. An event is only emitted
-        if the execution detects a material change.
-
-        Args:
-            monitor_id: The monitor's unique identifier.
-
-        Returns:
-            JSON string confirming the trigger was sent.
-        """
-        try:
-            self.parallel_client.monitor.trigger(monitor_id)
-
-            return json.dumps(
-                {
-                    "monitor_id": monitor_id,
-                    "triggered": True,
-                    "message": "Monitor run triggered. Events will be emitted if changes are detected.",
-                },
-                indent=2,
-            )
-
-        except Exception as e:
-            log_error(f"Error triggering monitor {monitor_id}")
-            return json.dumps({"error": f"Trigger monitor failed: {str(e)}"}, indent=2)
 
     def get_monitor_events(
         self,
