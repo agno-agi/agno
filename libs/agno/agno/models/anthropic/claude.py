@@ -164,7 +164,7 @@ class Claude(Model):
     # Set to True to append a trailing user turn when the conversation ends with an assistant message.
     # Defaults to True for Claude 4.6+ models.
     append_trailing_user_message: Optional[bool] = None
-    trailing_user_message_content: str = "continue"
+    trailing_user_message_content: str = "Please continue from where you left off."
 
     # Client parameters
     api_key: Optional[str] = None

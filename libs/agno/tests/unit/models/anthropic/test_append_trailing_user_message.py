@@ -63,7 +63,7 @@ ONLY_SYSTEM_AND_USER = [
 class TestAnthropicFormatMessages:
     """Tests for the shared Anthropic format_messages utility."""
 
-    def _format(self, messages, append=False, content="continue"):
+    def _format(self, messages, append=False, content="Please continue from where you left off."):
         from agno.utils.models.claude import format_messages
 
         formatted, _ = format_messages(
@@ -76,7 +76,7 @@ class TestAnthropicFormatMessages:
     def test_appends_when_ends_with_assistant(self):
         msgs = self._format(ENDS_WITH_ASSISTANT, append=True)
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == [{"type": "text", "text": "continue"}]
+        assert msgs[-1]["content"] == [{"type": "text", "text": "Please continue from where you left off."}]
 
     def test_no_append_when_flag_false(self):
         msgs = self._format(ENDS_WITH_ASSISTANT, append=False)
@@ -122,7 +122,7 @@ class TestAnthropicFormatMessages:
 class TestBedrockFormatMessages:
     """Tests for AwsBedrock._format_messages trailing message."""
 
-    def _format(self, messages, append=False, content="continue"):
+    def _format(self, messages, append=False, content="Please continue from where you left off."):
         from agno.models.aws.bedrock import AwsBedrock
 
         model = AwsBedrock(
@@ -137,7 +137,7 @@ class TestBedrockFormatMessages:
     def test_appends_when_ends_with_assistant(self):
         msgs = self._format(ENDS_WITH_ASSISTANT, append=True)
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == [{"text": "continue"}]
+        assert msgs[-1]["content"] == [{"text": "Please continue from where you left off."}]
 
     def test_no_append_when_flag_false(self):
         msgs = self._format(ENDS_WITH_ASSISTANT, append=False)
@@ -163,7 +163,7 @@ class TestBedrockFormatMessages:
 class TestLiteLLMFormatMessages:
     """Tests for LiteLLM._format_messages trailing message."""
 
-    def _format(self, messages, append=False, content="continue"):
+    def _format(self, messages, append=False, content="Please continue from where you left off."):
         from agno.models.litellm.chat import LiteLLM
 
         model = LiteLLM(
@@ -176,7 +176,7 @@ class TestLiteLLMFormatMessages:
     def test_appends_when_ends_with_assistant(self):
         msgs = self._format(ENDS_WITH_ASSISTANT, append=True)
         assert msgs[-1]["role"] == "user"
-        assert msgs[-1]["content"] == "continue"
+        assert msgs[-1]["content"] == "Please continue from where you left off."
 
     def test_no_append_when_flag_false(self):
         msgs = self._format(ENDS_WITH_ASSISTANT, append=False)

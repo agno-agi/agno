@@ -452,7 +452,7 @@ def format_messages(
     messages: List[Message],
     compress_tool_results: bool = False,
     append_trailing_user_message: Optional[bool] = False,
-    trailing_user_message_content: str = "continue",
+    trailing_user_message_content: str = "Please continue from where you left off.",
     enable_citations: bool = True,
 ) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
@@ -461,8 +461,15 @@ def format_messages(
     Args:
         messages (List[Message]): The list of messages to process.
         compress_tool_results: Whether to compress tool results.
-        append_trailing_user_message: If True, append a dummy user message when the conversation
-            ends with an assistant turn. Required for models that do not support assistant prefill.
+        append_trailing_user_message: If True, append a user message when the conversation
+            ends with an assistant turn. Required for models that do not support assistant prefill
+            (e.g., Claude 4.6+). The default trailing message is a generic continuation prompt.
+            For better results, consider use-case-specific alternatives:
+            - Structured output: use ``output_config.format`` with a ``json_schema``.
+            - Multi-agent handoff: synthesize a fresh user task instead of forwarding the
+              orchestrator's terminal assistant turn.
+            - Continuation: use an explicit continuation prompt like
+              ``"Your previous response was interrupted. Continue from where you left off."``.
         trailing_user_message_content: The text content of the injected trailing user message.
         enable_citations: Default for document citation attachment.
 
@@ -634,7 +641,12 @@ def format_messages(
     # Claude 4.6+ models do not support assistant message prefill.
     # Append a trailing user turn so the request ends with a user message.
     if append_trailing_user_message and merged_messages and merged_messages[-1]["role"] == "assistant":
-        log_info("Appending trailing user message because this model does not support assistant message prefill")
+        log_warning(
+            "Appending trailing user message because this model does not support assistant message prefill. "
+            "For structured output, use output_config.format instead. "
+            "For multi-agent handoff, rewrite the orchestrator's terminal assistant turn into a fresh user task. "
+            "For continuation, the default trailing message is: 'Please continue from where you left off.'"
+        )
         merged_messages.append({"role": "user", "content": [{"type": "text", "text": trailing_user_message_content}]})
 
     return merged_messages, " ".join(system_messages)

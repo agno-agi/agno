@@ -48,7 +48,7 @@ class LiteLLM(Model):
     extra_body: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
     append_trailing_user_message: Optional[bool] = None
-    trailing_user_message_content: str = "continue"
+    trailing_user_message_content: str = "Please continue from where you left off."
 
     client: Optional[Any] = None
 
