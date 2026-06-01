@@ -1,25 +1,32 @@
-"""Parallel Tools — web search, deep research, and monitoring.
+"""
+Parallel Tools
+=============================
 
-Setup:
-    pip install parallel-web
-    export PARALLEL_API_KEY=<your-api-key>
-
-APIs:
-    - Search: Find relevant web content with natural language
-    - Extract: Pull content from specific URLs
-    - Task: Deep research with citations (enable_task=True)
-    - Monitor: Track topics over time (enable_monitor=True)
+Demonstrates parallel tools.
 """
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.parallel import ParallelTools
 
-# Basic search agent (default — Search & Extract enabled)
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[ParallelTools()],
+    instructions="No need to tell me its based on your research.",
     markdown=True,
 )
 
-agent.print_response("What are the latest developments in AI agents?", stream=True)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Tell me about Agno's AgentOS?",
+        stream=True,
+        stream_events=True,
+    )
