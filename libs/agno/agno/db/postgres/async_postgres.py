@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
@@ -139,6 +140,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         self.db_schema: str = db_schema if db_schema is not None else "ai"
         self.metadata: MetaData = MetaData(schema=self.db_schema)
         self.create_schema: bool = create_schema
+
+        # Thread-safety: per-table lock to prevent concurrent metadata mutations
+        self._table_locks: Dict[str, asyncio.Lock] = {}
+        self._metadata_lock: asyncio.Lock = asyncio.Lock()
 
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(
@@ -309,112 +314,159 @@ class AsyncPostgresDb(AsyncBaseDb):
             raise
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
+        # Get or create a per-table lock for thread safety
+        if table_type not in self._table_locks:
+            async with self._metadata_lock:
+                if table_type not in self._table_locks:
+                    self._table_locks[table_type] = asyncio.Lock()
+
+        lock = self._table_locks[table_type]
+
         if table_type == "sessions":
-            self.session_table = await self._get_or_create_table(
-                table_name=self.session_table_name,
-                table_type="sessions",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.session_table
+            async with lock:
+                if self.session_table is not None:
+                    return self.session_table
+                self.session_table = await self._get_or_create_table(
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.session_table
 
         if table_type == "memories":
-            self.memory_table = await self._get_or_create_table(
-                table_name=self.memory_table_name,
-                table_type="memories",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.memory_table
+            async with lock:
+                if self.memory_table is not None:
+                    return self.memory_table
+                self.memory_table = await self._get_or_create_table(
+                    table_name=self.memory_table_name,
+                    table_type="memories",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.memory_table
 
         if table_type == "metrics":
-            self.metrics_table = await self._get_or_create_table(
-                table_name=self.metrics_table_name,
-                table_type="metrics",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.metrics_table
+            async with lock:
+                if self.metrics_table is not None:
+                    return self.metrics_table
+                self.metrics_table = await self._get_or_create_table(
+                    table_name=self.metrics_table_name,
+                    table_type="metrics",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.metrics_table
 
         if table_type == "evals":
-            self.eval_table = await self._get_or_create_table(
-                table_name=self.eval_table_name,
-                table_type="evals",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.eval_table
+            async with lock:
+                if self.eval_table is not None:
+                    return self.eval_table
+                self.eval_table = await self._get_or_create_table(
+                    table_name=self.eval_table_name,
+                    table_type="evals",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.eval_table
 
         if table_type == "knowledge":
-            self.knowledge_table = await self._get_or_create_table(
-                table_name=self.knowledge_table_name,
-                table_type="knowledge",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.knowledge_table
+            async with lock:
+                if self.knowledge_table is not None:
+                    return self.knowledge_table
+                self.knowledge_table = await self._get_or_create_table(
+                    table_name=self.knowledge_table_name,
+                    table_type="knowledge",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.knowledge_table
 
         if table_type == "culture":
-            self.culture_table = await self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.culture_table
+            async with lock:
+                if self.culture_table is not None:
+                    return self.culture_table
+                self.culture_table = await self._get_or_create_table(
+                    table_name=self.culture_table_name,
+                    table_type="culture",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.culture_table
 
         if table_type == "versions":
-            self.versions_table = await self._get_or_create_table(
-                table_name=self.versions_table_name,
-                table_type="versions",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.versions_table
+            async with lock:
+                if self.versions_table is not None:
+                    return self.versions_table
+                self.versions_table = await self._get_or_create_table(
+                    table_name=self.versions_table_name,
+                    table_type="versions",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.versions_table
 
         if table_type == "traces":
-            self.traces_table = await self._get_or_create_table(
-                table_name=self.trace_table_name,
-                table_type="traces",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.traces_table
+            async with lock:
+                if self.traces_table is not None:
+                    return self.traces_table
+                self.traces_table = await self._get_or_create_table(
+                    table_name=self.trace_table_name,
+                    table_type="traces",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.traces_table
 
         if table_type == "spans":
             # Ensure traces table exists first (spans has FK to traces)
             if create_table_if_not_found:
                 await self._get_table(table_type="traces", create_table_if_not_found=True)
-            self.spans_table = await self._get_or_create_table(
-                table_name=self.span_table_name,
-                table_type="spans",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.spans_table
+            async with lock:
+                if self.spans_table is not None:
+                    return self.spans_table
+                self.spans_table = await self._get_or_create_table(
+                    table_name=self.span_table_name,
+                    table_type="spans",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.spans_table
 
         if table_type == "learnings":
-            self.learnings_table = await self._get_or_create_table(
-                table_name=self.learnings_table_name,
-                table_type="learnings",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.learnings_table
+            async with lock:
+                if self.learnings_table is not None:
+                    return self.learnings_table
+                self.learnings_table = await self._get_or_create_table(
+                    table_name=self.learnings_table_name,
+                    table_type="learnings",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.learnings_table
 
         if table_type == "schedules":
-            self.schedules_table = await self._get_or_create_table(
-                table_name=self.schedules_table_name,
-                table_type="schedules",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.schedules_table
+            async with lock:
+                if self.schedules_table is not None:
+                    return self.schedules_table
+                self.schedules_table = await self._get_or_create_table(
+                    table_name=self.schedules_table_name,
+                    table_type="schedules",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.schedules_table
 
         if table_type == "schedule_runs":
-            self.schedule_runs_table = await self._get_or_create_table(
-                table_name=self.schedule_runs_table_name,
-                table_type="schedule_runs",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.schedule_runs_table
+            async with lock:
+                if self.schedule_runs_table is not None:
+                    return self.schedule_runs_table
+                self.schedule_runs_table = await self._get_or_create_table(
+                    table_name=self.schedule_runs_table_name,
+                    table_type="schedule_runs",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.schedule_runs_table
 
         if table_type == "approvals":
-            self.approvals_table = await self._get_or_create_table(
-                table_name=self.approvals_table_name,
-                table_type="approvals",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.approvals_table
+            async with lock:
+                if self.approvals_table is not None:
+                    return self.approvals_table
+                self.approvals_table = await self._get_or_create_table(
+                    table_name=self.approvals_table_name,
+                    table_type="approvals",
+                    create_table_if_not_found=create_table_if_not_found,
+                )
+                return self.approvals_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
