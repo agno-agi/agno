@@ -648,6 +648,7 @@ def _run(
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -683,6 +684,7 @@ def _run(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
 
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -1140,6 +1142,7 @@ def _run_stream(
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(
                     run_response,
@@ -1188,6 +1191,7 @@ def _run_stream(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(run_response, error=str(e))
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
@@ -1750,6 +1754,7 @@ async def _arun(
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -1786,6 +1791,7 @@ async def _arun(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
 
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -2499,6 +2505,7 @@ async def _arun_stream(
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(
                     run_response,
@@ -2553,6 +2560,7 @@ async def _arun_stream(
 
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(run_response, error=str(e))
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
@@ -3526,6 +3534,7 @@ def _continue_run(
                 run_response = cast(RunOutput, run_response)
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -3557,6 +3566,7 @@ def _continue_run(
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
 
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -3798,6 +3808,7 @@ def _continue_run_stream(
                 run_response = cast(RunOutput, run_response)
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(
                     run_response,
@@ -3843,6 +3854,7 @@ def _continue_run_stream(
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(run_response, error=str(e))
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
@@ -4605,6 +4617,7 @@ async def _acontinue_run(
                 run_response = cast(RunOutput, run_response)
                 # Handle exceptions during streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
@@ -4645,6 +4658,7 @@ async def _acontinue_run(
                     run_response = RunOutput(run_id=run_id)
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(run_response, error=str(e))  # type: ignore
                 run_response.events = add_error_event(error=run_error, events=run_response.events)  # type: ignore
@@ -5141,6 +5155,7 @@ async def _acontinue_run_stream(
                 run_response = cast(RunOutput, run_response)
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(
                     run_response,
@@ -5200,6 +5215,7 @@ async def _acontinue_run_stream(
 
                 # Handle exceptions during async streaming
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 # Add error event to list of events
                 run_error = create_run_error_event(run_response, error=str(e))
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
@@ -5379,6 +5395,44 @@ async def apersist_run_in_session(
             session.session_data = {"session_state": run_context.session_state}
 
     await _session.asave_session(agent, session=session)
+
+
+def flush_in_flight_messages_on_error(
+    run_response: RunOutput,
+    run_messages: Optional["RunMessages"],
+) -> None:
+    """Copy in-flight conversation into ``run_response.messages`` for the
+    terminal ERROR write.
+
+    During a normal run, ``run_response.messages`` is populated by
+    ``update_run_response`` only **after** the model loop returns
+    successfully. If the model loop raises (e.g. provider API failure,
+    malformed response, exception in a pre-hook) before any tool batch
+    boundary fires, neither ``update_run_response`` nor the mid-run
+    checkpoint hook has a chance to flush ``run_messages.messages`` into
+    ``run_response.messages``. The terminal ERROR write would then persist
+    an empty-message row, losing the conversation that led to the failure
+    and making post-mortem debugging impossible.
+
+    Call this from every ``except Exception`` block right before
+    ``cleanup_and_store``. It only sets ``run_response.messages`` if it's
+    still empty — preserves a partial state that the mid-run hook already
+    captured.
+
+    The filter ``m.add_to_agent_memory`` mirrors what the checkpoint hook
+    does, so the persisted shape is consistent regardless of which path
+    captured it.
+    """
+    if run_messages is None:
+        return
+    if run_response.messages:
+        # Already populated (e.g. by a mid-run checkpoint hook). Don't
+        # overwrite — it may be more complete than run_messages.messages
+        # if intervening processing happened.
+        return
+    if not run_messages.messages:
+        return
+    run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
 def cleanup_and_store(
