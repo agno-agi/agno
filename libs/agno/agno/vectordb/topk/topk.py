@@ -4,7 +4,7 @@ from typing import Any, Dict, Final, FrozenSet, List, Optional
 
 try:
     import topk_sdk.error
-    from topk_sdk import AsyncClient, Client, ConsistencyLevel
+    from topk_sdk import AsyncClient, Client
     from topk_sdk import schema as topk_schema
     from topk_sdk.data import f32_vector, struct
     from topk_sdk.query import Query, field, filter, fn, match, select
@@ -290,9 +290,7 @@ class TopK(VectorDb):
             True if a matching document exists, False otherwise.
         """
         try:
-            results = self.client.collection(self.collection).query(
-                filter(field("name") == name).limit(1), consistency=ConsistencyLevel.Strong
-            )
+            results = self.client.collection(self.collection).query(filter(field("name") == name).limit(1))
             return len(results) > 0
         except Exception as e:
             log_error(f"Error in name_exists: {e}")
@@ -308,9 +306,7 @@ class TopK(VectorDb):
             True if a matching document exists, False otherwise.
         """
         try:
-            results = await self.async_client.collection(self.collection).query(
-                filter(field("name") == name).limit(1), consistency=ConsistencyLevel.Strong
-            )
+            results = await self.async_client.collection(self.collection).query(filter(field("name") == name).limit(1))
             return len(results) > 0
         except Exception as e:
             log_error(f"Error in async_name_exists: {e}")
@@ -326,7 +322,7 @@ class TopK(VectorDb):
             True if the document exists, False otherwise.
         """
         try:
-            result = self.client.collection(self.collection).get([id], consistency=ConsistencyLevel.Strong)
+            result = self.client.collection(self.collection).get([id])
             return id in result
         except Exception as e:
             log_error(f"Error in id_exists: {e}")
@@ -343,7 +339,7 @@ class TopK(VectorDb):
         """
         try:
             results = self.client.collection(self.collection).query(
-                filter(field("content_hash") == content_hash).limit(1), consistency=ConsistencyLevel.Strong
+                filter(field("content_hash") == content_hash).limit(1)
             )
             return len(results) > 0
         except Exception as e:
@@ -430,7 +426,7 @@ class TopK(VectorDb):
         try:
             embedding = [] if self._use_semantic_index() else self.embedder.get_embedding(query)
             q = self._search_query(embedding, query, limit, filters)
-            records = self.client.collection(self.collection).query(q, consistency=ConsistencyLevel.Strong)
+            records = self.client.collection(self.collection).query(q)
             return [self._topk_doc_to_document(r) for r in records]
         except Exception as e:
             log_error(f"Error searching TopK collection: {e}")
@@ -450,7 +446,7 @@ class TopK(VectorDb):
         try:
             embedding = [] if self._use_semantic_index() else await self.embedder.async_get_embedding(query)
             q = self._search_query(embedding, query, limit, filters)
-            records = await self.async_client.collection(self.collection).query(q, consistency=ConsistencyLevel.Strong)
+            records = await self.async_client.collection(self.collection).query(q)
             return [self._topk_doc_to_document(r) for r in records]
         except Exception as e:
             log_error(f"Error searching TopK collection: {e}")
