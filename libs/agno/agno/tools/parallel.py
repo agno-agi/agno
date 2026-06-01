@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_error, log_exception
+from agno.utils.log import log_error
 
 try:
     from parallel import Parallel as ParallelClient
@@ -209,7 +209,7 @@ class ParallelTools(Toolkit):
             return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_exception(f"Error searching Parallel for objective '{objective}'")
+            log_error(f"Error searching Parallel for objective '{objective}'")
             return json.dumps({"error": f"Search failed: {str(e)}"}, indent=2)
 
     def parallel_extract(
@@ -320,7 +320,7 @@ class ParallelTools(Toolkit):
             return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_exception("Error extracting from Parallel")
+            log_error("Error extracting from Parallel")
             return json.dumps({"error": f"Extract failed: {str(e)}"}, indent=2)
 
     # Task API
@@ -384,7 +384,7 @@ class ParallelTools(Toolkit):
             return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_exception(f"Error running task with input '{input[:100]}...'")
+            log_error(f"Error running task with input '{input[:100]}...'")
             return json.dumps({"error": f"Task failed: {str(e)}"}, indent=2)
 
     def create_task(
@@ -434,7 +434,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_exception(f"Error creating task with input '{input[:100]}...'")
+            log_error(f"Error creating task with input '{input[:100]}...'")
             return json.dumps({"error": f"Create task failed: {str(e)}"}, indent=2)
 
     def get_task_result(self, run_id: str, timeout_seconds: int = 300) -> str:
@@ -474,7 +474,7 @@ class ParallelTools(Toolkit):
             return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_exception(f"Error getting result for task {run_id}")
+            log_error(f"Error getting result for task {run_id}")
             return json.dumps({"error": f"Get result failed: {str(e)}"}, indent=2)
 
     def get_task_status(self, run_id: str) -> str:
@@ -502,7 +502,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_exception(f"Error getting status for task {run_id}")
+            log_error(f"Error getting status for task {run_id}")
             return json.dumps({"error": f"Get status failed: {str(e)}"}, indent=2)
 
     # Monitor API
@@ -568,7 +568,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_exception(f"Error creating monitor for query '{query}'")
+            log_error(f"Error creating monitor for query '{query}'")
             return json.dumps({"error": f"Create monitor failed: {str(e)}"}, indent=2)
 
     def create_snapshot_monitor(
@@ -621,7 +621,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_exception(f"Error creating snapshot monitor for task {task_run_id}")
+            log_error(f"Error creating snapshot monitor for task {task_run_id}")
             return json.dumps({"error": f"Create snapshot monitor failed: {str(e)}"}, indent=2)
 
     def list_monitors(
@@ -667,7 +667,7 @@ class ParallelTools(Toolkit):
             return json.dumps({"monitors": monitors, "has_more": response.next_cursor is not None}, indent=2)
 
         except Exception as e:
-            log_exception("Error listing monitors")
+            log_error("Error listing monitors")
             return json.dumps({"error": f"List monitors failed: {str(e)}"}, indent=2)
 
     def get_monitor(self, monitor_id: str) -> str:
@@ -701,7 +701,7 @@ class ParallelTools(Toolkit):
             return json.dumps(monitor_data, indent=2)
 
         except Exception as e:
-            log_exception(f"Error getting monitor {monitor_id}")
+            log_error(f"Error getting monitor {monitor_id}")
             return json.dumps({"error": f"Get monitor failed: {str(e)}"}, indent=2)
 
     def update_monitor(
@@ -749,7 +749,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_exception(f"Error updating monitor {monitor_id}")
+            log_error(f"Error updating monitor {monitor_id}")
             return json.dumps({"error": f"Update monitor failed: {str(e)}"}, indent=2)
 
     def cancel_monitor(self, monitor_id: str) -> str:
@@ -774,7 +774,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_exception(f"Error cancelling monitor {monitor_id}")
+            log_error(f"Error cancelling monitor {monitor_id}")
             return json.dumps({"error": f"Cancel monitor failed: {str(e)}"}, indent=2)
 
     def trigger_monitor(self, monitor_id: str) -> str:
@@ -802,7 +802,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_exception(f"Error triggering monitor {monitor_id}")
+            log_error(f"Error triggering monitor {monitor_id}")
             return json.dumps({"error": f"Trigger monitor failed: {str(e)}"}, indent=2)
 
     def get_monitor_events(
@@ -846,5 +846,5 @@ class ParallelTools(Toolkit):
             return json.dumps({"events": events, "has_more": response.next_cursor is not None}, indent=2)
 
         except Exception as e:
-            log_exception(f"Error getting events for monitor {monitor_id}")
+            log_error(f"Error getting events for monitor {monitor_id}")
             return json.dumps({"error": f"Get events failed: {str(e)}"}, indent=2)
