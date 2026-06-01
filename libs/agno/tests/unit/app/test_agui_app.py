@@ -15,7 +15,7 @@ from ag_ui.core.types import (
     VideoInputContent,
 )
 
-from agno.os.interfaces.agui.input import extract_media, extract_user_input
+from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input
 from agno.os.interfaces.agui.router import run_entity
 from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
@@ -2106,3 +2106,62 @@ async def test_run_entity_passes_agui_media():
     events = [event async for event in run_entity(fake_entity, _media_run_input())]
     assert events[0].type == EventType.RUN_STARTED
     _assert_media_forwarded(fake_entity.captured_kwargs)
+
+
+# ---------------------------------------------------------------------------
+# extract_context — readable context extraction (PR for issue #7805)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_context_none_returns_none():
+    """None input returns None — no context block to inject."""
+    assert extract_context(None) is None
+
+
+def test_extract_context_empty_list_returns_none():
+    """Empty list returns None — caller can skip dependencies injection."""
+    assert extract_context([]) is None
+
+
+def test_extract_context_object_with_attrs():
+    """Pydantic-style object with description and value attributes."""
+    item = MagicMock(description="user_state", value="viewing dashboard")
+    result = extract_context([item])
+    assert result == [{"description": "user_state", "value": "viewing dashboard"}]
+
+
+def test_extract_context_dict_input():
+    """Dict input — when context items arrive as plain dicts not objects."""
+    result = extract_context([{"description": "page", "value": "home"}])
+    assert result == [{"description": "page", "value": "home"}]
+
+
+def test_extract_context_json_string_value_decoded():
+    """String values that look like JSON are parsed into structured data."""
+    item = MagicMock(description="movies", value='{"count":2,"titles":["A","B"]}')
+    result = extract_context([item])
+    assert result == [{"description": "movies", "value": {"count": 2, "titles": ["A", "B"]}}]
+
+
+def test_extract_context_non_json_string_kept_verbatim():
+    """Non-JSON string values are preserved as strings (graceful fallback)."""
+    item = MagicMock(description="note", value="just plain text {{{ not json")
+    result = extract_context([item])
+    assert result == [{"description": "note", "value": "just plain text {{{ not json"}]
+
+
+def test_extract_context_missing_description_gets_fallback():
+    """Missing/empty description falls back to context_N auto-numbering."""
+
+    class _Item:
+        value = "some value"
+
+    result = extract_context([_Item()])
+    assert result == [{"description": "context_1", "value": "some value"}]
+
+
+def test_extract_context_none_value_preserved():
+    """None values are preserved (model sees JSON null)."""
+    item = MagicMock(description="empty", value=None)
+    result = extract_context([item])
+    assert result == [{"description": "empty", "value": None}]
