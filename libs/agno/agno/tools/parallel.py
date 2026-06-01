@@ -36,7 +36,7 @@ class ParallelTools(Toolkit):
         default_monitor_frequency (str): Default frequency for monitors. Options: "1h", "1d", "1w", "30d". Default is "1d".
         max_results (int): Default maximum number of results for search operations. Default is 10.
         max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
-        mode (Optional[str]): Default search mode. Options: "basic" or "advanced". Default is None.
+        mode (Optional[str]): Default search mode. Options: "one-shot", "agentic", or "fast". Default is None.
         include_domains (Optional[List[str]]): Default domains to restrict results to. Default is None.
         exclude_domains (Optional[List[str]]): Default domains to exclude from results. Default is None.
     """
