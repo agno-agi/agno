@@ -96,7 +96,7 @@ class ParallelTools(Toolkit):
                 ]
             )
 
-        super().__init__(name="parallel", tools=tools, **kwargs)
+        super().__init__(name="parallel_tools", tools=tools, **kwargs)
 
     def parallel_search(
         self,
@@ -205,7 +205,7 @@ class ParallelTools(Toolkit):
             return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_error(f"Error searching Parallel for objective '{objective}'")
+            log_error(f"Error searching Parallel for objective '{objective}': {str(e)}")
             return json.dumps({"error": f"Search failed: {str(e)}"}, indent=2)
 
     def parallel_extract(
@@ -316,7 +316,7 @@ class ParallelTools(Toolkit):
             return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_error("Error extracting from Parallel")
+            log_error(f"Error extracting from Parallel: {str(e)}")
             return json.dumps({"error": f"Extract failed: {str(e)}"}, indent=2)
 
     # Task API
@@ -380,7 +380,7 @@ class ParallelTools(Toolkit):
             return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_error(f"Error running task with input '{input[:100]}...'")
+            log_error(f"Error running task with input '{input[:100]}...': {str(e)}")
             return json.dumps({"error": f"Task failed: {str(e)}"}, indent=2)
 
     def create_task(
@@ -430,7 +430,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Error creating task with input '{input[:100]}...'")
+            log_error(f"Error creating task with input '{input[:100]}...': {str(e)}")
             return json.dumps({"error": f"Create task failed: {str(e)}"}, indent=2)
 
     def get_task_result(self, run_id: str, timeout_seconds: int = 300) -> str:
@@ -470,7 +470,7 @@ class ParallelTools(Toolkit):
             return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
 
         except Exception as e:
-            log_error(f"Error getting result for task {run_id}")
+            log_error(f"Error getting result for task {run_id}: {str(e)}")
             return json.dumps({"error": f"Get result failed: {str(e)}"}, indent=2)
 
     def get_task_status(self, run_id: str) -> str:
@@ -498,7 +498,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Error getting status for task {run_id}")
+            log_error(f"Error getting status for task {run_id}: {str(e)}")
             return json.dumps({"error": f"Get status failed: {str(e)}"}, indent=2)
 
     # Monitor API
@@ -564,7 +564,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Error creating monitor for query '{query}'")
+            log_error(f"Error creating monitor for query '{query}': {str(e)}")
             return json.dumps({"error": f"Create monitor failed: {str(e)}"}, indent=2)
 
     def list_monitors(
@@ -610,7 +610,7 @@ class ParallelTools(Toolkit):
             return json.dumps({"monitors": monitors, "has_more": response.next_cursor is not None}, indent=2)
 
         except Exception as e:
-            log_error("Error listing monitors")
+            log_error(f"Error listing monitors: {str(e)}")
             return json.dumps({"error": f"List monitors failed: {str(e)}"}, indent=2)
 
     def cancel_monitor(self, monitor_id: str) -> str:
@@ -635,7 +635,7 @@ class ParallelTools(Toolkit):
             )
 
         except Exception as e:
-            log_error(f"Error cancelling monitor {monitor_id}")
+            log_error(f"Error cancelling monitor {monitor_id}: {str(e)}")
             return json.dumps({"error": f"Cancel monitor failed: {str(e)}"}, indent=2)
 
     def get_monitor_events(
@@ -679,5 +679,5 @@ class ParallelTools(Toolkit):
             return json.dumps({"events": events, "has_more": response.next_cursor is not None}, indent=2)
 
         except Exception as e:
-            log_error(f"Error getting events for monitor {monitor_id}")
+            log_error(f"Error getting events for monitor {monitor_id}: {str(e)}")
             return json.dumps({"error": f"Get events failed: {str(e)}"}, indent=2)
