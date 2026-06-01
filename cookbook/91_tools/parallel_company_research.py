@@ -43,12 +43,15 @@ structured_agent = Agent(
         ParallelTools(
             enable_task=True,
             default_output_schema={
-                "type": "object",
-                "properties": {
-                    "company_name": {"type": "string"},
-                    "valuation": {"type": "string"},
-                    "latest_funding": {"type": "string"},
-                    "key_investors": {"type": "array", "items": {"type": "string"}},
+                "type": "json",
+                "json_schema": {
+                    "type": "object",
+                    "properties": {
+                        "company_name": {"type": "string"},
+                        "valuation": {"type": "string"},
+                        "latest_funding": {"type": "string"},
+                        "key_investors": {"type": "array", "items": {"type": "string"}},
+                    },
                 },
             },
         )

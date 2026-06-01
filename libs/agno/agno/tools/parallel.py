@@ -36,7 +36,7 @@ class ParallelTools(Toolkit):
         default_monitor_processor (str): Default processor for Monitor API. Options: "lite", "base". Default is "lite".
         default_monitor_frequency (str): Default frequency for monitors. Options: "1h", "1d", "1w", "30d". Default is "1d".
         default_timeout (int): Default timeout for task results in seconds. Default is 300.
-        default_output_schema (Optional[Dict[str, Any]]): Default JSON schema for structured output. Default is None.
+        default_output_schema (Optional[Dict[str, Any]]): Schema for structured output. Use {"type": "json", "json_schema": {...}} or {"type": "auto"}. Default is None.
         max_results (int): Default maximum number of results for search operations. Default is 10.
         max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
         mode (Optional[str]): Default search mode. Options: "one-shot", "agentic", or "fast". Default is None.
