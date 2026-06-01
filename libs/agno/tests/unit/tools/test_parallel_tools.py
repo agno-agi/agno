@@ -131,3 +131,214 @@ def test_parallel_extract_error(parallel_tools):
 
     assert "error" in result_dict
     assert "Extract failed" in result_dict["error"]
+
+
+# ---------------------------------------------------------------------------
+# Task API Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def task_tools(mock_parallel_client):
+    """Create ParallelTools with Task API enabled."""
+    with patch.dict("os.environ", {"PARALLEL_API_KEY": "test-api-key"}):
+        return ParallelTools(api_key="test-api-key", enable_task=True)
+
+
+def test_run_task(task_tools):
+    """Test run_task function."""
+    mock_task_run = Mock()
+    mock_task_run.run_id = "test-run-id"
+
+    mock_task_result = Mock()
+    mock_task_result.run.status = "completed"
+    mock_task_result.run.processor = "base"
+    mock_task_result.output.content = {"answer": "Test answer"}
+    mock_task_result.output.basis = []
+
+    task_tools.parallel_client.task_run.create = Mock(return_value=mock_task_run)
+    task_tools.parallel_client.task_run.result = Mock(return_value=mock_task_result)
+
+    result = task_tools.run_task(input="What is the weather?")
+    result_dict = json.loads(result)
+
+    assert result_dict["run_id"] == "test-run-id"
+    assert result_dict["status"] == "completed"
+    assert result_dict["content"] == {"answer": "Test answer"}
+
+
+def test_run_task_error(task_tools):
+    """Test run_task error handling."""
+    task_tools.parallel_client.task_run.create = Mock(side_effect=Exception("API Error"))
+
+    result = task_tools.run_task(input="Test query")
+    result_dict = json.loads(result)
+
+    assert "error" in result_dict
+    assert "Task failed" in result_dict["error"]
+
+
+def test_create_task(task_tools):
+    """Test create_task function."""
+    mock_task_run = Mock()
+    mock_task_run.run_id = "test-run-id"
+    mock_task_run.status = "running"
+    mock_task_run.interaction_id = "test-interaction-id"
+    mock_task_run.processor = "base"
+    mock_task_run.is_active = True
+
+    task_tools.parallel_client.task_run.create = Mock(return_value=mock_task_run)
+
+    result = task_tools.create_task(input="Research AI trends")
+    result_dict = json.loads(result)
+
+    assert result_dict["run_id"] == "test-run-id"
+    assert result_dict["status"] == "running"
+    assert result_dict["is_active"] is True
+
+
+def test_get_task_result(task_tools):
+    """Test get_task_result function."""
+    mock_task_result = Mock()
+    mock_task_result.run.status = "completed"
+    mock_task_result.run.processor = "base"
+    mock_task_result.output.content = {"data": "result"}
+    mock_task_result.output.basis = []
+
+    task_tools.parallel_client.task_run.result = Mock(return_value=mock_task_result)
+
+    result = task_tools.get_task_result(run_id="test-run-id")
+    result_dict = json.loads(result)
+
+    assert result_dict["status"] == "completed"
+    assert result_dict["content"] == {"data": "result"}
+
+
+def test_get_task_status(task_tools):
+    """Test get_task_status function."""
+    mock_task_run = Mock()
+    mock_task_run.run_id = "test-run-id"
+    mock_task_run.status = "running"
+    mock_task_run.processor = "base"
+    mock_task_run.is_active = True
+    mock_task_run.created_at = "2026-01-01T00:00:00Z"
+    mock_task_run.modified_at = "2026-01-01T00:01:00Z"
+
+    task_tools.parallel_client.task_run.retrieve = Mock(return_value=mock_task_run)
+
+    result = task_tools.get_task_status(run_id="test-run-id")
+    result_dict = json.loads(result)
+
+    assert result_dict["run_id"] == "test-run-id"
+    assert result_dict["status"] == "running"
+    assert result_dict["is_active"] is True
+
+
+# ---------------------------------------------------------------------------
+# Monitor API Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def monitor_tools(mock_parallel_client):
+    """Create ParallelTools with Monitor API enabled."""
+    with patch.dict("os.environ", {"PARALLEL_API_KEY": "test-api-key"}):
+        return ParallelTools(api_key="test-api-key", enable_monitor=True)
+
+
+def test_create_monitor(monitor_tools):
+    """Test create_monitor function."""
+    mock_monitor = Mock()
+    mock_monitor.monitor_id = "test-monitor-id"
+    mock_monitor.type = "event_stream"
+    mock_monitor.status = "active"
+    mock_monitor.frequency = "1d"
+    mock_monitor.processor = "lite"
+    mock_monitor.created_at = "2026-01-01T00:00:00Z"
+    mock_monitor.last_run_at = None
+
+    monitor_tools.parallel_client.monitor.create = Mock(return_value=mock_monitor)
+
+    result = monitor_tools.create_monitor(query="AI funding news")
+    result_dict = json.loads(result)
+
+    assert result_dict["monitor_id"] == "test-monitor-id"
+    assert result_dict["status"] == "active"
+    assert result_dict["query"] == "AI funding news"
+
+
+def test_list_monitors(monitor_tools):
+    """Test list_monitors function."""
+    mock_monitor = Mock()
+    mock_monitor.monitor_id = "test-monitor-id"
+    mock_monitor.type = "event_stream"
+    mock_monitor.status = "active"
+    mock_monitor.frequency = "1d"
+    mock_monitor.processor = "lite"
+    mock_monitor.created_at = "2026-01-01T00:00:00Z"
+    mock_monitor.last_run_at = None
+    mock_monitor.settings = Mock()
+    mock_monitor.settings.query = "Test query"
+
+    mock_response = Mock()
+    mock_response.monitors = [mock_monitor]
+    mock_response.next_cursor = None
+
+    monitor_tools.parallel_client.monitor.list = Mock(return_value=mock_response)
+
+    result = monitor_tools.list_monitors()
+    result_dict = json.loads(result)
+
+    assert len(result_dict["monitors"]) == 1
+    assert result_dict["monitors"][0]["monitor_id"] == "test-monitor-id"
+    assert result_dict["has_more"] is False
+
+
+def test_cancel_monitor(monitor_tools):
+    """Test cancel_monitor function."""
+    mock_monitor = Mock()
+    mock_monitor.monitor_id = "test-monitor-id"
+    mock_monitor.status = "cancelled"
+
+    monitor_tools.parallel_client.monitor.cancel = Mock(return_value=mock_monitor)
+
+    result = monitor_tools.cancel_monitor(monitor_id="test-monitor-id")
+    result_dict = json.loads(result)
+
+    assert result_dict["monitor_id"] == "test-monitor-id"
+    assert result_dict["status"] == "cancelled"
+    assert result_dict["cancelled"] is True
+
+
+def test_get_monitor_events(monitor_tools):
+    """Test get_monitor_events function."""
+    mock_event = Mock()
+    mock_event.type = "new_content"
+    mock_event.event_group_id = "test-group-id"
+    mock_event.created_at = "2026-01-01T00:00:00Z"
+    mock_event.content = {"summary": "New AI funding announced"}
+    mock_event.citations = []
+
+    mock_response = Mock()
+    mock_response.events = [mock_event]
+    mock_response.next_cursor = None
+
+    monitor_tools.parallel_client.monitor.events = Mock(return_value=mock_response)
+
+    result = monitor_tools.get_monitor_events(monitor_id="test-monitor-id")
+    result_dict = json.loads(result)
+
+    assert len(result_dict["events"]) == 1
+    assert result_dict["events"][0]["event_type"] == "new_content"
+    assert result_dict["has_more"] is False
+
+
+def test_get_monitor_events_error(monitor_tools):
+    """Test get_monitor_events error handling."""
+    monitor_tools.parallel_client.monitor.events = Mock(side_effect=Exception("API Error"))
+
+    result = monitor_tools.get_monitor_events(monitor_id="test-monitor-id")
+    result_dict = json.loads(result)
+
+    assert "error" in result_dict
+    assert "Get events failed" in result_dict["error"]
