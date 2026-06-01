@@ -51,9 +51,8 @@ def test_transcribe_audio_closes_file_after_success(audio_file):
 def test_transcribe_audio_closes_file_when_api_raises(audio_file):
     """The handle must be closed even when the API call raises.
 
-    The original bug leaked the descriptor on every call; the leak is worst on
-    the error path. Here the client raises, and the captured handle must still
-    be closed after the method returns its error string.
+    The client is made to raise, and the captured handle must still report
+    ``closed is True`` after the method returns its error string.
     """
     captured = {}
 
@@ -74,8 +73,7 @@ def test_transcribe_audio_does_not_leak_descriptors_in_a_loop(audio_file):
     """Repeated calls must not accumulate open file descriptors.
 
     Tracks every handle opened for the audio path across many calls and asserts
-    each one ends up closed -- the property that fails if the method reverts to
-    a bare ``open(...)`` without a context manager.
+    each one ends up closed.
     """
     opened = []
     real_open = open
