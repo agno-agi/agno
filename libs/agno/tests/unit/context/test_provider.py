@@ -376,19 +376,18 @@ async def test_base_asetup_is_idempotent():
 @pytest.mark.asyncio
 async def test_query_tool_yields_events_from_sub_agent():
     """Events from the sub-agent must be yielded, not just the final answer."""
-    from agno.run.agent import RunOutput
-
-    class _FakeEvent:
-        def __init__(self, name: str):
-            self.name = name
-            self.parent_run_id = None
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
 
     class _StreamingProvider(_EchoProvider):
         async def _aget_query_agent(self, run_context):
             class _FakeAgent:
                 async def arun(self, message, **kwargs):
-                    yield _FakeEvent("event1")
-                    yield _FakeEvent("event2")
+                    event1 = ToolCallStartedEvent()
+                    event1.tool_call_id = "call_1"
+                    event2 = ToolCallStartedEvent()
+                    event2.tool_call_id = "call_2"
+                    yield event1
+                    yield event2
                     yield RunOutput(content="final answer")
 
             return _FakeAgent()
@@ -406,8 +405,8 @@ async def test_query_tool_yields_events_from_sub_agent():
             events.append(chunk)
 
     assert len(events) == 2, f"Expected 2 events, got {len(events)}"
-    assert events[0].name == "event1"
-    assert events[1].name == "event2"
+    assert events[0].tool_call_id == "call_1"
+    assert events[1].tool_call_id == "call_2"
     assert final_json is not None
     assert "final answer" in final_json
 
@@ -415,18 +414,14 @@ async def test_query_tool_yields_events_from_sub_agent():
 @pytest.mark.asyncio
 async def test_query_tool_sets_parent_run_id_on_events():
     """Each yielded event must have parent_run_id set to the parent's run_id."""
-    from agno.run.agent import RunOutput
-
-    class _FakeEvent:
-        def __init__(self):
-            self.parent_run_id = None
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
 
     class _StreamingProvider(_EchoProvider):
         async def _aget_query_agent(self, run_context):
             class _FakeAgent:
                 async def arun(self, message, **kwargs):
-                    yield _FakeEvent()
-                    yield _FakeEvent()
+                    yield ToolCallStartedEvent()
+                    yield ToolCallStartedEvent()
                     yield RunOutput(content="done")
 
             return _FakeAgent()
@@ -451,18 +446,18 @@ async def test_query_tool_sets_parent_run_id_on_events():
 @pytest.mark.asyncio
 async def test_query_tool_preserves_existing_parent_run_id():
     """If event already has parent_run_id, don't overwrite it (nested sub-agents)."""
-    from agno.run.agent import RunOutput
-
-    class _FakeEvent:
-        def __init__(self, parent_run_id=None):
-            self.parent_run_id = parent_run_id
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
 
     class _StreamingProvider(_EchoProvider):
         async def _aget_query_agent(self, run_context):
             class _FakeAgent:
                 async def arun(self, message, **kwargs):
-                    yield _FakeEvent(parent_run_id="nested-parent-456")
-                    yield _FakeEvent(parent_run_id=None)
+                    event1 = ToolCallStartedEvent()
+                    event1.parent_run_id = "nested-parent-456"
+                    event2 = ToolCallStartedEvent()
+                    event2.parent_run_id = None
+                    yield event1
+                    yield event2
                     yield RunOutput(content="done")
 
             return _FakeAgent()
@@ -494,17 +489,13 @@ async def test_streaming_path_and_aquery_path_both_work():
 @pytest.mark.asyncio
 async def test_streaming_path_handles_no_run_context():
     """Streaming works even when run_context is None (parent_run_id will be None)."""
-    from agno.run.agent import RunOutput
-
-    class _FakeEvent:
-        def __init__(self):
-            self.parent_run_id = None
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
 
     class _StreamingProvider(_EchoProvider):
         async def _aget_query_agent(self, run_context):
             class _FakeAgent:
                 async def arun(self, message, **kwargs):
-                    yield _FakeEvent()
+                    yield ToolCallStartedEvent()
                     yield RunOutput(content="done")
 
             return _FakeAgent()
