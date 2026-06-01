@@ -100,6 +100,38 @@ def get_update_cultural_knowledge_function(agent: Agent, async_mode: bool = Fals
     )
 
 
+def _format_results(
+    docs: Optional[List[Union[Dict[str, Any], str]]],
+    references_format: str = "json",
+) -> str:
+    """Serialize knowledge-base docs for injection into the LLM context.
+
+    Uses ensure_ascii=False / allow_unicode=True so that non-ASCII characters
+    (Chinese, Arabic, Cyrillic, …) are preserved as-is rather than being
+    escaped to \\uXXXX sequences, which cause model hallucinations on
+    languages that rely on character shape (issue #7036).
+
+    Unknown format values fall through to YAML; callers should pass only
+    "json" or "yaml" (the values of Agent/Team.references_format).
+    """
+    if not docs:
+        return "No documents found"
+    if references_format == "json":
+        import json
+
+        return json.dumps(docs, indent=2, default=str, ensure_ascii=False)
+    elif references_format == "yaml":
+        import yaml
+
+        return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
+    else:
+        import yaml
+        import logging
+
+        logging.getLogger(__name__).warning("Unknown references_format %r — falling back to YAML", references_format)
+        return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
+
+
 def create_knowledge_search_tool(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -114,18 +146,6 @@ def create_knowledge_search_tool(
     which checks knowledge_retriever first and falls back to knowledge.search().
     This ensures the custom retriever is always respected when provided.
     """
-
-    def _format_results(docs: Optional[List[Union[Dict[str, Any], str]]]) -> str:
-        if not docs:
-            return "No documents found"
-        if agent.references_format == "json":
-            import json
-
-            return json.dumps(docs, indent=2, default=str)
-        else:
-            import yaml
-
-            return yaml.dump(docs, default_flow_style=False)
 
     def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
@@ -181,7 +201,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _format_results(docs, agent.references_format)
 
         async def asearch_knowledge_base_with_filters(
             query: str, filters: Optional[List[KnowledgeFilter]] = None
@@ -213,7 +233,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _format_results(docs, agent.references_format)
 
         if async_mode:
             return Function.from_callable(asearch_knowledge_base_with_filters, name="search_knowledge_base")
@@ -247,7 +267,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _format_results(docs, agent.references_format)
 
         async def asearch_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
@@ -275,7 +295,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _format_results(docs, agent.references_format)
 
         if async_mode:
             return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
@@ -314,7 +334,7 @@ def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
         if num_chats is not None:
             history = history[-num_chats:]
 
-        return json.dumps(history)
+        return json.dumps(history, ensure_ascii=False)
 
     return get_chat_history
 
@@ -339,7 +359,7 @@ def get_tool_call_history_function(agent: Agent, session: AgentSession) -> Calla
         tool_calls = session.get_tool_calls(num_calls=num_calls)
         if len(tool_calls) == 0:
             return json.dumps([])
-        return json.dumps(tool_calls)
+        return json.dumps(tool_calls, ensure_ascii=False)
 
     return get_tool_call_history
 
@@ -497,7 +517,7 @@ def get_search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     return search_past_sessions
 
@@ -552,7 +572,7 @@ async def aget_search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     return Function.from_callable(search_past_sessions, name="search_past_sessions")
 

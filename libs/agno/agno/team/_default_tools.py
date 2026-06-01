@@ -185,7 +185,7 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         if num_chats is not None:
             history = history[-num_chats:]
 
-        return json.dumps(history)
+        return json.dumps(history, ensure_ascii=False)
 
     async def aget_chat_history(num_chats: Optional[int] = None) -> str:
         """
@@ -216,7 +216,7 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         if num_chats is not None:
             history = history[-num_chats:]
 
-        return json.dumps(history)
+        return json.dumps(history, ensure_ascii=False)
 
     if async_mode:
         get_chat_history_func = aget_chat_history
@@ -286,7 +286,7 @@ def _search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     async def asearch_past_sessions() -> str:
         """List previous chat sessions with short previews.
@@ -323,7 +323,7 @@ def _search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     if async_mode and _has_async_db(team):
         return Function.from_callable(asearch_past_sessions, name="search_past_sessions")
@@ -752,11 +752,13 @@ def _get_delegate_task_function(
                         yield tool_str.rstrip(",")
 
                 elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
+                    # TODO(#7036): model_dump_json also ASCII-escapes by default; needs a
+                    # separate fix once confirmed that non-ASCII content reaches this branch.
                     yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                 else:
                     import json
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
             except Exception as e:
                 yield str(e)
 
@@ -935,11 +937,13 @@ def _get_delegate_task_function(
                     ):
                         yield ",".join([tool.result for tool in member_agent_run_response.tools if tool.result])  # type: ignore
                 elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
+                    # TODO(#7036): model_dump_json also ASCII-escapes by default; needs a
+                    # separate fix once confirmed that non-ASCII content reaches this branch.
                     yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                 else:
                     import json
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
             except Exception as e:
                 yield str(e)
 
@@ -1104,11 +1108,12 @@ def _get_delegate_task_function(
                         ):
                             yield f"Agent {member_agent.name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"  # type: ignore
                     elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
+                        # TODO(#7036): model_dump_json also ASCII-escapes by default.
                         yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
                     else:
                         import json
 
-                        yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"  # type: ignore
+                        yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}"  # type: ignore
                 except Exception as e:
                     yield f"Agent {member_agent.name}: Error - {str(e)}"
 
@@ -1363,6 +1368,7 @@ def _get_delegate_task_function(
                                 )
                         elif issubclass(type(member_agent_run_response.content), BaseModel):
                             return (
+                                # TODO(#7036): model_dump_json also ASCII-escapes by default.
                                 f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}",  # type: ignore
                                 None,
                                 None,
@@ -1371,7 +1377,7 @@ def _get_delegate_task_function(
                             import json
 
                             return (
-                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}",
+                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}",
                                 None,
                                 None,
                             )
@@ -1456,6 +1462,38 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     return "Successfully added to knowledge base"
 
 
+def _format_results(
+    docs: Optional[List[Union[Dict[str, Any], str]]],
+    references_format: str = "json",
+) -> str:
+    """Serialize knowledge-base docs for injection into the LLM context.
+
+    Uses ensure_ascii=False / allow_unicode=True so that non-ASCII characters
+    (Chinese, Arabic, Cyrillic, …) are preserved as-is rather than being
+    escaped to \\uXXXX sequences, which cause model hallucinations on
+    languages that rely on character shape (issue #7036).
+
+    Mirror of agent._default_tools._format_results — keep the two in sync.
+    Unknown format values fall through to YAML; callers should pass only
+    "json" or "yaml" (the values of Agent/Team.references_format).
+    """
+    if not docs:
+        return "No documents found"
+    if references_format == "json":
+        return json.dumps(docs, indent=2, default=str, ensure_ascii=False)
+    elif references_format == "yaml":
+        import yaml
+
+        return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
+    else:
+        import yaml
+
+        import logging
+
+        logging.getLogger(__name__).warning("Unknown references_format %r — falling back to YAML", references_format)
+        return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
+
+
 def create_knowledge_search_tool(
     team: "Team",
     run_response: Optional[TeamRunOutput] = None,
@@ -1469,16 +1507,6 @@ def create_knowledge_search_tool(
     Routes all knowledge searches through get_relevant_docs_from_knowledge(),
     which checks knowledge_retriever first and falls back to knowledge.search().
     """
-
-    def _format_results(docs: Optional[List[Union[Dict[str, Any], str]]]) -> str:
-        if not docs:
-            return "No documents found"
-        if team.references_format == "json":
-            return json.dumps(docs, indent=2, default=str)
-        else:
-            import yaml
-
-            return yaml.dump(docs, default_flow_style=False)
 
     def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
@@ -1532,7 +1560,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _format_results(docs, team.references_format)
 
         async def asearch_knowledge_base_with_filters(
             query: str, filters: Optional[List[KnowledgeFilter]] = None
@@ -1562,7 +1590,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _format_results(docs, team.references_format)
 
         if async_mode:
             return Function.from_callable(asearch_knowledge_base_with_filters, name="search_knowledge_base")
@@ -1594,7 +1622,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _format_results(docs, team.references_format)
 
         async def asearch_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
@@ -1620,7 +1648,7 @@ def create_knowledge_search_tool(
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-            return _format_results(docs)
+            return _format_results(docs, team.references_format)
 
         if async_mode:
             return Function.from_callable(asearch_knowledge_base, name="search_knowledge_base")
