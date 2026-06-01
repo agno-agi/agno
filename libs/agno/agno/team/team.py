@@ -1090,6 +1090,7 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
+        background: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
         return _run.acontinue_run_dispatch(
@@ -1107,6 +1108,7 @@ class Team:
             metadata=metadata,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
+            background=background,
             **kwargs,
         )
 

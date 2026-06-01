@@ -34,6 +34,7 @@ from agno.exceptions import (
     ContextWindowExceededError,
     ModelProviderError,
     RetryableModelProviderError,
+    RunCancelledException,
 )
 from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
@@ -1158,6 +1159,13 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Providers (e.g. GeminiInteractions on the agent path) can produce
+        # already-executed ToolExecution records server-side; carry them
+        # through so run_response.tools / AgentOS UI sees the audit.
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     async def _aprocess_model_response(
         self,
@@ -1221,6 +1229,13 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Providers (e.g. GeminiInteractions on the agent path) can produce
+        # already-executed ToolExecution records server-side; carry them
+        # through so run_response.tools / AgentOS UI sees the audit.
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     def _populate_assistant_message(
         self,
@@ -1421,27 +1436,30 @@ class Model(ABC):
                     # Initialize assistant_message.metrics for provider invoke_stream calls
                     self._ensure_message_metrics_initialized(assistant_message)
                     # Generate response
-                    for response in self.process_response_stream(
-                        messages=messages,
-                        assistant_message=assistant_message,
-                        stream_data=stream_data,
-                        response_format=response_format,
-                        tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
-                        run_response=run_response,
-                        compress_tool_results=_compress_tool_results,
-                    ):
-                        if self.cache_response and isinstance(response, ModelResponse):
-                            streaming_responses.append(response)
-                        yield response
+                    try:
+                        for response in self.process_response_stream(
+                            messages=messages,
+                            assistant_message=assistant_message,
+                            stream_data=stream_data,
+                            response_format=response_format,
+                            tools=_tool_dicts,
+                            tool_choice=tool_choice or self._tool_choice,
+                            run_response=run_response,
+                            compress_tool_results=_compress_tool_results,
+                        ):
+                            if self.cache_response and isinstance(response, ModelResponse):
+                                streaming_responses.append(response)
+                            yield response
+                    finally:
+                        # Accumulate metrics for this streamed iteration (also on cancel)
+                        if run_response is not None and assistant_message.metrics is not None:
+                            from agno.metrics import accumulate_model_metrics
 
-                    # Accumulate metrics for this streamed iteration
-                    if run_response is not None and assistant_message.metrics is not None:
-                        from agno.metrics import accumulate_model_metrics
-
-                        _stream_model_response = ModelResponse()
-                        _stream_model_response.response_usage = assistant_message.metrics
-                        accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response.metrics)
+                            _stream_model_response = ModelResponse()
+                            _stream_model_response.response_usage = assistant_message.metrics
+                            accumulate_model_metrics(
+                                _stream_model_response, self, self.model_type, run_response.metrics
+                            )
 
                 else:
                     # Initialize message metrics and start timer before model call
@@ -1697,27 +1715,30 @@ class Model(ABC):
                     # Initialize assistant_message.metrics for provider ainvoke_stream calls
                     self._ensure_message_metrics_initialized(assistant_message)
                     # Generate response
-                    async for model_response_delta in self.aprocess_response_stream(
-                        messages=messages,
-                        assistant_message=assistant_message,
-                        stream_data=stream_data,
-                        response_format=response_format,
-                        tools=_tool_dicts,
-                        tool_choice=tool_choice or self._tool_choice,
-                        run_response=run_response,
-                        compress_tool_results=_compress_tool_results,
-                    ):
-                        if self.cache_response and isinstance(model_response_delta, ModelResponse):
-                            streaming_responses.append(model_response_delta)
-                        yield model_response_delta
+                    try:
+                        async for model_response_delta in self.aprocess_response_stream(
+                            messages=messages,
+                            assistant_message=assistant_message,
+                            stream_data=stream_data,
+                            response_format=response_format,
+                            tools=_tool_dicts,
+                            tool_choice=tool_choice or self._tool_choice,
+                            run_response=run_response,
+                            compress_tool_results=_compress_tool_results,
+                        ):
+                            if self.cache_response and isinstance(model_response_delta, ModelResponse):
+                                streaming_responses.append(model_response_delta)
+                            yield model_response_delta
+                    finally:
+                        # Accumulate metrics for this streamed iteration (also on cancel)
+                        if run_response is not None and assistant_message.metrics is not None:
+                            from agno.metrics import accumulate_model_metrics
 
-                    # Accumulate metrics for this streamed iteration
-                    if run_response is not None and assistant_message.metrics is not None:
-                        from agno.metrics import accumulate_model_metrics
-
-                        _stream_model_response = ModelResponse()
-                        _stream_model_response.response_usage = assistant_message.metrics
-                        accumulate_model_metrics(_stream_model_response, self, self.model_type, run_response.metrics)
+                            _stream_model_response = ModelResponse()
+                            _stream_model_response.response_usage = assistant_message.metrics
+                            accumulate_model_metrics(
+                                _stream_model_response, self, self.model_type, run_response.metrics
+                            )
 
                 else:
                     # Initialize message metrics and start timer before model call
@@ -2142,6 +2163,8 @@ class Model(ABC):
             if a_exc.stop_execution:
                 stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {str(e)}")
             raise e
@@ -2195,6 +2218,8 @@ class Model(ABC):
                         function_call_output += str(item)
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_error(
                     f"Error while iterating function result generator for {function_call.function.name}: {str(e)}"
@@ -2465,6 +2490,8 @@ class Model(ABC):
                 success = result.status == "success"
         except AgentRunException as e:
             success = e
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {str(e)}")
             success = False
@@ -2768,6 +2795,9 @@ class Model(ABC):
         for i, original_result in enumerate(results):
             # If result is an exception, skip processing it
             if isinstance(original_result, BaseException):
+                # Cancellation is intentional, not an error — re-raise without logging
+                if isinstance(original_result, RunCancelledException):
+                    raise original_result
                 log_error(f"Error during function call: {original_result}")
                 raise original_result
 
@@ -2787,6 +2817,9 @@ class Model(ABC):
                                 if async_gen_index in async_generator_outputs:
                                     _, async_function_call_output, error = async_generator_outputs[async_gen_index]
                                     if error:
+                                        # Re-raise cancellation — it is not an error
+                                        if isinstance(error, RunCancelledException):
+                                            raise error
                                         # Handle async generator exceptions gracefully like sync generators
                                         log_error(
                                             f"Error while iterating async generator for {function_call.function.name}: {error}"
@@ -2849,6 +2882,8 @@ class Model(ABC):
                             function_call_output += str(item)
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
+                except RunCancelledException:
+                    raise
                 except Exception as e:
                     log_error(
                         f"Error while iterating function result generator for {function_call.function.name}: {str(e)}"

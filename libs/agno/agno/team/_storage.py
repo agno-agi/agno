@@ -520,9 +520,14 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_dependencies_to_context"] = team.add_dependencies_to_context
 
     # --- Knowledge settings ---
-    # TODO: implement knowledge serialization
-    # if team.knowledge is not None:
-    #     config["knowledge"] = team.knowledge.to_dict()
+    # Knowledge is a non-serializable object (it holds live db/vector_db connections),
+    # so we store a reference by name and resolve it from the registry on load.
+    if team.knowledge is not None:
+        knowledge_name = getattr(team.knowledge, "name", None)
+        if knowledge_name is not None:
+            config["knowledge"] = {"name": knowledge_name}
+        else:
+            log_warning("Team knowledge has no name; it cannot be referenced from the registry and will not be saved.")
     if team.knowledge_filters is not None:
         config["knowledge_filters"] = team.knowledge_filters
     if team.enable_agentic_knowledge_filters:
@@ -853,10 +858,16 @@ def from_dict(
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
     # --- Handle Knowledge reconstruction ---
-    # TODO: implement knowledge deserialization
-    # if "knowledge" in config and isinstance(config["knowledge"], dict):
-    #     from agno.knowledge import Knowledge
-    #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+    # Knowledge is stored as a reference by name and resolved from the registry,
+    # since it holds live db/vector_db connections that cannot be serialized.
+    if "knowledge" in config and isinstance(config["knowledge"], dict):
+        knowledge_name = config["knowledge"].get("name")
+        resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
+        if resolved_knowledge is not None:
+            config["knowledge"] = resolved_knowledge
+        else:
+            log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
+            del config["knowledge"]
 
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
@@ -922,7 +933,7 @@ def from_dict(
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context", False),
             # --- Knowledge settings ---
-            # knowledge=config.get("knowledge"),  # TODO
+            knowledge=config.get("knowledge"),
             knowledge_filters=config.get("knowledge_filters"),
             enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
             add_knowledge_to_context=config.get("add_knowledge_to_context", False),
