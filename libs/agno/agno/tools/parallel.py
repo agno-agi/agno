@@ -105,17 +105,17 @@ class ParallelTools(Toolkit):
         max_results: Optional[int] = None,
         max_chars_per_result: Optional[int] = None,
     ) -> str:
-        """Use this function to search the web using Parallel's Search API with a natural language objective.
-        You must provide at least one of objective or search_queries.
+        """
+        Search the web with a natural language objective. Provide at least one of objective or search_queries.
 
         Args:
-            objective (Optional[str]): Natural-language description of what the web search is trying to find.
-            search_queries (Optional[List[str]]): Traditional keyword queries with optional search operators.
-            max_results (Optional[int]): Upper bound on results returned. Overrides constructor default.
-            max_chars_per_result (Optional[int]): Upper bound on total characters per url for excerpts.
+            objective (Optional[str]): Natural-language description of what to find
+            search_queries (Optional[List[str]]): Traditional keyword queries with search operators
+            max_results (Optional[int]): Upper bound on results returned
+            max_chars_per_result (Optional[int]): Upper bound on characters per url for excerpts
 
         Returns:
-            str: A JSON formatted string containing the search results with URLs, titles, publish dates, and relevant excerpts.
+            str: JSON with search results containing URLs, titles, publish dates, and excerpts
         """
         try:
             if not objective and not search_queries:
@@ -218,19 +218,20 @@ class ParallelTools(Toolkit):
         full_content: bool = False,
         max_chars_for_full_content: Optional[int] = None,
     ) -> str:
-        """Use this function to extract content from specific URLs using Parallel's Extract API.
+        """
+        Extract content from specific URLs.
 
         Args:
-            urls (List[str]): List of public URLs to extract content from.
-            objective (Optional[str]): Search focus to guide content extraction.
-            search_queries (Optional[List[str]]): Keywords for targeting relevant content.
-            excerpts (bool): Include relevant text snippets.
-            max_chars_per_excerpt (Optional[int]): Upper bound on total characters per url. Only used when excerpts is True.
-            full_content (bool): Include complete page text.
-            max_chars_for_full_content (Optional[int]): Limit on characters per url. Only used when full_content is True.
+            urls (List[str]): List of public URLs to extract content from
+            objective (Optional[str]): Search focus to guide content extraction
+            search_queries (Optional[List[str]]): Keywords for targeting relevant content
+            excerpts (bool): Include relevant text snippets (default: True)
+            max_chars_per_excerpt (Optional[int]): Character limit per url for excerpts
+            full_content (bool): Include complete page text (default: False)
+            max_chars_for_full_content (Optional[int]): Character limit per url for full content
 
         Returns:
-            str: A JSON formatted string containing extracted content with titles, publish dates, excerpts and/or full content.
+            str: JSON with extracted content including titles, publish dates, excerpts/full content
         """
         try:
             if not urls:
@@ -328,19 +329,17 @@ class ParallelTools(Toolkit):
         output_schema: Optional[Dict[str, Any]] = None,
         timeout_seconds: int = 300,
     ) -> str:
-        """Execute a deep research task and wait for results.
-
-        The Task API performs multi-step web research to answer complex queries,
-        returning structured results with citations and confidence scores.
+        """
+        Run a deep research task and wait for results with citations.
 
         Args:
-            input: Natural language research query (e.g., "What is the latest funding round for Stripe?").
-            processor: Processing tier - "lite", "base", "core", "pro", "ultra", "ultra8x". Higher tiers are more thorough but cost more.
-            output_schema: Optional JSON schema for structured output. If not provided, the API infers an appropriate schema.
-            timeout_seconds: Maximum time to wait for results in seconds. Defaults to 300 (5 min).
+            input (str): Natural language research query (e.g., "What is the latest funding round for Stripe?")
+            processor (Optional[str]): Processing tier - "lite", "base", "core", "pro", "ultra", "ultra8x"
+            output_schema (Optional[Dict[str, Any]]): JSON schema for structured output
+            timeout_seconds (int): Maximum time to wait for results (default: 300)
 
         Returns:
-            JSON string with content (structured output), basis (per-field citations), and run metadata.
+            str: JSON with content, basis (citations with confidence), and run metadata
         """
         try:
             task_processor = processor or self.default_processor
@@ -390,18 +389,17 @@ class ParallelTools(Toolkit):
         output_schema: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, str]] = None,
     ) -> str:
-        """Create a research task without waiting for results. Returns run_id for later retrieval.
-
-        Use this for long-running tasks. Retrieve results later with get_task_result().
+        """
+        Create a research task without waiting for results. Use get_task_result() to retrieve later.
 
         Args:
-            input: Natural language research query or JSON object describing the task.
-            processor: Processing tier - "lite", "base", "core", "pro", "ultra", "ultra8x".
-            output_schema: Optional JSON schema for structured output.
-            metadata: Key-value pairs stored with the task (max 16 char keys, 512 char values).
+            input (str): Natural language research query
+            processor (Optional[str]): Processing tier - "lite", "base", "core", "pro", "ultra", "ultra8x"
+            output_schema (Optional[Dict[str, Any]]): JSON schema for structured output
+            metadata (Optional[Dict[str, str]]): Key-value pairs stored with the task
 
         Returns:
-            JSON string with run_id, status, interaction_id, and processor.
+            str: JSON with run_id, status, interaction_id, and processor
         """
         try:
             task_processor = processor or self.default_processor
@@ -434,14 +432,15 @@ class ParallelTools(Toolkit):
             return json.dumps({"error": f"Create task failed: {str(e)}"}, indent=2)
 
     def get_task_result(self, run_id: str, timeout_seconds: int = 300) -> str:
-        """Get the result of a task by run_id. Blocks until task completes or times out.
+        """
+        Get the result of a task. Blocks until task completes or times out.
 
         Args:
-            run_id: The task run identifier from create_task().
-            timeout_seconds: Maximum time to wait for completion in seconds. Defaults to 300.
+            run_id (str): The task run identifier from create_task()
+            timeout_seconds (int): Maximum time to wait for completion (default: 300)
 
         Returns:
-            JSON string with content (structured output), basis (citations), and run status.
+            str: JSON with content (structured output), basis (citations), and run status
         """
         try:
             task_result = self.parallel_client.task_run.result(run_id, api_timeout=timeout_seconds)
@@ -474,13 +473,14 @@ class ParallelTools(Toolkit):
             return json.dumps({"error": f"Get result failed: {str(e)}"}, indent=2)
 
     def get_task_status(self, run_id: str) -> str:
-        """Check the status of a task without waiting for completion.
+        """
+        Check the status of a task without waiting for completion.
 
         Args:
-            run_id: The task run identifier.
+            run_id (str): The task run identifier
 
         Returns:
-            JSON string with run_id, status, processor, is_active, and timestamps.
+            str: JSON with run_id, status, processor, is_active, and timestamps
         """
         try:
             task_run = self.parallel_client.task_run.retrieve(run_id)
@@ -512,21 +512,19 @@ class ParallelTools(Toolkit):
         include_backfill: bool = False,
         metadata: Optional[Dict[str, str]] = None,
     ) -> str:
-        """Create an event_stream monitor to track a search query for material changes.
-
-        The monitor runs on the configured schedule. Use get_monitor_events() to retrieve
-        detected changes. Combine with SchedulerTools for automated polling.
+        """
+        Create a monitor to track a search query for changes over time.
 
         Args:
-            query: Search query to monitor for changes (e.g., "AI startup funding rounds").
-            frequency: How often to check. Options: "1h", "1d", "1w", "30d". Default is "1d".
-            processor: "lite" (fast/cheap) or "base" (more thorough). Defaults to "lite".
-            output_schema: Optional JSON schema for structured events.
-            include_backfill: If True, first run includes recent historical events.
-            metadata: Key-value pairs stored with the monitor (max 16 char keys, 512 char values).
+            query (str): Search query to monitor (e.g., "AI startup funding rounds")
+            frequency (Optional[str]): How often to check - "1h", "1d", "1w", "30d" (default: "1d")
+            processor (Literal["lite", "base"]): "lite" (fast) or "base" (thorough)
+            output_schema (Optional[Dict[str, Any]]): JSON schema for structured events
+            include_backfill (bool): If True, first run includes recent historical events
+            metadata (Optional[Dict[str, str]]): Key-value pairs stored with the monitor
 
         Returns:
-            JSON string with monitor_id, status, frequency, and created_at.
+            str: JSON with monitor_id, status, frequency, and created_at
         """
         try:
             monitor_frequency = frequency or self.default_monitor_frequency
@@ -573,15 +571,16 @@ class ParallelTools(Toolkit):
         monitor_type: Optional[Literal["event_stream", "snapshot"]] = None,
         limit: int = 100,
     ) -> str:
-        """List monitors with optional filters.
+        """
+        List all monitors with optional filters.
 
         Args:
-            status: Filter by "active" or "cancelled". Defaults to active only.
-            monitor_type: Filter by "event_stream" or "snapshot".
-            limit: Maximum number of monitors to return. Defaults to 100.
+            status (Optional[Literal["active", "cancelled"]]): Filter by status
+            monitor_type (Optional[Literal["event_stream", "snapshot"]]): Filter by type
+            limit (int): Maximum number of monitors to return (default: 100)
 
         Returns:
-            JSON string with list of monitors containing id, type, status, frequency.
+            str: JSON with list of monitors containing id, type, status, frequency
         """
         try:
             list_params: Dict[str, Any] = {"limit": limit}
@@ -614,13 +613,14 @@ class ParallelTools(Toolkit):
             return json.dumps({"error": f"List monitors failed: {str(e)}"}, indent=2)
 
     def cancel_monitor(self, monitor_id: str) -> str:
-        """Cancel a monitor permanently. This action cannot be undone.
+        """
+        Cancel a monitor permanently. This action cannot be undone.
 
         Args:
-            monitor_id: The monitor's unique identifier.
+            monitor_id (str): The monitor's unique identifier
 
         Returns:
-            JSON string confirming cancellation with monitor_id and status.
+            str: JSON confirming cancellation with monitor_id and status
         """
         try:
             monitor = self.parallel_client.monitor.cancel(monitor_id)
@@ -644,15 +644,16 @@ class ParallelTools(Toolkit):
         include_completions: bool = False,
         limit: int = 20,
     ) -> str:
-        """List events (changes) detected by a monitor.
+        """
+        Get events (changes) detected by a monitor.
 
         Args:
-            monitor_id: The monitor's unique identifier.
-            include_completions: Include runs with no changes (for audit). Defaults to False.
-            limit: Maximum number of events to return. Defaults to 20, max 100.
+            monitor_id (str): The monitor's unique identifier
+            include_completions (bool): Include runs with no changes (default: False)
+            limit (int): Maximum number of events to return (default: 20, max: 100)
 
         Returns:
-            JSON string with list of events containing timestamps, changes, and citations.
+            str: JSON with list of events containing timestamps, changes, and citations
         """
         try:
             response = self.parallel_client.monitor.events(
