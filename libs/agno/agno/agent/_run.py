@@ -15,6 +15,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Type,
     Union,
     cast,
@@ -43,6 +44,8 @@ from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
+    RunCancelledEvent,
+    RunCompletedEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
@@ -110,6 +113,13 @@ from agno.utils.response import get_paused_content
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
+
+# Cancel raises immediately on every event. Only terminal events bypass so the
+# run's own cancel handler can yield them to the stream.
+_CANCEL_BYPASS_EVENT_TYPES = (
+    RunCancelledEvent,
+    RunCompletedEvent,
+)
 
 # ---------------------------------------------------------------------------
 # Run dependency resolution
@@ -385,6 +395,10 @@ def _run(
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
                 if attempt == 0 and pre_session is not None:
@@ -412,6 +426,8 @@ def _run(
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
                     resolve_run_dependencies(agent, run_context=run_context)
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
@@ -450,7 +466,7 @@ def _run(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = get_run_messages(
+                run_messages = get_run_messages(
                     agent,
                     run_response=run_response,
                     run_context=run_context,
@@ -623,20 +639,18 @@ def _run(
 
                 return run_response
             except RunCancelledException as e:
-                log_info(f"Run {run_response.run_id} was cancelled")
-                run_response.content = str(e)
-                run_response.status = RunStatus.cancelled
-
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    cleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
-
+                run_response = _handle_run_cancellation(run_response, e, run_messages)
+                try:
+                    if agent_session is not None:
+                        cleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
@@ -658,9 +672,18 @@ def _run(
 
                 return run_response
             except KeyboardInterrupt:
-                run_response = cast(RunOutput, run_response)
-                run_response.status = RunStatus.cancelled
-                run_response.content = "Operation cancelled by user"
+                run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                try:
+                    if agent_session is not None:
+                        cleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
             except Exception as e:
@@ -774,6 +797,10 @@ def _run_stream(
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
                 if attempt == 0 and pre_session is not None:
@@ -801,6 +828,8 @@ def _run_stream(
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
                     resolve_run_dependencies(agent, run_context=run_context)
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
@@ -840,7 +869,7 @@ def _run_stream(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = get_run_messages(
+                run_messages = get_run_messages(
                     agent,
                     run_response=run_response,
                     input=run_input.input_content,
@@ -920,7 +949,8 @@ def _run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     from agno.run.agent import (
@@ -939,7 +969,8 @@ def _run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -957,27 +988,34 @@ def _run_stream(
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event  # type: ignore
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 7. Parse response with parser model if provided
-                yield from parse_response_with_parser_model_stream(
+                for event in parse_response_with_parser_model_stream(
                     agent,  # type: ignore
                     session=agent_session,
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # 7b. Generate follow-up suggestions if enabled
-                yield from generate_followups_stream(
+                for event in generate_followups_stream(
                     agent,  # type: ignore
                     run_response=run_response,
                     stream_events=stream_events,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1109,26 +1147,28 @@ def _run_stream(
 
                 break
             except RunCancelledException as e:
-                # Handle run cancellation during streaming
-                log_info(f"Run {run_response.run_id} was cancelled during streaming")
-                run_response.content = str(e)
-                run_response.status = RunStatus.cancelled
-                yield handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                run_response = _handle_run_cancellation(run_response, e, run_messages)
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    cleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        cleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
+                if yield_run_output:
+                    yield run_response
                 break
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
@@ -1160,13 +1200,28 @@ def _run_stream(
                 yield run_error
                 break
             except KeyboardInterrupt:
-                run_response = cast(RunOutput, run_response)
-                yield handle_event(  # type: ignore
-                    create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+                run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
+                try:
+                    if agent_session is not None:
+                        cleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
+                if yield_run_output:
+                    yield run_response
                 break
             except Exception as e:
                 if attempt < num_attempts - 1:
@@ -1464,6 +1519,9 @@ async def _arun(
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
                 if attempt == 0 and pre_session is not None:
@@ -1491,6 +1549,8 @@ async def _arun(
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
                     await aresolve_run_dependencies(agent, run_context=run_context)
+
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
@@ -1533,7 +1593,7 @@ async def _arun(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = await aget_run_messages(
+                run_messages = await aget_run_messages(
                     agent,
                     run_response=run_response,
                     run_context=run_context,
@@ -1717,21 +1777,18 @@ async def _arun(
                 return run_response
 
             except RunCancelledException as e:
-                # Handle run cancellation
-                log_info(f"Run {run_response.run_id} was cancelled")
-                run_response.content = str(e)
-                run_response.status = RunStatus.cancelled
-
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    await acleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
-
+                run_response = _handle_run_cancellation(run_response, e, run_messages)
+                try:
+                    if agent_session is not None:
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 # Handle exceptions during streaming
@@ -1752,11 +1809,30 @@ async def _arun(
                     )
 
                 return run_response
-
-            except KeyboardInterrupt:
-                run_response = cast(RunOutput, run_response)
-                run_response.status = RunStatus.cancelled
-                run_response.content = "Operation cancelled by user"
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                if agent_session is not None:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+                        _persist_cancelled_run_in_background(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Ctrl-C under asyncio.run: persist inline; a detached task would not run before the loop exits
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                # Re-raise on disconnect to propagate it; return the partial on Ctrl-C
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 return run_response
             except Exception as e:
                 # Check if this is the last attempt
@@ -1903,6 +1979,146 @@ async def _arun_background(
     return run_response
 
 
+async def _arun_background_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming agent run that survives client disconnections.
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _arun_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+
+    The detached task keeps running even if the client disconnects.
+    The caller (router) just yields the SSE strings to the client.
+
+    Similar to how Workflow._arun_background_stream handles WebSocket streaming,
+    but uses SSE transport with event_buffer and sse_subscriber_manager.
+    """
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, update_metadata
+
+    run_id = run_response.run_id
+    if not run_id:
+        raise ValueError("run_id is required for background streaming")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    run_response.status = RunStatus.running
+
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+    agent_session.upsert_run(run=run_response)
+    await asave_session(agent, session=agent_session)
+
+    log_info(f"Background stream run {run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _arun_stream(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                session_id=session_id,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                pre_session=agent_session,
+                **kwargs,
+            ):
+                if isinstance(event, RunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for run {run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for run {run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for run {run_id}")
+
+        except Exception:
+            log_error(f"Background stream run {run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                run_response.status = RunStatus.error
+                agent_session.upsert_run(run=run_response)
+                await asave_session(agent, session=agent_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
+
+        finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for run {run_id} completion")
+
+            # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
+            try:
+                event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
+            except Exception:
+                log_warning(f"Failed to mark run {run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(run_id))
+            except (Exception, asyncio.CancelledError):
+                log_warning(f"Failed to signal SSE subscribers for run {run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
+
+
 async def _arun_stream(
     agent: Agent,
     run_response: RunOutput,
@@ -1966,6 +2182,9 @@ async def _arun_stream(
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
                 if attempt == 0 and pre_session is not None:
@@ -2003,6 +2222,8 @@ async def _arun_stream(
                 if run_context.dependencies is not None:
                     await aresolve_run_dependencies(agent, run_context=run_context)
 
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
+
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
@@ -2021,7 +2242,8 @@ async def _arun_stream(
                         **kwargs,
                     )
                     async for event in pre_hook_iterator:
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
                 # 5. Determine tools for model
@@ -2044,7 +2266,7 @@ async def _arun_stream(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = await aget_run_messages(
+                run_messages = await aget_run_messages(
                     agent,
                     run_response=run_response,
                     run_context=run_context,
@@ -2098,7 +2320,8 @@ async def _arun_stream(
                     run_context=run_context,
                     stream_events=stream_events,
                 ):
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    if not isinstance(item, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield item
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2116,7 +2339,8 @@ async def _arun_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     from agno.run.agent import (
@@ -2135,7 +2359,8 @@ async def _arun_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -2153,8 +2378,9 @@ async def _arun_stream(
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2167,6 +2393,8 @@ async def _arun_stream(
                     stream_events=stream_events,
                     run_context=run_context,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
 
                 # 10b. Generate follow-up suggestions if enabled
@@ -2175,6 +2403,8 @@ async def _arun_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
 
                 if stream_events:
@@ -2315,31 +2545,28 @@ async def _arun_stream(
                 break
 
             except RunCancelledException as e:
-                # Handle run cancellation during async streaming
-                log_info(f"Run {run_response.run_id} was cancelled during async streaming")
-                run_response.status = RunStatus.cancelled
-                # Don't overwrite content - preserve any partial content that was streamed
-                # Only set content if it's empty
-                if not run_response.content:
-                    run_response.content = str(e)
-
-                # Yield the cancellation event
-                yield handle_event(  # type: ignore
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                run_response = _handle_run_cancellation(run_response, e, run_messages)
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    await acleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -2375,14 +2602,42 @@ async def _arun_stream(
                 yield run_error
                 break
 
-            except KeyboardInterrupt:
-                run_response = cast(RunOutput, run_response)
-                yield handle_event(  # type: ignore
-                    create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+            except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                # Build terminal events first so they are stored on the run
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
+                if agent_session is not None:
+                    if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write.
+                        # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
+                        _persist_cancelled_run_in_background(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Ctrl-C under asyncio.run: persist inline; a detached task would not run before the loop exits
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                # Re-raise on disconnect (client gone); yield the terminal events on Ctrl-C
+                if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                    raise
+                yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
+                if yield_run_output:
+                    yield run_response
                 break
             except Exception as e:
                 # Check if this is the last attempt
@@ -2600,15 +2855,29 @@ def arun_dispatch(  # type: ignore
     run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
-    # Background execution: return immediately with PENDING status
+    # Background execution
     if background:
-        if opts.stream:
-            raise ValueError(
-                "Background execution cannot be combined with streaming. Set stream=False when using background=True."
-            )
         if not agent.db:
             raise ValueError(
                 "Background execution requires a database to be configured on the agent for run persistence."
+            )
+        if opts.stream:
+            # background=True, stream=True: run in background task, stream events via queue
+            return _arun_background_stream(  # type: ignore[return-value]
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                session_id=session_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
             agent,
@@ -2660,6 +2929,18 @@ def arun_dispatch(  # type: ignore
             pre_session=_pre_session,
             **kwargs,
         )
+
+
+def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[Any]) -> None:
+    """Sync requirements to reference the new tool objects so is_resolved()
+    checks operate on the same instances that handle_tool_call_updates modifies.
+    """
+    if run_response.requirements:
+        updated_tools_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
+
+        for req in run_response.requirements:
+            if req.tool_execution and req.tool_execution.tool_call_id in updated_tools_map:
+                req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
 
 
 def continue_run_dispatch(
@@ -2771,6 +3052,8 @@ def continue_run_dispatch(
 
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
+        if run_response.status == RunStatus.cancelled:
+            raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
         # The run is continued from a provided run_response. This contains the updated tools.
         input = run_response.messages or []
     elif run_id is not None:
@@ -2779,6 +3062,8 @@ def continue_run_dispatch(
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
+        if run_response.status == RunStatus.cancelled:
+            raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
         input = run_response.messages or []
 
@@ -2790,6 +3075,7 @@ def continue_run_dispatch(
                 stacklevel=2,
             )
             run_response.tools = updated_tools
+            _sync_requirements_with_tools(run_response, updated_tools)
 
         # If we have requirements, get the updated tools and set them in the run_response
         elif requirements is not None:
@@ -2822,7 +3108,7 @@ def continue_run_dispatch(
 
     # Prepare arguments for the model
     set_default_model(agent)
-    response_format = get_response_format(agent, run_context=run_context)
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
     agent.model = cast(Model, agent.model)
 
     processed_tools = agent.get_tools(
@@ -3035,17 +3321,13 @@ def _continue_run(
 
                 return run_response
             except RunCancelledException as e:
-                run_response = cast(RunOutput, run_response)
-                # Handle run cancellation during async streaming
-                log_info(f"Run {run_response.run_id} was cancelled")
-                run_response.status = RunStatus.cancelled
-                run_response.content = str(e)
-
-                # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
-
+                run_response = _handle_run_cancellation(run_response, e, run_messages)
+                try:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
@@ -3063,9 +3345,13 @@ def _continue_run(
 
                 return run_response
             except KeyboardInterrupt:
-                run_response = cast(RunOutput, run_response)
-                run_response.status = RunStatus.cancelled
-                run_response.content = "Operation cancelled by user"
+                run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                try:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
 
             except Exception as e:
@@ -3160,13 +3446,16 @@ def _continue_run_stream(
                     )
 
                 # 2. Handle the updated tools
-                yield from handle_tool_call_updates_stream(
+                for event in handle_tool_call_updates_stream(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
                     tools=tools,
                     stream_events=stream_events,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # 3. Process model response
                 for event in handle_model_response_stream(
@@ -3180,23 +3469,31 @@ def _continue_run_stream(
                     session_state=run_context.session_state,
                     run_context=run_context,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
                 # Parse response with parser model if provided
-                yield from parse_response_with_parser_model_stream(
+                for event in parse_response_with_parser_model_stream(
                     agent,  # type: ignore
                     session=session,
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # Generate follow-up suggestions if enabled
-                yield from generate_followups_stream(
+                for event in generate_followups_stream(
                     agent,  # type: ignore
                     run_response=run_response,
                     stream_events=stream_events,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # Yield RunContentCompletedEvent
                 if stream_events:
@@ -3300,24 +3597,23 @@ def _continue_run_stream(
 
                 break
             except RunCancelledException as e:
-                run_response = cast(RunOutput, run_response)
-                # Handle run cancellation during async streaming
-                log_info(f"Run {run_response.run_id} was cancelled during streaming")
-                run_response.status = RunStatus.cancelled
-                run_response.content = str(e)
-
-                # Yield the cancellation event
-                yield handle_event(  # type: ignore
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                run_response = _handle_run_cancellation(run_response, e, run_messages)
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-
-                # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                try:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
+                if yield_run_output:
+                    yield run_response
                 break
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
@@ -3345,13 +3641,23 @@ def _continue_run_stream(
                 yield run_error
                 break
             except KeyboardInterrupt:
-                run_response = cast(RunOutput, run_response)
-                yield handle_event(  # type: ignore
-                    create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+                run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
+                try:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
+                if yield_run_output:
+                    yield run_response
                 break
 
             except Exception as e:
@@ -3408,6 +3714,7 @@ def acontinue_run_dispatch(  # type: ignore
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
+    background: bool = False,
     **kwargs,
 ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
     """Continue a previous run.
@@ -3505,7 +3812,30 @@ def acontinue_run_dispatch(  # type: ignore
         metadata_provided=metadata is not None,
     )
 
-    response_format = get_response_format(agent, run_context=run_context)
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
+
+    if background:
+        if not agent.db:
+            raise ValueError(
+                "Background execution requires a database to be configured on the agent for run persistence."
+            )
+        if opts.stream:
+            return _acontinue_run_background_stream(  # type: ignore[return-value]
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                updated_tools=updated_tools,
+                requirements=requirements,
+                run_id=run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
 
     if opts.stream:
         return _acontinue_run_stream(
@@ -3539,6 +3869,147 @@ def acontinue_run_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
+
+
+async def _acontinue_run_background_stream(
+    agent: Agent,
+    session_id: str,
+    run_context: RunContext,
+    run_response: Optional[RunOutput] = None,
+    updated_tools: Optional[List[ToolExecution]] = None,
+    requirements: Optional[List[RunRequirement]] = None,
+    run_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming continue-run that survives client disconnections.
+
+    Same pattern as _arun_background_stream but delegates to _acontinue_run_stream
+    instead of _arun_stream. Used for HITL scenarios where a paused run resumes
+    and the client needs reconnection support.
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _acontinue_run_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+    """
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, update_metadata
+
+    _run_id = run_id or (run_response.run_id if run_response else None)
+    if not _run_id:
+        raise ValueError("run_id is required for background streaming")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
+    # Update the run status to RUNNING in the session
+    if run_response:
+        run_response.status = RunStatus.running
+        agent_session.upsert_run(run=run_response)
+    await asave_session(agent, session=agent_session)
+
+    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _acontinue_run_stream(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                updated_tools=updated_tools,
+                requirements=requirements,
+                run_id=run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output or False,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                if isinstance(event, RunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(_run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        _run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
+
+        except Exception:
+            log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                if run_response:
+                    run_response.status = RunStatus.error
+                    agent_session.upsert_run(run=run_response)
+                    await asave_session(agent, session=agent_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background continue-run stream {_run_id}", exc_info=True)
+
+        finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
+
+            # Mark run completed in event buffer
+            try:
+                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                event_buffer.set_run_completed(_run_id, final_status)
+            except Exception:
+                log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(_run_id))
+            except (Exception, asyncio.CancelledError):
+                log_warning(f"Failed to signal SSE subscribers for continue-run {_run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
 
 
 async def _acontinue_run(
@@ -3595,6 +4066,9 @@ async def _acontinue_run(
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
+                # Bind run_messages early — cancellation can fire before run_messages
+                # is built, and the cancellation handler reads it.
+                run_messages: Optional[RunMessages] = None
                 if attempt > 0:
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
@@ -3623,6 +4097,8 @@ async def _acontinue_run(
 
                 # 4. Prepare run response
                 if run_response is not None:
+                    if run_response.status == RunStatus.cancelled:
+                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
                     input = run_response.messages or []
                 elif run_id is not None:
@@ -3631,12 +4107,15 @@ async def _acontinue_run(
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
+                    if run_response.status == RunStatus.cancelled:
+                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                     input = run_response.messages or []
 
                     # If we have updated_tools, set them in the run_response
                     if updated_tools is not None:
                         run_response.tools = updated_tools
+                        _sync_requirements_with_tools(run_response, updated_tools)
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     elif requirements is not None:
@@ -3693,7 +4172,7 @@ async def _acontinue_run(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = get_continue_run_messages(
+                run_messages = get_continue_run_messages(
                     agent,
                     input=input,
                     session=agent_session,
@@ -3823,22 +4302,18 @@ async def _acontinue_run(
             except RunCancelledException as e:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
-                run_response = cast(RunOutput, run_response)
-                # Handle run cancellation
-                log_info(f"Run {run_response.run_id if run_response else run_id} was cancelled")
-                run_response.status = RunStatus.cancelled
-                run_response.content = str(e)
-
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    await acleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
-
+                run_response = _handle_run_cancellation(run_response, e, run_messages)
+                try:
+                    if agent_session is not None:
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
@@ -3860,12 +4335,36 @@ async def _acontinue_run(
                     )
 
                 return run_response
-
-            except KeyboardInterrupt:
-                run_response = cast(RunOutput, run_response)
-                run_response.status = RunStatus.cancelled
-                run_response.content = "Operation cancelled by user"
+            except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                if run_response is None:
+                    run_response = RunOutput(run_id=run_id)
+                run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                if agent_session is not None:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write
+                        _persist_cancelled_run_in_background(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Ctrl-C under asyncio.run: persist inline; a detached task would not run before the loop exits
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                # Re-raise on disconnect to propagate it; return the partial on Ctrl-C
+                if isinstance(cancel_exc, asyncio.CancelledError):
+                    raise
                 return run_response
+            except ValueError:
+                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+                raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
                 # Check if this is the last attempt
@@ -3970,6 +4469,9 @@ async def _acontinue_run_stream(
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
+                # Bind run_messages early — cancellation can fire before run_messages
+                # is built, and the cancellation handler reads it.
+                run_messages: Optional[RunMessages] = None
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
@@ -3995,6 +4497,8 @@ async def _acontinue_run_stream(
 
                 # 4. Prepare run response
                 if run_response is not None:
+                    if run_response.status == RunStatus.cancelled:
+                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
                     input = run_response.messages or []
 
@@ -4004,12 +4508,15 @@ async def _acontinue_run_stream(
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
+                    if run_response.status == RunStatus.cancelled:
+                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                     input = run_response.messages or []
 
                     # If we have updated_tools, set them in the run_response
                     if updated_tools is not None:
                         run_response.tools = updated_tools
+                        _sync_requirements_with_tools(run_response, updated_tools)
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     elif requirements is not None:
@@ -4066,7 +4573,7 @@ async def _acontinue_run_stream(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = get_continue_run_messages(
+                run_messages = get_continue_run_messages(
                     agent,
                     input=input,
                     session=agent_session,
@@ -4096,7 +4603,8 @@ async def _acontinue_run_stream(
                     tools=_tools,
                     stream_events=stream_events,
                 ):
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
                 # 8. Process model response
@@ -4111,7 +4619,8 @@ async def _acontinue_run_stream(
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     from agno.run.agent import (
@@ -4129,7 +4638,8 @@ async def _acontinue_run_stream(
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -4147,8 +4657,9 @@ async def _acontinue_run_stream(
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4161,6 +4672,8 @@ async def _acontinue_run_stream(
                     stream_events=stream_events,
                     run_context=run_context,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
 
                 # Generate follow-up suggestions if enabled
@@ -4169,6 +4682,8 @@ async def _acontinue_run_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
 
                 # Yield RunContentCompletedEvent
@@ -4276,32 +4791,28 @@ async def _acontinue_run_stream(
             except RunCancelledException as e:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
-                run_response = cast(RunOutput, run_response)
-                # Handle run cancellation during streaming
-                log_info(f"Run {run_response.run_id if run_response.run_id else run_id} was cancelled during streaming")
-                run_response.status = RunStatus.cancelled
-                # Don't overwrite content - preserve any partial content that was streamed
-                # Only set content if it's empty
-                if not run_response.content:
-                    run_response.content = str(e)
-
-                # Yield the cancellation event
-                yield handle_event(  # type: ignore
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                run_response = _handle_run_cancellation(run_response, e, run_messages)
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-
-                # Cleanup and store the run response and session
-                if agent_session is not None:
-                    await acleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (InputCheckError, OutputCheckError) as e:
@@ -4339,18 +4850,49 @@ async def _acontinue_run_stream(
                 # Yield the error event
                 yield run_error
                 break
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
-                run_response = cast(RunOutput, run_response)
-                yield handle_event(  # type: ignore
-                    create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+                run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
+                # Build terminal events first so they are stored on the run
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
+                if agent_session is not None:
+                    if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                        # Client disconnect: persist on a detached task so the cancel scope can't abort the write.
+                        # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
+                        _persist_cancelled_run_in_background(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Ctrl-C under asyncio.run: persist inline; a detached task would not run before the loop exits
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                # Re-raise on disconnect (client gone); yield the terminal events on Ctrl-C
+                if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                    raise
+                yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
+                if yield_run_output:
+                    yield run_response
                 break
 
+            except ValueError:
+                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+                raise
             except Exception as e:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
@@ -4460,6 +5002,92 @@ def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
 
     if not agent.store_history_messages:
         scrub_history_messages_from_run_output(run_response)
+
+
+def _normalize_cancellation_reason(
+    run_response: RunOutput,
+    error: Union[RunCancelledException, KeyboardInterrupt],
+) -> str:
+    """Return a non-empty, human-readable reason for a cancellation."""
+    if isinstance(error, RunCancelledException):
+        return str(error) or f"Run {run_response.run_id} was cancelled"
+    return "Operation cancelled by user"
+
+
+def _handle_run_cancellation(
+    run_response: RunOutput,
+    error: Union[RunCancelledException, KeyboardInterrupt],
+    run_messages: Optional["RunMessages"] = None,
+) -> RunOutput:
+    """Prepare a run response for cancellation: set status, preserve content and messages."""
+    reason = _normalize_cancellation_reason(run_response, error)
+    log_debug(f"Run {run_response.run_id} was cancelled")
+    run_response.status = RunStatus.cancelled
+    has_partial_content = bool(run_response.content)
+    if not run_response.content:
+        run_response.content = reason
+    if run_response.messages is None and run_messages is not None:
+        messages_for_run_response = [msg for msg in run_messages.messages if msg.add_to_agent_memory]
+        # Preserve partial streamed content as the assistant message, filling an empty trailing one if present
+        if has_partial_content:
+            partial_content = str(run_response.content)
+            trailing_assistant = next(
+                (msg for msg in reversed(messages_for_run_response) if msg.role == "assistant"),
+                None,
+            )
+            if trailing_assistant is None:
+                messages_for_run_response.append(Message(role="assistant", content=partial_content))
+            elif not trailing_assistant.content:
+                trailing_assistant.content = partial_content
+        if messages_for_run_response:
+            run_response.messages = messages_for_run_response
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+    # Clear pause state so cancel wins over a paused HITL run
+    if run_response.requirements:
+        run_response.requirements = [req for req in run_response.requirements if req.is_resolved()]
+    if run_response.tools:
+        for tool in run_response.tools:
+            if tool.is_paused:
+                tool.requires_confirmation = False
+                tool.requires_user_input = False
+                tool.external_execution_required = False
+    return run_response
+
+
+def _build_cancel_terminal_events(
+    agent: Agent,
+    run_response: RunOutput,
+    error: Union[RunCancelledException, KeyboardInterrupt],
+    run_context: Optional[RunContext] = None,
+) -> Tuple[RunCancelledEvent, RunCompletedEvent]:
+    """Return the (cancelled, completed) terminal event pair for a cancelled run."""
+    # Update run_response.session_state before creating the events
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+    cancelled_event = cast(
+        RunCancelledEvent,
+        handle_event(
+            create_run_cancelled_event(
+                from_run_response=run_response,
+                reason=_normalize_cancellation_reason(run_response, error),
+            ),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        ),
+    )
+    completed_event = cast(
+        RunCompletedEvent,
+        handle_event(
+            create_run_completed_event(from_run_response=run_response),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        ),
+    )
+    return cancelled_event, completed_event
 
 
 def cleanup_and_store(
@@ -4575,6 +5203,42 @@ async def acleanup_and_store(
     # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
         await aupdate_approval_run_status(agent.db, run_response.run_id, run_response.status)
+
+
+def _persist_cancelled_run_in_background(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    """Persist a cancelled run on a detached background task.
+
+    On a client disconnect the request runs inside an anyio cancel scope; awaiting
+    acleanup_and_store inline lets its DB write be re-cancelled mid-flight, losing the
+    run. Scheduling it on _background_tasks runs the write to completion outside that
+    scope.
+    """
+
+    async def _persist() -> None:
+        try:
+            await acleanup_and_store(
+                agent,
+                run_response=run_response,
+                session=session,
+                run_context=run_context,
+                user_id=user_id,
+            )
+            # The _arun finally also cleans up, but on a disconnect that await can be
+            # re-cancelled; clean up here too so the run is never left tracked.
+            if run_response.run_id:
+                await acleanup_run(run_response.run_id)
+        except Exception as store_err:
+            log_warning(f"Failed to persist cancelled run: {store_err}")
+
+    task = asyncio.create_task(_persist())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 # ---------------------------------------------------------------------------

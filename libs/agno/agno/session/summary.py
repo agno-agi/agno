@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -62,6 +63,18 @@ class SessionSummaryResponse(BaseModel):
 class SessionSummaryManager:
     """Session Summary Manager"""
 
+    # Unique identifier for this manager. Auto-generated if not provided.
+    id: Optional[str] = None
+
+    # Optional human-readable name for this manager.
+    name: Optional[str] = None
+
+    # Id of the agent or team that owns this manager (set when registered in the OS).
+    owner_id: Optional[str] = None
+
+    # Type of the owner: "agent" or "team" (set when registered in the OS).
+    owner_type: Optional[str] = None
+
     # Model used for session summary generation
     model: Optional[Model] = None
 
@@ -73,6 +86,20 @@ class SessionSummaryManager:
 
     # Whether session summaries were created in the last run
     summaries_updated: bool = False
+
+    # Number of recent runs to include in the summary. None means all runs.
+    last_n_runs: Optional[int] = None
+
+    # Maximum number of messages to include in the summary conversation. None means no limit.
+    conversation_limit: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.id is None:
+            self.id = f"session_summary_manager_{uuid4().hex[:8]}"
+        if self.last_n_runs is not None and self.last_n_runs <= 0:
+            raise ValueError(f"last_n_runs must be a positive integer, got {self.last_n_runs}")
+        if self.conversation_limit is not None and self.conversation_limit <= 0:
+            raise ValueError(f"conversation_limit must be a positive integer, got {self.conversation_limit}")
 
     def get_response_format(self, model: "Model") -> Union[Dict[str, Any], Type[BaseModel]]:  # type: ignore
         if model.supports_native_structured_outputs:
@@ -151,7 +178,10 @@ class SessionSummaryManager:
         response_format = self.get_response_format(self.model)
 
         system_message = self.get_system_message(
-            conversation=session.get_messages(),  # type: ignore
+            conversation=session.get_messages(  # type: ignore
+                last_n_runs=self.last_n_runs,
+                limit=self.conversation_limit,
+            ),
             response_format=response_format,
         )
 
