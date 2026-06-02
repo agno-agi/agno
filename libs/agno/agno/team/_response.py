@@ -1015,6 +1015,9 @@ def _handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    # Lazy import — _run imports _response, so we can't import at module top.
+    from agno.team._run import build_team_after_tool_results_callback
+
     full_model_response = ModelResponse()
     for model_response_event in call_model_stream_with_fallback(
         team.model,
@@ -1028,6 +1031,9 @@ def _handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        after_tool_results=build_team_after_tool_results_callback(
+            team, run_response, session, run_messages, run_context
+        ),
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1169,6 +1175,9 @@ async def _ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    # Lazy import — _run imports _response, so we can't import at module top.
+    from agno.team._run import abuild_team_after_tool_results_callback
+
     full_model_response = ModelResponse()
     model_stream = acall_model_stream_with_fallback(
         team.model,
@@ -1182,6 +1191,9 @@ async def _ahandle_model_response_stream(
         send_media_to_model=team.send_media_to_model,
         run_response=run_response,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        after_tool_results=abuild_team_after_tool_results_callback(
+            team, run_response, session, run_messages, run_context
+        ),
     )  # type: ignore
     async for model_response_event in model_stream:
         # Handle LLM request events and compression events from ModelResponse

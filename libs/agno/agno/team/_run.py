@@ -14,6 +14,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Type,
     Union,
     cast,
@@ -329,6 +330,9 @@ def _run_tasks(
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
+                after_tool_results=build_team_after_tool_results_callback(
+                    team, run_response, session, run_messages, run_context
+                ),
             )
 
             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -438,6 +442,7 @@ def _run_tasks(
 
     except (InputCheckError, OutputCheckError) as e:
         run_response.status = RunStatus.error
+        flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(
             run_response,
             error=str(e),
@@ -460,6 +465,7 @@ def _run_tasks(
 
     except Exception as e:
         run_response.status = RunStatus.error
+        flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(run_response, error=str(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
@@ -907,6 +913,7 @@ def _run_tasks_stream(
 
     except (InputCheckError, OutputCheckError) as e:
         run_response.status = RunStatus.error
+        flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(
             run_response,
             error=str(e),
@@ -938,6 +945,7 @@ def _run_tasks_stream(
 
     except Exception as e:
         run_response.status = RunStatus.error
+        flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(run_response, error=str(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
@@ -1140,6 +1148,9 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    after_tool_results=build_team_after_tool_results_callback(
+                        team, run_response, session, run_messages, run_context
+                    ),
                 )
 
                 # Check for cancellation after model call
@@ -1242,6 +1253,7 @@ def _run(
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
 
                 # Add error event to list of events
                 run_error = create_team_run_error_event(
@@ -1283,6 +1295,7 @@ def _run(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
@@ -1688,6 +1701,7 @@ def _run_stream(
                 break
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
 
                 # Add error event to list of events
                 run_error = create_team_run_error_event(
@@ -1733,6 +1747,7 @@ def _run_stream(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
@@ -2133,6 +2148,9 @@ async def _arun_tasks(
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
+                after_tool_results=abuild_team_after_tool_results_callback(
+                    team, run_response, team_session, run_messages, run_context
+                ),
             )  # type: ignore
 
             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2243,6 +2261,7 @@ async def _arun_tasks(
 
     except (InputCheckError, OutputCheckError) as e:
         run_response.status = RunStatus.error
+        flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(
             run_response,
             error=str(e),
@@ -2266,6 +2285,7 @@ async def _arun_tasks(
 
     except Exception as e:
         run_response.status = RunStatus.error
+        flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(run_response, error=str(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
@@ -2736,6 +2756,7 @@ async def _arun_tasks_stream(
 
     except (InputCheckError, OutputCheckError) as e:
         run_response.status = RunStatus.error
+        flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(
             run_response,
             error=str(e),
@@ -2769,6 +2790,7 @@ async def _arun_tasks_stream(
 
     except Exception as e:
         run_response.status = RunStatus.error
+        flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
         run_error = create_team_run_error_event(run_response, error=str(e))
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
@@ -3004,6 +3026,9 @@ async def _arun(
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    after_tool_results=abuild_team_after_tool_results_callback(
+                        team, run_response, team_session, run_messages, run_context
+                    ),
                 )  # type: ignore
 
                 # Check for cancellation after model call
@@ -3111,6 +3136,7 @@ async def _arun(
 
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(
                     run_response,
                     error=str(e),
@@ -3151,6 +3177,7 @@ async def _arun(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
 
@@ -3255,6 +3282,7 @@ async def _arun_background(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 team_session.upsert_run(run_response=run_response)
                 await asave_session(team, session=team_session)
             except Exception as e:
@@ -3369,6 +3397,7 @@ async def _arun_background_stream(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 team_session.upsert_run(run_response=run_response)
                 await asave_session(team, session=team_session)
             except Exception:
@@ -3811,6 +3840,7 @@ async def _arun_stream(
 
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(
                     run_response,
                     error=str(e),
@@ -3859,6 +3889,7 @@ async def _arun_stream(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
@@ -4219,6 +4250,182 @@ async def _acleanup_and_store(
     # Update approval run_status if this run has an associated approval.
     if run_response.status is not None and run_response.run_id is not None:
         await aupdate_approval_run_status(team.db, run_response.run_id, run_response.status)
+
+
+# ---------------------------------------------------------------------------
+# Mid-run checkpointing (checkpoint="steps") for Team
+# Mirrors the agent-side helpers in agno/agent/_run.py.
+# ---------------------------------------------------------------------------
+
+
+def flush_in_flight_messages_on_error_team(
+    run_response: TeamRunOutput,
+    run_messages: Optional["RunMessages"],  # noqa: F821
+) -> None:
+    """Copy in-flight conversation into ``run_response.messages`` for the
+    terminal ERROR write. Mirrors agent's ``flush_in_flight_messages_on_error``.
+
+    Same scenario: model API call fails before any tool batch fires, so the
+    mid-run checkpoint hook never ran and ``_update_run_response`` never
+    populated ``run_response.messages``. Without this flush, the ERROR row
+    persists with empty messages and the conversation that led to the
+    failure is lost.
+
+    Only sets ``run_response.messages`` when empty — preserves anything a
+    mid-run hook captured.
+    """
+    if run_messages is None:
+        return
+    if run_response.messages:
+        return
+    if not run_messages.messages:
+        return
+    run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
+
+
+def _persist_team_run_in_session(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    """Persist mid-run state for a team without the terminal-only steps
+    (timer stop, approval update). Same write path as ``_cleanup_and_store``
+    minus those finalization side effects.
+    """
+    import copy
+
+    from agno.team._session import update_session_metrics
+
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
+
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
+
+    session.upsert_run(run_response=storage_copy)
+    update_session_metrics(team, session=session, run_response=run_response)
+
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    team.save_session(session=session)
+
+
+async def _apersist_team_run_in_session(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    """Async variant of :func:`_persist_team_run_in_session`."""
+    import copy
+
+    from agno.team._session import update_session_metrics
+
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(team, storage_copy)
+
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
+
+    session.upsert_run(run_response=storage_copy)
+    update_session_metrics(team, session=session, run_response=run_response)
+
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    await team.asave_session(session=session)
+
+
+def _sync_team_run_response_with_model_response(
+    run_response: TeamRunOutput,
+    run_messages: "RunMessages",  # noqa: F821
+    model_response: "ModelResponse",  # noqa: F821
+) -> None:
+    """Mirror the in-flight model_response state onto run_response for a team.
+    Same shape as the agent helper.
+    """
+    if model_response.tool_executions is not None:
+        run_response.tools = list(model_response.tool_executions)
+    run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
+
+
+def checkpoint_team_run(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    """Persist a mid-run team checkpoint. No-op unless ``team.checkpoint == "steps"``."""
+    if team.checkpoint != "steps":
+        return
+    run_response.status = RunStatus.running
+    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
+    _persist_team_run_in_session(team, run_response, session, run_context)
+
+
+async def acheckpoint_team_run(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    """Async variant of :func:`checkpoint_team_run`."""
+    if team.checkpoint != "steps":
+        return
+    run_response.status = RunStatus.running
+    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
+    await _apersist_team_run_in_session(team, run_response, session, run_context)
+
+
+def build_team_after_tool_results_callback(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_messages: "RunMessages",  # noqa: F821
+    run_context: Optional[RunContext] = None,
+) -> Optional[Any]:
+    """Build the sync ``after_tool_results`` callback for ``team.checkpoint='steps'``.
+
+    Returns ``None`` (the zero-cost path) when checkpointing is not enabled.
+    Otherwise returns a callback that syncs run_response with the in-flight
+    model_response and writes a checkpoint to the session.
+    """
+    if team.checkpoint != "steps":
+        return None
+
+    def _callback(model_response):
+        _sync_team_run_response_with_model_response(run_response, run_messages, model_response)
+        checkpoint_team_run(team, run_response, session, run_context)
+
+    return _callback
+
+
+def abuild_team_after_tool_results_callback(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_messages: "RunMessages",  # noqa: F821
+    run_context: Optional[RunContext] = None,
+) -> Optional[Any]:
+    """Async variant of :func:`build_team_after_tool_results_callback`."""
+    if team.checkpoint != "steps":
+        return None
+
+    async def _callback(model_response):
+        _sync_team_run_response_with_model_response(run_response, run_messages, model_response)
+        await acheckpoint_team_run(team, run_response, session, run_context)
+
+    return _callback
 
 
 def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> bool:
@@ -5314,6 +5521,9 @@ async def _ahandle_model_response_for_continue(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        after_tool_results=abuild_team_after_tool_results_callback(
+            team, run_response, team_session, run_messages, run_context
+        ),
     )
 
     await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -5345,12 +5555,295 @@ async def _ahandle_model_response_for_continue(
     return None  # Continue with post-hooks
 
 
+# ---------------------------------------------------------------------------
+# Continue / fork / truncate helpers
+# Mirrors the agent-side helpers in agno/agent/_run.py with one additional
+# concern: team runs have member RunOutput rows in session.runs (linked via
+# parent_run_id). On fork, these get deep-copied with fresh run_ids so the
+# forked team owns its own member rows (per design decision).
+# ---------------------------------------------------------------------------
+
+
+def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", from_checkpoint: int) -> None:
+    """Truncate the team run's messages to length ``from_checkpoint`` and
+    prune tools / requirements that referenced removed messages.
+
+    Time-travel for teams. Mirrors :func:`agno.agent._run._truncate_run_to_checkpoint`
+    in shape; the only team-specific consideration is that ``member_responses``
+    survives truncation untouched — a member completed delegation is a
+    permanent fact in the team's history regardless of where we rewind to.
+    """
+    if run_response.messages is None or from_checkpoint < 0:
+        return
+    if from_checkpoint >= len(run_response.messages):
+        return
+
+    run_response.messages = run_response.messages[:from_checkpoint]
+
+    valid_tool_call_ids: set = set()
+    for msg in run_response.messages:
+        tool_call_id = getattr(msg, "tool_call_id", None)
+        if tool_call_id:
+            valid_tool_call_ids.add(tool_call_id)
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        for tc in tool_calls:
+            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+            if tc_id:
+                valid_tool_call_ids.add(tc_id)
+
+    if run_response.tools:
+        run_response.tools = [t for t in run_response.tools if t.tool_call_id in valid_tool_call_ids]
+    if run_response.requirements:
+        run_response.requirements = [
+            req
+            for req in run_response.requirements
+            if req.tool_execution and req.tool_execution.tool_call_id in valid_tool_call_ids
+        ]
+
+    run_response.last_checkpoint_at_message_index = from_checkpoint
+
+
+def _fork_team_run(run_response: "TeamRunOutput", from_checkpoint: int) -> "TeamRunOutput":
+    """Deep-clone a team run with a new ``run_id``, set fork metadata, and
+    truncate to ``from_checkpoint``.
+
+    Scope is the team's own state (messages, tools, requirements, metrics).
+    Member runs that the original team produced stay where they are — they
+    are durable records of delegation work attached to the **original** team
+    via ``parent_run_id``. The forked team's ``member_responses`` field
+    points at those same member objects (deep-copied so mutating the fork
+    can't corrupt them), but no new member rows are written to the session.
+
+    Rationale: from the team's perspective a member is just a tool the team
+    delegated to — its output is already baked into the team's messages.
+    Forking the team is parity with agent forking; member state is out of
+    scope, same as fallback models / parser models / followups.
+
+    Resets ``metrics`` and ``created_at`` so the fork reports only its own
+    work — same invariant as agent's :func:`_fork_run`.
+    """
+    import copy
+    from time import time as _time
+
+    forked = copy.deepcopy(run_response)
+    forked.run_id = str(uuid4())
+    forked.forked_from_run_id = run_response.run_id
+    forked.forked_from_message_index = from_checkpoint
+    forked.metrics = RunMetrics()
+    forked.created_at = int(_time())
+
+    _truncate_team_run_to_checkpoint(forked, from_checkpoint)
+    return forked
+
+
+def _apply_continue_modifiers_team(
+    run_response: "TeamRunOutput",
+    fork: bool,
+    from_checkpoint: Optional[int],
+) -> "TeamRunOutput":
+    """Apply ``fork`` and/or ``from_checkpoint`` to a loaded team run_response.
+
+    Mirrors agent's :func:`_apply_continue_modifiers`. Returns the same
+    instance when only truncating, a new instance (with cloned members)
+    when forking.
+    """
+    if fork:
+        idx = from_checkpoint if from_checkpoint is not None else len(run_response.messages or [])
+        return _fork_team_run(run_response, idx)
+    if from_checkpoint is not None:
+        _truncate_team_run_to_checkpoint(run_response, from_checkpoint)
+    return run_response
+
+
+def _find_regenerate_checkpoint_team(run_response: "TeamRunOutput") -> int:
+    """For ``regenerate=True``, compute the message index to truncate to.
+
+    Mirrors agent's :func:`_find_regenerate_checkpoint`: walk backwards
+    until we find the last user message, return its index + 1 so the
+    truncated prefix ends *just after* the user's question.
+    """
+    messages = run_response.messages or []
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].role == "user":
+            return i + 1
+    raise ValueError("Cannot regenerate: team run has no user messages to regenerate from.")
+
+
+def _normalize_regenerate_params_team(
+    run_response: Optional["TeamRunOutput"],
+    *,
+    regenerate: bool,
+    preserve_original: bool,
+    additional_instructions: Optional[str],
+    fork: bool,
+    from_checkpoint: Optional[int],
+    input: Optional[str],
+) -> Tuple[bool, Optional[int], Optional[str]]:
+    """Normalize regenerate-sugar params for teams. Mirrors agent helper.
+
+    ``regenerate=True`` ALWAYS forks (1-run-1-loop invariant). With
+    ``preserve_original=True`` the source is additionally marked
+    ``REGENERATED`` so history-builders skip it.
+    """
+    if additional_instructions is not None and input is not None:
+        raise ValueError("Provide either `additional_instructions` or `input`, not both.")
+    if preserve_original and not regenerate:
+        raise ValueError("`preserve_original=True` only makes sense with `regenerate=True`.")
+
+    if not regenerate:
+        return fork, from_checkpoint, input
+
+    if from_checkpoint is not None:
+        raise ValueError("`regenerate=True` derives `from_checkpoint` automatically; do not pass it explicitly.")
+    if fork:
+        raise ValueError(
+            "`regenerate=True` derives the destructive/preserving choice from "
+            "`preserve_original`; do not pass `fork=True` directly."
+        )
+    if run_response is None:
+        raise ValueError("`regenerate=True` requires a loaded run_response to compute the checkpoint.")
+
+    resolved_input = additional_instructions if additional_instructions is not None else input
+    return (True, _find_regenerate_checkpoint_team(run_response), resolved_input)
+
+
+def _maybe_append_input_message_team(
+    run_response: "TeamRunOutput",
+    new_input: Optional[str],
+    team: "Team",
+) -> None:
+    """Append a new user-role message to the team run's ``messages`` so the
+    model loop sees it. Used when the caller passes ``input=`` or
+    ``additional_instructions=`` to /continue.
+    """
+    if not new_input:
+        return
+    new_message = Message(role="user", content=new_input)
+    if run_response.messages is None:
+        run_response.messages = [new_message]
+    else:
+        run_response.messages.append(new_message)
+
+
+# ---------------------------------------------------------------------------
+# Session branching — mirrors agent's branch_session_dispatch
+# ---------------------------------------------------------------------------
+
+
+def _build_branched_team_session(source_session: TeamSession, new_user_id: Optional[str]) -> TeamSession:
+    """Deep-copy ``source_session`` into a brand-new ``TeamSession`` with a
+    fresh ``session_id`` and fresh ``run_id``s for every copied run.
+
+    Lineage shape mirrors the agent:
+    - ``session.session_data["branched_from"]``: the immediate parent
+      session_id (overwritten on each re-branch).
+    - ``run.branched_from``: each run's **original** session_id, set
+      only-if-empty so nested branches keep pointing at the root.
+    """
+    import copy
+    import time as _time
+
+    now = int(_time.time())
+    new_session_id = str(uuid4())
+    branched_runs = copy.deepcopy(source_session.runs or [])
+
+    for run in branched_runs:
+        run.run_id = str(uuid4())
+        run.session_id = new_session_id
+        if not getattr(run, "branched_from", None):
+            run.branched_from = source_session.session_id
+
+    new_session_data = copy.deepcopy(source_session.session_data) or {}
+    new_session_data["branched_from"] = source_session.session_id
+
+    return TeamSession(
+        session_id=new_session_id,
+        team_id=source_session.team_id,
+        user_id=new_user_id or source_session.user_id,
+        workflow_id=source_session.workflow_id,
+        team_data=copy.deepcopy(source_session.team_data),
+        session_data=new_session_data,
+        metadata=copy.deepcopy(source_session.metadata),
+        runs=branched_runs,
+        summary=copy.deepcopy(source_session.summary),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def branch_session_dispatch(
+    team: "Team",
+    *,
+    source_session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Branch a team session into a new independent session (sync)."""
+    from agno.team._init import _has_async_db
+    from agno.team._storage import _read_or_create_session
+
+    if _has_async_db(team):
+        raise RuntimeError("`branch_session` is not supported with an async database. Use `abranch_session` instead.")
+
+    source_session_id = source_session_id or team.session_id
+    if source_session_id is None:
+        raise ValueError("source_session_id is required to branch a session.")
+
+    team.initialize_team()
+    source_session = _read_or_create_session(team, session_id=source_session_id, user_id=user_id)
+    if not source_session.runs:
+        raise ValueError("Source session has no runs to branch.")
+
+    new_session = _build_branched_team_session(source_session, new_user_id=user_id)
+    team.save_session(session=new_session)
+    return new_session.session_id
+
+
+async def abranch_session_dispatch(
+    team: "Team",
+    *,
+    source_session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> str:
+    """Async variant of :func:`branch_session_dispatch`."""
+    from agno.team._init import _has_async_db
+    from agno.team._storage import _aread_or_create_session, _read_or_create_session
+
+    source_session_id = source_session_id or team.session_id
+    if source_session_id is None:
+        raise ValueError("source_session_id is required to branch a session.")
+
+    team.initialize_team()
+
+    if _has_async_db(team):
+        source_session = await _aread_or_create_session(team, session_id=source_session_id, user_id=user_id)
+    else:
+        source_session = _read_or_create_session(team, session_id=source_session_id, user_id=user_id)
+
+    if not source_session.runs:
+        raise ValueError("Source session has no runs to branch.")
+
+    new_session = _build_branched_team_session(source_session, new_user_id=user_id)
+    if _has_async_db(team):
+        await team.asave_session(session=new_session)
+    else:
+        team.save_session(session=new_session)
+    return new_session.session_id
+
+
 def continue_run_dispatch(
     team: "Team",
     run_response: Optional[TeamRunOutput] = None,
     *,
     run_id: Optional[str] = None,
     requirements: Optional[List[Any]] = None,
+    # --- Continue sugar (mirrors agent dispatch) ---
+    input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
+    # --- Stream/control ---
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = False,
     user_id: Optional[str] = None,
@@ -5365,7 +5858,12 @@ def continue_run_dispatch(
 ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (sync).
 
-    Handles both team-level tool pauses and member-agent tool pauses.
+    Handles both team-level tool pauses and member-agent tool pauses, plus
+    the snapshot dispatch (regenerate / fork / time-travel) — see the
+    corresponding agent docstring in ``agno/agent/_run.py`` for the full
+    variant table. Auto-fork-on-COMPLETED is enforced: continuing a
+    COMPLETED team run produces a new ``run_id`` with the member rows
+    cloned (per ADR — forked teams own their member rows).
     """
     from agno.team._init import _has_async_db, _initialize_session
     from agno.team._response import get_response_format
@@ -5450,6 +5948,116 @@ def continue_run_dispatch(
 
     run_response = cast(TeamRunOutput, run_response)
 
+    # --- Snapshot dispatch (regenerate / fork / time-travel) ----------------
+    # Normalize sugar params into canonical (fork, from_checkpoint, input)
+    # form. Mirrors the agent dispatch — see agno/agent/_run.py.
+    fork, from_checkpoint, input = _normalize_regenerate_params_team(
+        run_response,
+        regenerate=regenerate,
+        preserve_original=preserve_original,
+        additional_instructions=additional_instructions,
+        fork=fork,
+        from_checkpoint=from_checkpoint,
+        input=input,
+    )
+    original_run_id_for_lineage = run_response.run_id if regenerate else None
+
+    # Auto-fork on COMPLETED — preserves the "1 run = 1 model loop" invariant.
+    # A COMPLETED loop ran end-to-end; any further model call is a NEW loop
+    # and must get a new run_id. Mid-flight states (RUNNING / PAUSED) resume
+    # in place because their loop never finished. ERROR / CANCELLED are NOT
+    # auto-forked (retry semantics) — same call as agent.
+    if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+        fork = True
+
+    # Apply modifiers BEFORE the requirements machinery. If we forked, the
+    # rest of the dispatch operates on the new run with cloned members.
+    _did_snapshot_dispatch = fork or from_checkpoint is not None
+    run_response = _apply_continue_modifiers_team(run_response, fork, from_checkpoint)
+    if regenerate and original_run_id_for_lineage:
+        run_response.regenerated_from = original_run_id_for_lineage
+        if preserve_original and run_response.forked_from_run_id:
+            # Mark the original run REGENERATED so history builders skip it.
+            for r in team_session.runs or []:
+                if r.run_id == original_run_id_for_lineage:
+                    r.status = RunStatus.regenerated
+                    break
+
+    # Append the new user-message (from input / additional_instructions) so
+    # the model loop picks it up.
+    if input:
+        _maybe_append_input_message_team(run_response, input, team)
+
+    # A freshly-forked run has no PAUSED requirements contract — skip the
+    # HITL machinery and route straight to the model loop. Member-level
+    # tool resolution for HITL is a property of the SOURCE run; the fork
+    # is a new attempt and its tools/messages are seeded from the
+    # snapshot.
+    if _did_snapshot_dispatch:
+        # Reset run state for a fresh model loop on the forked run.
+        run_response.status = RunStatus.running
+        run_response.content = None
+
+        response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+        team.model = cast(Model, team.model)
+
+        team_run_context_local: Dict[str, Any] = {}
+        _tools_fork = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context_local,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            stream=opts.stream or False,
+            stream_events=opts.stream_events or False,
+        )
+
+        input_messages = run_response.messages or []
+        run_messages = _get_continue_run_messages(
+            team,
+            input=input_messages,
+            session=team_session,
+            add_history_to_context=team.add_history_to_context,
+            run_context=run_context,
+        )
+
+        log_debug(f"Team Continue Run (forked): {run_response.run_id}", center=True)
+
+        if opts.stream:
+            return _continue_run_stream(
+                team,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                tools=_tools_fork,
+                session=team_session,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+        else:
+            return _continue_run(
+                team,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                tools=_tools_fork,
+                session=team_session,
+                user_id=user_id,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+    # --- End snapshot dispatch ----------------------------------------------
+
     # Save old requirements before overwriting — needed to preserve approval fields for member-level tools
     old_requirements = run_response.requirements
 
@@ -5483,12 +6091,17 @@ def continue_run_dispatch(
         try:
             check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
         except RuntimeError:
-            raise ValueError(
-                "To continue a run from a given run_id, the requirements parameter must be provided "
-                "(or resolve an admin approval first)."
-            )
+            # No resolved approval found — fall through to bare-resume rather
+            # than raising. The run may be a crashed mid-flight run (RUNNING /
+            # ERROR / CANCELLED) where we want to resume from persisted
+            # messages, not insist on HITL requirements.
+            _did_snapshot_dispatch = True  # treat as resume-only; route to team-leader model call
     else:
-        raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
+        # No requirements AND no tools — this is a bare resume of a mid-flight
+        # run (RUNNING / ERROR / CANCELLED that crashed before any tool batch).
+        # Don't raise; let the team-leader model loop run with whatever
+        # messages survived in run_response.
+        _did_snapshot_dispatch = True
 
     # Determine what kind of pause we're continuing from
     has_member = _has_member_requirements(run_response.requirements or [])
@@ -5560,7 +6173,11 @@ def continue_run_dispatch(
             )
 
     # Handle team-level tool resolution
-    if has_team_level:
+    if has_team_level or _did_snapshot_dispatch:
+        # Includes _did_snapshot_dispatch: bare-resume of a crashed run (no
+        # requirements, no tools) still needs the team-leader model call to
+        # produce a response. Without this, those runs would fall through
+        # with no model invocation.
         # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
         unresolved_team = [
             r
@@ -5944,6 +6561,9 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    after_tool_results=build_team_after_tool_results_callback(
+                        team, run_response, session, run_messages, run_context
+                    ),
                 )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -6020,6 +6640,7 @@ def _continue_run(
 
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(
                     run_response,
                     error=str(e),
@@ -6052,6 +6673,7 @@ def _continue_run(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
@@ -6277,6 +6899,7 @@ def _continue_run_stream(
 
             except (InputCheckError, OutputCheckError) as e:
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(
                     run_response,
                     error=str(e),
@@ -6316,6 +6939,7 @@ def _continue_run_stream(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
@@ -6334,6 +6958,14 @@ def acontinue_run_dispatch(  # type: ignore
     *,
     run_id: Optional[str] = None,
     requirements: Optional[List[Any]] = None,
+    # --- Continue sugar (mirrors agent dispatch) ---
+    input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
+    # --- Stream/control ---
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = False,
     user_id: Optional[str] = None,
@@ -6349,6 +6981,9 @@ def acontinue_run_dispatch(  # type: ignore
     """Continue a paused team run (async entry point).
 
     Routes to _acontinue_run or _acontinue_run_stream based on stream option.
+    Snapshot dispatch parameters (``regenerate``, ``fork``, ``from_checkpoint``,
+    ``preserve_original``, ``additional_instructions``, ``input``) flow
+    through to the inner functions which apply them after loading the run.
     """
     from agno.team._init import _initialize_session
     from agno.team._response import get_response_format
@@ -6416,6 +7051,12 @@ def acontinue_run_dispatch(  # type: ignore
             run_response=run_response,
             run_context=run_context,
             requirements=requirements,
+            input=input,
+            from_checkpoint=from_checkpoint,
+            fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             run_id=run_id_resolved,
             user_id=user_id,
             session_id=session_id_resolved,
@@ -6432,6 +7073,12 @@ def acontinue_run_dispatch(  # type: ignore
             run_response=run_response,
             run_context=run_context,
             requirements=requirements,
+            input=input,
+            from_checkpoint=from_checkpoint,
+            fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             run_id=run_id_resolved,
             user_id=user_id,
             session_id=session_id_resolved,
@@ -6448,6 +7095,13 @@ async def _acontinue_run(
     run_context: RunContext,
     run_response: Optional[TeamRunOutput] = None,
     requirements: Optional[List[Any]] = None,
+    # --- Snapshot dispatch sugar (mirrors sync continue_run_dispatch) ---
+    input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -6487,11 +7141,53 @@ async def _acontinue_run(
 
                 run_response = cast(TeamRunOutput, run_response)
 
+                # --- Snapshot dispatch (regenerate / fork / time-travel) ---
+                # Mirrors the sync continue_run_dispatch.
+                fork, from_checkpoint, input = _normalize_regenerate_params_team(
+                    run_response,
+                    regenerate=regenerate,
+                    preserve_original=preserve_original,
+                    additional_instructions=additional_instructions,
+                    fork=fork,
+                    from_checkpoint=from_checkpoint,
+                    input=input,
+                )
+                original_run_id_for_lineage = run_response.run_id if regenerate else None
+
+                # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
+                if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+                    fork = True
+
+                _did_snapshot_dispatch = fork or from_checkpoint is not None
+                run_response = _apply_continue_modifiers_team(run_response, fork, from_checkpoint)
+                if regenerate and original_run_id_for_lineage:
+                    run_response.regenerated_from = original_run_id_for_lineage
+                    if preserve_original and run_response.forked_from_run_id:
+                        for r in team_session.runs or []:
+                            if r.run_id == original_run_id_for_lineage:
+                                r.status = RunStatus.regenerated
+                                break
+
+                # Append input/additional_instructions as a user message.
+                if input:
+                    _maybe_append_input_message_team(run_response, input, team)
+                # --- End snapshot dispatch ---
+
                 # Save old requirements before overwriting — needed for member-level approval fields
                 old_requirements = run_response.requirements
 
+                # A freshly-forked run has no PAUSED requirements contract;
+                # skip the HITL machinery entirely. The fork is a fresh
+                # attempt seeded from the snapshot — no tools/approvals to
+                # resolve. Without this gate, the dispatch raises "requirements
+                # parameter must be provided" for forked runs that have no
+                # surviving requirements.
+                if _did_snapshot_dispatch:
+                    # Reset content so update_run_response doesn't append to
+                    # stale content from the source run.
+                    run_response.content = None
                 # Normalize and apply requirements
-                if requirements:
+                elif requirements:
                     requirements = _normalize_requirements_payload(requirements)
                     run_response.requirements = requirements
                     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
@@ -6523,14 +7219,14 @@ async def _acontinue_run(
                             team.db, run_response.run_id or run_id or "", run_response
                         )
                     except RuntimeError:
-                        raise ValueError(
-                            "To continue a run from a given run_id, the requirements parameter must be provided "
-                            "(or resolve an admin approval first)."
-                        )
+                        # Fall through to bare-resume rather than raising.
+                        # Same rationale as the sync dispatch — see comment there.
+                        _did_snapshot_dispatch = True
                 else:
-                    raise ValueError(
-                        "To continue a run from a given run_id, the requirements parameter must be provided."
-                    )
+                    # Bare resume of a mid-flight run (RUNNING/ERROR/CANCELLED)
+                    # — no requirements, no tools. Let the team-leader model
+                    # loop run with whatever messages survived. Same as sync.
+                    _did_snapshot_dispatch = True
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
@@ -6579,7 +7275,11 @@ async def _acontinue_run(
                         )
 
                 # Handle team-level tool resolution
-                if has_team_level:
+                if has_team_level or _did_snapshot_dispatch:
+                    # Includes _did_snapshot_dispatch: a freshly-forked team run has no
+                    # requirements but still needs the team-leader model call
+                    # to produce a response. Without this, forked runs would
+                    # fall through to terminal cleanup with content=None.
                     # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
                     unresolved_team = [
                         r
@@ -6732,6 +7432,7 @@ async def _acontinue_run(
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(TeamRunOutput, run_response)
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 if run_response.content is None:
                     run_response.content = str(e)
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
@@ -6758,6 +7459,7 @@ async def _acontinue_run(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
@@ -6781,6 +7483,13 @@ async def _acontinue_run_stream(
     run_context: RunContext,
     run_response: Optional[TeamRunOutput] = None,
     requirements: Optional[List[Any]] = None,
+    # --- Snapshot dispatch sugar (mirrors sync continue_run_dispatch) ---
+    input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -6828,11 +7537,53 @@ async def _acontinue_run_stream(
 
                 run_response = cast(TeamRunOutput, run_response)
 
+                # --- Snapshot dispatch (regenerate / fork / time-travel) ---
+                # Mirrors the sync continue_run_dispatch.
+                fork, from_checkpoint, input = _normalize_regenerate_params_team(
+                    run_response,
+                    regenerate=regenerate,
+                    preserve_original=preserve_original,
+                    additional_instructions=additional_instructions,
+                    fork=fork,
+                    from_checkpoint=from_checkpoint,
+                    input=input,
+                )
+                original_run_id_for_lineage = run_response.run_id if regenerate else None
+
+                # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
+                if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+                    fork = True
+
+                _did_snapshot_dispatch = fork or from_checkpoint is not None
+                run_response = _apply_continue_modifiers_team(run_response, fork, from_checkpoint)
+                if regenerate and original_run_id_for_lineage:
+                    run_response.regenerated_from = original_run_id_for_lineage
+                    if preserve_original and run_response.forked_from_run_id:
+                        for r in team_session.runs or []:
+                            if r.run_id == original_run_id_for_lineage:
+                                r.status = RunStatus.regenerated
+                                break
+
+                # Append input/additional_instructions as a user message.
+                if input:
+                    _maybe_append_input_message_team(run_response, input, team)
+                # --- End snapshot dispatch ---
+
                 # Save old requirements before overwriting — needed for member-level approval fields
                 old_requirements = run_response.requirements
 
+                # A freshly-forked run has no PAUSED requirements contract;
+                # skip the HITL machinery entirely. The fork is a fresh
+                # attempt seeded from the snapshot — no tools/approvals to
+                # resolve. Without this gate, the dispatch raises "requirements
+                # parameter must be provided" for forked runs that have no
+                # surviving requirements.
+                if _did_snapshot_dispatch:
+                    # Reset content so update_run_response doesn't append to
+                    # stale content from the source run.
+                    run_response.content = None
                 # Normalize and apply requirements
-                if requirements:
+                elif requirements:
                     requirements = _normalize_requirements_payload(requirements)
                     run_response.requirements = requirements
                     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
@@ -6864,14 +7615,14 @@ async def _acontinue_run_stream(
                             team.db, run_response.run_id or run_id or "", run_response
                         )
                     except RuntimeError:
-                        raise ValueError(
-                            "To continue a run from a given run_id, the requirements parameter must be provided "
-                            "(or resolve an admin approval first)."
-                        )
+                        # Fall through to bare-resume rather than raising.
+                        # Same rationale as the sync dispatch — see comment there.
+                        _did_snapshot_dispatch = True
                 else:
-                    raise ValueError(
-                        "To continue a run from a given run_id, the requirements parameter must be provided."
-                    )
+                    # Bare resume of a mid-flight run (RUNNING/ERROR/CANCELLED)
+                    # — no requirements, no tools. Let the team-leader model
+                    # loop run with whatever messages survived. Same as sync.
+                    _did_snapshot_dispatch = True
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
@@ -6916,7 +7667,11 @@ async def _acontinue_run_stream(
                             yield run_response
                         return
 
-                if has_team_level:
+                if has_team_level or _did_snapshot_dispatch:
+                    # Includes _did_snapshot_dispatch: a freshly-forked team run has no
+                    # requirements but still needs the team-leader model call
+                    # to produce a response. Without this, forked runs would
+                    # fall through to terminal cleanup with content=None.
                     # Guard: if team-level requirements are unresolved, re-pause instead of auto-rejecting
                     unresolved_team = [
                         r
@@ -7267,6 +8022,7 @@ async def _acontinue_run_stream(
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(TeamRunOutput, run_response)
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(
                     run_response,
                     error=str(e),
@@ -7311,6 +8067,7 @@ async def _acontinue_run_stream(
                     continue
 
                 run_response.status = RunStatus.error
+                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 run_error = create_team_run_error_event(run_response, error=str(e))
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
