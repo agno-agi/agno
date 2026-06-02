@@ -7,7 +7,7 @@ from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
-from agno.exceptions import AgentRunException
+from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
 from agno.utils.log import log_debug, log_exception, log_warning
@@ -855,6 +855,8 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
@@ -882,6 +884,8 @@ class FunctionCall(BaseModel):
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
+                raise
+            except RunCancelledException:
                 raise
             except Exception as e:
                 log_warning(f"Error in post-hook callback: {str(e)}")
@@ -1099,6 +1103,8 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
@@ -1138,6 +1144,8 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
@@ -1166,6 +1174,8 @@ class FunctionCall(BaseModel):
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
+                raise
+            except RunCancelledException:
                 raise
             except Exception as e:
                 log_warning(f"Error in post-hook callback: {str(e)}")
@@ -1319,6 +1329,8 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
