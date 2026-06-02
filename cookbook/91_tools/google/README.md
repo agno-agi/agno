@@ -1,6 +1,6 @@
 # Google Tools Cookbooks
 
-Agents for Gmail, Google Calendar, Google Drive, and Google Slides using OAuth or service account authentication.
+Agents for Gmail, Google Calendar, Google Drive, Google Slides, Google Docs, Google Tasks, Google Meet, and Google People using OAuth or service account authentication.
 
 ## Quick Start
 
@@ -77,6 +77,10 @@ Go to **APIs & Services > Enable APIs and Services** and enable:
 | `GmailTools` | Gmail API |
 | `GoogleDriveTools` | Google Drive API |
 | `GoogleSlidesTools` | Google Slides API + Google Drive API |
+| `GoogleDocsTools` | Google Docs API + Google Drive API |
+| `GoogleTasksTools` | Google Tasks API |
+| `GoogleMeetTools` | Google Meet API |
+| `GooglePeopleTools` | People API |
 
 ### 3. Create OAuth Credentials
 
@@ -157,6 +161,30 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 | `slides_presentation_builder.py` | Multi-slide deck builder with tables, layouts, and text annotations |
 | `slides_content_reader.py` | Read and summarize existing presentations with structured output |
 | `slides_media_slides.py` | Background images, YouTube embeds, and Drive video integration |
+
+### Docs
+
+| File | Description |
+|------|-------------|
+| `docs_tools.py` | Core examples: create document, read text, batch update, append text, export as PDF |
+
+### Tasks
+
+| File | Description |
+|------|-------------|
+| `google_tasks_tools.py` | List task lists, create/update/complete tasks, clear completed |
+
+### Meet
+
+| File | Description |
+|------|-------------|
+| `meet_tools.py` | Create meeting spaces, list recordings, get transcripts |
+
+### People
+
+| File | Description |
+|------|-------------|
+| `people_tools.py` | Search contacts, lookup directory people (Workspace), resolve names to emails |
 
 ### Combined / Auth
 

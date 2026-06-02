@@ -278,6 +278,17 @@ class GoogleDriveTools(GoogleToolkit):
         # Writing tools — disabled by default for safety
         upload_file: bool = False,
         download_file: bool = False,
+        # Enterprise file management — disabled by default
+        create_folder: bool = False,
+        move_file: bool = False,
+        copy_file: bool = False,
+        rename_file: bool = False,
+        delete_file: bool = False,
+        # Sharing and permissions — disabled by default
+        share_file: bool = False,
+        list_permissions: bool = False,
+        remove_permission: bool = False,
+        get_file_info: bool = False,
         # Save location for download_file; defaults to cwd, sandboxes writes to this directory
         download_dir: Path = Path("."),
         # When False, trashed files are excluded from search/list results automatically
@@ -314,7 +325,11 @@ class GoogleDriveTools(GoogleToolkit):
         if oauth_port == 5050 and auth_port is not None:
             oauth_port = auth_port
 
-        read_tools_enabled = any([list_files, search_files, read_file, download_file])
+        read_tools_enabled = any([list_files, search_files, read_file, download_file, get_file_info])
+        # Enterprise file management needs full drive scope
+        file_management_enabled = any([create_folder, move_file, copy_file, rename_file, delete_file])
+        # Sharing needs full drive scope
+        sharing_enabled = any([share_file, list_permissions, remove_permission])
 
         # Auto-infer minimal scopes from enabled tools
         if scopes is None:
@@ -323,6 +338,8 @@ class GoogleDriveTools(GoogleToolkit):
                 resolved_scopes.append(self.default_scopes["read"])
             if upload_file:
                 resolved_scopes.append(self.default_scopes["write"])
+            if file_management_enabled or sharing_enabled:
+                resolved_scopes.append(self.default_scopes["full"])
             if not resolved_scopes:
                 resolved_scopes.append(self.default_scopes["read"])
             scopes = list(dict.fromkeys(resolved_scopes))
@@ -356,6 +373,35 @@ class GoogleDriveTools(GoogleToolkit):
         if download_file:
             tools.append(self.download_file)
             async_tools.append((self.adownload_file, "download_file"))
+        # Enterprise file management
+        if create_folder:
+            tools.append(self.create_folder)
+            async_tools.append((self.acreate_folder, "create_folder"))
+        if move_file:
+            tools.append(self.move_file)
+            async_tools.append((self.amove_file, "move_file"))
+        if copy_file:
+            tools.append(self.copy_file)
+            async_tools.append((self.acopy_file, "copy_file"))
+        if rename_file:
+            tools.append(self.rename_file)
+            async_tools.append((self.arename_file, "rename_file"))
+        if delete_file:
+            tools.append(self.delete_file)
+            async_tools.append((self.adelete_file, "delete_file"))
+        # Sharing and permissions
+        if share_file:
+            tools.append(self.share_file)
+            async_tools.append((self.ashare_file, "share_file"))
+        if list_permissions:
+            tools.append(self.list_permissions)
+            async_tools.append((self.alist_permissions, "list_permissions"))
+        if remove_permission:
+            tools.append(self.remove_permission)
+            async_tools.append((self.aremove_permission, "remove_permission"))
+        if get_file_info:
+            tools.append(self.get_file_info)
+            async_tools.append((self.aget_file_info, "get_file_info"))
 
         super().__init__(
             name="google_drive_tools",
@@ -821,3 +867,578 @@ class GoogleDriveTools(GoogleToolkit):
             str: JSON string containing saved file path and status or error message
         """
         return await asyncio.to_thread(self.download_file, agent, run_context, file_id, export_format=export_format)
+
+    @authenticate
+    def create_folder(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        name: str,
+        parent_id: Optional[str] = None,
+    ) -> str:
+        """
+        Create a new folder in Google Drive.
+
+        Args:
+            name (str): Name of the folder to create
+            parent_id (str): Optional parent folder ID. If None, creates in root.
+
+        Returns:
+            str: JSON string with folder id, name, and web link
+        """
+        try:
+            service = cast(Resource, self.service)
+
+            file_metadata: Dict[str, Any] = {
+                "name": name,
+                "mimeType": "application/vnd.google-apps.folder",
+            }
+
+            if parent_id:
+                file_metadata["parents"] = [parent_id]
+
+            folder = (
+                service.files()
+                .create(
+                    body=file_metadata,
+                    fields="id,name,webViewLink",
+                    supportsAllDrives=self.supports_all_drives,
+                )
+                .execute()
+            )
+
+            return json.dumps(
+                {
+                    "id": folder.get("id"),
+                    "name": folder.get("name"),
+                    "webViewLink": folder.get("webViewLink"),
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not create folder '{name}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def acreate_folder(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        name: str,
+        parent_id: Optional[str] = None,
+    ) -> str:
+        """Create a new folder in Google Drive (async)."""
+        return await asyncio.to_thread(self.create_folder, agent, run_context, name, parent_id)
+
+    @authenticate
+    def move_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        new_parent_id: str,
+    ) -> str:
+        """
+        Move a file to a different folder in Google Drive.
+
+        Args:
+            file_id (str): ID of the file to move
+            new_parent_id (str): ID of the destination folder
+
+        Returns:
+            str: JSON string with updated file metadata
+        """
+        try:
+            service = cast(Resource, self.service)
+
+            # Get current parents
+            file = (
+                service.files()
+                .get(
+                    fileId=file_id,
+                    fields="parents",
+                    supportsAllDrives=self.supports_all_drives,
+                )
+                .execute()
+            )
+
+            previous_parents = ",".join(file.get("parents", []))
+
+            # Move file to new parent
+            updated = (
+                service.files()
+                .update(
+                    fileId=file_id,
+                    addParents=new_parent_id,
+                    removeParents=previous_parents,
+                    fields="id,name,parents,webViewLink",
+                    supportsAllDrives=self.supports_all_drives,
+                )
+                .execute()
+            )
+
+            return json.dumps(
+                {
+                    "id": updated.get("id"),
+                    "name": updated.get("name"),
+                    "parents": updated.get("parents"),
+                    "webViewLink": updated.get("webViewLink"),
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not move file '{file_id}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def amove_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        new_parent_id: str,
+    ) -> str:
+        """Move a file to a different folder in Google Drive (async)."""
+        return await asyncio.to_thread(self.move_file, agent, run_context, file_id, new_parent_id)
+
+    @authenticate
+    def copy_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        new_name: Optional[str] = None,
+        parent_id: Optional[str] = None,
+    ) -> str:
+        """
+        Create a copy of a file in Google Drive.
+
+        Args:
+            file_id (str): ID of the file to copy
+            new_name (str): Optional name for the copy. If None, uses "Copy of <original>"
+            parent_id (str): Optional folder ID to place the copy. If None, same as original.
+
+        Returns:
+            str: JSON string with new file metadata
+        """
+        try:
+            service = cast(Resource, self.service)
+
+            body: Dict[str, Any] = {}
+            if new_name:
+                body["name"] = new_name
+            if parent_id:
+                body["parents"] = [parent_id]
+
+            copied = (
+                service.files()
+                .copy(
+                    fileId=file_id,
+                    body=body,
+                    fields="id,name,webViewLink",
+                    supportsAllDrives=self.supports_all_drives,
+                )
+                .execute()
+            )
+
+            return json.dumps(
+                {
+                    "id": copied.get("id"),
+                    "name": copied.get("name"),
+                    "webViewLink": copied.get("webViewLink"),
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not copy file '{file_id}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def acopy_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        new_name: Optional[str] = None,
+        parent_id: Optional[str] = None,
+    ) -> str:
+        """Create a copy of a file in Google Drive (async)."""
+        return await asyncio.to_thread(self.copy_file, agent, run_context, file_id, new_name, parent_id)
+
+    @authenticate
+    def share_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        email: str,
+        role: str = "reader",
+        notify: bool = True,
+    ) -> str:
+        """
+        Share a file with a user or group.
+
+        Args:
+            file_id (str): ID of the file to share
+            email (str): Email address to share with
+            role (str): Permission role - "reader", "commenter", or "writer"
+            notify (bool): Whether to send an email notification
+
+        Returns:
+            str: JSON string with permission details
+        """
+        valid_roles = {"reader", "commenter", "writer"}
+        if role not in valid_roles:
+            return json.dumps({"error": f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}"})
+
+        try:
+            service = cast(Resource, self.service)
+
+            permission = {
+                "type": "user",
+                "role": role,
+                "emailAddress": email,
+            }
+
+            result = (
+                service.permissions()
+                .create(
+                    fileId=file_id,
+                    body=permission,
+                    sendNotificationEmail=notify,
+                    supportsAllDrives=self.supports_all_drives,
+                    fields="id,type,role,emailAddress",
+                )
+                .execute()
+            )
+
+            return json.dumps(
+                {
+                    "permissionId": result.get("id"),
+                    "email": result.get("emailAddress"),
+                    "role": result.get("role"),
+                    "type": result.get("type"),
+                    "fileId": file_id,
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not share file '{file_id}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def ashare_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        email: str,
+        role: str = "reader",
+        notify: bool = True,
+    ) -> str:
+        """Share a file with a user or group (async)."""
+        return await asyncio.to_thread(self.share_file, agent, run_context, file_id, email, role, notify)
+
+    @authenticate
+    def list_permissions(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+    ) -> str:
+        """
+        List all permissions (who has access) for a file.
+
+        Args:
+            file_id (str): ID of the file
+
+        Returns:
+            str: JSON string with list of permissions including emails and roles
+        """
+        try:
+            service = cast(Resource, self.service)
+
+            result = (
+                service.permissions()
+                .list(
+                    fileId=file_id,
+                    supportsAllDrives=self.supports_all_drives,
+                    fields="permissions(id,type,role,emailAddress,displayName)",
+                )
+                .execute()
+            )
+
+            permissions = result.get("permissions", [])
+
+            return json.dumps(
+                {
+                    "fileId": file_id,
+                    "permissions": [
+                        {
+                            "id": p.get("id"),
+                            "type": p.get("type"),
+                            "role": p.get("role"),
+                            "email": p.get("emailAddress"),
+                            "name": p.get("displayName"),
+                        }
+                        for p in permissions
+                    ],
+                    "total": len(permissions),
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not list permissions for '{file_id}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def alist_permissions(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+    ) -> str:
+        """List all permissions for a file (async)."""
+        return await asyncio.to_thread(self.list_permissions, agent, run_context, file_id)
+
+    @authenticate
+    def remove_permission(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        permission_id: str,
+    ) -> str:
+        """
+        Remove a permission (revoke access) from a file.
+
+        Args:
+            file_id (str): ID of the file
+            permission_id (str): ID of the permission to remove (from list_permissions)
+
+        Returns:
+            str: JSON string confirming removal
+        """
+        try:
+            service = cast(Resource, self.service)
+
+            service.permissions().delete(
+                fileId=file_id,
+                permissionId=permission_id,
+                supportsAllDrives=self.supports_all_drives,
+            ).execute()
+
+            return json.dumps(
+                {
+                    "fileId": file_id,
+                    "permissionId": permission_id,
+                    "status": "removed",
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not remove permission '{permission_id}' from '{file_id}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def aremove_permission(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        permission_id: str,
+    ) -> str:
+        """Remove a permission from a file (async)."""
+        return await asyncio.to_thread(self.remove_permission, agent, run_context, file_id, permission_id)
+
+    @authenticate
+    def get_file_info(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+    ) -> str:
+        """
+        Get detailed metadata about a file including size, owner, and sharing info.
+
+        Args:
+            file_id (str): ID of the file
+
+        Returns:
+            str: JSON string with file metadata including name, size, mimeType, owners, shared status
+        """
+        try:
+            service = cast(Resource, self.service)
+
+            file = (
+                service.files()
+                .get(
+                    fileId=file_id,
+                    supportsAllDrives=self.supports_all_drives,
+                    fields="id,name,mimeType,size,modifiedTime,createdTime,owners,shared,webViewLink,parents,description",
+                )
+                .execute()
+            )
+
+            owners = file.get("owners", [])
+            size_bytes = int(file.get("size", 0))
+
+            return json.dumps(
+                {
+                    "id": file.get("id"),
+                    "name": file.get("name"),
+                    "mimeType": file.get("mimeType"),
+                    "size_bytes": size_bytes,
+                    "size_readable": self._format_size(size_bytes) if size_bytes else "N/A",
+                    "created": file.get("createdTime"),
+                    "modified": file.get("modifiedTime"),
+                    "owners": [{"name": o.get("displayName"), "email": o.get("emailAddress")} for o in owners],
+                    "shared": file.get("shared", False),
+                    "parents": file.get("parents"),
+                    "description": file.get("description"),
+                    "webViewLink": file.get("webViewLink"),
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not get file info for '{file_id}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    def _format_size(self, size_bytes: int) -> str:
+        """Format bytes into human-readable size."""
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size_bytes < 1024:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes = size_bytes // 1024
+        return f"{size_bytes:.1f} TB"
+
+    async def aget_file_info(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+    ) -> str:
+        """Get detailed metadata about a file (async)."""
+        return await asyncio.to_thread(self.get_file_info, agent, run_context, file_id)
+
+    @authenticate
+    def delete_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        permanent: bool = False,
+    ) -> str:
+        """
+        Delete a file by moving it to trash, or permanently delete it.
+
+        Args:
+            file_id (str): ID of the file to delete
+            permanent (bool): If True, permanently deletes. If False (default), moves to trash.
+
+        Returns:
+            str: JSON string confirming deletion
+        """
+        try:
+            service = cast(Resource, self.service)
+
+            if permanent:
+                service.files().delete(
+                    fileId=file_id,
+                    supportsAllDrives=self.supports_all_drives,
+                ).execute()
+                status = "permanently_deleted"
+            else:
+                service.files().update(
+                    fileId=file_id,
+                    body={"trashed": True},
+                    supportsAllDrives=self.supports_all_drives,
+                ).execute()
+                status = "trashed"
+
+            return json.dumps(
+                {
+                    "fileId": file_id,
+                    "status": status,
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not delete file '{file_id}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def adelete_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        permanent: bool = False,
+    ) -> str:
+        """Delete a file (async)."""
+        return await asyncio.to_thread(self.delete_file, agent, run_context, file_id, permanent)
+
+    @authenticate
+    def rename_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        new_name: str,
+    ) -> str:
+        """
+        Rename a file in Google Drive.
+
+        Args:
+            file_id (str): ID of the file to rename
+            new_name (str): New name for the file
+
+        Returns:
+            str: JSON string with updated file metadata
+        """
+        try:
+            service = cast(Resource, self.service)
+
+            updated = (
+                service.files()
+                .update(
+                    fileId=file_id,
+                    body={"name": new_name},
+                    fields="id,name,webViewLink",
+                    supportsAllDrives=self.supports_all_drives,
+                )
+                .execute()
+            )
+
+            return json.dumps(
+                {
+                    "id": updated.get("id"),
+                    "name": updated.get("name"),
+                    "webViewLink": updated.get("webViewLink"),
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not rename file '{file_id}': {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def arename_file(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        file_id: str,
+        new_name: str,
+    ) -> str:
+        """Rename a file in Google Drive (async)."""
+        return await asyncio.to_thread(self.rename_file, agent, run_context, file_id, new_name)

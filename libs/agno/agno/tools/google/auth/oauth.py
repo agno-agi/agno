@@ -95,9 +95,7 @@ def oauth_google(
         return json.dumps({"error": "Failed to store PKCE state"})
 
     if not config.client_id or not config.redirect_uri:
-        return json.dumps(
-            {"error": "GoogleAuth requires client_id and redirect_uri. Set via constructor or env vars."}
-        )
+        return json.dumps({"error": "GoogleAuth requires client_id and redirect_uri. Set via constructor or env vars."})
 
     params: Dict[str, str] = {
         "client_id": config.client_id,

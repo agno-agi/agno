@@ -34,27 +34,48 @@ def _get_first_approval_tool(tools: Optional[List[Any]], requirements: Optional[
 
 
 def _has_approval_requirement(tools: Optional[List[Any]], requirements: Optional[List[Any]] = None) -> bool:
-    """Check if any paused tool execution has approval_type set.
+    """Check if any tool requires approval (confirmation, user input, or explicit approval_type).
 
     Checks both run_response.tools (agent-level) and run_response.requirements
     (team-level, where member tools are propagated via requirements).
     """
+    # Check explicit approval_type="required"
     tool = _get_first_approval_tool(tools, requirements)
-    return tool is not None and getattr(tool, "approval_type", None) == "required"
+    if tool is not None and getattr(tool, "approval_type", None) == "required":
+        return True
+    # Also check requires_confirmation or requires_user_input flags
+    if tools:
+        for t in tools:
+            if getattr(t, "requires_confirmation", False) or getattr(t, "requires_user_input", False):
+                return True
+    if requirements:
+        for req in requirements:
+            te = getattr(req, "tool_execution", None)
+            if te and (getattr(te, "requires_confirmation", False) or getattr(te, "requires_user_input", False)):
+                return True
+    return False
 
 
 def _stamp_approval_id_on_tools(
     tools: Optional[List[Any]], requirements: Optional[List[Any]], approval_id: str
 ) -> None:
-    """Stamp approval_id on every tool that has approval_type set."""
+    """Stamp approval_id on every tool that requires approval."""
     if tools:
         for tool in tools:
-            if getattr(tool, "approval_type", None) is not None:
+            if (
+                getattr(tool, "approval_type", None) is not None
+                or getattr(tool, "requires_confirmation", False)
+                or getattr(tool, "requires_user_input", False)
+            ):
                 tool.approval_id = approval_id
     if requirements:
         for req in requirements:
             te = getattr(req, "tool_execution", None)
-            if te and getattr(te, "approval_type", None) is not None:
+            if te and (
+                getattr(te, "approval_type", None) is not None
+                or getattr(te, "requires_confirmation", False)
+                or getattr(te, "requires_user_input", False)
+            ):
                 te.approval_id = approval_id
 
 

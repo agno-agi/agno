@@ -4,10 +4,14 @@ __all__ = [
     "GoogleSlidesTools",
     "GoogleBigQueryTools",
     "GoogleCalendarTools",
+    "GoogleDocsTools",
     "GoogleDriveTools",
     "GmailTools",
     "GoogleMapTools",
+    "GoogleMeetTools",
+    "GooglePeopleTools",
     "GoogleSheetsTools",
+    "GoogleTasksTools",
 ]
 
 
@@ -32,6 +36,10 @@ def __getattr__(name: str):
         from agno.tools.google.calendar import GoogleCalendarTools
 
         return GoogleCalendarTools
+    if name == "GoogleDocsTools":
+        from agno.tools.google.docs import GoogleDocsTools
+
+        return GoogleDocsTools
     if name == "GoogleDriveTools":
         from agno.tools.google.drive import GoogleDriveTools
 
@@ -44,8 +52,20 @@ def __getattr__(name: str):
         from agno.tools.google.maps import GoogleMapTools
 
         return GoogleMapTools
+    if name == "GoogleMeetTools":
+        from agno.tools.google.meet import GoogleMeetTools
+
+        return GoogleMeetTools
+    if name == "GooglePeopleTools":
+        from agno.tools.google.people import GooglePeopleTools
+
+        return GooglePeopleTools
     if name == "GoogleSheetsTools":
         from agno.tools.google.sheets import GoogleSheetsTools
 
         return GoogleSheetsTools
+    if name == "GoogleTasksTools":
+        from agno.tools.google.tasks import GoogleTasksTools
+
+        return GoogleTasksTools
     raise AttributeError(f"module 'agno.tools.google' has no attribute {name!r}")
