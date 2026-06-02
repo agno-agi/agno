@@ -2344,12 +2344,16 @@ class Model(ABC):
 
             # The function requires user input (HITL)
             if fc.function.requires_user_input:
-                user_input_schema = fc.function.user_input_schema
-                if fc.arguments and user_input_schema:
-                    for name, value in fc.arguments.items():
-                        for user_input_field in user_input_schema:
-                            if user_input_field.name == name:
-                                user_input_field.value = value
+                # Copy schema to avoid mutating the shared Function object
+                user_input_schema = [
+                    UserInputField(
+                        name=f.name,
+                        field_type=f.field_type,
+                        description=f.description,
+                        value=fc.arguments.get(f.name) if fc.arguments else None,
+                    )
+                    for f in (fc.function.user_input_schema or [])
+                ]
 
                 paused_tool_executions.append(
                     ToolExecution(
@@ -2541,12 +2545,16 @@ class Model(ABC):
                 )
             # If the function requires user input, we yield a message to the user
             if fc.function.requires_user_input and not skip_pause_check:
-                user_input_schema = fc.function.user_input_schema
-                if fc.arguments and user_input_schema:
-                    for name, value in fc.arguments.items():
-                        for user_input_field in user_input_schema:
-                            if user_input_field.name == name:
-                                user_input_field.value = value
+                # Copy schema to avoid mutating the shared Function object
+                user_input_schema = [
+                    UserInputField(
+                        name=f.name,
+                        field_type=f.field_type,
+                        description=f.description,
+                        value=fc.arguments.get(f.name) if fc.arguments else None,
+                    )
+                    for f in (fc.function.user_input_schema or [])
+                ]
 
                 paused_tool_executions.append(
                     ToolExecution(

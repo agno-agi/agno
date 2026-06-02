@@ -195,9 +195,10 @@ class Toolkit:
                 return
 
             # User input config from toolkit-level dict
+            # None = not configured, [] = exclude all fields from LLM schema
             user_input_config = self.requires_user_input_tools.get(tool_name)
             requires_user_input = user_input_config is not None
-            user_input_fields = user_input_config if user_input_config else None
+            user_input_fields = user_input_config
 
             f = Function(
                 name=tool_name,

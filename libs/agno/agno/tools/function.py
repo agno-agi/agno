@@ -469,7 +469,9 @@ class Function(BaseModel):
             if self.requires_user_input:
                 _excluded_framework_params = list(excluded_params)
 
-            if self.requires_user_input and self.user_input_fields:
+            # user_input_fields=[] means exclude ALL params from LLM schema
+            # user_input_fields=["x"] means exclude only "x" from LLM schema
+            if self.requires_user_input and self.user_input_fields is not None:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
                 else:
@@ -496,19 +498,31 @@ class Function(BaseModel):
                             param_descriptions[param_name] = param.description or ""
                         param_descriptions_clean[param_name] = param.description or ""
 
-            # If the function requires user input, set user_input_schema to all parameters
-            # except framework-injected ones (using the snapshot taken before user_input_fields
-            # were added to excluded_params, since those should remain in the schema).
+            # If the function requires user input, set user_input_schema to specified fields
+            # or all parameters if no specific fields are specified.
             if self.requires_user_input:
-                self.user_input_schema = [
-                    UserInputField(
-                        name=name,
-                        description=param_descriptions_clean.get(name),
-                        field_type=type_hints.get(name, str),
-                    )
-                    for name in sig.parameters
-                    if name not in _excluded_framework_params
-                ]
+                # If user_input_fields specified, only include those fields
+                if self.user_input_fields:
+                    self.user_input_schema = [
+                        UserInputField(
+                            name=name,
+                            description=param_descriptions_clean.get(name),
+                            field_type=type_hints.get(name, str),
+                        )
+                        for name in sig.parameters
+                        if name in self.user_input_fields
+                    ]
+                else:
+                    # No specific fields — include all non-framework params
+                    self.user_input_schema = [
+                        UserInputField(
+                            name=name,
+                            description=param_descriptions_clean.get(name),
+                            field_type=type_hints.get(name, str),
+                        )
+                        for name in sig.parameters
+                        if name not in _excluded_framework_params
+                    ]
 
             # Get JSON schema for parameters only
             parameters = get_json_schema(
