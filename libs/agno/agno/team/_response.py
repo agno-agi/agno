@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
@@ -1324,6 +1325,27 @@ def _handle_model_response_chunk(
                 if not model_response_event.run_id:  # type: ignore
                     model_response_event.run_id = run_response.run_id  # type: ignore
 
+            # Skip terminals — their content is a summary string, not a streaming delta.
+            if not parse_structured_output and team._member_response_model is None:
+                event_name = getattr(model_response_event, "event", "")
+                is_terminal = event_name in {
+                    "RunCompleted",
+                    "RunCancelled",
+                    "RunError",
+                    "TeamRunCompleted",
+                    "TeamRunCancelled",
+                    "TeamRunError",
+                }
+                if (
+                    not is_terminal
+                    and hasattr(model_response_event, "content")
+                    and isinstance(model_response_event.content, str)
+                ):
+                    if run_response.content is None:
+                        run_response.content = model_response_event.content
+                    elif isinstance(run_response.content, str):
+                        run_response.content += model_response_event.content
+
             # We just bubble the event up
             yield handle_event(  # type: ignore
                 model_response_event,  # type: ignore
@@ -1368,6 +1390,7 @@ def _handle_model_response_chunk(
                     run_response.content_type = content_type
                 elif isinstance(model_response_event.content, str):
                     full_model_response.content = (full_model_response.content or "") + model_response_event.content
+                    run_response.content = full_model_response.content
                 should_yield = True
 
             # Process reasoning content
@@ -1741,6 +1764,8 @@ def generate_team_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1771,6 +1796,8 @@ async def agenerate_team_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1810,6 +1837,8 @@ def generate_team_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1857,6 +1886,8 @@ async def agenerate_team_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         accumulate_model_metrics(model_response, model, ModelType.FOLLOWUP_MODEL, run_response.metrics)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
