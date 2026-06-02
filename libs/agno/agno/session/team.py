@@ -57,8 +57,9 @@ class TeamSession:
             return None
 
         summary = data.get("summary")
+        summary_obj = summary
         if summary is not None and isinstance(summary, dict):
-            data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
+            summary_obj = SessionSummary.from_dict(summary)
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
@@ -80,7 +81,7 @@ class TeamSession:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
-            summary=data.get("summary"),
+            summary=summary_obj,
         )
 
     def get_run(self, run_id: str) -> Optional[Union[TeamRunOutput, RunOutput]]:
@@ -265,7 +266,9 @@ class TeamSession:
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return self.get_messages(skip_roles=["system", "tool"], skip_member_messages=True, last_n_runs=last_n_runs)
+        return self.get_messages(
+            skip_roles=["system", "tool"], skip_member_messages=True, skip_statuses=[], last_n_runs=last_n_runs
+        )
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""

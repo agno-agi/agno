@@ -145,6 +145,14 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     return token == settings.os_security_key
 
 
+def build_insufficient_permissions_detail(required_scopes: Optional[List[str]]) -> str:
+    """Format a 403 detail string, appending the required scope(s) when known."""
+    base = "Insufficient permissions"
+    if required_scopes:
+        return f"{base}. Required scope(s): {', '.join(required_scopes)}"
+    return base
+
+
 def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     """
     Get the set of resource IDs the user has access to based on their scopes.
@@ -189,8 +197,19 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     # Get user's scopes from request state (set by JWT middleware)
     user_scopes = getattr(request.state, "scopes", [])
 
+    # Honour any custom admin_scope configured on JWTMiddleware (set on
+    # request.state by the middleware). Without this, list endpoints reject
+    # custom-admin tokens with 403 even though check_resource_access would
+    # accept them.
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+
     # Get accessible resource IDs
-    accessible_ids = get_accessible_resource_ids(user_scopes=user_scopes, resource_type=resource_type)
+    accessible_ids = get_accessible_resource_ids(
+        user_scopes=user_scopes,
+        resource_type=resource_type,
+        admin_scope=admin_scope,
+    )
 
     return accessible_ids
 
@@ -236,7 +255,7 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
 
 def check_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
     """
-    Check if user has access to a specific resource.
+    Check if user has access to a specific resource for a specific action.
 
     Args:
         request: The FastAPI request object
@@ -252,14 +271,26 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
             raise HTTPException(status_code=403, detail="Access denied")
 
     Examples:
-        >>> # Token scopes: ["agent-os:my-os:agents:my-agent:read", "agent-os:my-os:agents:my-agent:run"]
+        >>> # Token scopes: ["agents:my-agent:read", "agents:my-agent:run"]
         >>> check_resource_access(request, "my-agent", "agents", "run")
         True
 
-        >>> check_resource_access(request, "other-agent", "agents", "run")
+        >>> # Token scopes: ["agents:my-agent:read"] (no run scope)
+        >>> check_resource_access(request, "my-agent", "agents", "run")
         False
     """
-    accessible_ids = get_accessible_resources(request, resource_type)
+    user_scopes = getattr(request.state, "scopes", [])
+    # Honour the configured admin scope (set by JWTMiddleware on request.state)
+    # so custom-admin tokens are recognised here too. Non-string values (e.g.
+    # MagicMock attributes in tests) are ignored.
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    accessible_ids = get_accessible_resource_ids(
+        user_scopes=user_scopes,
+        resource_type=resource_type,
+        action=action,
+        admin_scope=admin_scope,
+    )
 
     # Wildcard access grants all permissions
     if "*" in accessible_ids:
