@@ -114,6 +114,10 @@ class GoogleDocsTools(GoogleToolkit):
         export_as_pdf: bool = False,
         export_dir: Union[str, Path] = Path("."),
         delete_document: bool = False,
+        # Enterprise features
+        replace_text: bool = False,
+        copy_document: bool = False,
+        insert_image: bool = False,
         all: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
@@ -144,6 +148,16 @@ class GoogleDocsTools(GoogleToolkit):
         if all or delete_document:
             tools.append(self.delete_document)
             async_tools.append((self.adelete_document, "delete_document"))
+        # Enterprise features
+        if all or replace_text:
+            tools.append(self.replace_text)
+            async_tools.append((self.areplace_text, "replace_text"))
+        if all or copy_document:
+            tools.append(self.copy_document)
+            async_tools.append((self.acopy_document, "copy_document"))
+        if all or insert_image:
+            tools.append(self.insert_image)
+            async_tools.append((self.ainsert_image, "insert_image"))
 
         if instructions is None:
             instructions = DOCS_INSTRUCTIONS
@@ -456,3 +470,215 @@ class GoogleDocsTools(GoogleToolkit):
     async def adelete_document(self, document_id: str) -> str:
         """Move a Google Doc to the Drive trash (async)."""
         return await asyncio.to_thread(self.delete_document, document_id=document_id)
+
+    @authenticate
+    def replace_text(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        document_id: str,
+        replacements: Dict[str, str],
+        match_case: bool = True,
+    ) -> str:
+        """
+        Replace placeholder text throughout a document (mail merge).
+
+        Args:
+            document_id (str): The Google Doc ID
+            replacements (dict): Mapping of text to find -> replacement text
+                Example: {"{{NAME}}": "John", "{{DATE}}": "2025-01-15"}
+            match_case (bool): Whether to match case exactly (default: True)
+
+        Returns:
+            str: JSON with count of replacements made
+        """
+        try:
+            service = self.docs_service
+
+            requests = []
+            for find_text, replace_with in replacements.items():
+                requests.append(
+                    {
+                        "replaceAllText": {
+                            "containsText": {
+                                "text": find_text,
+                                "matchCase": match_case,
+                            },
+                            "replaceText": replace_with,
+                        }
+                    }
+                )
+
+            result = service.documents().batchUpdate(documentId=document_id, body={"requests": requests}).execute()
+
+            # Count total replacements across all operations
+            total_replaced = 0
+            for reply in result.get("replies", []):
+                if "replaceAllText" in reply:
+                    total_replaced += reply["replaceAllText"].get("occurrencesChanged", 0)
+
+            return json.dumps(
+                {
+                    "document_id": document_id,
+                    "replacements_made": total_replaced,
+                    "patterns_searched": len(replacements),
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Docs API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not replace text in {document_id}: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def areplace_text(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        document_id: str,
+        replacements: Dict[str, str],
+        match_case: bool = True,
+    ) -> str:
+        """Replace placeholder text throughout a document (async)."""
+        return await asyncio.to_thread(self.replace_text, agent, run_context, document_id, replacements, match_case)
+
+    @authenticate
+    def copy_document(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        document_id: str,
+        new_title: Optional[str] = None,
+    ) -> str:
+        """
+        Create a copy of a Google Doc (template duplication).
+
+        Args:
+            document_id (str): The Google Doc ID to copy
+            new_title (str): Title for the new document. If None, uses "Copy of <original>"
+
+        Returns:
+            str: JSON with new document ID and URL
+        """
+        try:
+            drive_service = self.drive_service
+
+            body: Dict[str, Any] = {}
+            if new_title:
+                body["name"] = new_title
+
+            copied = drive_service.files().copy(fileId=document_id, body=body, fields="id,name,webViewLink").execute()
+
+            return json.dumps(
+                {
+                    "id": copied.get("id"),
+                    "name": copied.get("name"),
+                    "url": copied.get("webViewLink"),
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not copy document {document_id}: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def acopy_document(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        document_id: str,
+        new_title: Optional[str] = None,
+    ) -> str:
+        """Create a copy of a Google Doc (async)."""
+        return await asyncio.to_thread(self.copy_document, agent, run_context, document_id, new_title)
+
+    @authenticate
+    def insert_image(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        document_id: str,
+        image_url: str,
+        index: int = 1,
+        width_pts: Optional[float] = None,
+        height_pts: Optional[float] = None,
+    ) -> str:
+        """
+        Insert an image into a Google Doc at a specific position.
+
+        Args:
+            document_id (str): The Google Doc ID
+            image_url (str): Public URL of the image to insert
+            index (int): Character index where to insert (1 = beginning)
+            width_pts (float): Optional width in points (72 pts = 1 inch)
+            height_pts (float): Optional height in points
+
+        Returns:
+            str: JSON confirming insertion
+        """
+        try:
+            service = self.docs_service
+
+            inline_object_properties: Dict[str, Any] = {
+                "embeddedObject": {
+                    "imageProperties": {
+                        "sourceUri": image_url,
+                    }
+                }
+            }
+
+            if width_pts is not None or height_pts is not None:
+                size: Dict[str, Any] = {}
+                if width_pts is not None:
+                    size["width"] = {"magnitude": width_pts, "unit": "PT"}
+                if height_pts is not None:
+                    size["height"] = {"magnitude": height_pts, "unit": "PT"}
+                inline_object_properties["embeddedObject"]["size"] = size
+
+            request = {
+                "insertInlineImage": {
+                    "uri": image_url,
+                    "location": {"index": index},
+                }
+            }
+
+            if width_pts is not None or height_pts is not None:
+                object_size: Dict[str, Any] = {}
+                if width_pts is not None:
+                    object_size["width"] = {"magnitude": width_pts, "unit": "PT"}
+                if height_pts is not None:
+                    object_size["height"] = {"magnitude": height_pts, "unit": "PT"}
+                request["insertInlineImage"]["objectSize"] = object_size
+
+            service.documents().batchUpdate(documentId=document_id, body={"requests": [request]}).execute()
+
+            return json.dumps(
+                {
+                    "document_id": document_id,
+                    "status": "image_inserted",
+                    "image_url": image_url,
+                    "index": index,
+                }
+            )
+
+        except HttpError as e:
+            return json.dumps({"error": f"Google Docs API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not insert image in {document_id}: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def ainsert_image(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        document_id: str,
+        image_url: str,
+        index: int = 1,
+        width_pts: Optional[float] = None,
+        height_pts: Optional[float] = None,
+    ) -> str:
+        """Insert an image into a Google Doc (async)."""
+        return await asyncio.to_thread(
+            self.insert_image, agent, run_context, document_id, image_url, index, width_pts, height_pts
+        )

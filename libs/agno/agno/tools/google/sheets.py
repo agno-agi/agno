@@ -87,10 +87,21 @@ class GoogleSheetsTools(GoogleToolkit):
         token_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         oauth_port: int = 0,
+        # Basic operations
         read_sheet: bool = True,
         create_sheet: bool = False,
         update_sheet: bool = False,
         create_duplicate_sheet: bool = False,
+        # Enterprise features
+        append_rows: bool = False,
+        get_spreadsheet_info: bool = False,
+        add_sheet_tab: bool = False,
+        delete_sheet_tab: bool = False,
+        batch_update_values: bool = False,
+        format_cells: bool = False,
+        freeze_rows_columns: bool = False,
+        auto_resize_columns: bool = False,
+        clear_range: bool = False,
         # Backward compat aliases (deprecated)
         enable_read_sheet: Optional[bool] = None,
         enable_create_sheet: Optional[bool] = None,
@@ -132,26 +143,45 @@ class GoogleSheetsTools(GoogleToolkit):
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
 
+        # Determine which enterprise features need write scope
+        write_features = (
+            _create_sheet
+            or _update_sheet
+            or _create_duplicate_sheet
+            or append_rows
+            or add_sheet_tab
+            or delete_sheet_tab
+            or batch_update_values
+            or format_cells
+            or freeze_rows_columns
+            or auto_resize_columns
+            or clear_range
+        )
+        read_only_features = _read_sheet or get_spreadsheet_info
+
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
             resolved_scopes: List[str] = []
-            if _read_sheet:
+            if read_only_features:
                 resolved_scopes.append(self.default_scopes["read"])
-            if _create_sheet or _update_sheet or _create_duplicate_sheet:
+            if write_features:
                 resolved_scopes.append(self.default_scopes["write"])
             scopes = list(dict.fromkeys(resolved_scopes))
         else:
             # Validate that required scopes are present for requested operations
-            if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.default_scopes[
-                "write"
-            ] not in scopes:
+            if write_features and self.default_scopes["write"] not in scopes:
                 raise ValueError(f"The scope {self.default_scopes['write']} is required for write operations")
-            if _read_sheet and self.default_scopes["read"] not in scopes and self.default_scopes["write"] not in scopes:
+            if (
+                read_only_features
+                and self.default_scopes["read"] not in scopes
+                and self.default_scopes["write"] not in scopes
+            ):
                 raise ValueError(
                     f"Either {self.default_scopes['read']} or {self.default_scopes['write']} is required for read operations"
                 )
 
         tools: List[Any] = []
+        # Basic operations
         if all or _read_sheet:
             tools.append(self.read_sheet)
         if all or _create_sheet:
@@ -160,6 +190,25 @@ class GoogleSheetsTools(GoogleToolkit):
             tools.append(self.update_sheet)
         if all or _create_duplicate_sheet:
             tools.append(self.create_duplicate_sheet)
+        # Enterprise features
+        if all or append_rows:
+            tools.append(self.append_rows)
+        if all or get_spreadsheet_info:
+            tools.append(self.get_spreadsheet_info)
+        if all or add_sheet_tab:
+            tools.append(self.add_sheet_tab)
+        if all or delete_sheet_tab:
+            tools.append(self.delete_sheet_tab)
+        if all or batch_update_values:
+            tools.append(self.batch_update_values)
+        if all or format_cells:
+            tools.append(self.format_cells)
+        if all or freeze_rows_columns:
+            tools.append(self.freeze_rows_columns)
+        if all or auto_resize_columns:
+            tools.append(self.auto_resize_columns)
+        if all or clear_range:
+            tools.append(self.clear_range)
 
         super().__init__(
             name="google_sheets_tools",
@@ -345,3 +394,468 @@ class GoogleSheetsTools(GoogleToolkit):
             return f"Spreadsheet duplicated successfully: https://docs.google.com/spreadsheets/d/{new_spreadsheet_id}"
         except Exception as e:
             return f"Error duplicating spreadsheet via Drive API: {e}"
+
+    @authenticate
+    def append_rows(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        data: List[List[Any]],
+        spreadsheet_id: str,
+        sheet_name: str = "Sheet1",
+    ) -> str:
+        """Append rows to the end of existing data in a sheet.
+
+        Unlike update_sheet, this finds the next empty row and adds data there
+        without overwriting existing content.
+
+        Args:
+            data: Rows to append, e.g. [["Name", "Email"], ["Alice", "alice@example.com"]]
+            spreadsheet_id: The spreadsheet ID
+            sheet_name: The sheet tab name (default: "Sheet1")
+
+        Returns:
+            Number of rows appended and the range updated
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            result = (
+                self.service.spreadsheets()
+                .values()
+                .append(
+                    spreadsheetId=spreadsheet_id,
+                    range=f"{sheet_name}!A:Z",
+                    valueInputOption="USER_ENTERED",
+                    insertDataOption="INSERT_ROWS",
+                    body={"values": data},
+                )
+                .execute()
+            )
+
+            updates = result.get("updates", {})
+            rows = updates.get("updatedRows", len(data))
+            updated_range = updates.get("updatedRange", "")
+
+            return f"Appended {rows} rows to {updated_range}"
+
+        except Exception as e:
+            return f"Error appending rows: {e}"
+
+    @authenticate
+    def get_spreadsheet_info(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: str,
+    ) -> str:
+        """Get metadata about a spreadsheet including all sheet names and row counts.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+
+        Returns:
+            JSON with title, sheets (name, row count, column count for each)
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            result = (
+                self.service.spreadsheets()
+                .get(
+                    spreadsheetId=spreadsheet_id,
+                    fields="properties.title,sheets(properties(sheetId,title,gridProperties))",
+                )
+                .execute()
+            )
+
+            info = {
+                "title": result.get("properties", {}).get("title", ""),
+                "spreadsheet_id": spreadsheet_id,
+                "url": f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}",
+                "sheets": [],
+            }
+
+            for sheet in result.get("sheets", []):
+                props = sheet.get("properties", {})
+                grid = props.get("gridProperties", {})
+                info["sheets"].append(
+                    {
+                        "name": props.get("title", ""),
+                        "sheet_id": props.get("sheetId"),
+                        "rows": grid.get("rowCount", 0),
+                        "columns": grid.get("columnCount", 0),
+                    }
+                )
+
+            return json.dumps(info, indent=2)
+
+        except Exception as e:
+            return f"Error getting spreadsheet info: {e}"
+
+    @authenticate
+    def add_sheet_tab(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: str,
+        title: str,
+    ) -> str:
+        """Add a new sheet tab to an existing spreadsheet.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            title: Name for the new sheet tab
+
+        Returns:
+            The new sheet's ID and name
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            request = {"requests": [{"addSheet": {"properties": {"title": title}}}]}
+
+            result = (
+                self.service.spreadsheets()
+                .batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body=request,
+                )
+                .execute()
+            )
+
+            replies = result.get("replies", [{}])
+            new_sheet = replies[0].get("addSheet", {}).get("properties", {})
+
+            return f"Added sheet '{new_sheet.get('title')}' (ID: {new_sheet.get('sheetId')})"
+
+        except Exception as e:
+            return f"Error adding sheet tab: {e}"
+
+    @authenticate
+    def delete_sheet_tab(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: str,
+        sheet_id: int,
+    ) -> str:
+        """Delete a sheet tab from a spreadsheet.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_id: The numeric sheet ID (from get_spreadsheet_info)
+
+        Returns:
+            Confirmation message
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            request = {"requests": [{"deleteSheet": {"sheetId": sheet_id}}]}
+
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=request,
+            ).execute()
+
+            return f"Deleted sheet with ID {sheet_id}"
+
+        except Exception as e:
+            return f"Error deleting sheet tab: {e}"
+
+    @authenticate
+    def batch_update_values(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: str,
+        updates: List[Dict[str, Any]],
+    ) -> str:
+        """Update multiple ranges in a single API call.
+
+        More efficient than multiple update_sheet calls.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            updates: List of {"range": "Sheet1!A1:B2", "values": [[1, 2], [3, 4]]}
+
+        Returns:
+            Summary of updates applied
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            body = {
+                "valueInputOption": "USER_ENTERED",
+                "data": updates,
+            }
+
+            result = (
+                self.service.spreadsheets()
+                .values()
+                .batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body=body,
+                )
+                .execute()
+            )
+
+            total = result.get("totalUpdatedCells", 0)
+            ranges = result.get("totalUpdatedSheets", len(updates))
+
+            return f"Updated {total} cells across {ranges} ranges"
+
+        except Exception as e:
+            return f"Error in batch update: {e}"
+
+    @authenticate
+    def format_cells(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: str,
+        sheet_id: int,
+        start_row: int,
+        start_col: int,
+        end_row: int,
+        end_col: int,
+        bold: Optional[bool] = None,
+        italic: Optional[bool] = None,
+        font_size: Optional[int] = None,
+        background_color: Optional[Dict[str, float]] = None,
+        text_color: Optional[Dict[str, float]] = None,
+        horizontal_alignment: Optional[str] = None,
+        number_format: Optional[str] = None,
+    ) -> str:
+        """Apply formatting to a range of cells.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_id: Numeric sheet ID (from get_spreadsheet_info)
+            start_row: Starting row (0-indexed)
+            start_col: Starting column (0-indexed)
+            end_row: Ending row (exclusive)
+            end_col: Ending column (exclusive)
+            bold: Make text bold
+            italic: Make text italic
+            font_size: Font size in points
+            background_color: RGB dict like {"red": 1.0, "green": 0.9, "blue": 0.8}
+            text_color: RGB dict for text color
+            horizontal_alignment: "LEFT", "CENTER", or "RIGHT"
+            number_format: Format pattern like "#,##0.00" or "0%"
+
+        Returns:
+            Confirmation message
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            cell_format: Dict[str, Any] = {}
+            fields = []
+
+            if bold is not None or italic is not None or font_size is not None:
+                text_format: Dict[str, Any] = {}
+                if bold is not None:
+                    text_format["bold"] = bold
+                    fields.append("userEnteredFormat.textFormat.bold")
+                if italic is not None:
+                    text_format["italic"] = italic
+                    fields.append("userEnteredFormat.textFormat.italic")
+                if font_size is not None:
+                    text_format["fontSize"] = font_size
+                    fields.append("userEnteredFormat.textFormat.fontSize")
+                cell_format["textFormat"] = text_format
+
+            if background_color is not None:
+                cell_format["backgroundColor"] = background_color
+                fields.append("userEnteredFormat.backgroundColor")
+
+            if text_color is not None:
+                if "textFormat" not in cell_format:
+                    cell_format["textFormat"] = {}
+                cell_format["textFormat"]["foregroundColor"] = text_color
+                fields.append("userEnteredFormat.textFormat.foregroundColor")
+
+            if horizontal_alignment is not None:
+                cell_format["horizontalAlignment"] = horizontal_alignment
+                fields.append("userEnteredFormat.horizontalAlignment")
+
+            if number_format is not None:
+                cell_format["numberFormat"] = {"type": "NUMBER", "pattern": number_format}
+                fields.append("userEnteredFormat.numberFormat")
+
+            if not fields:
+                return "No formatting options specified"
+
+            request = {
+                "requests": [
+                    {
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": start_row,
+                                "endRowIndex": end_row,
+                                "startColumnIndex": start_col,
+                                "endColumnIndex": end_col,
+                            },
+                            "cell": {"userEnteredFormat": cell_format},
+                            "fields": ",".join(fields),
+                        }
+                    }
+                ]
+            }
+
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=request,
+            ).execute()
+
+            return f"Applied formatting to rows {start_row}-{end_row}, columns {start_col}-{end_col}"
+
+        except Exception as e:
+            return f"Error formatting cells: {e}"
+
+    @authenticate
+    def freeze_rows_columns(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: str,
+        sheet_id: int,
+        frozen_rows: int = 0,
+        frozen_columns: int = 0,
+    ) -> str:
+        """Freeze rows and/or columns in a sheet (for headers).
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_id: Numeric sheet ID
+            frozen_rows: Number of rows to freeze from top (0 to unfreeze)
+            frozen_columns: Number of columns to freeze from left (0 to unfreeze)
+
+        Returns:
+            Confirmation message
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            request = {
+                "requests": [
+                    {
+                        "updateSheetProperties": {
+                            "properties": {
+                                "sheetId": sheet_id,
+                                "gridProperties": {
+                                    "frozenRowCount": frozen_rows,
+                                    "frozenColumnCount": frozen_columns,
+                                },
+                            },
+                            "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+                        }
+                    }
+                ]
+            }
+
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=request,
+            ).execute()
+
+            parts = []
+            if frozen_rows > 0:
+                parts.append(f"{frozen_rows} row(s)")
+            if frozen_columns > 0:
+                parts.append(f"{frozen_columns} column(s)")
+
+            if parts:
+                return f"Froze {' and '.join(parts)}"
+            return "Unfroze all rows and columns"
+
+        except Exception as e:
+            return f"Error freezing rows/columns: {e}"
+
+    @authenticate
+    def auto_resize_columns(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: str,
+        sheet_id: int,
+        start_column: int = 0,
+        end_column: Optional[int] = None,
+    ) -> str:
+        """Auto-resize columns to fit their content.
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            sheet_id: Numeric sheet ID
+            start_column: First column to resize (0-indexed)
+            end_column: Last column to resize (exclusive, None = all)
+
+        Returns:
+            Confirmation message
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            dimension_range: Dict[str, Any] = {
+                "sheetId": sheet_id,
+                "dimension": "COLUMNS",
+                "startIndex": start_column,
+            }
+            if end_column is not None:
+                dimension_range["endIndex"] = end_column
+
+            request = {"requests": [{"autoResizeDimensions": {"dimensions": dimension_range}}]}
+
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body=request,
+            ).execute()
+
+            if end_column:
+                return f"Auto-resized columns {start_column} to {end_column - 1}"
+            return f"Auto-resized columns starting from {start_column}"
+
+        except Exception as e:
+            return f"Error auto-resizing columns: {e}"
+
+    @authenticate
+    def clear_range(
+        self,
+        agent: Agent,
+        run_context: RunContext,
+        spreadsheet_id: str,
+        range_name: str,
+    ) -> str:
+        """Clear all values in a range (keeps formatting).
+
+        Args:
+            spreadsheet_id: The spreadsheet ID
+            range_name: A1 notation range like "Sheet1!A1:D10"
+
+        Returns:
+            Confirmation message
+        """
+        if not self.service:
+            return "Not authenticated. Call auth() first."
+
+        try:
+            self.service.spreadsheets().values().clear(
+                spreadsheetId=spreadsheet_id,
+                range=range_name,
+            ).execute()
+
+            return f"Cleared values in {range_name}"
+
+        except Exception as e:
+            return f"Error clearing range: {e}"
