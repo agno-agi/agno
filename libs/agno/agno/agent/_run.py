@@ -995,6 +995,12 @@ def _run_stream(
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # Set PAUSED status immediately if any tool is paused, BEFORE any more yields.
+                # This ensures _handle_run_cancellation respects the PAUSED state if the
+                # consumer closes the stream during subsequent yields (parser, followups, etc.)
+                if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    run_response.status = RunStatus.paused
+
                 # 7. Parse response with parser model if provided
                 for event in parse_response_with_parser_model_stream(
                     agent,  # type: ignore
@@ -2394,6 +2400,12 @@ async def _arun_stream(
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Set PAUSED status immediately if any tool is paused, BEFORE any more yields.
+                # This ensures _handle_run_cancellation respects the PAUSED state if the
+                # consumer closes the stream during subsequent yields (parser, followups, etc.)
+                if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    run_response.status = RunStatus.paused
 
                 # 10. Parse response with parser model if provided
                 async for event in aparse_response_with_parser_model_stream(
@@ -4692,6 +4704,12 @@ async def _acontinue_run_stream(
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Set PAUSED status immediately if any tool is paused, BEFORE any more yields.
+                # This ensures _handle_run_cancellation respects the PAUSED state if the
+                # consumer closes the stream during subsequent yields (parser, followups, etc.)
+                if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    run_response.status = RunStatus.paused
 
                 # Parse response with parser model if provided
                 async for event in aparse_response_with_parser_model_stream(
