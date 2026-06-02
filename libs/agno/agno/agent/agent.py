@@ -210,6 +210,10 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If True, automatically add uploaded file IDs/filenames to session_state
+    # when send_media_to_model is False. This allows the agent to know which
+    # files are available for tool calls even though they are not sent to the model.
+    add_file_ids_to_session_state: bool = False
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output.
@@ -412,6 +416,7 @@ class Agent:
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
+        add_file_ids_to_session_state: bool = False,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,
@@ -565,6 +570,7 @@ class Agent:
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
         self.store_media = store_media
+        self.add_file_ids_to_session_state = add_file_ids_to_session_state
         self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
 

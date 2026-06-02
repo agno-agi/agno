@@ -600,6 +600,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["send_media_to_model"] = agent.send_media_to_model
     if not agent.store_media:
         config["store_media"] = agent.store_media
+    if agent.add_file_ids_to_session_state:
+        config["add_file_ids_to_session_state"] = agent.add_file_ids_to_session_state
     if not agent.store_tool_messages:
         config["store_tool_messages"] = agent.store_tool_messages
     if agent.store_history_messages:
@@ -935,6 +937,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         read_tool_call_history=config.get("read_tool_call_history", False),
         send_media_to_model=config.get("send_media_to_model", True),
         store_media=config.get("store_media", True),
+        add_file_ids_to_session_state=config.get("add_file_ids_to_session_state", False),
         store_tool_messages=config.get("store_tool_messages", True),
         store_history_messages=config.get("store_history_messages", False),
         # --- System message settings ---

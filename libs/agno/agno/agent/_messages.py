@@ -1347,6 +1347,35 @@ def get_run_messages(
                 except Exception as e:
                     log_warning(f"Failed to validate message: {str(e)}")
 
+    # Add uploaded file metadata to session_state when the agent is configured to
+    # track files but not send them to the model. This lets the agent know which
+    # files are available for tool calls.
+    if (
+        run_context is not None
+        and not agent.send_media_to_model
+        and agent.add_file_ids_to_session_state
+        and files
+    ):
+        file_list = []
+        for f in files:
+            if hasattr(f, "id") or hasattr(f, "filename"):
+                file_list.append(
+                    {
+                        k: v
+                        for k, v in {
+                            "file_id": getattr(f, "id", None),
+                            "filename": getattr(f, "filename", None),
+                            "url": getattr(f, "url", None),
+                        }.items()
+                        if v is not None
+                    }
+                )
+        if file_list:
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            existing = run_context.session_state.get("files", [])
+            run_context.session_state["files"] = existing + file_list
+
     # Add user message to run_messages
     if user_message is not None:
         run_messages.user_message = user_message
@@ -1551,6 +1580,35 @@ async def aget_run_messages(
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
                     log_warning(f"Failed to validate message: {str(e)}")
+
+    # Add uploaded file metadata to session_state when the agent is configured to
+    # track files but not send them to the model. This lets the agent know which
+    # files are available for tool calls.
+    if (
+        run_context is not None
+        and not agent.send_media_to_model
+        and agent.add_file_ids_to_session_state
+        and files
+    ):
+        file_list = []
+        for f in files:
+            if hasattr(f, "id") or hasattr(f, "filename"):
+                file_list.append(
+                    {
+                        k: v
+                        for k, v in {
+                            "file_id": getattr(f, "id", None),
+                            "filename": getattr(f, "filename", None),
+                            "url": getattr(f, "url", None),
+                        }.items()
+                        if v is not None
+                    }
+                )
+        if file_list:
+            if run_context.session_state is None:
+                run_context.session_state = {}
+            existing = run_context.session_state.get("files", [])
+            run_context.session_state["files"] = existing + file_list
 
     # Add user message to run_messages
     if user_message is not None:
