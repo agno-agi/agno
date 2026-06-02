@@ -137,10 +137,13 @@ def test_read_with_chunking(csv_reader, csv_file):
 async def test_async_read_path(csv_reader, csv_file):
     documents = await csv_reader.async_read(csv_file)
 
-    assert len(documents) == 1
+    # RowChunking splits newline-joined content into one doc per row
+    assert len(documents) == 4
     assert documents[0].name == "test"
-    assert documents[0].id.endswith("_1")
-    assert documents[0].content == "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago"
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "John, 30, New York"
+    assert documents[2].content == "Jane, 25, San Francisco"
+    assert documents[3].content == "Bob, 40, Chicago"
 
 
 @pytest.fixture
@@ -167,26 +170,25 @@ row10,39,City10"""
 async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
     documents = await csv_reader.async_read(multi_page_csv_file, page_size=5)
 
-    assert len(documents) == 3
-
-    # Check first page
+    # RowChunking splits newline-joined content into one doc per row (11 rows total)
+    assert len(documents) == 11
     assert documents[0].name == "multi_page"
-    assert documents[0].id is not None and isinstance(documents[0].id, str)
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "row1, 30, City1"
+    assert documents[10].content == "row10, 39, City10"
+
+    # Pagination metadata should still be present on chunked docs from page 1
     assert documents[0].meta_data["page"] == 1
     assert documents[0].meta_data["start_row"] == 1
     assert documents[0].meta_data["rows"] == 5
-
-    # Check second page
-    assert documents[1].id is not None and isinstance(documents[1].id, str)
-    assert documents[1].meta_data["page"] == 2
-    assert documents[1].meta_data["start_row"] == 6
-    assert documents[1].meta_data["rows"] == 5
-
-    # Check third page
-    assert documents[2].id is not None and isinstance(documents[2].id, str)
-    assert documents[2].meta_data["page"] == 3
-    assert documents[2].meta_data["start_row"] == 11
-    assert documents[2].meta_data["rows"] == 1
+    # Docs from page 2 (rows 6-10)
+    assert documents[5].meta_data["page"] == 2
+    assert documents[5].meta_data["start_row"] == 6
+    assert documents[5].meta_data["rows"] == 5
+    # Doc from page 3 (row 11)
+    assert documents[10].meta_data["page"] == 3
+    assert documents[10].meta_data["start_row"] == 11
+    assert documents[10].meta_data["rows"] == 1
 
 
 @pytest.mark.asyncio

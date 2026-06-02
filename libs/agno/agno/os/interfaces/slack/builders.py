@@ -38,6 +38,7 @@ from agno.os.interfaces.slack.types import (
     block_to_dict,
     tool_args,
     tool_name,
+    truncate,
 )
 from agno.run.requirement import RunRequirement
 from agno.utils.serialize import json_serializer
@@ -184,6 +185,8 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
     # Format args as bullet points in body (not subtitle which truncates)
     body_lines = [f"• {k}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
     body_text = "\n".join(body_lines) if body_lines else "_(no arguments)_"
+    # Slack Block Kit section text has ~200 char limit; truncate to prevent silent card rejection
+    body_text = truncate(body_text, 200)
     return Card(
         block_id=f"rowact:{req_id}:confirmation",
         title=MarkdownTextObject(text=f"*{name}*"),
@@ -216,6 +219,8 @@ def build_confirmation_toggle_card(
 ) -> Card:
     button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
     is_approved = selected == "approve"
+    # Slack Block Kit section text has ~200 char limit
+    body_text = truncate(body_text, 200)
 
     approve_btn = ButtonElement(
         action_id=ACTION_ROW_APPROVE,
