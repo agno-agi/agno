@@ -9,6 +9,10 @@ Set the SLACK_TOKEN environment variable before running.
 Supported canvas markdown: headings, bold, italic, strikethrough, inline code,
 bullet/numbered lists, checklists (- [ ] / - [x]), code blocks, links, emojis,
 blockquotes, tables (max 300 cells), and horizontal rules.
+
+Note: list_canvases uses files.list which only returns channel canvases.
+Standalone canvases (created via create_canvas) need their canvas_id saved
+or use create_channel_canvas to attach them to a channel for discovery.
 """
 
 from agno.agent import Agent
@@ -21,18 +25,16 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    # Create a canvas with rich content
+    # Create a canvas and immediately edit it using the returned canvas_id
     agent.print_response(
-        "Create a canvas titled 'Sprint Planning' with these sections: "
-        "a checklist under '## Tasks' with 3 items, "
-        "a table under '## Timeline' with columns Task/Owner/Status, "
-        "and a '## Notes' section with a blockquote.",
+        "Create a canvas titled 'Sprint Planning' with a '## Tasks' section "
+        "containing 3 checklist items. Then use the canvas_id to add a "
+        "'## Notes' section with a blockquote at the end.",
         stream=True,
     )
 
-    # Read and update an existing canvas
+    # Read and update an existing canvas by ID
     agent.print_response(
-        "List all canvases, read the 'Sprint Planning' canvas, "
-        "then add a new task '- [ ] Write release notes' to the Tasks section.",
+        "Read the RBAC Working Group canvas (F0B7GBTJN91) and summarize its content.",
         stream=True,
     )
