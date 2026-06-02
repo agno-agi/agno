@@ -448,6 +448,10 @@ def test_lookup_canvas_sections_no_filters(canvas_tools):
     canvas_tools.client.canvases_sections_lookup.return_value = {"ok": True, "sections": []}
     result = json.loads(canvas_tools.lookup_canvas_sections("F123"))
     assert result["sections"] == []
+    # Verify that any_header is sent as the default when no filters provided
+    canvas_tools.client.canvases_sections_lookup.assert_called_with(
+        canvas_id="F123", criteria={"section_types": ["any_header"]}
+    )
 
 
 def test_build_instructions_includes_canvas():

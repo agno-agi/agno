@@ -1032,6 +1032,9 @@ class SlackTools(Toolkit):
                 criteria["section_types"] = section_types
             if contains_text:
                 criteria["contains_text"] = contains_text
+            # Slack API requires at least one criterion
+            if not criteria:
+                criteria["section_types"] = ["any_header"]
             response = self.client.canvases_sections_lookup(canvas_id=canvas_id, criteria=criteria)
             return json.dumps({"ok": True, "sections": response.get("sections", [])})
         except SlackApiError as e:
