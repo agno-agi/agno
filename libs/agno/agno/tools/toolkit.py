@@ -291,13 +291,33 @@ class Toolkit:
         external_execution = function.external_execution or tool_name in self.external_execution_required_tools
 
         # User input: decorator takes precedence, then toolkit-level config
+        # Decorator's empty list [] is default, so only override if it's truthy
         user_input_config = self.requires_user_input_tools.get(tool_name)
         requires_user_input = function.requires_user_input or user_input_config is not None
-        user_input_fields = function.user_input_fields or (user_input_config if user_input_config else None)
+        user_input_fields = function.user_input_fields if function.user_input_fields else user_input_config
 
         # Filter user_input_schema if specific fields are requested
         user_input_schema = function.user_input_schema
         parameters = function.parameters
+
+        # Build schema from function parameters if toolkit-level HITL was added
+        # but decorator didn't provide user_input_schema
+        if requires_user_input and user_input_schema is None and function.parameters:
+            from agno.tools.function import UserInputField
+
+            props = function.parameters.get("properties", {})
+            # user_input_fields=[] means all params; specific list means only those
+            fields_to_include = user_input_fields if user_input_fields else list(props.keys())
+            user_input_schema = [
+                UserInputField(
+                    name=name,
+                    field_type=str,
+                    description=props.get(name, {}).get("description"),
+                )
+                for name in fields_to_include
+                if name in props
+            ]
+
         if user_input_fields and user_input_schema:
             user_input_schema = [f for f in user_input_schema if f.name in user_input_fields]
             # Also remove user_input_fields from LLM's parameters so it calls the tool without them
