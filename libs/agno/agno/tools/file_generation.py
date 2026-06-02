@@ -2,13 +2,15 @@ import csv
 import io
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
+from agno.exceptions import PathSecurityError
 from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.path_safety import safe_join_filename, sanitize_filename
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -23,6 +25,16 @@ except ImportError as e:
         f"reportlab not installed. PDF generation will not be available. Install with: pip install reportlab: {str(e)}"
     )
 
+try:
+    from docx import Document
+
+    DOCX_AVAILABLE = True
+except ImportError as e:
+    DOCX_AVAILABLE = False
+    log_warning(
+        f"python-docx not installed. DOCX generation will not be available. Install with: pip install python-docx: {str(e)}"
+    )
+
 
 class FileGenerationTools(Toolkit):
     def __init__(
@@ -30,25 +42,37 @@ class FileGenerationTools(Toolkit):
         enable_json_generation: bool = True,
         enable_csv_generation: bool = True,
         enable_pdf_generation: bool = True,
+        enable_docx_generation: bool = True,
         enable_txt_generation: bool = True,
         output_directory: Optional[str] = None,
+        save_files: bool = False,
         all: bool = False,
         **kwargs,
     ):
         self.enable_json_generation = enable_json_generation
         self.enable_csv_generation = enable_csv_generation
         self.enable_pdf_generation = enable_pdf_generation and PDF_AVAILABLE
+        self.enable_docx_generation = enable_docx_generation and DOCX_AVAILABLE
         self.enable_txt_generation = enable_txt_generation
-        self.output_directory = Path(output_directory) if output_directory else None
+        # output_directory implies save_files=True for backward compatibility
+        self.save_files = save_files or (output_directory is not None)
 
-        # Create output directory if specified
-        if self.output_directory:
+        if self.save_files:
+            self.output_directory: Optional[Path] = (
+                Path(output_directory).resolve() if output_directory else Path.cwd().resolve()
+            )
             self.output_directory.mkdir(parents=True, exist_ok=True)
             log_debug(f"Files will be saved to: {self.output_directory}")
+        else:
+            self.output_directory = None
 
         if enable_pdf_generation and not PDF_AVAILABLE:
             logger.warning("PDF generation requested but reportlab is not installed. Disabling PDF generation.")
             self.enable_pdf_generation = False
+
+        if enable_docx_generation and not DOCX_AVAILABLE:
+            logger.warning("DOCX generation requested but python-docx is not installed. Disabling DOCX generation.")
+            self.enable_docx_generation = False
 
         tools: List[Any] = []
         if all or enable_json_generation:
@@ -57,25 +81,78 @@ class FileGenerationTools(Toolkit):
             tools.append(self.generate_csv_file)
         if all or (enable_pdf_generation and PDF_AVAILABLE):
             tools.append(self.generate_pdf_file)
+        if all or (enable_docx_generation and DOCX_AVAILABLE):
+            tools.append(self.generate_docx_file)
         if all or enable_txt_generation:
             tools.append(self.generate_text_file)
 
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
-    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
-        """Save file to disk if output_directory is set. Return file path or None."""
-        if not self.output_directory:
-            return None
+    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Tuple[Optional[str], Optional[str]]:
+        """Save file to disk within output_directory.
 
-        file_path = self.output_directory / filename
-
-        if isinstance(content, str):
-            file_path.write_text(content, encoding="utf-8")
-        else:
-            file_path.write_bytes(content)
-
+        Returns:
+            Tuple of (saved_path, error_message). If successful, error is None.
+        """
+        try:
+            file_path = safe_join_filename(self.output_directory, filename)  # type: ignore[arg-type]
+            if isinstance(content, str):
+                file_path.write_text(content, encoding="utf-8")
+            else:
+                file_path.write_bytes(content)
+        except (OSError, PathSecurityError) as e:
+            log_warning(f"Failed to save file locally: {str(e)}")
+            return None, str(e)
         log_debug(f"File saved to: {file_path}")
-        return str(file_path)
+        return str(file_path), None
+
+    def _create_file_artifact(
+        self,
+        content: Union[str, bytes],
+        filename: Optional[str],
+        file_type: str,
+        mime_type: str,
+        display_name: str,
+    ) -> ToolResult:
+        """Build a File artifact and optionally save to disk."""
+        # Resolve filename: default if empty, ensure correct extension
+        if not filename:
+            filename = f"generated_file_{str(uuid4())[:8]}.{file_type}"
+        elif not filename.endswith(f".{file_type}"):
+            filename += f".{file_type}"
+        file_name = sanitize_filename(filename)
+
+        # Normalize to bytes for the artifact
+        if isinstance(content, str):
+            content_bytes = content.encode("utf-8")
+            count_unit = "characters"
+        else:
+            content_bytes = content
+            count_unit = "bytes"
+
+        file_path: Optional[str] = None
+        file_path_error: Optional[str] = None
+        if self.save_files and self.output_directory:
+            file_path, file_path_error = self._save_file_to_disk(content, file_name)
+
+        file_artifact = File(
+            id=str(uuid4()),
+            content=content_bytes,
+            mime_type=mime_type,
+            file_type=file_type,
+            filename=file_name,
+            size=len(content_bytes),
+            filepath=file_path,
+        )
+
+        log_debug(f"{display_name} file generated successfully")
+        success_msg = f"{display_name} file '{file_name}' generated ({len(content)} {count_unit})"
+        if file_path:
+            success_msg += f" → {file_path}"
+        elif file_path_error:
+            success_msg += f" (save failed: {file_path_error})"
+
+        return ToolResult(content=success_msg, files=[file_artifact])
 
     def generate_json_file(self, data: Union[Dict, List, str], filename: Optional[str] = None) -> ToolResult:
         """Generate a JSON file from the provided data.
@@ -101,36 +178,13 @@ class FileGenerationTools(Toolkit):
             else:
                 json_content = json.dumps(data, indent=2, ensure_ascii=False)
 
-            # Generate filename if not provided
-            if not filename:
-                filename = f"generated_file_{str(uuid4())[:8]}.json"
-            elif not filename.endswith(".json"):
-                filename += ".json"
-
-            # Save file to disk (if output_directory is set)
-            file_path = self._save_file_to_disk(json_content, filename)
-
-            content_bytes = json_content.encode("utf-8")
-
-            # Create FileArtifact
-            file_artifact = File(
-                id=str(uuid4()),
-                content=content_bytes,
-                mime_type="application/json",
+            return self._create_file_artifact(
+                json_content,
+                filename,
                 file_type="json",
-                filename=filename,
-                size=len(content_bytes),
-                filepath=file_path if file_path else None,
+                mime_type="application/json",
+                display_name="JSON",
             )
-
-            log_debug("JSON file generated successfully")
-            success_msg = f"JSON file '{filename}' has been generated successfully with {len(json_content)} characters."
-            if file_path:
-                success_msg += f" File saved to: {file_path}"
-            else:
-                success_msg += " File is available in response."
-
-            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.exception("Failed to generate JSON file")
@@ -190,36 +244,13 @@ class FileGenerationTools(Toolkit):
             else:
                 csv_content = ""
 
-            # Generate filename if not provided
-            if not filename:
-                filename = f"generated_file_{str(uuid4())[:8]}.csv"
-            elif not filename.endswith(".csv"):
-                filename += ".csv"
-
-            # Save file to disk (if output_directory is set)
-            file_path = self._save_file_to_disk(csv_content, filename)
-
-            content_bytes = csv_content.encode("utf-8")
-
-            # Create FileArtifact
-            file_artifact = File(
-                id=str(uuid4()),
-                content=content_bytes,
-                mime_type="text/csv",
+            return self._create_file_artifact(
+                csv_content,
+                filename,
                 file_type="csv",
-                filename=filename,
-                size=len(content_bytes),
-                filepath=file_path if file_path else None,
+                mime_type="text/csv",
+                display_name="CSV",
             )
-
-            log_debug("CSV file generated successfully")
-            success_msg = f"CSV file '{filename}' has been generated successfully with {len(csv_content)} characters."
-            if file_path:
-                success_msg += f" File saved to: {file_path}"
-            else:
-                success_msg += " File is available in response."
-
-            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.exception("Failed to generate CSV file")
@@ -276,34 +307,13 @@ class FileGenerationTools(Toolkit):
             pdf_content = buffer.getvalue()
             buffer.close()
 
-            # Generate filename if not provided
-            if not filename:
-                filename = f"generated_file_{str(uuid4())[:8]}.pdf"
-            elif not filename.endswith(".pdf"):
-                filename += ".pdf"
-
-            # Save file to disk (if output_directory is set)
-            file_path = self._save_file_to_disk(pdf_content, filename)
-
-            # Create FileArtifact
-            file_artifact = File(
-                id=str(uuid4()),
-                content=pdf_content,
-                mime_type="application/pdf",
+            return self._create_file_artifact(
+                pdf_content,
+                filename,
                 file_type="pdf",
-                filename=filename,
-                size=len(pdf_content),
-                filepath=file_path if file_path else None,
+                mime_type="application/pdf",
+                display_name="PDF",
             )
-
-            log_debug("PDF file generated successfully")
-            success_msg = f"PDF file '{filename}' has been generated successfully with {len(pdf_content)} bytes."
-            if file_path:
-                success_msg += f" File saved to: {file_path}"
-            else:
-                success_msg += " File is available in response."
-
-            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.exception("Failed to generate PDF file")
@@ -322,37 +332,62 @@ class FileGenerationTools(Toolkit):
         try:
             log_debug(f"Generating text file with content length: {len(content)}")
 
-            # Generate filename if not provided
-            if not filename:
-                filename = f"generated_file_{str(uuid4())[:8]}.txt"
-            elif not filename.endswith(".txt"):
-                filename += ".txt"
-
-            # Save file to disk (if output_directory is set)
-            file_path = self._save_file_to_disk(content, filename)
-
-            content_bytes = content.encode("utf-8")
-
-            # Create FileArtifact
-            file_artifact = File(
-                id=str(uuid4()),
-                content=content_bytes,
-                mime_type="text/plain",
+            return self._create_file_artifact(
+                content,
+                filename,
                 file_type="txt",
-                filename=filename,
-                size=len(content_bytes),
-                filepath=file_path if file_path else None,
+                mime_type="text/plain",
+                display_name="Text",
             )
-
-            log_debug("Text file generated successfully")
-            success_msg = f"Text file '{filename}' has been generated successfully with {len(content)} characters."
-            if file_path:
-                success_msg += f" File saved to: {file_path}"
-            else:
-                success_msg += " File is available in response."
-
-            return ToolResult(content=success_msg, files=[file_artifact])
 
         except Exception as e:
             logger.exception("Failed to generate text file")
             return ToolResult(content=f"Error generating text file: {e}")
+
+    def generate_docx_file(
+        self, content: str, filename: Optional[str] = None, title: Optional[str] = None
+    ) -> ToolResult:
+        """Generate a DOCX file from the provided content.
+
+        Args:
+            content: The text content to write to the DOCX file.
+            filename: Optional filename for the generated file. If not provided, a UUID will be used.
+            title: Optional title for the DOCX document.
+
+        Returns:
+            ToolResult: Result containing the generated DOCX file as a FileArtifact.
+        """
+        if not DOCX_AVAILABLE:
+            return ToolResult(
+                content="DOCX generation is not available. Please install python-docx: pip install python-docx"
+            )
+
+        try:
+            log_debug(f"Generating DOCX file with content length: {len(content)}")
+
+            document = Document()
+
+            if title:
+                document.add_paragraph(title)
+
+            paragraphs = content.split("\n\n")
+            for para in paragraphs:
+                if para.strip():
+                    document.add_paragraph(para.strip())
+
+            buffer = io.BytesIO()
+            document.save(buffer)
+            docx_content = buffer.getvalue()
+            buffer.close()
+
+            return self._create_file_artifact(
+                docx_content,
+                filename,
+                file_type="docx",
+                mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                display_name="DOCX",
+            )
+
+        except Exception as e:
+            logger.exception("Failed to generate DOCX file")
+            return ToolResult(content=f"Error generating DOCX file: {e}")

@@ -70,7 +70,7 @@ def test_openai_with_claude_parser_model():
 
 def test_gemini_with_openai_parser_model():
     park_agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-001"),  # Main model to generate the content
+        model=Gemini(id="gemini-flash-latest"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
         output_schema=ParkGuide,
         parser_model=OpenAIChat(id="gpt-4o"),  # Model to parse the output

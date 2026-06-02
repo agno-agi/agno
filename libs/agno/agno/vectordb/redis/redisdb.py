@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 try:
     from redis import Redis
@@ -650,7 +650,7 @@ class RedisDB(VectorDb):
             log_error(f"Error deleting documents by content_id: {str(e)}")
             return False
 
-    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+    def update_metadata(self, content_id: str, metadata: Mapping[str, Any]) -> None:
         """Update metadata for documents with the given content ID."""
         try:
             # Find documents with the given content_id
@@ -661,16 +661,13 @@ class RedisDB(VectorDb):
                 num_results=1000,  # Get all matching documents
             )
             results = self.index.query(query)
+            parsed = convert_bytes(results)
 
             # Update metadata for each found document
-            for result in results:
-                doc_id = result.get("id")
-                if doc_id:
-                    # result['id'] is the Redis key
-                    key = result.get("id")
-                    # Update the hash with new metadata
-                    if key:
-                        self.redis_client.hset(key, mapping=metadata)
+            for result in parsed:
+                key = result.get("id")
+                if key:
+                    self.redis_client.hset(key, mapping=metadata)  # type: ignore[arg-type]
 
             log_debug(f"Updated metadata for documents with content_id '{content_id}'")
         except Exception as e:

@@ -25,7 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import json_serializer
+from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -498,7 +498,7 @@ class AsyncMySQLDb(AsyncBaseDb):
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -507,8 +507,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         Args:
             session_id (str): ID of the session to read.
+            session_type (Optional[SessionType]): Type of session to get. Defaults to None.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -537,14 +537,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Exception reading from session table: {str(e)}")
@@ -603,6 +596,12 @@ class AsyncMySQLDb(AsyncBaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
@@ -639,14 +638,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 if not deserialize:
                     return session, total_count
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in session]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in session]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in session]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, session)
 
         except Exception as e:
             log_error(f"Exception reading from session table: {str(e)}")
@@ -655,7 +647,7 @@ class AsyncMySQLDb(AsyncBaseDb):
     async def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -686,15 +678,18 @@ class AsyncMySQLDb(AsyncBaseDb):
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
-                    .where(table.c.session_type == session_type.value)
                     .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
                 )
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
                 # Fetch the updated row
                 select_stmt = select(table).where(table.c.session_id == session_id)
+                if session_type is not None:
+                    select_stmt = select_stmt.where(table.c.session_type == session_type.value)
                 if user_id is not None:
                     select_stmt = select_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(select_stmt)
@@ -708,15 +703,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             if not deserialize:
                 return session
 
-            # Return the appropriate session type
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Exception renaming session: {str(e)}")
@@ -1192,6 +1179,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 # MySQL approach: extract JSON array elements differently
                 stmt = select(table.c.topics)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 records = result.fetchall()
 
@@ -1660,7 +1649,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 if memory.memory_id is None:
@@ -1734,7 +1723,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return []
 
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
             # Prepare bulk data
             bulk_data = []
@@ -1893,7 +1882,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
 
             starting_date = await self._get_metrics_calculation_starting_date(table)
 
@@ -1969,7 +1958,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2584,13 +2573,17 @@ class AsyncMySQLDb(AsyncBaseDb):
                         (new_level > existing_level, insert_stmt.inserted.name),
                         else_=table.c.name,
                     ),
-                    # Preserve existing non-null context values using COALESCE
-                    run_id=func.coalesce(insert_stmt.inserted.run_id, table.c.run_id),
-                    session_id=func.coalesce(insert_stmt.inserted.session_id, table.c.session_id),
-                    user_id=func.coalesce(insert_stmt.inserted.user_id, table.c.user_id),
-                    agent_id=func.coalesce(insert_stmt.inserted.agent_id, table.c.agent_id),
-                    team_id=func.coalesce(insert_stmt.inserted.team_id, table.c.team_id),
-                    workflow_id=func.coalesce(insert_stmt.inserted.workflow_id, table.c.workflow_id),
+                    # Preserve existing non-null context values: COALESCE returns
+                    # the first non-null arg, so put the existing column first.
+                    # Otherwise a later upsert from a child span (e.g. a post-hook
+                    # agent's run with a different session_id) would overwrite
+                    # the trace's already-correct context.
+                    run_id=func.coalesce(table.c.run_id, insert_stmt.inserted.run_id),
+                    session_id=func.coalesce(table.c.session_id, insert_stmt.inserted.session_id),
+                    user_id=func.coalesce(table.c.user_id, insert_stmt.inserted.user_id),
+                    agent_id=func.coalesce(table.c.agent_id, insert_stmt.inserted.agent_id),
+                    team_id=func.coalesce(table.c.team_id, insert_stmt.inserted.team_id),
+                    workflow_id=func.coalesce(table.c.workflow_id, insert_stmt.inserted.workflow_id),
                 )
                 await sess.execute(upsert_stmt)
 
