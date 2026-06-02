@@ -1557,6 +1557,11 @@ def handle_model_response_chunk(
                 # a tool is paused. Setting it here ensures _handle_run_cancellation respects
                 # the PAUSED state even if the consumer closes during subsequent yields.
                 run_response.status = RunStatus.paused
+                from agno.utils.log import log_info
+
+                log_info(
+                    f"[HITL] Set run_response.status=PAUSED in handle_model_response_chunk for run_id={run_response.run_id}"
+                )
 
         # If the model response is a tool_call_started, add the tool call to the run_response
         elif (
