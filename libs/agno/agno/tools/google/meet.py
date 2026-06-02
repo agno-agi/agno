@@ -35,8 +35,8 @@ from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional, Union
 
-from agno.tools import Toolkit
 from agno.tools.google.auth import get_current_service, google_authenticate
+from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -73,8 +73,26 @@ MEET_INSTRUCTIONS = textwrap.dedent("""\
 authenticate = google_authenticate("meet")
 
 
-class GoogleMeetTools(Toolkit):
-    DEFAULT_SCOPES = [
+class GoogleMeetTools(GoogleToolkit):
+    """Google Meet toolkit with unified GoogleAuth support.
+
+    Inherits from GoogleToolkit for:
+    - Multi-user OAuth via auth= parameter (recommended for multi-toolkit apps)
+    - Backward-compatible standalone OAuth via token_path/credentials_path
+
+    Usage (standalone):
+        meet = GoogleMeetTools()  # Uses file-based OAuth
+
+    Usage (unified auth):
+        auth = GoogleAuth(client_id=..., oauth_config=OAuthConfig(db=db, ...))
+        meet = GoogleMeetTools(auth=auth)
+        calendar = GoogleCalendarTools(auth=auth)  # Same auth, shared OAuth
+    """
+
+    api_name = "meet"
+    api_version = "v2"
+    google_service_name = "meet"
+    default_scopes = [
         "https://www.googleapis.com/auth/meetings.space.created",
         "https://www.googleapis.com/auth/meetings.space.readonly",
         "https://www.googleapis.com/auth/drive.readonly",
@@ -82,14 +100,7 @@ class GoogleMeetTools(Toolkit):
 
     def __init__(
         self,
-        creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
-        credentials_path: Optional[str] = None,
-        token_path: Optional[str] = "token.json",
-        service_account_path: Optional[str] = None,
-        delegated_user: Optional[str] = None,
-        scopes: Optional[List[str]] = None,
-        oauth_port: int = 8080,
-        login_hint: Optional[str] = None,
+        # Tool flags
         create_meeting_space: bool = True,
         get_meeting_space: bool = True,
         list_conference_records: bool = True,
@@ -101,47 +112,31 @@ class GoogleMeetTools(Toolkit):
         end_active_conference: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
+        # GoogleToolkit auth params (passed to super)
         **kwargs,
     ):
         """Initialize GoogleMeetTools with authentication and tool selection.
 
-        Args:
+        Authentication (pick one):
+            auth: GoogleAuth instance for unified multi-toolkit OAuth.
             creds: Pre-fetched credentials to skip a new auth flow.
             credentials_path: Path to OAuth credentials JSON file.
-            token_path: Path to cached token file. Created on first auth.
-            service_account_path: Path to service account JSON key. When set, OAuth is skipped.
-            delegated_user: Email to impersonate via domain-wide delegation. Required for
-                service accounts to access user meetings.
-            scopes: Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            oauth_port: Port for the OAuth local redirect server. Defaults to 8080.
-            login_hint: Email to pre-select in the OAuth consent screen.
-            create_meeting_space: Enable creating new meeting spaces. Defaults to True.
-            get_meeting_space: Enable reading meeting space details. Defaults to True.
-            list_conference_records: Enable listing past conferences. Defaults to True.
-            get_conference_record: Enable reading a single conference record. Defaults to True.
-            list_participants: Enable listing participants of a conference. Defaults to True.
-            list_recordings: Enable listing recordings for a conference. Defaults to True.
-            list_transcripts: Enable listing transcripts for a conference. Defaults to True.
-            list_transcript_entries: Enable listing transcript entries. Defaults to True.
-            end_active_conference: Enable ending an active conference. Destructive — disabled
-                by default and requires confirmation when enabled.
-            instructions: Custom instructions for the toolkit. If None, uses default.
-            add_instructions: Whether to inject instructions into the agent system prompt.
-        """
-        if instructions is None:
-            self.instructions = MEET_INSTRUCTIONS
-        else:
-            self.instructions = instructions
+            token_path: Path to cached token file (default: token.json).
+            service_account_path: Path to service account JSON key.
 
-        self.creds = creds
+        Tool flags:
+            create_meeting_space: Enable creating new meeting spaces.
+            get_meeting_space: Enable reading meeting space details.
+            list_conference_records: Enable listing past conferences.
+            get_conference_record: Enable reading a single conference record.
+            list_participants: Enable listing participants of a conference.
+            list_recordings: Enable listing recordings for a conference.
+            list_transcripts: Enable listing transcripts for a conference.
+            list_transcript_entries: Enable listing transcript entries.
+            end_active_conference: Enable ending an active conference (destructive, disabled by default).
+        """
+        self.instructions = instructions if instructions is not None else MEET_INSTRUCTIONS
         self._service: Optional[Resource] = None
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.scopes = scopes or self.DEFAULT_SCOPES
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
 
         tools: List[Any] = []
 

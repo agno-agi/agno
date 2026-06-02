@@ -26,8 +26,8 @@ from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
-from agno.tools import Toolkit
 from agno.tools.google.auth import get_current_service, google_authenticate
+from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -67,22 +67,33 @@ TASKS_INSTRUCTIONS = textwrap.dedent("""\
 authenticate = google_authenticate("tasks")
 
 
-class GoogleTasksTools(Toolkit):
-    DEFAULT_SCOPES = [
+class GoogleTasksTools(GoogleToolkit):
+    """Google Tasks toolkit with unified GoogleAuth support.
+
+    Inherits from GoogleToolkit for:
+    - Multi-user OAuth via auth= parameter (recommended for multi-toolkit apps)
+    - Backward-compatible standalone OAuth via token_path/credentials_path
+
+    Usage (standalone):
+        tasks = GoogleTasksTools()  # Uses file-based OAuth
+
+    Usage (unified auth):
+        auth = GoogleAuth(client_id=..., oauth_config=OAuthConfig(db=db, ...))
+        tasks = GoogleTasksTools(auth=auth)
+        gmail = GmailTools(auth=auth)  # Same auth, shared OAuth
+    """
+
+    api_name = "tasks"
+    api_version = "v1"
+    google_service_name = "tasks"
+    default_scopes = [
         "https://www.googleapis.com/auth/tasks.readonly",
         "https://www.googleapis.com/auth/tasks",
     ]
 
     def __init__(
         self,
-        creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
-        credentials_path: Optional[str] = None,
-        token_path: Optional[str] = "token.json",
-        service_account_path: Optional[str] = None,
-        delegated_user: Optional[str] = None,
-        scopes: Optional[List[str]] = None,
-        oauth_port: int = 8080,
-        login_hint: Optional[str] = None,
+        # Tool flags
         list_task_lists: bool = True,
         get_task_list: bool = True,
         list_tasks: bool = True,
@@ -98,19 +109,19 @@ class GoogleTasksTools(Toolkit):
         clear_completed_tasks: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
+        # GoogleToolkit auth params (passed to super)
         **kwargs: Any,
     ):
         """Initialize GoogleTasksTools with authentication and tool selection.
 
-        Args:
+        Authentication (pick one):
+            auth: GoogleAuth instance for unified multi-toolkit OAuth.
             creds: Pre-fetched credentials to skip a new auth flow.
             credentials_path: Path to OAuth credentials JSON file.
-            token_path: Path to cached token file. Created on first auth.
-            service_account_path: Path to service account JSON key. When set, OAuth is skipped.
-            delegated_user: Email to impersonate via domain-wide delegation. Optional for Tasks.
-            scopes: Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            oauth_port: Port for OAuth local redirect server (default: 8080).
-            login_hint: Email to pre-select in the OAuth consent screen.
+            token_path: Path to cached token file (default: token.json).
+            service_account_path: Path to service account JSON key.
+
+        Tool flags:
             list_task_lists: Register the list_task_lists tool (read).
             get_task_list: Register the get_task_list tool (read).
             list_tasks: Register the list_tasks tool (read).
@@ -124,23 +135,9 @@ class GoogleTasksTools(Toolkit):
             delete_task_list: Register the delete_task_list tool (destructive, disabled by default).
             delete_task: Register the delete_task tool (destructive, disabled by default).
             clear_completed_tasks: Register the clear_completed_tasks tool (destructive, disabled by default).
-            instructions: Custom instructions for the toolkit. If None, uses default.
-            add_instructions: Whether to inject instructions into the agent system prompt.
         """
-        if instructions is None:
-            self.instructions = TASKS_INSTRUCTIONS
-        else:
-            self.instructions = instructions
-
-        self.creds = creds
+        self.instructions = instructions if instructions is not None else TASKS_INSTRUCTIONS
         self._service: Optional[Resource] = None
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.scopes = scopes or self.DEFAULT_SCOPES
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
 
         tools: List[Any] = []
         if list_task_lists:
