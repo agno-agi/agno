@@ -200,9 +200,9 @@ def up(
         if avl_infra:
             print_available_infra(avl_infra)
 
-    # Check for docker compose files
-    current_dir = Path.cwd()
-    compose_files = find_compose_files(current_dir)
+    # Check for docker compose files (skip if explicitly targeting cloud infra)
+    target_infra = infra_filter or (resource_filter.split(":")[1] if resource_filter and ":" in resource_filter else None)
+    compose_files = [] if target_infra and target_infra != "docker" else find_compose_files(Path.cwd())
     if not compose_files and agno_config.active_infra_dir:
         compose_files = find_compose_files(Path(agno_config.active_infra_dir))
     if infra_to_start is None and not compose_files:
@@ -389,9 +389,9 @@ def down(
         if avl_infra:
             print_available_infra(avl_infra)
 
-    # Check for docker compose files
-    current_dir = Path.cwd()
-    compose_files = find_compose_files(current_dir)
+    # Check for docker compose files (skip if explicitly targeting cloud infra)
+    target_infra = infra_filter or (resource_filter.split(":")[1] if resource_filter and ":" in resource_filter else None)
+    compose_files = [] if target_infra and target_infra != "docker" else find_compose_files(Path.cwd())
     if not compose_files and agno_config.active_infra_dir:
         compose_files = find_compose_files(Path(agno_config.active_infra_dir))
 
