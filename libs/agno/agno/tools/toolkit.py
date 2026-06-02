@@ -24,6 +24,7 @@ class Toolkit:
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
         requires_confirmation_tools: Optional[list[str]] = None,
+        requires_user_input_tools: Optional[Dict[str, List[str]]] = None,
         external_execution_required_tools: Optional[list[str]] = None,
         stop_after_tool_call_tools: Optional[List[str]] = None,
         show_result_tools: Optional[List[str]] = None,
@@ -45,6 +46,9 @@ class Toolkit:
             include_tools: List of tool names to include in the toolkit
             exclude_tools: List of tool names to exclude from the toolkit
             requires_confirmation_tools: List of tool names that require user confirmation
+            requires_user_input_tools: Dict mapping tool names to list of field names that require user input.
+                        Use empty list [] for all params: {"create_event": []}
+                        Use specific fields: {"create_event": ["start_time", "end_time"]}
             external_execution_required_tools: List of tool names that will be executed outside of the agent loop
             cache_results (bool): Enable in-memory caching of function results.
             cache_ttl (int): Time-to-live for cached results in seconds.
@@ -64,6 +68,7 @@ class Toolkit:
         self.add_instructions: bool = add_instructions
 
         self.requires_confirmation_tools: list[str] = requires_confirmation_tools or []
+        self.requires_user_input_tools: Dict[str, List[str]] = requires_user_input_tools or {}
         self.external_execution_required_tools: list[str] = external_execution_required_tools or []
 
         self.stop_after_tool_call_tools: list[str] = stop_after_tool_call_tools or []
@@ -119,6 +124,11 @@ class Toolkit:
                 log_warning(
                     f"Requires confirmation tool(s) not present in the toolkit: {', '.join(missing_requires_confirmation)}"
                 )
+
+        if self.requires_user_input_tools:
+            missing_user_input = set(self.requires_user_input_tools.keys()) - set(available_tools)
+            if missing_user_input:
+                log_warning(f"Requires user input tool(s) not present in the toolkit: {', '.join(missing_user_input)}")
 
         if self.external_execution_required_tools:
             missing_external_execution_required = set(self.external_execution_required_tools) - set(available_tools)
@@ -184,6 +194,11 @@ class Toolkit:
             if self.exclude_tools is not None and tool_name in self.exclude_tools:
                 return
 
+            # User input config from toolkit-level dict
+            user_input_config = self.requires_user_input_tools.get(tool_name)
+            requires_user_input = user_input_config is not None
+            user_input_fields = user_input_config if user_input_config else None
+
             f = Function(
                 name=tool_name,
                 entrypoint=function,
@@ -191,10 +206,14 @@ class Toolkit:
                 cache_dir=self.cache_dir,
                 cache_ttl=self.cache_ttl,
                 requires_confirmation=tool_name in self.requires_confirmation_tools,
+                requires_user_input=requires_user_input,
+                user_input_fields=user_input_fields,
                 external_execution=tool_name in self.external_execution_required_tools,
                 stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
                 show_result=tool_name in self.show_result_tools or tool_name in self.stop_after_tool_call_tools,
             )
+            # Process entrypoint to build parameters and user_input_schema
+            f.process_entrypoint()
 
             if is_async:
                 self.async_functions[f.name] = f
@@ -270,11 +289,31 @@ class Toolkit:
         requires_confirmation = function.requires_confirmation or tool_name in self.requires_confirmation_tools
         external_execution = function.external_execution or tool_name in self.external_execution_required_tools
 
+        # User input: decorator takes precedence, then toolkit-level config
+        user_input_config = self.requires_user_input_tools.get(tool_name)
+        requires_user_input = function.requires_user_input or user_input_config is not None
+        user_input_fields = function.user_input_fields or (user_input_config if user_input_config else None)
+
+        # Filter user_input_schema if specific fields are requested
+        user_input_schema = function.user_input_schema
+        parameters = function.parameters
+        if user_input_fields and user_input_schema:
+            user_input_schema = [f for f in user_input_schema if f.name in user_input_fields]
+            # Also remove user_input_fields from LLM's parameters so it calls the tool without them
+            if parameters and "properties" in parameters:
+                from copy import deepcopy
+
+                parameters = deepcopy(parameters)
+                for field in user_input_fields:
+                    parameters["properties"].pop(field, None)
+                    if "required" in parameters and field in parameters["required"]:
+                        parameters["required"].remove(field)
+
         # Create new Function with bound method, preserving decorator settings
         f = Function(
             name=tool_name,
             description=function.description,
-            parameters=function.parameters,
+            parameters=parameters,
             strict=function.strict,
             instructions=function.instructions,
             add_instructions=function.add_instructions,
@@ -286,9 +325,9 @@ class Toolkit:
             post_hook=function.post_hook,
             tool_hooks=function.tool_hooks,
             requires_confirmation=requires_confirmation,
-            requires_user_input=function.requires_user_input,
-            user_input_fields=function.user_input_fields,
-            user_input_schema=function.user_input_schema,
+            requires_user_input=requires_user_input,
+            user_input_fields=user_input_fields,
+            user_input_schema=user_input_schema,
             external_execution=external_execution,
             approval_type=function.approval_type,
             cache_results=function.cache_results if function.cache_results else self.cache_results,
