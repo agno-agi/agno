@@ -49,7 +49,7 @@ class ParallelTools(Toolkit):
         default_processor (str): Default processor for Task API. Default is "base".
         default_monitor_processor (str): Default processor for Monitor API. Options: "lite", "base". Default is "lite".
         default_monitor_frequency (str): Default frequency for monitors. Options: "1h", "1d", "1w", "30d". Default is "1d".
-        default_timeout (int): Default timeout for task results in seconds. Default is 300.
+        default_timeout (int): Default timeout for task results in seconds. Default is 1800 (30 minutes), suitable for "pro" tier research. Increase up to 3600 for "ultra" tier deep research.
         default_output_schema (Optional[Union[Dict[str, Any], str]]): Schema for structured output. Accepts a bare string description, {"type": "auto"}, {"type": "json", "json_schema": {...}}, or {"type": "text"}. Default is None.
     """
 
@@ -72,7 +72,7 @@ class ParallelTools(Toolkit):
         default_processor: str = "base",
         default_monitor_processor: Literal["lite", "base"] = "lite",
         default_monitor_frequency: str = "1d",
-        default_timeout: int = 300,
+        default_timeout: int = 1800,
         default_output_schema: Optional[Union[Dict[str, Any], str]] = None,
         **kwargs,
     ):
@@ -407,7 +407,7 @@ class ParallelTools(Toolkit):
 
     def get_task_result(self, run_id: str) -> str:
         """
-        Get the result of a task. Blocks until task completes or times out.
+        Get the result of a task. Blocks until task completes or default_timeout is reached.
 
         Args:
             run_id (str): The task run identifier from create_task()
@@ -416,7 +416,9 @@ class ParallelTools(Toolkit):
             str: JSON with content (structured output), basis (citations), and run status
         """
         try:
-            task_result = self.parallel_client.task_run.result(run_id, api_timeout=self.default_timeout)
+            task_result = self.parallel_client.task_run.result(
+                run_id, api_timeout=self.default_timeout, timeout=float(self.default_timeout)
+            )
 
             output_data = self._format_task_output(run_id, task_result)
             return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
