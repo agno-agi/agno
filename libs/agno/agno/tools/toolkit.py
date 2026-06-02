@@ -296,6 +296,11 @@ class Toolkit:
         requires_user_input = function.requires_user_input or user_input_config is not None
         user_input_fields = function.user_input_fields if function.user_input_fields else user_input_config
 
+        # Debug: trace HITL registration
+        if requires_user_input:
+            from agno.utils.log import log_info
+            log_info(f"[HITL] Registering {tool_name} with requires_user_input=True, fields={user_input_fields}")
+
         # Filter user_input_schema if specific fields are requested
         user_input_schema = function.user_input_schema
         parameters = function.parameters
