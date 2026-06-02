@@ -13,10 +13,19 @@ USE CASES:
 
 Monitors detect NEW information and alert you to changes.
 
+Two-phase usage:
+    python competitor_tracker.py            # Phase 1: create monitors
+    python competitor_tracker.py check      # Phase 2: pull events (re-run later)
+
+Wait at least one monitor cycle (default_monitor_frequency) between phases so
+the monitors have time to run and detect changes.
+
 Prerequisites:
 - pip install parallel-web
 - export PARALLEL_API_KEY=<your-api-key>
 """
+
+import sys
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
@@ -71,9 +80,23 @@ competitive_intel_agent = Agent(
 # RUN
 # =============================================================================
 if __name__ == "__main__":
-    # Track a competitor
-    competitive_intel_agent.print_response(
-        "Create monitors to track OpenAI and Anthropic for product launches, "
-        "API updates, and major announcements.",
-        stream=True,
-    )
+    if len(sys.argv) > 1 and sys.argv[1] == "check":
+        # Phase 2: read what monitors have detected so far
+        competitive_intel_agent.print_response(
+            "List my active monitors. For each one, fetch the latest events with "
+            "get_monitor_events and summarize any new competitive activity. "
+            "Flag anything that looks strategically significant.",
+            stream=True,
+        )
+    else:
+        # Phase 1: stand up the monitors
+        competitive_intel_agent.print_response(
+            "Create monitors to track OpenAI and Anthropic for product launches, "
+            "API updates, and major announcements.",
+            stream=True,
+        )
+        print(
+            "\nMonitors created. Wait at least one cycle "
+            "(see default_monitor_frequency), then run:\n"
+            "    python competitor_tracker.py check"
+        )
