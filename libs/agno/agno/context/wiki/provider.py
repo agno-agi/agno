@@ -197,6 +197,9 @@ class WikiContextProvider(ContextProvider):
     # Sub-agents
     # ------------------------------------------------------------------
 
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_read_agent()
+
     def _ensure_read_agent(self) -> Agent:
         if self._read_agent is None:
             self._read_agent = Agent(
