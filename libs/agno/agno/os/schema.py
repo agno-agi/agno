@@ -14,6 +14,7 @@ from agno.os.config import (
     ChatConfig,
     EvalsConfig,
     KnowledgeConfig,
+    LearningConfig,
     MemoryConfig,
     MetricsConfig,
     SessionConfig,
@@ -209,6 +210,7 @@ class ConfigResponse(BaseModel):
     session: Optional[SessionConfig] = Field(None, description="Session configuration")
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
+    learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")

@@ -55,6 +55,12 @@ class MemoryDomainConfig(BaseModel):
     display_name: Optional[str] = None
 
 
+class LearningDomainConfig(BaseModel):
+    """Configuration for the Learning domain of the AgentOS"""
+
+    display_name: Optional[str] = None
+
+
 class TracesDomainConfig(BaseModel):
     """Configuration for the Traces domain of the AgentOS"""
 
@@ -88,6 +94,12 @@ class MemoryConfig(MemoryDomainConfig):
     """Configuration for the Memory domain of the AgentOS"""
 
     dbs: Optional[List[DatabaseConfig[MemoryDomainConfig]]] = None
+
+
+class LearningConfig(LearningDomainConfig):
+    """Configuration for the Learning domain of the AgentOS"""
+
+    dbs: Optional[List[DatabaseConfig[LearningDomainConfig]]] = None
 
 
 class KnowledgeDatabaseConfig(BaseModel):
@@ -140,6 +152,7 @@ class AgentOSConfig(BaseModel):
     evals: Optional[EvalsConfig] = None
     knowledge: Optional[KnowledgeConfig] = None
     memory: Optional[MemoryConfig] = None
+    learning: Optional[LearningConfig] = None
     session: Optional[SessionConfig] = None
     metrics: Optional[MetricsConfig] = None
     traces: Optional[TracesConfig] = None

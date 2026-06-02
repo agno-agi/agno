@@ -166,6 +166,7 @@ def get_base_router(
             chat=os.config.chat if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
+            learning=os._get_learning_config(),
             knowledge=os._get_knowledge_config(),
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),

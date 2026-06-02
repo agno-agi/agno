@@ -28,6 +28,8 @@ from agno.os.config import (
     KnowledgeDatabaseConfig,
     KnowledgeDomainConfig,
     KnowledgeInstanceConfig,
+    LearningConfig,
+    LearningDomainConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -1306,6 +1308,28 @@ class AgentOS:
                 )
 
         return memory_config
+
+    def _get_learning_config(self) -> LearningConfig:
+        learning_config = self.config.learning if self.config and self.config.learning else LearningConfig()
+
+        if learning_config.dbs is None:
+            learning_config.dbs = []
+
+        dbs_with_specific_config = [db.db_id for db in learning_config.dbs]
+
+        for db_id, dbs in self.dbs.items():
+            if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.learnings_table_name for db in dbs))
+                learning_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=LearningDomainConfig(display_name=db_id),
+                        tables=unique_tables,
+                    )
+                )
+
+        return learning_config
 
     def _get_knowledge_config(self) -> KnowledgeConfig:
         knowledge_config = self.config.knowledge if self.config and self.config.knowledge else KnowledgeConfig()
