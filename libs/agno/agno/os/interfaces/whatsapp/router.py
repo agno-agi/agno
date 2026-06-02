@@ -2,7 +2,7 @@ import asyncio
 import hashlib
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from time import time
-from typing import Any, Literal, NamedTuple, Optional, Type, Union
+from typing import Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
-from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.os.interfaces.sessions import build_session_store_config
 from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
     download_event_media_async,
@@ -21,9 +21,6 @@ from agno.os.interfaces.whatsapp.helpers import (
     upload_and_send_media_async,
 )
 from agno.os.interfaces.whatsapp.security import validate_webhook_signature
-from agno.session.agent import AgentSession
-from agno.session.team import TeamSession
-from agno.session.workflow import WorkflowSession
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_error, log_info, log_warning
@@ -49,35 +46,6 @@ _WA_TOOL_NAMES = frozenset(
         "send_reaction",
     }
 )
-
-
-class _SessionConfig(NamedTuple):
-    session_type: SessionType
-    session_class: Type[Any]
-    id_field: str
-    db: Any
-    has_db: bool
-    is_async_db: bool
-
-
-_SESSION_DISPATCH = {
-    "agent": (SessionType.AGENT, AgentSession, "agent_id"),
-    "team": (SessionType.TEAM, TeamSession, "team_id"),
-    "workflow": (SessionType.WORKFLOW, WorkflowSession, "workflow_id"),
-}
-
-
-def _resolve_session_config(entity: Any, entity_type: str) -> _SessionConfig:
-    session_type, session_class, id_field = _SESSION_DISPATCH[entity_type]
-    db = getattr(entity, "db", None)
-    return _SessionConfig(
-        session_type=session_type,
-        session_class=session_class,
-        id_field=id_field,
-        db=db,
-        has_db=isinstance(db, (BaseDb, AsyncBaseDb)),
-        is_async_db=isinstance(db, AsyncBaseDb),
-    )
 
 
 def _format_reasoning(text: str) -> str:
@@ -144,7 +112,7 @@ def attach_routes(
     entity_id = getattr(entity, "id", None) or entity_name
 
     # Used by /new handler (create sessions) and process_message (find latest)
-    session_config = _resolve_session_config(entity, entity_type)
+    session_config = build_session_store_config(entity, entity_type)
 
     config = WhatsAppConfig.init(
         access_token=access_token,
@@ -241,7 +209,7 @@ def attach_routes(
                 try:
                     new_session_id = f"wa:{entity_id}:{user_id}:{uuid4().hex[:8]}"
                     now = int(time())
-                    new_session = session_config.session_class(
+                    new_session = session_config.session_cls(
                         session_id=new_session_id,
                         user_id=user_id,
                         created_at=now,

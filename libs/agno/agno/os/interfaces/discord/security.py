@@ -1,0 +1,70 @@
+import os
+import time
+from typing import Any, Optional
+
+from agno.utils.log import log_warning
+
+# PyNaCl is optional — resolve BadSignatureError at import time so except
+# clauses don't hit UnboundLocalError when the symbol is referenced but
+# never bound (Python treats `from X import Y` inside a function as a
+# local; a late import inside a try block breaks the except tuple lookup)
+try:
+    from nacl.exceptions import BadSignatureError as _NaclBadSignatureError
+except ImportError:
+
+    class _NaclBadSignatureError(Exception):  # type: ignore[no-redef]
+        pass
+
+
+# Discord recommends a 5-minute window to tolerate clock skew
+_REPLAY_WINDOW_SECONDS = 300
+
+# Public key is fixed per app — cache VerifyKey to avoid re-parsing on every request
+_verify_key_cache: dict[str, Any] = {}
+
+
+def _get_verify_key(key_hex: str) -> Any:
+    cached = _verify_key_cache.get(key_hex)
+    if cached is not None:
+        return cached
+    # PyNaCl is optional — deferred so the package stays importable without it
+    try:
+        from nacl.signing import VerifyKey
+    except ImportError as e:
+        raise ImportError("PyNaCl is not installed. Install it via `pip install PyNaCl`.") from e
+    vk = VerifyKey(bytes.fromhex(key_hex))
+    _verify_key_cache[key_hex] = vk
+    return vk
+
+
+def verify_discord_signature(
+    body: bytes,
+    signature: str,
+    timestamp: str,
+    *,
+    public_key: Optional[str] = None,
+) -> bool:
+    if os.getenv("APP_ENV", "").lower() == "development":
+        log_warning("Bypassing Discord signature validation in development mode")
+        return True
+
+    if not signature or not timestamp:
+        return False
+
+    key = public_key or os.getenv("DISCORD_PUBLIC_KEY")
+    if not key:
+        raise ValueError("DISCORD_PUBLIC_KEY is not set. Set the env var or pass public_key.")
+
+    try:
+        if abs(time.time() - int(timestamp)) > _REPLAY_WINDOW_SECONDS:
+            return False
+    except (ValueError, TypeError):
+        return False
+
+    try:
+        verify_key = _get_verify_key(key)
+        verify_key.verify(timestamp.encode() + body, bytes.fromhex(signature))
+        return True
+    except (_NaclBadSignatureError, ValueError):
+        # BadSignatureError on mismatch, ValueError on malformed hex / wrong sig length
+        return False

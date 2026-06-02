@@ -155,6 +155,7 @@ oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
 neo4j = ["neo4j"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
+discord = ["aiohttp", "PyNaCl"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -524,6 +525,7 @@ module = [
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
+  "nacl.*",
   "neo4j.*",
   "nest_asyncio.*",
   "newspaper.*",
