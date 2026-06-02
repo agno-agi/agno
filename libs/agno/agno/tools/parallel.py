@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
@@ -50,7 +50,7 @@ class ParallelTools(Toolkit):
         default_monitor_processor (str): Default processor for Monitor API. Options: "lite", "base". Default is "lite".
         default_monitor_frequency (str): Default frequency for monitors. Options: "1h", "1d", "1w", "30d". Default is "1d".
         default_timeout (int): Default timeout for task results in seconds. Default is 300.
-        default_output_schema (Optional[Dict[str, Any]]): Schema for structured output. Use {"type": "json", "json_schema": {...}} or {"type": "auto"}. Default is None.
+        default_output_schema (Optional[Union[Dict[str, Any], str]]): Schema for structured output. Accepts a bare string description, {"type": "auto"}, {"type": "json", "json_schema": {...}}, or {"type": "text"}. Default is None.
     """
 
     def __init__(
@@ -73,7 +73,7 @@ class ParallelTools(Toolkit):
         default_monitor_processor: Literal["lite", "base"] = "lite",
         default_monitor_frequency: str = "1d",
         default_timeout: int = 300,
-        default_output_schema: Optional[Dict[str, Any]] = None,
+        default_output_schema: Optional[Union[Dict[str, Any], str]] = None,
         **kwargs,
     ):
         self.api_key: Optional[str] = api_key or getenv("PARALLEL_API_KEY")
