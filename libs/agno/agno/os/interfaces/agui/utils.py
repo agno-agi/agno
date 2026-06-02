@@ -86,6 +86,9 @@ class EventBuffer:
     pending_tool_calls_parent_id: str = ""  # Parent message ID for pending tool calls
     reasoning_message_id: Optional[str] = None  # Active reasoning session ID, set by reasoning_started
     reasoning_step_count: int = 0  # Step counter for ReasoningTools (reset each session)
+    current_source_key: str = (
+        ""  # "<sourceType>:<sourceId>" of the active text message, for source-change boundary detection
+    )
 
     def __init__(self):
         self.active_tool_call_ids = set()
@@ -95,6 +98,19 @@ class EventBuffer:
         self.pending_tool_calls_parent_id = ""
         self.reasoning_message_id = None
         self.reasoning_step_count = 0
+        self.current_source_key = ""
+
+    def source_changed(self, new_source_key: str) -> bool:
+        """Return True if source key differs from the active one AND both are non-empty.
+
+        Used to insert TEXT_MESSAGE_END + new TEXT_MESSAGE_START boundaries when
+        a nested team's sub-team and member agent share a streaming text message
+        (issue #6141). Returns False when either key is empty so chunks without
+        source metadata don't trigger spurious boundaries.
+        """
+        if not new_source_key or not self.current_source_key:
+            return False
+        return new_source_key != self.current_source_key
 
     def start_tool_call(self, tool_call_id: str) -> None:
         """Start a new tool call."""
@@ -238,6 +254,32 @@ def _format_reasoning_step_delta(step: Optional[ReasoningStep], step_number: int
     return "\n".join(parts) + "\n\n" if parts else ""
 
 
+def _extract_source_metadata(chunk: Union[RunOutputEvent, TeamRunOutputEvent]) -> Dict[str, str]:
+    """Extract source metadata (type, id, name) from a chunk for AG-UI event enrichment."""
+    metadata: Dict[str, str] = {}
+    agent_id = getattr(chunk, "agent_id", "")
+    agent_name = getattr(chunk, "agent_name", "")
+    team_id = getattr(chunk, "team_id", "")
+    team_name = getattr(chunk, "team_name", "")
+
+    # Use camelCase keys to stay consistent with ag_ui's alias_generator
+    # (extra fields bypass alias_generator, so we apply the convention manually)
+    if team_id or team_name:
+        metadata["sourceType"] = "team"
+        if team_id:
+            metadata["sourceId"] = team_id
+        if team_name:
+            metadata["sourceName"] = team_name
+    elif agent_id or agent_name:
+        metadata["sourceType"] = "agent"
+        if agent_id:
+            metadata["sourceId"] = agent_id
+        if agent_name:
+            metadata["sourceName"] = agent_name
+
+    return metadata
+
+
 def _create_events_from_chunk(
     chunk: Union[RunOutputEvent, TeamRunOutputEvent],
     message_id: str,
@@ -258,6 +300,15 @@ def _create_events_from_chunk(
     """
     events_to_emit: List[BaseEvent] = []
 
+    # Extract source metadata for enriching AG-UI events
+    source_metadata = _extract_source_metadata(chunk)
+    # Build a source key only when we actually have a source type; otherwise leave it empty so
+    # anonymous chunks (no agent_id/team_id) don't trigger a spurious boundary against an
+    # established source key like "agent:a-1".
+    source_type = source_metadata.get("sourceType", "")
+    source_id = source_metadata.get("sourceId", "")
+    new_source_key = f"{source_type}:{source_id}" if source_type else ""
+
     # Extract content if the contextual event is a content event
     if chunk.event == RunEvent.run_content:
         content = extract_response_chunk_content(chunk)  # type: ignore
@@ -268,10 +319,29 @@ def _create_events_from_chunk(
 
     # Handle text responses
     if content is not None:
+        # Source-change boundary (issue #6141): when a different agent/team starts
+        # streaming mid-message, end the current message and start a fresh one with
+        # a new message_id, so consumers can attribute each chunk to its source.
+        if message_started and event_buffer.source_changed(new_source_key):
+            events_to_emit.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
+            message_id = event_buffer.start_text_message()
+            event_buffer.current_source_key = new_source_key
+            # Mirror the first-message path: clear pending tool-call parent so a subsequent
+            # tool call inside the new source's segment parents to the new message_id, not the old.
+            event_buffer.clear_pending_tool_calls_parent_id()
+            events_to_emit.append(
+                TextMessageStartEvent(
+                    type=EventType.TEXT_MESSAGE_START,
+                    message_id=message_id,
+                    role="assistant",
+                    **source_metadata,
+                )
+            )
         # Handle the message start event, emitted once per message
-        if not message_started:
+        elif not message_started:
             message_started = True
             message_id = event_buffer.start_text_message()
+            event_buffer.current_source_key = new_source_key
 
             # Clear pending tool calls parent ID when starting new text message
             event_buffer.clear_pending_tool_calls_parent_id()
@@ -280,6 +350,7 @@ def _create_events_from_chunk(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=message_id,
                 role="assistant",
+                **source_metadata,
             )
             events_to_emit.append(start_event)
 
@@ -324,6 +395,7 @@ def _create_events_from_chunk(
                     type=EventType.TEXT_MESSAGE_START,
                     message_id=parent_message_id,
                     role="assistant",
+                    **source_metadata,
                 )
                 events_to_emit.append(text_start)
 
@@ -461,6 +533,7 @@ def _create_completion_events(
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit: List[BaseEvent] = []
+    source_metadata = _extract_source_metadata(chunk)
 
     # Close orphaned reasoning session if stream ended mid-reasoning
     if event_buffer.reasoning_message_id is not None:
@@ -496,6 +569,7 @@ def _create_completion_events(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=assistant_message_id,
                 role="assistant",
+                **source_metadata,
             )
             events_to_emit.append(assistant_start_event)
 
