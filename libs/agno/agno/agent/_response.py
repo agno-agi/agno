@@ -31,7 +31,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import Followups, RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import Followups, RunEvent, RunOutput, RunOutputEvent, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutputEvent
@@ -1553,6 +1553,10 @@ def handle_model_response_chunk(
                 if run_response.requirements is None:
                     run_response.requirements = []
                 run_response.requirements.append(RunRequirement(tool_execution=tool_executions_list[-1]))
+                # Set PAUSED status immediately — this is the earliest point where we know
+                # a tool is paused. Setting it here ensures _handle_run_cancellation respects
+                # the PAUSED state even if the consumer closes during subsequent yields.
+                run_response.status = RunStatus.paused
 
         # If the model response is a tool_call_started, add the tool call to the run_response
         elif (
