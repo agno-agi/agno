@@ -705,7 +705,9 @@ def get_chat_history(
     Returns:
         A list of user and assistant Messages belonging to the session.
     """
-    return get_session_messages(agent, session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"])
+    return get_session_messages(
+        agent, session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_statuses=[]
+    )
 
 
 async def aget_chat_history(
@@ -718,7 +720,7 @@ async def aget_chat_history(
         A list of user and assistant Messages belonging to the session.
     """
     return await aget_session_messages(
-        agent, session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"]
+        agent, session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_statuses=[]
     )
 
 

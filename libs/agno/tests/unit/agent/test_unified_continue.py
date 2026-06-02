@@ -485,10 +485,10 @@ class TestAsyncEmptyBodyResume:
 
     @pytest.mark.asyncio
     async def test_async_unresolved_requirements_without_body_surfaces_error(self, monkeypatch: pytest.MonkeyPatch):
-        """HITL contract preserved on the async path. Note: async ``_acontinue_run``
-        wraps the validation in a retry/catch block, so the ValueError surfaces as a
-        returned RunOutput with status=ERROR and the error message attached, rather
-        than propagating directly (pre-existing asymmetry with the sync path)."""
+        """HITL contract preserved on the async path. ``_acontinue_run`` now has an
+        ``except ValueError: raise`` block (added by the cancel-run-persistence
+        change in main) that lets validation errors propagate to the caller —
+        matching sync behavior."""
         pending_tool = ToolExecution(
             tool_call_id="tc-pending",
             tool_name="needs_input",
@@ -516,16 +516,13 @@ class TestAsyncEmptyBodyResume:
 
         monkeypatch.setattr(approval_mod, "acheck_and_apply_approval_resolution", raising_approval)
 
-        result = await _run.acontinue_run_dispatch(
-            agent=agent,
-            run_id="run-pause",
-            session_id="session-1",
-            stream=False,
-        )
-
-        assert isinstance(result, RunOutput)
-        assert result.status == RunStatus.error
-        assert "unresolved HITL requirements" in (result.content or "")
+        with pytest.raises(ValueError, match="unresolved HITL requirements"):
+            await _run.acontinue_run_dispatch(
+                agent=agent,
+                run_id="run-pause",
+                session_id="session-1",
+                stream=False,
+            )
 
 
 class TestInputAppend:

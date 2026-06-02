@@ -23,6 +23,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
@@ -1839,6 +1840,8 @@ def generate_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1866,6 +1869,8 @@ async def agenerate_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1902,6 +1907,8 @@ def generate_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1946,6 +1953,8 @@ async def agenerate_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 

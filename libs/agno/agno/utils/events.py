@@ -232,6 +232,7 @@ def create_team_run_cancelled_event(from_run_response: TeamRunOutput, reason: st
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+        content=from_run_response.content or reason,
     )
 
 
@@ -267,6 +268,7 @@ def create_run_cancelled_event(from_run_response: RunOutput, reason: str) -> Run
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+        content=from_run_response.content or reason,
     )
 
 
