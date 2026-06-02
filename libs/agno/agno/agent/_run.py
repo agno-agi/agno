@@ -1019,6 +1019,9 @@ def _run_stream(
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    # Set PAUSED status immediately so _handle_run_cancellation respects it
+                    # if the consumer closes the stream before handle_agent_run_paused_stream runs
+                    run_response.status = RunStatus.paused
                     yield from wait_for_thread_tasks_stream(
                         memory_future=memory_future,  # type: ignore
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
@@ -2424,6 +2427,9 @@ async def _arun_stream(
 
                 # Break out of the run function if a tool call is paused
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    # Set PAUSED status immediately so _handle_run_cancellation respects it
+                    # if the consumer closes the stream before ahandle_agent_run_paused_stream runs
+                    run_response.status = RunStatus.paused
                     async for item in await_for_thread_tasks_stream(
                         memory_task=memory_task,
                         cultural_knowledge_task=cultural_knowledge_task,
