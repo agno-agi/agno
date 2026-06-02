@@ -176,31 +176,63 @@ def _build_user_feedback_question_block(req_id: str, question: Any, q_index: int
     )
 
 
+# Human-friendly tool names for HITL cards
+_TOOL_DISPLAY_NAMES = {
+    "create_event": "Create Calendar Event",
+    "update_event": "Update Calendar Event",
+    "delete_event": "Delete Calendar Event",
+    "send_email": "Send Email",
+    "create_draft_email": "Create Draft Email",
+    "send_message": "Send Slack Message",
+    "upload_file": "Upload File",
+    "create_document": "Create Document",
+    "create_sheet": "Create Spreadsheet",
+    "create_presentation": "Create Presentation",
+    "delete_presentation": "Delete Presentation",
+    "create_task": "Create Task",
+    "create_meeting_space": "Create Meeting",
+}
+
+
+def _format_arg_for_display(key: str, value: Any) -> str:
+    """Format a tool argument for human-readable display."""
+    rendered = render_arg_value(value)
+    # Truncate long values
+    if len(rendered) > 50:
+        rendered = rendered[:47] + "..."
+    return f"• *{key}:* {rendered}"
+
+
 # Builds HITL confirmation card with Approve/Deny buttons for a tool execution
 def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awaiting_ts: Optional[str] = None) -> Card:
     req_id = requirement.id or ""
     name = tool_name(requirement)
+    display_name = _TOOL_DISPLAY_NAMES.get(name, name.replace("_", " ").title())
     args = tool_args(requirement)
     button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
-    # Format args as bullet points in body (not subtitle which truncates)
-    body_lines = [f"• {k}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
+
+    # Format args as clean bullet points (no code backticks)
+    body_lines = [_format_arg_for_display(k, v) for k, v in (args or {}).items()]
     body_text = "\n".join(body_lines) if body_lines else "_(no arguments)_"
-    # Slack Block Kit section text has ~200 char limit; truncate to prevent silent card rejection
+    # Slack Block Kit card body limit; truncate to prevent silent rejection
     body_text = truncate(body_text, 200)
+
     return Card(
         block_id=f"rowact:{req_id}:confirmation",
-        title=MarkdownTextObject(text=f"*{name}*"),
+        title=MarkdownTextObject(text=display_name),
+        subtitle=MarkdownTextObject(text=f"`{name}`"),
         body=MarkdownTextObject(text=body_text),
         actions=[
+            # Approve on RIGHT (primary action), Deny on LEFT — matches Slack's Approval template
             ButtonElement(
                 action_id=ACTION_ROW_APPROVE,
-                text=PlainTextObject(text="Approve", emoji=True),
+                text=PlainTextObject(text="Approve", emoji=False),
                 style="primary",
                 value=button_value,
             ),
             ButtonElement(
                 action_id=ACTION_ROW_REJECT,
-                text=PlainTextObject(text="Deny", emoji=True),
+                text=PlainTextObject(text="Deny", emoji=False),
                 style="danger",
                 value=button_value,
             ),
@@ -219,25 +251,27 @@ def build_confirmation_toggle_card(
 ) -> Card:
     button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
     is_approved = selected == "approve"
-    # Slack Block Kit section text has ~200 char limit
+    display_name = _TOOL_DISPLAY_NAMES.get(tool_name, tool_name.replace("_", " ").title())
+    # Slack Block Kit card body limit
     body_text = truncate(body_text, 200)
 
     approve_btn = ButtonElement(
         action_id=ACTION_ROW_APPROVE,
-        text=PlainTextObject(text="Approved" if is_approved else "Approve", emoji=True),
+        text=PlainTextObject(text="Approved" if is_approved else "Approve", emoji=False),
         style="primary" if is_approved else None,
         value=button_value,
     )
     deny_btn = ButtonElement(
         action_id=ACTION_ROW_REJECT,
-        text=PlainTextObject(text="Denied" if not is_approved else "Deny", emoji=True),
+        text=PlainTextObject(text="Denied" if not is_approved else "Deny", emoji=False),
         style="danger" if not is_approved else None,
         value=button_value,
     )
 
     return Card(
         block_id=f"rowact:{req_id}:confirmation:selected:{selected}",
-        title=MarkdownTextObject(text=f"*{tool_name}*"),
+        title=MarkdownTextObject(text=display_name),
+        subtitle=MarkdownTextObject(text=f"`{tool_name}`"),
         body=MarkdownTextObject(text=body_text),
         actions=[approve_btn, deny_btn],
     )
@@ -277,13 +311,16 @@ def select_confirmation_row(
 
         # Clicked row — replace with toggle card
         if block_id.startswith(f"rowact:{ctx.req_id}:confirmation"):
-            name = (block.get("title") or {}).get("text", "*tool*").replace("*", "")
+            # Extract tool name from subtitle (contains the raw function name)
+            subtitle_text = (block.get("subtitle") or {}).get("text", "")
+            # Remove backticks if present (subtitle format is `tool_name`)
+            tool_name_raw = subtitle_text.strip("`") if subtitle_text else "tool"
             body_text = (block.get("body") or {}).get("text", "")
             toggle_card = build_confirmation_toggle_card(
                 req_id=ctx.req_id,
                 run_id=ctx.run_id,
                 awaiting_ts=ctx.awaiting_ts,
-                tool_name=name,
+                tool_name=tool_name_raw,
                 body_text=body_text,
                 selected=selected,
             )

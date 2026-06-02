@@ -25,7 +25,7 @@ from agno.os.interfaces.slack.state import StreamState, TaskStatus
 from agno.os.interfaces.slack.types import SubmitContext, tool_args, tool_name, truncate
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error, log_info
+from agno.utils.log import log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 _STREAM_CHAR_LIMIT = 3900
@@ -69,12 +69,18 @@ class HITLHandler:
                 log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
 
     async def load_active_requirements(self, ctx: SubmitContext) -> List[Any]:
+        log_info(f"[HITL] load_active_requirements: run_id={ctx.run_id} session_id={ctx.session_id}")
         try:
             run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=ctx.session_id)  # type: ignore[union-attr]
         except Exception as exc:
             log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
             return []
-        return list(getattr(run_output, "active_requirements", None) or []) if run_output else []
+        if run_output is None:
+            log_warning(f"[HITL] run_output is None for run_id={ctx.run_id} session_id={ctx.session_id}")
+            return []
+        reqs = list(getattr(run_output, "active_requirements", None) or [])
+        log_info(f"[HITL] found {len(reqs)} active requirements for run_id={ctx.run_id}")
+        return reqs
 
     async def freeze_form(
         self, ctx: SubmitContext, original_blocks: List[Dict[str, Any]], requirements: List[Any]

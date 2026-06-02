@@ -1810,6 +1810,13 @@ async def _arun(
 
                 return run_response
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                # PAUSED runs should not be treated as cancelled — HITL pause is a valid
+                # terminal state where we're awaiting user input, not a cancellation.
+                if run_response.status == RunStatus.paused:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        raise
+                    return run_response
+
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 if agent_session is not None:
                     if isinstance(cancel_exc, asyncio.CancelledError):
@@ -2603,6 +2610,15 @@ async def _arun_stream(
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                # PAUSED runs should not be treated as cancelled — HITL pause is a valid
+                # terminal state where we're awaiting user input, not a cancellation.
+                # GeneratorExit is raised when the Slack handler closes the generator after
+                # receiving the pause event, which is expected behavior.
+                if run_response.status == RunStatus.paused:
+                    if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                        raise
+                    break
+
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 # Build terminal events first so they are stored on the run
                 cancelled_event, completed_event = _build_cancel_terminal_events(
@@ -4336,6 +4352,13 @@ async def _acontinue_run(
 
                 return run_response
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                # PAUSED runs should not be treated as cancelled — HITL pause is a valid
+                # terminal state where we're awaiting user input, not a cancellation.
+                if run_response is not None and run_response.status == RunStatus.paused:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        raise
+                    return run_response
+
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -4851,6 +4874,13 @@ async def _acontinue_run_stream(
                 yield run_error
                 break
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                # PAUSED runs should not be treated as cancelled — HITL pause is a valid
+                # terminal state where we're awaiting user input, not a cancellation.
+                if run_response is not None and run_response.status == RunStatus.paused:
+                    if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                        raise
+                    break
+
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -5020,6 +5050,10 @@ def _handle_run_cancellation(
     run_messages: Optional["RunMessages"] = None,
 ) -> RunOutput:
     """Prepare a run response for cancellation: set status, preserve content and messages."""
+    # Don't overwrite PAUSED status — the run was already persisted with HITL state
+    if run_response.status == RunStatus.paused:
+        log_debug(f"Run {run_response.run_id} cancellation ignored — already PAUSED")
+        return run_response
     reason = _normalize_cancellation_reason(run_response, error)
     log_debug(f"Run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
@@ -5219,6 +5253,10 @@ def _persist_cancelled_run_in_background(
     run. Scheduling it on _background_tasks runs the write to completion outside that
     scope.
     """
+    # PAUSED runs should not be overwritten with CANCELLED — HITL pause is a valid
+    # terminal state where we're awaiting user input, not a cancellation.
+    if run_response.status == RunStatus.paused:
+        return
 
     async def _persist() -> None:
         try:
