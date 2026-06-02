@@ -1,6 +1,9 @@
 """Run: pip install openai slack-sdk
 
-Requires canvases:read and canvases:write bot scopes in your Slack app.
+Requires these bot scopes in your Slack app:
+- canvases:read, canvases:write (for canvas operations)
+- files:read (for listing and reading canvas content)
+
 Set the SLACK_TOKEN environment variable before running.
 
 Supported canvas markdown: headings, bold, italic, strikethrough, inline code,

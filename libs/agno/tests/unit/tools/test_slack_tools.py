@@ -341,13 +341,13 @@ def test_list_canvases(canvas_tools):
     assert result["ok"] is True
     assert result["count"] == 2
     assert result["canvases"][0]["canvas_id"] == "F1"
-    canvas_tools.client.files_list.assert_called_once_with(types="canvases", count=20)
+    canvas_tools.client.files_list.assert_called_once_with(types="canvas", count=20)
 
 
 def test_list_canvases_by_channel(canvas_tools):
     canvas_tools.client.files_list.return_value = {"files": []}
     canvas_tools.list_canvases(channel="C1", limit=5)
-    canvas_tools.client.files_list.assert_called_once_with(types="canvases", count=5, channel="C1")
+    canvas_tools.client.files_list.assert_called_once_with(types="canvas", count=5, channel="C1")
 
 
 def test_list_canvases_error(canvas_tools):

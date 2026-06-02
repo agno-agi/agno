@@ -831,15 +831,17 @@ class SlackTools(Toolkit):
         Use this to discover existing canvases before reading or editing them.
         Returns canvas_id values needed by read_canvas, edit_canvas, and other canvas tools.
 
+        Requires canvases:read and files:read bot scopes.
+
         Args:
             channel (str): Optional channel ID to filter canvases by.
-            limit (int): Maximum number of canvases to return. Defaults to 20.
+            limit (int): Maximum number of canvases to return. Defaults to 20, max 100.
 
         Returns:
             str: A JSON string with a list of canvases including canvas_id, title, created, and updated timestamps.
         """
         try:
-            kwargs: Dict[str, Any] = {"types": "canvases", "count": min(limit, 100)}
+            kwargs: Dict[str, Any] = {"types": "canvas", "count": min(limit, 100)}
             if channel:
                 kwargs["channel"] = channel
             response = self.client.files_list(**kwargs)
@@ -859,14 +861,18 @@ class SlackTools(Toolkit):
             logger.exception("Error listing canvases")
             return json.dumps({"error": str(e)})
 
-    def read_canvas(self, canvas_id: str) -> str:
+    def read_canvas(self, canvas_id: str, max_content_size: int = 100000) -> str:
         """Read the full content of a canvas as HTML.
 
-        Use this before editing to see current content. The HTML includes section IDs
-        in element attributes that can be used directly with edit_canvas.
+        Use this before editing to see current content. To get section IDs for
+        targeted edits, use lookup_canvas_sections instead of parsing HTML.
+
+        Requires canvases:read and files:read bot scopes.
 
         Args:
             canvas_id (str): The canvas ID to read. Get this from list_canvases or create_canvas.
+            max_content_size (int): Maximum content size in bytes. Defaults to 100KB. Content
+                exceeding this is truncated with a warning.
 
         Returns:
             str: A JSON string with canvas_id, title, and content as HTML.
@@ -883,14 +889,22 @@ class SlackTools(Toolkit):
             download = httpx.get(url_private, headers=headers, timeout=30, follow_redirects=True)
             download.raise_for_status()
 
-            return json.dumps(
-                {
-                    "ok": True,
-                    "canvas_id": canvas_id,
-                    "title": file_info.get("title", ""),
-                    "content": download.text,
-                }
-            )
+            content = download.text
+            truncated = False
+            if len(content) > max_content_size:
+                content = content[:max_content_size]
+                truncated = True
+
+            result: Dict[str, Any] = {
+                "ok": True,
+                "canvas_id": canvas_id,
+                "title": file_info.get("title", ""),
+                "content": content,
+            }
+            if truncated:
+                result["truncated"] = True
+                result["warning"] = f"Content truncated to {max_content_size} bytes"
+            return json.dumps(result)
         except SlackApiError as e:
             logger.exception("Error reading canvas")
             return json.dumps({"error": str(e)})
