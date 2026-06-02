@@ -10,9 +10,8 @@ Supported canvas markdown: headings, bold, italic, strikethrough, inline code,
 bullet/numbered lists, checklists (- [ ] / - [x]), code blocks, links, emojis,
 blockquotes, tables (max 300 cells), and horizontal rules.
 
-Note: list_canvases uses files.list which only returns channel canvases.
-Standalone canvases (created via create_canvas) need their canvas_id saved
-or use create_channel_canvas to attach them to a channel for discovery.
+Note: list_canvases only returns channel canvases. Pass channel_id to
+create_canvas to make it discoverable, or save the returned canvas_id.
 """
 
 from agno.agent import Agent

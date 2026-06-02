@@ -388,10 +388,11 @@ def test_create_canvas_error(canvas_tools):
     assert "error" in result
 
 
-def test_create_channel_canvas(canvas_tools):
+def test_create_canvas_with_channel(canvas_tools):
     canvas_tools.client.conversations_canvases_create.return_value = {"ok": True, "canvas_id": "F789"}
-    result = json.loads(canvas_tools.create_channel_canvas("C1", title="Channel Doc"))
+    result = json.loads(canvas_tools.create_canvas(title="Channel Doc", channel_id="C1"))
     assert result["canvas_id"] == "F789"
+    canvas_tools.client.conversations_canvases_create.assert_called_once()
 
 
 def test_edit_canvas_insert_at_end(canvas_tools):

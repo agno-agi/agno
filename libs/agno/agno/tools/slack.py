@@ -92,7 +92,6 @@ class SlackTools(Toolkit):
             "list_canvases",
             "read_canvas",
             "create_canvas",
-            "create_channel_canvas",
             "edit_canvas",
             "delete_canvas",
             "lookup_canvas_sections",
@@ -102,11 +101,11 @@ class SlackTools(Toolkit):
                 "**Canvas tools** — create and manage collaborative documents in Slack.\n"
                 "- `list_canvases` finds existing canvases, optionally filtered by channel.\n"
                 "- `read_canvas` retrieves the full content of a canvas as HTML.\n"
-                "- `create_canvas` creates a standalone canvas; `create_channel_canvas` creates one attached to a channel.\n"
+                "- `create_canvas` creates a canvas; pass channel_id to attach it to a channel (makes it discoverable).\n"
                 "- To update a canvas: `read_canvas` to see current content, `lookup_canvas_sections` to get section IDs, then `edit_canvas`.\n"
                 "- Content uses markdown format (headings, bold, lists, code blocks, tables up to 300 cells).\n"
                 "- `delete_canvas` is permanent and cannot be undone.\n"
-                "- Requires `canvases:read` and `canvases:write` bot scopes."
+                "- Requires `canvases:read`, `canvases:write`, and `files:read` bot scopes."
             )
             sections.append(text)
 
@@ -232,7 +231,6 @@ class SlackTools(Toolkit):
             tools.append(self.list_canvases)
             tools.append(self.read_canvas)
             tools.append(self.create_canvas)
-            tools.append(self.create_channel_canvas)
             tools.append(self.edit_canvas)
             tools.append(self.delete_canvas)
             tools.append(self.lookup_canvas_sections)
@@ -912,52 +910,42 @@ class SlackTools(Toolkit):
             logger.exception("Error downloading canvas content")
             return json.dumps({"error": f"HTTP error: {str(e)}"})
 
-    def create_canvas(self, title: Optional[str] = None, markdown: Optional[str] = None) -> str:
-        """Create a standalone Slack canvas.
+    def create_canvas(
+        self,
+        title: Optional[str] = None,
+        markdown: Optional[str] = None,
+        channel_id: Optional[str] = None,
+    ) -> str:
+        """Create a Slack canvas.
+
+        Without channel_id: creates a standalone canvas (not discoverable via list_canvases).
+        With channel_id: creates a channel canvas (discoverable, inherits channel access).
 
         Args:
             title (str): Optional title for the canvas.
             markdown (str): Optional initial content in markdown format. Supports headings, bold, italic,
                 lists, code blocks, and tables (max 300 cells).
+            channel_id (str): Optional channel ID to attach the canvas to. If provided, creates a
+                channel canvas that inherits channel membership and appears in list_canvases.
 
         Returns:
             str: A JSON string containing the canvas_id of the newly created canvas.
         """
         try:
-            # SDK requires document_content even though the API considers it optional
             doc = {"type": "markdown", "markdown": markdown or ""}
-            kwargs: Dict[str, Any] = {"document_content": doc}
-            if title:
-                kwargs["title"] = title
-            response = self.client.canvases_create(**kwargs)
+            if channel_id:
+                kwargs: Dict[str, Any] = {"channel_id": channel_id, "document_content": doc}
+                if title:
+                    kwargs["title"] = title
+                response = self.client.conversations_canvases_create(**kwargs)
+            else:
+                kwargs = {"document_content": doc}
+                if title:
+                    kwargs["title"] = title
+                response = self.client.canvases_create(**kwargs)
             return json.dumps({"ok": True, "canvas_id": response.get("canvas_id", "")})
         except SlackApiError as e:
             logger.exception("Error creating canvas")
-            return json.dumps({"error": str(e)})
-
-    def create_channel_canvas(
-        self, channel_id: str, title: Optional[str] = None, markdown: Optional[str] = None
-    ) -> str:
-        """Create a canvas attached to a Slack channel.
-
-        Args:
-            channel_id (str): The channel ID to attach the canvas to.
-            title (str): Optional title for the canvas.
-            markdown (str): Optional initial content in markdown format.
-
-        Returns:
-            str: A JSON string containing the canvas_id of the newly created canvas.
-        """
-        try:
-            # SDK requires document_content even though the API considers it optional
-            doc = {"type": "markdown", "markdown": markdown or ""}
-            kwargs: Dict[str, Any] = {"channel_id": channel_id, "document_content": doc}
-            if title:
-                kwargs["title"] = title
-            response = self.client.conversations_canvases_create(**kwargs)
-            return json.dumps({"ok": True, "canvas_id": response.get("canvas_id", "")})
-        except SlackApiError as e:
-            logger.exception("Error creating channel canvas")
             return json.dumps({"error": str(e)})
 
     def edit_canvas(
