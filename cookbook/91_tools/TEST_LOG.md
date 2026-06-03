@@ -1,5 +1,15 @@
 # Test Log
 
+### strale_tools.py
+
+**Status:** PASS
+
+**Description:** Added a new cookbook example `strale_tools.py` and a built-in toolkit `StraleTools` (in `libs/agno/agno/tools/strale.py`) showing how to use the Strale API. Demonstrates both free capabilities (no API key required on the API, but validated/required by the SDK) like `iban-validate` and `email-validate`, and paid/enterprise capabilities like `company-search` and `sanctions-screening`.
+
+**Result:** Verified that the `StraleTools` module imports correctly and that the script compiles and executes, properly catching the `ValueError` when `STRALE_API_KEY` is not set. Full runtime execution was not performed because agent model and Strale API credentials are required.
+
+---
+
 ### file_tools.py (Examples 6-8: exclude_patterns)
 
 **Status:** PASS
