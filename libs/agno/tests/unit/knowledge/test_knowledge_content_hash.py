@@ -688,3 +688,67 @@ def test_non_remote_content_hash_unchanged():
 
     # Identical (no remote_content on either) → identical hash, preserves dedup behavior.
     assert knowledge._build_content_hash(content_a) == knowledge._build_content_hash(content_b)
+
+
+def test_path_hash_with_different_metadata():
+    """Same path with different metadata produces different hashes (issue #8211)."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(path="/path/to/demo.pdf", metadata={"doc_id": 1, "server_id": "10"})
+    content2 = Content(path="/path/to/demo.pdf", metadata={"doc_id": 1, "server_id": "11"})
+    content3 = Content(path="/path/to/demo.pdf")
+
+    hash1 = knowledge._build_content_hash(content1)
+    hash2 = knowledge._build_content_hash(content2)
+    hash3 = knowledge._build_content_hash(content3)
+
+    assert hash1 != hash2
+    assert hash1 != hash3
+    assert hash2 != hash3
+
+
+def test_path_hash_with_same_metadata():
+    """Same path with same metadata produces identical hashes."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(path="/path/to/demo.pdf", metadata={"doc_id": 1, "server_id": "10"})
+    content2 = Content(path="/path/to/demo.pdf", metadata={"doc_id": 1, "server_id": "10"})
+
+    hash1 = knowledge._build_content_hash(content1)
+    hash2 = knowledge._build_content_hash(content2)
+
+    assert hash1 == hash2
+
+
+def test_metadata_order_does_not_affect_hash():
+    """Metadata dict key order does not affect the hash (sorted internally)."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(path="/path/to/file.pdf", metadata={"a": "1", "b": "2"})
+    content2 = Content(path="/path/to/file.pdf", metadata={"b": "2", "a": "1"})
+
+    hash1 = knowledge._build_content_hash(content1)
+    hash2 = knowledge._build_content_hash(content2)
+
+    assert hash1 == hash2
+
+
+def test_url_hash_with_different_metadata():
+    """Same URL with different metadata produces different hashes."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(url="https://example.com/doc.pdf", metadata={"version": "1"})
+    content2 = Content(url="https://example.com/doc.pdf", metadata={"version": "2"})
+
+    hash1 = knowledge._build_content_hash(content1)
+    hash2 = knowledge._build_content_hash(content2)
+
+    assert hash1 != hash2
+
+
+def test_no_metadata_backward_compatible():
+    """Content without metadata produces the same hash as before the fix."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(path="/path/to/file.pdf")
+    content2 = Content(path="/path/to/file.pdf")
+
+    hash1 = knowledge._build_content_hash(content1)
+    hash2 = knowledge._build_content_hash(content2)
+
+    assert hash1 == hash2

@@ -2226,6 +2226,9 @@ class Knowledge(RemoteKnowledge):
             hash_parts.append(content.name)
         if content.description:
             hash_parts.append(content.description)
+        if content.metadata:
+            meta_str = ":".join(f"{k}={v}" for k, v in sorted(content.metadata.items()))
+            hash_parts.append(meta_str)
 
         remote_identity = self._build_remote_content_identity(content.remote_content)
         if remote_identity:
