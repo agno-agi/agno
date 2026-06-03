@@ -1,5 +1,6 @@
 """Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
 
+import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
 
@@ -12,6 +13,7 @@ try:
         RunAgentInput,
         RunErrorEvent,
         RunStartedEvent,
+        StateSnapshotEvent,
     )
     from ag_ui.encoder import EventEncoder
 except ImportError as e:
@@ -49,6 +51,11 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(run_input.state, run_input.thread_id)
 
+        # Emit initial state snapshot if state is provided
+        if session_state is not None:
+            # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+
         # Request streaming response from agent
         response_stream = agent.arun(  # type: ignore
             input=user_input,
@@ -65,6 +72,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
             response_stream=response_stream,  # type: ignore
             thread_id=run_input.thread_id,
             run_id=run_id,
+            run_state=session_state,
         ):
             yield event
 
@@ -91,6 +99,11 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(input.state, input.thread_id)
 
+        # Emit initial state snapshot if state is provided
+        if session_state is not None:
+            # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+
         # Request streaming response from team
         response_stream = team.arun(  # type: ignore
             input=user_input,
@@ -104,7 +117,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
+            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id, run_state=session_state
         ):
             yield event
 

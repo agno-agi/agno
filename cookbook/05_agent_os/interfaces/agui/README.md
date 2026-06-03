@@ -9,6 +9,7 @@ Examples for `interfaces/agui` in AgentOS.
 - `multiple_instances.py` — Multiple Instances.
 - `reasoning_agent.py` — Reasoning Agent.
 - `research_team.py` — Research Team.
+- `state_events.py` — Outbound state synchronization via STATE_SNAPSHOT + STATE_DELTA events.
 - `structured_output.py` — Structured Output.
 
 ## Prerequisites

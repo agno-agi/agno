@@ -50,6 +50,14 @@
 
 ---
 
+### state_events.py
+
+**Status:** PENDING
+
+**Description:** Outbound state synchronization via STATE_SNAPSHOT + STATE_DELTA events. Emits initial and final STATE_SNAPSHOT events plus STATE_DELTA JSON Patch ops after each state-mutating tool call.
+
+---
+
 ### structured_output.py
 
 **Status:** PENDING
