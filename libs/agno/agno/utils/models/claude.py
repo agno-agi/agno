@@ -370,6 +370,22 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
     return document
 
 
+def build_ephemeral_cache_control(extended_cache_time: bool) -> Dict[str, str]:
+    """Build an Anthropic ``cache_control`` dict for an ephemeral cache block.
+
+    A bare ``{"type": "ephemeral"}`` uses Anthropic's default 5m TTL;
+    ``extended_cache_time`` promotes it to 1h. Centralised so the system blocks
+    and the tools block resolve their TTL identically and stay in lockstep with
+    Anthropic's non-increasing-TTL ordering rule (tools -> system -> messages):
+    a tools block cached for a shorter duration than the system block is rejected
+    by the API.
+    """
+    cache_control: Dict[str, str] = {"type": "ephemeral"}
+    if extended_cache_time:
+        cache_control["ttl"] = "1h"
+    return cache_control
+
+
 def build_system_blocks(
     system_message: Union[str, List["SystemPromptBlock"]],
     cache_system_prompt: bool,
@@ -397,10 +413,7 @@ def build_system_blocks(
     if isinstance(system_message, str):
         entry: Dict[str, Any] = {"text": system_message, "type": "text"}
         if cache_system_prompt:
-            cc: Dict[str, str] = {"type": "ephemeral"}
-            if extended_cache_time:
-                cc["ttl"] = "1h"
-            entry["cache_control"] = cc
+            entry["cache_control"] = build_ephemeral_cache_control(extended_cache_time)
         return [entry]
 
     result: List[Dict[str, Any]] = []
@@ -412,10 +425,7 @@ def build_system_blocks(
             # agent-built block, so users can cache custom blocks without also caching
             # the agent-built one (and vice versa).
             effective_ttl = block.ttl if block.ttl is not None else ("1h" if extended_cache_time else "5m")
-            cc = {"type": "ephemeral"}
-            if effective_ttl == "1h":
-                cc["ttl"] = "1h"
-            b["cache_control"] = cc
+            b["cache_control"] = build_ephemeral_cache_control(effective_ttl == "1h")
         result.append(b)
     return result
 

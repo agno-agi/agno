@@ -261,6 +261,35 @@ def test_cache_tools_disabled_leaves_tools_uncached():
     assert "cache_control" not in kwargs["tools"][-1]
 
 
+def test_aws_cache_tools_inherits_extended_ttl():
+    """AWS Claude inherits _apply_cache_tools, so the tools block must honor extended_cache_time."""
+    pytest.importorskip("boto3")
+    from agno.models.aws.claude import Claude as AwsClaude
+
+    model = AwsClaude(cache_tools=True, extended_cache_time=True)
+    kwargs = model._prepare_request_kwargs("system prompt", tools=[dict(_TOOLS[0])])
+
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_vertexai_cache_tools_inherits_extended_ttl():
+    """VertexAI Claude inherits _apply_cache_tools, so the tools block must honor extended_cache_time."""
+    model = VertexAIClaude(id="claude-haiku-4-5", cache_tools=True, extended_cache_time=True)
+    kwargs = model._prepare_request_kwargs("system prompt", tools=[dict(_TOOLS[0])])
+
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_azure_cache_tools_inherits_extended_ttl():
+    """Azure Claude inherits _apply_cache_tools, so the tools block must honor extended_cache_time."""
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    model = AzureClaude(id="claude-haiku-4-5", cache_tools=True, extended_cache_time=True)
+    kwargs = model._prepare_request_kwargs("system prompt", tools=[dict(_TOOLS[0])])
+
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
 # =============================================================================
 # temperature / top_p / top_k: zero values must not be silently dropped
 # =============================================================================

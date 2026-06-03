@@ -18,6 +18,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
     _validate_cache_ttl_order,
+    build_ephemeral_cache_control,
     build_system_blocks,
     format_messages,
     format_tools_for_model,
@@ -609,10 +610,7 @@ class Claude(Model):
         rejects. Mirror the system-block TTL here to keep the order valid.
         """
         if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
-            cache_control: Dict[str, str] = {"type": "ephemeral"}
-            if self.extended_cache_time:
-                cache_control["ttl"] = "1h"
-            request_kwargs["tools"][-1]["cache_control"] = cache_control
+            request_kwargs["tools"][-1]["cache_control"] = build_ephemeral_cache_control(bool(self.extended_cache_time))
 
     def _build_system(self, system_message: str) -> List[Dict[str, Any]]:
         """Assemble the Anthropic ``system`` array.
