@@ -368,6 +368,11 @@ class LiteLLM(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        finish_reason = getattr(response.choices[0], 'finish_reason', None)
+        if finish_reason is not None:
+            model_response.provider_data = model_response.provider_data or {}
+            model_response.provider_data['finish_reason'] = finish_reason
+
         return model_response
 
     def _parse_provider_response_delta(self, response_delta: Any) -> ModelResponse:
@@ -409,6 +414,12 @@ class LiteLLM(Model):
                         processed_tool_calls.append(tool_call_dict)
 
                     model_response.tool_calls = processed_tool_calls
+
+        if hasattr(response_delta, "choices") and len(response_delta.choices) > 0:
+            finish_reason = getattr(response_delta.choices[0], "finish_reason", None)
+            if finish_reason is not None:
+                model_response.provider_data = model_response.provider_data or {}
+                model_response.provider_data["finish_reason"] = finish_reason
 
         # Add usage metrics if present in streaming response
         if hasattr(response_delta, "usage") and response_delta.usage is not None:
