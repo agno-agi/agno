@@ -197,7 +197,7 @@ chonkie = [
 ]
 
 # Dependencies for AG-UI integration
-agui = ["ag-ui-protocol>=0.1.14"]
+agui = ["ag-ui-protocol>=0.1.15"]
 
 # Dependencies for A2A integration
 a2a = ["a2a-sdk>=0.3.0,<1.0"]
