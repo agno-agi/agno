@@ -7,7 +7,7 @@ from agno.agent import Agent
 from agno.media import Video
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from lumaai import LumaAI  # type: ignore
@@ -42,7 +42,7 @@ class LumaLabTools(Toolkit):
         self.api_key = api_key or getenv("LUMAAI_API_KEY")
 
         if not self.api_key:
-            logger.error("LUMAAI_API_KEY not set. Please set the LUMAAI_API_KEY environment variable.")
+            log_error("LUMAAI_API_KEY not set. Please set the LUMAAI_API_KEY environment variable.")
 
         self.client = LumaAI(auth_token=self.api_key)
 
@@ -124,7 +124,7 @@ class LumaLabTools(Toolkit):
             return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
 
         except Exception as e:
-            logger.error(f"Failed to generate video: {e}")
+            logger.exception("Failed to generate video")
             return ToolResult(content=f"Error: {e}")
 
     def generate_video(
@@ -179,5 +179,5 @@ class LumaLabTools(Toolkit):
             return ToolResult(content=f"Video generation timed out after {self.max_wait_time} seconds")
 
         except Exception as e:
-            logger.error(f"Failed to generate video: {e}")
+            logger.exception("Failed to generate video")
             return ToolResult(content=f"Error: {e}")

@@ -12,6 +12,8 @@ Tests cover:
 - Serialization/deserialization of HITL requirements
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunOutput
 from agno.workflow.step import Step
@@ -503,12 +505,14 @@ class TestStepHITLConfiguration:
 
         data = step.to_dict()
 
-        assert data["requires_confirmation"] is True
-        assert data["confirmation_message"] == "Confirm?"
-        assert data["requires_user_input"] is True
-        assert data["user_input_message"] == "Input?"
-        assert data["on_reject"] == "skip"
-        assert data["on_error"] == "pause"
+        assert "human_review" in data
+        hitl = data["human_review"]
+        assert hitl["requires_confirmation"] is True
+        assert hitl["confirmation_message"] == "Confirm?"
+        assert hitl["requires_user_input"] is True
+        assert hitl["user_input_message"] == "Input?"
+        assert hitl["on_reject"] == "skip"
+        assert hitl["on_error"] == "pause"
 
 
 # =============================================================================
@@ -1009,8 +1013,8 @@ class TestConditionOnReject:
 
         data = condition.to_dict()
 
-        assert "on_reject" in data
-        assert data["on_reject"] == "OnReject.else_branch" or data["on_reject"] == "else"
+        assert "human_review" in data
+        assert data["human_review"]["on_reject"] == "else"
 
     def test_condition_from_dict_restores_on_reject(self):
         """Test that Condition.from_dict restores on_reject field."""
@@ -1300,3 +1304,65 @@ class TestConditionOnRejectWorkflowIntegration:
 
         # final_step should have executed
         assert "final_step" in step_names or "Final step executed" in str(run_output.content)
+
+
+class TestAsyncContinueCleanup:
+    """Regression tests for #7912: async continue paths must await acleanup_run, not the sync variant.
+
+    A sync cleanup_run cannot handle async-only cancellation managers (e.g. async Redis),
+    so _acontinue_execute and _acontinue_execute_stream must call acleanup_run.
+    """
+
+    @staticmethod
+    def _make_confirmation_workflow(session_id: str):
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.workflow import Workflow
+
+        def confirm_step(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="confirmed step ran")
+
+        return Workflow(
+            name="test_async_cleanup_workflow",
+            steps=[Step(name="confirm_step", executor=confirm_step, requires_confirmation=True)],
+            db=SqliteDb(db_file=f"tmp/{session_id}.db"),
+        )
+
+    async def test_acontinue_run_awaits_acleanup_run(self, monkeypatch):
+        import agno.workflow.workflow as wf_module
+
+        wf = self._make_confirmation_workflow("async_cleanup_acontinue")
+        run = await wf.arun("test", session_id="async_cleanup_acontinue")
+        assert run.is_paused
+        run.steps_requiring_confirmation[0].confirm()
+
+        acleanup_mock = AsyncMock(return_value=None)
+        cleanup_sync_mock = MagicMock()
+        monkeypatch.setattr(wf_module, "acleanup_run", acleanup_mock)
+        monkeypatch.setattr(wf_module, "cleanup_run", cleanup_sync_mock)
+
+        run = await wf.acontinue_run(run)
+        assert run.status == RunStatus.completed
+        cleanup_sync_mock.assert_not_called()
+        acleanup_mock.assert_awaited()
+
+    async def test_acontinue_run_stream_awaits_acleanup_run(self, monkeypatch):
+        import agno.workflow.workflow as wf_module
+
+        wf = self._make_confirmation_workflow("async_cleanup_acontinue_stream")
+        async for _ in wf.arun("test", session_id="async_cleanup_acontinue_stream", stream=True, stream_events=True):
+            pass
+        session = wf.get_session(session_id="async_cleanup_acontinue_stream")
+        run = session.runs[-1]
+        assert run.is_paused
+        run.steps_requiring_confirmation[0].confirm()
+
+        acleanup_mock = AsyncMock(return_value=None)
+        cleanup_sync_mock = MagicMock()
+        monkeypatch.setattr(wf_module, "acleanup_run", acleanup_mock)
+        monkeypatch.setattr(wf_module, "cleanup_run", cleanup_sync_mock)
+
+        async for _ in await wf.acontinue_run(run, stream=True, stream_events=True):
+            pass
+
+        cleanup_sync_mock.assert_not_called()
+        acleanup_mock.assert_awaited()

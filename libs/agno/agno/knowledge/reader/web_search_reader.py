@@ -2,7 +2,7 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlparse
 
 import httpx
@@ -11,8 +11,14 @@ from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.url_validation import (
+    is_host_allowed,
+    make_async_redirect_guard,
+    make_redirect_guard,
+    validate_allowed_hosts,
+)
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -45,6 +51,10 @@ class WebSearchReader(Reader):
     rate_limit_delay: float = 5.0  # Delay when rate limited
     exponential_backoff: bool = True
 
+    # Optional hostname allowlist. When set, only URLs whose host is in the list are fetched.
+    # When None (default), all hosts are allowed.
+    allowed_hosts: Optional[List[str]] = None
+
     # Internal state
     _visited_urls: Set[str] = field(default_factory=set)
     _last_search_time: float = field(default=0.0, init=False)
@@ -56,6 +66,7 @@ class WebSearchReader(Reader):
         """Initialize chunking strategy with proper chunk_size"""
         if self.chunking_strategy is None:
             self.chunking_strategy = SemanticChunking(chunk_size=self.chunk_size)
+        self.allowed_hosts = validate_allowed_hosts(self.allowed_hosts)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -111,7 +122,7 @@ class WebSearchReader(Reader):
                 return results
 
             except Exception as e:
-                logger.warning(f"DuckDuckGo search attempt {attempt + 1} failed: {e}")
+                log_warning(f"DuckDuckGo search attempt {attempt + 1} failed: {str(e)}")
                 if "rate limit" in str(e).lower() or "429" in str(e):
                     # Rate limited - wait longer
                     wait_time = (
@@ -123,7 +134,7 @@ class WebSearchReader(Reader):
                     # Other error - shorter wait
                     time.sleep(self.search_delay)
                 else:
-                    logger.error(f"All DuckDuckGo search attempts failed: {e}")
+                    logger.exception("All DuckDuckGo search attempts failed")
                     return []
         return []
 
@@ -132,14 +143,19 @@ class WebSearchReader(Reader):
         if self.search_engine == "duckduckgo":
             return self._perform_duckduckgo_search(query)
         else:
-            logger.error(f"Unsupported search engine: {self.search_engine}")
+            log_error(f"Unsupported search engine: {self.search_engine}")
             return []
 
     def _is_valid_url(self, url: str) -> bool:
-        """Check if URL is valid and not already visited"""
+        """Check if URL is valid, host-allowed, and not already visited"""
         try:
             parsed = urlparse(url)
-            return bool(parsed.scheme in ["http", "https"] and parsed.netloc and url not in self._visited_urls)
+            if not (parsed.scheme in ["http", "https"] and parsed.netloc and url not in self._visited_urls):
+                return False
+            if not is_host_allowed(url, self.allowed_hosts):
+                log_debug(f"Host not in allowed_hosts, skipping: {url}")
+                return False
+            return True
         except Exception:
             return False
 
@@ -163,16 +179,23 @@ class WebSearchReader(Reader):
             return text
 
         except Exception as e:
-            logger.warning(f"Error extracting text from {url}: {e}")
+            log_warning(f"Error extracting text from {url}: {str(e)}")
             return html_content
 
     def _fetch_url_content(self, url: str) -> Optional[str]:
         """Fetch content from a URL with retry logic"""
         headers = {"User-Agent": self.user_agent}
+        guard = make_redirect_guard(self.allowed_hosts)
 
         for attempt in range(self.max_retries):
             try:
-                response = httpx.get(url, headers=headers, timeout=self.request_timeout, follow_redirects=True)
+                if guard is None:
+                    response = httpx.get(url, headers=headers, timeout=self.request_timeout, follow_redirects=True)
+                else:
+                    # Per-redirect host check: follow redirects but validate each hop's
+                    # target against the allowlist via the request event hook.
+                    with httpx.Client(timeout=self.request_timeout, event_hooks={"request": [guard]}) as client:
+                        response = client.get(url, headers=headers, follow_redirects=True)
                 response.raise_for_status()
 
                 # Check if it's HTML content
@@ -184,12 +207,12 @@ class WebSearchReader(Reader):
                     return response.text
 
             except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed for {url}: {e}")
+                log_warning(f"Attempt {attempt + 1} failed for {url}: {str(e)}")
                 if attempt < self.max_retries - 1:
                     time.sleep(random.uniform(1, 3))  # Random delay between retries
                 continue
 
-        logger.error(f"Failed to fetch content from {url} after {self.max_retries} attempts")
+        log_error(f"Failed to fetch content from {url} after {self.max_retries} attempts")
         return None
 
     def _create_document_from_url(self, url: str, content: str, search_result: Dict[str, str]) -> Document:
@@ -290,7 +313,11 @@ class WebSearchReader(Reader):
 
             try:
                 headers = {"User-Agent": self.user_agent}
-                async with httpx.AsyncClient(timeout=self.request_timeout) as client:
+                guard = make_async_redirect_guard(self.allowed_hosts)
+                client_kwargs: Dict[str, Any] = {"timeout": self.request_timeout}
+                if guard is not None:
+                    client_kwargs["event_hooks"] = {"request": [guard]}
+                async with httpx.AsyncClient(**client_kwargs) as client:
                     response = await client.get(url, headers=headers, follow_redirects=True)
                     response.raise_for_status()
 
@@ -303,7 +330,7 @@ class WebSearchReader(Reader):
                     return self._create_document_from_url(url, content, result)
 
             except Exception as e:
-                logger.warning(f"Error fetching {url}: {e}")
+                log_warning(f"Error fetching {url}: {str(e)}")
                 return None
 
         documents = []
