@@ -424,7 +424,9 @@ def test_raises_error_without_verification_key():
             algorithm="HS256",
         )
 
-    assert "at least one jwt verification key or jwks file is required" in str(exc_info.value).lower()
+    msg = str(exc_info.value).lower()
+    assert "at least one jwt verification key" in msg
+    assert "jwks" in msg
 
 
 def test_authorization_enabled_implicitly_with_scope_mappings():

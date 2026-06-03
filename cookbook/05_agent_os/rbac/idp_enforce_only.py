@@ -20,9 +20,11 @@ The only thing we define is the role -> permissions list (here, in memory):
   - admin  -> can do anything
 WorkOS decides WHO is a member or admin; we decide what those words mean.
 
-(Real WorkOS tokens are signed by WorkOS and verified against its public keys -
-see casbin_external_idp.py for that part. Here we use a simple shared secret so
-the example runs on its own; the authorization behaviour is identical.)
+(Real WorkOS tokens are signed by WorkOS. In production you point agno at WorkOS's
+live keys URL and it fetches + rotates them for you - no key file to manage:
+    AuthorizationConfig(jwks_url="https://<your-workos>/.well-known/jwks.json", ...)
+Here we use a simple shared secret so the example runs on its own; the
+authorization behaviour is identical.)
 
 Run it:
     pip install "agno[casbin]"

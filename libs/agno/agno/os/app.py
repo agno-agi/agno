@@ -979,6 +979,7 @@ class AgentOS:
 
         verify_audience = False
         jwks_file = None
+        jwks_url = None
         verification_keys = None
         algorithm = "RS256"
         audience = None
@@ -990,6 +991,7 @@ class AgentOS:
             algorithm = self.authorization_config.algorithm or "RS256"
             verification_keys = self.authorization_config.verification_keys
             jwks_file = self.authorization_config.jwks_file
+            jwks_url = self.authorization_config.jwks_url
             verify_audience = self.authorization_config.verify_audience or False
             audience = self.authorization_config.audience
             admin_scope = self.authorization_config.admin_scope
@@ -1002,6 +1004,7 @@ class AgentOS:
         jwt_validator = JWTValidator(
             verification_keys=verification_keys,
             jwks_file=jwks_file,
+            jwks_url=jwks_url,
             algorithm=algorithm,
         )
         fastapi_app.state.jwt_validator = jwt_validator
@@ -1050,6 +1053,7 @@ class AgentOS:
         middleware_kwargs: Dict[str, Any] = {
             "verification_keys": verification_keys,
             "jwks_file": jwks_file,
+            "jwks_url": jwks_url,
             "algorithm": algorithm,
             "authorization": self.authorization,
             "verify_audience": verify_audience,

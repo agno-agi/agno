@@ -109,6 +109,9 @@ agent_os = AgentOS(
         algorithm="RS256",
         verification_keys=[cust_public],  # verifies self-minted (no-IdP) tokens
         jwks_file=JWKS_PATH,  # verifies external-IdP tokens
+        # In production with a real IdP you'd skip the file and use the IdP's live
+        # keys URL instead - agno fetches and rotates them for you:
+        #   jwks_url="https://<your-workos-or-auth0>/.well-known/jwks.json"
         verify_audience=True,
         audience=OS_ID,
         authorization_provider=CasbinAuthorizationProvider(enforcer, roles_claim="roles"),

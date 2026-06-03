@@ -68,6 +68,7 @@ class JWTValidator:
         self,
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
+        jwks_url: Optional[str] = None,
         algorithm: str = "RS256",
         validate: bool = True,
         scopes_claim: str = "scopes",
@@ -122,12 +123,27 @@ class JWTValidator:
             if jwks_file_env:
                 self._load_jwks_file(jwks_file_env)
 
+        # Remote JWKS URL (e.g. an IdP like WorkOS/Auth0 that publishes and rotates
+        # its public keys at a well-known URL). Keys are fetched and cached at
+        # startup, then re-fetched lazily (rate-limited) when a token arrives with
+        # a key id we haven't seen yet - which is how key rotation is handled.
+        self.jwks_url: Optional[str] = jwks_url or getenv("JWT_JWKS_URL", "") or None
+        self._jwks_last_fetch: float = 0.0
+        self._jwks_min_refresh_seconds: float = 300.0
+        if self.jwks_url:
+            try:
+                self._load_jwks_url(self.jwks_url)
+            except Exception as e:
+                # Don't hard-fail startup if the IdP is briefly unreachable; we'll
+                # retry on the first token that needs a key.
+                log_warning(f"Could not fetch JWKS from {self.jwks_url} at startup: {e}")
+
         # Validate that at least one key source is provided if validate=True
-        if self.validate and not self.verification_keys and not self.jwks_keys:
+        if self.validate and not self.verification_keys and not self.jwks_keys and not self.jwks_url:
             raise ValueError(
-                "At least one JWT verification key or JWKS file is required when validate=True. "
+                "At least one JWT verification key or JWKS source is required when validate=True. "
                 "Set via verification_keys parameter, JWT_VERIFICATION_KEY environment variable, "
-                "jwks_file parameter or JWT_JWKS_FILE environment variable."
+                "jwks_file/JWT_JWKS_FILE, or jwks_url/JWT_JWKS_URL."
             )
 
     def _load_jwks_file(self, file_path: str) -> None:
@@ -146,6 +162,40 @@ class JWTValidator:
             raise ValueError(f"JWKS file not found: {file_path}")
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in JWKS file {file_path}: {e}")
+
+    def _load_jwks_url(self, url: str) -> None:
+        """Fetch a JWKS document from a URL and merge its keys into the cache."""
+        import time
+
+        import httpx
+
+        response = httpx.get(url, timeout=5.0)
+        response.raise_for_status()
+        self._parse_jwks_data(response.json())
+        self._jwks_last_fetch = time.time()
+        log_debug(f"Loaded {len(self.jwks_keys)} key(s) from JWKS url: {url}")
+
+    def _maybe_refresh_jwks(self) -> bool:
+        """Re-fetch a remote JWKS, at most once per refresh window.
+
+        Called when a token presents a key id we don't have cached - usually
+        because the IdP rotated its signing keys. Rate-limited so a flood of
+        unknown-kid tokens can't turn into a fetch storm against the IdP.
+        """
+        import time
+
+        if not self.jwks_url:
+            return False
+        if time.time() - self._jwks_last_fetch < self._jwks_min_refresh_seconds:
+            return False
+        try:
+            self._load_jwks_url(self.jwks_url)
+            return True
+        except Exception as e:
+            # Stamp the attempt so a persistent outage doesn't hammer the IdP.
+            self._jwks_last_fetch = time.time()
+            log_warning(f"JWKS refresh from {self.jwks_url} failed: {e}")
+            return False
 
     def _parse_jwks_data(self, jwks_data: Dict[str, Any]) -> None:
         """
@@ -216,8 +266,8 @@ class JWTValidator:
         last_exception: Optional[Exception] = None
         payload: Optional[Dict[str, Any]] = None
 
-        # Try JWKS keys first if configured
-        if self.jwks_keys:
+        # Try JWKS keys first if configured (cached keys, or a remote JWKS url)
+        if self.jwks_keys or self.jwks_url:
             try:
                 # Get the kid from the token header to find the right key
                 unverified_header = jwt.get_unverified_header(token)
@@ -229,6 +279,11 @@ class JWTValidator:
                 elif "_default" in self.jwks_keys:
                     # Fall back to default key if no kid match
                     jwk = self.jwks_keys["_default"]
+
+                # Unknown key id: the IdP may have rotated keys. Re-fetch the
+                # remote JWKS (rate-limited) and look again before giving up.
+                if jwk is None and kid and self.jwks_url and self._maybe_refresh_jwks():
+                    jwk = self.jwks_keys.get(kid)
 
                 if jwk:
                     payload = jwt.decode(token, jwk.key, **decode_kwargs)
@@ -396,6 +451,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         app,
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
+        jwks_url: Optional[str] = None,
         secret_key: Optional[str] = None,  # Deprecated: Use verification_keys instead
         algorithm: str = "RS256",
         validate: bool = True,
@@ -484,6 +540,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.validator = JWTValidator(
             verification_keys=all_verification_keys if all_verification_keys else None,
             jwks_file=jwks_file,
+            jwks_url=jwks_url,
             algorithm=algorithm,
             validate=validate,
             scopes_claim=scopes_claim,
