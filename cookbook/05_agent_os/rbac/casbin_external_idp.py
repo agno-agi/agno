@@ -1,19 +1,32 @@
 """
-Casbin with External IdP and Self-Minted Tokens Example with AgentOS
+Where does "who are you" come from - outside login vs your own login
 
-This example demonstrates one AgentOS serving BOTH user populations, because the
-authorization layer only ever sees a `sub`. Only token minting/verification differs:
-- Users WITH an external IdP (Auth0/WorkOS/Clerk): the IdP signs the token; AgentOS
-  verifies it against the IdP's published keys (a JWKS); roles come FROM the token.
-- Users WITHOUT an IdP: your backend self-mints a token with your own key (here a
-  plain jwt.encode); AgentOS verifies it against that key; roles come FROM the Casbin store.
+(New to this? Read managed_roles.py first.)
 
-A single AgentOS trusts both at once via `jwks_file` (the IdP's keys) AND
-`verification_keys` (your self-mint key). The same Casbin policy authorizes both.
+Remember the token: the signed ID card a user carries. Someone has to issue that
+card. There are two common situations, and the nice thing is one AgentOS can
+accept both at the same time:
 
-Prerequisites:
-- pip install "agno[casbin]"
-- Set OPENAI_API_KEY to actually run an agent (authorization is enforced regardless)
+1. The company uses an outside login service (Okta, WorkOS, Auth0, Google...).
+   That service issues the card and stamps the person's role right on it. agno
+   trusts cards from that service and reads the role off the card.
+2. The company has no such service, so their own app issues the card. The card
+   just says who the person is; agno looks up that person's role in its own list.
+
+Either way the question agno answers is the same ("what is this person allowed to
+do?"), and the answer comes out the same. This file sets up both kinds of users
+against one AgentOS and shows each one getting ALLOWED or BLOCKED. Don't worry
+about the key/signing plumbing; the point is both login styles just work.
+
+The cast (all asking to look at the research agent):
+- alice -> outside-login user whose card says role "member"  -> allowed
+- carol -> outside-login user whose card says role "guest"   -> blocked
+- bob   -> own-app user, listed as a "member" in agno         -> allowed
+- dave  -> own-app user with no role                          -> blocked
+
+Run it:
+    pip install "agno[casbin]"
+    python casbin_external_idp.py
 """
 
 import json
@@ -147,15 +160,18 @@ if __name__ == "__main__":
 
     def show(label: str, tok: str, note: str = "") -> None:
         r = client.get("/agents/research-agent", headers={"Authorization": f"Bearer {tok}"})
-        verdict = "DENIED " if r.status_code in (401, 403) else "ALLOWED"
-        print(f"  {label:42s} -> {r.status_code} {verdict}  {note}")
+        verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
+        print(f"  {label:46s} -> {verdict:7s} ({r.status_code})  {note}")
 
-    print("\n" + "=" * 70)
-    print("IdP + self-minted tokens — running the scenario for you")
-    print("(every line hits GET /agents/research-agent on the SAME AgentOS)")
-    print("=" * 70)
-    show("alice@corp  IdP token,   roles=[member]", alice, "IdP member -> allowed")
-    show("carol@corp  IdP token,   roles=[guest]", carol, "IdP guest -> blocked")
-    show("bob         self-minted, store member", bob, "store member -> allowed")
-    show("dave        self-minted, no role", dave, "no role -> blocked")
-    print("=" * 70)
+    print("\n" + "=" * 80)
+    print("TWO KINDS OF LOGIN, ONE AGENTOS")
+    print("=" * 80)
+    print("  everyone below is asking to look at the same agent.\n")
+    show("alice  (outside login, card says 'member')", alice, "trusted card + good role -> in")
+    show("carol  (outside login, card says 'guest')", carol, "trusted card, wrong role -> bounced")
+    show("bob    (your app's login, listed as member)", bob, "agno looks up his role -> in")
+    show("dave   (your app's login, no role)", dave, "no role anywhere -> bounced")
+    print("=" * 80)
+    print("the point: it doesn't matter who issued the login card. agno asks the same")
+    print("question and protects the agent the same way for both kinds of user.")
+    print("=" * 80)

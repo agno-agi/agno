@@ -359,21 +359,23 @@ Three tiers, pick the lowest that fits:
 | Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[casbin]` (hidden) |
 | Raw provider | your own `AuthorizationProvider` (e.g. a Casbin model) | yours |
 
-Each cookbook below runs the whole scenario in-process and prints an
-`ALLOWED`/`DENIED` transcript, then exits (no server, no curl needed):
+Each cookbook below runs the whole scenario for you and prints a plain
+`ALLOWED` / `BLOCKED` transcript that explains itself, then exits (no server, no
+curl needed). Every file starts with a short plain-English explainer at the top.
 
-- `casbin_provider.py` — swap in a Casbin enforcer (roles, hierarchy, wildcards).
-- `casbin_external_idp.py` — one AgentOS trusting both external-IdP tokens (roles
-  from the token) and self-minted tokens (roles from the Casbin store).
-- `casbin_runtime_policy.py` — policy in your own DB, granted/revoked at runtime,
-  reflected on the next request with the same token.
-- `managed_roles.py` — the agno-native managed-roles API: define roles and assign
-  them in scope terms, Casbin hidden inside the store.
-- `managed_roles_api.py` — an admin-only REST API (`/authz/...`) to manage roles
-  over HTTP.
-- `managed_roles_sessions.py` — roles gating the real session endpoints: a
-  read-only role is blocked (403) from deleting sessions; an operator deletes for
-  real.
+New to authorization? Read them in this order:
+
+1. `managed_roles.py` — start here. What roles are, and how handing someone a role
+   decides what they can do. Shows a change taking effect instantly.
+2. `managed_roles_sessions.py` — roles protecting real data: who is allowed to
+   delete a saved chat session (and who gets stopped before any data is touched).
+3. `managed_roles_api.py` — managing roles over the web, who's allowed to do that,
+   and a permanent record of every change (the audit log).
+4. `casbin_external_idp.py` — where the user's login comes from: an outside login
+   service (Okta/WorkOS/Auth0) vs your own app, both on one AgentOS.
+5. `casbin_runtime_policy.py` — turning a person's access on and off live, instantly.
+6. `casbin_provider.py` — advanced: swapping the rules engine for Casbin while
+   everything else stays the same. Most people won't need this.
 
 Install the optional extra first: `pip install "agno[casbin]"`.
 

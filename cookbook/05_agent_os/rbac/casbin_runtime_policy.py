@@ -1,17 +1,25 @@
 """
-Casbin Runtime Policy Example with AgentOS
+Turning someone's access on and off while the app is running
 
-This example demonstrates policy stored in YOUR database and changed live, with no
-token re-mint. Grant or revoke a role at runtime and the very next request reflects
-it, using the same token. Policy persists in your own DB (here SQLite via the
-SQLAlchemy adapter; in production point it at Postgres).
+(New to this? Read managed_roles.py first.)
 
-This is what token-baked scopes cannot do: revoking a scope in a token means
-waiting for the token to expire. With DB-backed Casbin, "revoke now" is now.
+A real worry: someone leaves the company, or you grant access by mistake. Can you
+cut their access RIGHT NOW, or do you have to wait for their login to expire?
 
-Prerequisites:
-- pip install "agno[casbin]"
-- Set OPENAI_API_KEY to actually run an agent (authorization is enforced regardless)
+With this setup the answer is "right now". The permissions live in your database,
+not baked into the user's login card. So you can flip a person's access on or off
+and their very next request obeys the new rule, even though they're still holding
+the exact same card.
+
+This file uses one person, bob, who starts with no access. We:
+1. show bob is BLOCKED,
+2. grant him access while the server runs -> he's now ALLOWED,
+3. take it away again -> he's BLOCKED again,
+all without bob logging in again or getting a new card.
+
+Run it:
+    pip install "agno[casbin]"
+    python casbin_runtime_policy.py
 """
 
 import os
@@ -120,16 +128,22 @@ if __name__ == "__main__":
 
     def show(label: str, note: str = "") -> None:
         r = client.get("/agents/research-agent", headers=bob_h)
-        verdict = "DENIED " if r.status_code in (401, 403) else "ALLOWED"
-        print(f"  {label:42s} -> {r.status_code} {verdict}  {note}")
+        verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
+        print(f"  {label:34s} -> {verdict:7s} ({r.status_code})  {note}")
 
-    print("\n" + "=" * 70)
-    print("Casbin runtime policy — running the scenario for you")
-    print("(bob's token NEVER changes; only the DB-backed policy does)")
-    print("=" * 70)
-    show("bob GET /agents/research-agent", "no role yet -> blocked")
-    enforcer.add_role_for_user("bob", "member")  # grant at runtime, persists to the DB
-    show("bob GET /agents/research-agent", "granted 'member' live -> SAME token")
-    enforcer.delete_role_for_user("bob", "member")  # revoke at runtime
-    show("bob GET /agents/research-agent", "revoked live -> blocked again")
-    print("=" * 70)
+    print("\n" + "=" * 78)
+    print("TURNING ACCESS ON AND OFF, LIVE")
+    print("=" * 78)
+    print("  bob holds ONE login card the whole time. we never give him a new one.\n")
+
+    show("bob asks to look at the agent", "starts with no access -> bounced")
+    print("\n  >> grant bob access now (while the server is running)...\n")
+    enforcer.add_role_for_user("bob", "member")
+    show("bob asks again (same card)", "access flipped on -> he's in")
+    print("\n  >> ...now cut his access...\n")
+    enforcer.delete_role_for_user("bob", "member")
+    show("bob asks again (same card)", "access flipped off -> bounced again")
+    print("=" * 78)
+    print("the point: you can revoke access instantly. bob never logged in again and")
+    print("his card never changed - only the rule on the server side did.")
+    print("=" * 78)

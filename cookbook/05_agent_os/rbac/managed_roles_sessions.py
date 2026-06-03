@@ -1,17 +1,26 @@
 """
-Managed Roles Session Access Control Example with AgentOS
+Roles protecting real data - who can delete a chat session
 
-This example demonstrates RBAC gating a real AgentOS resource: sessions. Roles
-govern the actual session endpoints (GET /sessions, PATCH /sessions/{id},
-DELETE /sessions/{id}). A read-only 'support' role can VIEW sessions but is
-blocked (403) from editing or deleting them; an 'operator' can delete, and when
-it does the session is really gone. There is no Casbin in this file; roles are
-defined in agno scope terms and the store hides the engine.
+(If roles are new to you, read managed_roles.py first.)
 
-Two sessions are seeded so the blocking is tangible.
+A "session" is one saved conversation with an agent. Deleting one throws away real
+data, so not everyone should be allowed to. This file shows roles protecting an
+actual operation, not a toy one.
 
-Prerequisites:
-- pip install "agno[casbin]"
+Three jobs:
+- support  -> can LOOK at sessions, nothing else
+- operator -> can look, edit, and DELETE sessions
+- admin    -> can do anything
+
+We put two saved sessions in the database, then watch what each person is allowed
+to do. The key moment: the support person tries to delete a session and gets
+BLOCKED, while the operator deletes one for real and the count drops from 2 to 1.
+That is the whole idea of authorization in one screen: the right people get
+through, the wrong ones get stopped, before any data is touched.
+
+Run it:
+    pip install "agno[casbin]"
+    python managed_roles_sessions.py
 """
 
 import os
@@ -117,20 +126,27 @@ if __name__ == "__main__":
         return {"Authorization": f"Bearer {token(sub)}"}
 
     def show(label: str, r, note: str = "") -> None:
-        verdict = "DENIED " if r.status_code in (401, 403) else "ALLOWED"
-        print(f"  {label:46s} -> {r.status_code} {verdict}  {note}")
+        # 200/204 means it went through; 401/403 means it was bounced.
+        verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
+        print(f"  {label:44s} -> {verdict:7s} ({r.status_code})  {note}")
 
     def count(sub: str) -> int:
         r = client.get("/sessions?type=agent", headers=auth(sub))
         return r.json()["meta"]["total_count"] if r.status_code == 200 else -1
 
-    print("\n" + "=" * 70)
-    print("Session access control — running the scenario for you")
-    print("=" * 70)
-    print(f"  sessions in the DB to start                    : {count('val')}")
-    show("bob (support)  GET    /sessions", client.get("/sessions?type=agent", headers=auth("bob")), "can view")
-    show("bob (support)  PATCH  /sessions/sess-123", client.patch("/sessions/sess-123", headers=auth("bob"), json={"name": "x"}), "write -> blocked")
-    show("bob (support)  DELETE /sessions/sess-123", client.delete("/sessions/sess-123", headers=auth("bob")), "delete -> blocked")
-    show("val (operator) DELETE /sessions/sess-123", client.delete("/sessions/sess-123", headers=auth("val")), "really deleted")
-    print(f"  sessions in the DB now                         : {count('val')}  <- it's gone")
-    print("=" * 70)
+    print("\n" + "=" * 78)
+    print("WHO CAN TOUCH THE SAVED SESSIONS")
+    print("=" * 78)
+    print("  bob = support (look only) | val = operator (look, edit, delete)")
+    print(f"  saved sessions right now: {count('val')}\n")
+
+    show("bob (support)  tries to LOOK at sessions", client.get("/sessions?type=agent", headers=auth("bob")), "support can look")
+    show("bob (support)  tries to RENAME a session", client.patch("/sessions/sess-123", headers=auth("bob"), json={"name": "x"}), "editing isn't allowed -> bounced")
+    show("bob (support)  tries to DELETE a session", client.delete("/sessions/sess-123", headers=auth("bob")), "deleting isn't allowed -> bounced")
+    show("val (operator) tries to DELETE a session", client.delete("/sessions/sess-123", headers=auth("val")), "operators can delete -> done for real")
+
+    print(f"\n  saved sessions now: {count('val')}  (was 2 - the operator's delete really happened)")
+    print("=" * 78)
+    print("the point: the support person was stopped before any data was touched.")
+    print("only the operator's delete went through, and you can see the count drop.")
+    print("=" * 78)

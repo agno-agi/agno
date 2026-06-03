@@ -1,17 +1,33 @@
 """
-Managed Roles HTTP Management API Example with AgentOS
+Managing roles over the web - and keeping a record of every change
 
-This example demonstrates the admin-only REST API for managed roles. Mount one
-router and admins can create roles and grant/revoke them with plain HTTP calls,
-the change takes effect on the target user's next request (same token). There is
-still no Casbin in this file; the store hides that engine.
+(If roles are new to you, read managed_roles.py first.)
 
-Every /authz/* route requires an admin caller (satisfies agent_os:admin, by token
-scope or by an admin role in the store): non-admins get 403, anonymous 401.
+So far roles were set in code. In real life an admin needs to manage them while
+the app is running, from a dashboard or a script. This file adds a small set of
+web endpoints (a REST API) for exactly that: create a role, give it to someone,
+take it away - all over plain HTTP.
 
-Prerequisites:
-- pip install "agno[casbin]"
-- Set OPENAI_API_KEY to actually run an agent (authorization is enforced regardless)
+Two important things this shows:
+
+1. Only admins can use these endpoints. If a normal user calls them they get
+   BLOCKED, and someone with no login at all is bounced even harder. So the tool
+   that hands out power is itself protected.
+
+2. Every change is written to an audit log: a permanent, append-only record of
+   who changed what and when (e.g. "alice gave bob the runner role"). This is the
+   kind of trail a security/compliance review asks for. At the end the file prints
+   that log so you can see it.
+
+The endpoints all live under /authz, for example:
+    GET    /authz/roles                  -> list the roles
+    PUT    /authz/roles/{role}           -> set what a role can do
+    POST   /authz/users/{who}/roles      -> give someone a role
+    DELETE /authz/users/{who}/roles/{r}  -> take a role away
+
+Run it:
+    pip install "agno[casbin]"
+    python managed_roles_api.py
 """
 
 import os
@@ -119,29 +135,36 @@ if __name__ == "__main__":
         return {"Authorization": f"Bearer {token(sub)}"}
 
     def show(label: str, r, note: str = "") -> None:
-        verdict = "DENIED " if r.status_code in (401, 403) else "ALLOWED"
-        print(f"  {label:48s} -> {r.status_code} {verdict}  {note}")
+        verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
+        print(f"  {label:46s} -> {verdict:7s} ({r.status_code})  {note}")
 
-    print("\n" + "=" * 72)
-    print("Managed roles admin API — running the scenario for you")
-    print("=" * 72)
-    show("alice (admin) GET    /authz/roles", client.get("/authz/roles", headers=auth("alice")), "admin")
-    show("bob (viewer)  GET    /authz/roles", client.get("/authz/roles", headers=auth("bob")), "not admin -> blocked")
-    show("anon          GET    /authz/roles", client.get("/authz/roles"), "no token -> 401")
-    show("bob           POST   /agents/research-agent/runs", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "viewer -> blocked")
+    print("\n" + "=" * 80)
+    print("MANAGING ROLES OVER THE WEB (and who's allowed to)")
+    print("=" * 80)
+    print("  alice = admin (allowed to manage) | bob = normal user | anon = nobody logged in\n")
+
+    print("  first, who can even use the management endpoints?")
+    show("alice (admin) opens the roles admin", client.get("/authz/roles", headers=auth("alice")), "admins can")
+    show("bob (normal)  opens the roles admin", client.get("/authz/roles", headers=auth("bob")), "normal users can't -> bounced")
+    show("nobody        opens the roles admin", client.get("/authz/roles"), "not logged in -> bounced harder")
+
+    print("\n  now watch alice give bob a new power, live:")
+    show("bob tries to RUN an agent (before)", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "bob can't run yet")
     client.put("/authz/roles/runner", headers=auth("alice"), json={"scopes": ["agents:*:run"]})
-    g = client.post("/authz/users/bob/roles", headers=auth("alice"), json={"role": "runner"})
-    show("alice         POST   /authz/users/bob/roles", g, f"granted -> bob roles {g.json().get('roles')}")
-    show("bob           POST   /agents/research-agent/runs", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "after grant -> SAME token")
-    client.delete("/authz/users/bob/roles/runner", headers=auth("alice"))  # revoke over HTTP
-    show("alice         DELETE /authz/users/bob/roles/runner", client.get("/authz/users/bob/roles", headers=auth("alice")), "revoked -> bob back to viewer")
-    show("bob           POST   /agents/research-agent/runs", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "after revoke -> blocked again")
-    print("=" * 72)
+    print("    (alice created a 'runner' role that can run agents)")
+    client.post("/authz/users/bob/roles", headers=auth("alice"), json={"role": "runner"})
+    print("    (alice gave bob the 'runner' role)")
+    show("bob tries to RUN an agent (after)", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "same bob, now allowed")
+    client.delete("/authz/users/bob/roles/runner", headers=auth("alice"))
+    print("    (alice took the 'runner' role back)")
+    show("bob tries to RUN an agent (after revoke)", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "bounced again")
+    print("=" * 80)
 
-    # The append-only audit trail of everything the admin just did over HTTP.
+    # Every change above was written to a permanent record. Here it is.
     import sqlalchemy as sa
 
-    print("\nAudit trail (authz_audit table, actor taken from the admin's jwt):")
+    print("\nTHE RECORD: every change is logged - who did it, what changed, before -> after.")
+    print("(this is what a security review wants to see)")
     eng = sa.create_engine("sqlite:///tmp/authz_audit.db")
     with eng.connect() as conn:
         for row in conn.execute(

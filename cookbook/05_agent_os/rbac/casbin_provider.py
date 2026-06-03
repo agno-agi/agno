@@ -1,19 +1,27 @@
 """
-Casbin Authorization Provider Example with AgentOS
+Advanced: using Casbin as the rules engine
 
-This example demonstrates how to swap the default scope matcher for a Casbin
-enforcer behind the authorization provider seam, so you get role hierarchy,
-wildcards, and policy stored/edited in your own DB. Casbin is a pure-Python
-library (no service); the default provider stays the zero-dependency scope
-matcher, this is opt-in.
+(New to this? Read managed_roles.py first. This file is the power-user version of
+the same idea and you probably don't need it day to day.)
 
-Policy convention (Casbin `p = sub, obj, act`): sub is the JWT `sub`, obj is
-"<resource_type>/<resource_id>" (use keyMatch2 for wildcards), act is the action.
-Roles via `g, user, role`. In production point the enforcer's adapter at your DB.
+Something has to actually decide "is this person allowed?". By default agno uses
+its own simple rules engine. But agno lets you swap that engine out, so if a
+customer already standardises on a well-known open-source one called Casbin, they
+can plug it in without changing anything else about how AgentOS works.
 
-Prerequisites:
-- pip install "agno[casbin]"
-- Set OPENAI_API_KEY to actually run an agent (authorization is enforced regardless)
+This file does exactly that swap and then runs the same kind of check you saw in
+managed_roles.py: a few people, a few requests, ALLOWED or BLOCKED for each. The
+takeaway isn't the Casbin syntax, it's that the engine is replaceable while the
+rest stays the same.
+
+The cast:
+- alice is a "member"  -> can look at agents and run the research agent
+- root is an "admin"   -> can do anything
+- mallory has no role  -> can do nothing
+
+Run it:
+    pip install "agno[casbin]"
+    python casbin_provider.py
 """
 
 import os
@@ -128,14 +136,18 @@ if __name__ == "__main__":
         return {"Authorization": f"Bearer {token(sub)}"}
 
     def show(label: str, r, note: str = "") -> None:
-        verdict = "DENIED " if r.status_code in (401, 403) else "ALLOWED"
-        print(f"  {label:48s} -> {r.status_code} {verdict}  {note}")
+        verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
+        print(f"  {label:44s} -> {verdict:7s} ({r.status_code})  {note}")
 
-    print("\n" + "=" * 70)
-    print("Casbin RBAC — running the scenario for you")
-    print("=" * 70)
-    show("alice (member) GET  /agents/research-agent", client.get("/agents/research-agent", headers=auth("alice")), "can read")
-    show("alice (member) POST /agents/research-agent/runs", client.post("/agents/research-agent/runs", headers=auth("alice"), data={"message": "hi"}), "can run")
-    show("mallory (none) GET  /agents/research-agent", client.get("/agents/research-agent", headers=auth("mallory")), "no role -> blocked")
-    show("root (admin)   POST /agents/research-agent/runs", client.post("/agents/research-agent/runs", headers=auth("root"), data={"message": "hi"}), "admin -> all")
-    print("=" * 70)
+    print("\n" + "=" * 78)
+    print("SAME CHECKS, DIFFERENT ENGINE (Casbin instead of agno's built-in)")
+    print("=" * 78)
+    print("  alice = member | root = admin | mallory = no role\n")
+    show("alice (member)  tries to LOOK at the agent", client.get("/agents/research-agent", headers=auth("alice")), "members can look")
+    show("alice (member)  tries to RUN the agent", client.post("/agents/research-agent/runs", headers=auth("alice"), data={"message": "hi"}), "members can run this one")
+    show("mallory (none)  tries to LOOK at the agent", client.get("/agents/research-agent", headers=auth("mallory")), "no role -> bounced")
+    show("root (admin)    tries to RUN the agent", client.post("/agents/research-agent/runs", headers=auth("root"), data={"message": "hi"}), "admins can do anything")
+    print("=" * 78)
+    print("the point: the decisions look identical to managed_roles.py - only the engine")
+    print("underneath changed. that's the part worth seeing.")
+    print("=" * 78)
