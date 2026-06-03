@@ -118,12 +118,29 @@ def test_get_json_schema_for_arg_bare_dict():
     bare_dict_schema = get_json_schema_for_arg(dict)
     assert bare_dict_schema == {"type": "object", "additionalProperties": True}
 
-    # List of bare dicts should work correctly
+    # List of bare dicts
     list_dict_schema = get_json_schema_for_arg(List[dict])
     assert list_dict_schema == {
         "type": "array",
         "items": {"type": "object", "additionalProperties": True},
     }
+
+    # Optional[dict] should have anyOf with the correct dict schema
+    optional_dict_schema = get_json_schema_for_arg(Optional[dict])
+    assert "anyOf" in optional_dict_schema
+    dict_variant = next(s for s in optional_dict_schema["anyOf"] if s.get("type") == "object")
+    assert dict_variant.get("additionalProperties") is True
+
+    # Union[dict, str] should have dict with correct schema
+    union_dict_schema = get_json_schema_for_arg(Union[dict, str])
+    assert "anyOf" in union_dict_schema
+    dict_variant = next(s for s in union_dict_schema["anyOf"] if s.get("type") == "object")
+    assert dict_variant.get("additionalProperties") is True
+
+    # Lowercase generic (Python 3.9+): list[dict]
+    list_dict_lower = get_json_schema_for_arg(list[dict])
+    assert list_dict_lower["type"] == "array"
+    assert list_dict_lower["items"].get("additionalProperties") is True
 
 
 def test_get_json_schema_bare_dict_in_function():
@@ -141,6 +158,19 @@ def test_get_json_schema_bare_dict_in_function():
     assert data_schema["type"] == "object"
     assert data_schema["additionalProperties"] is True
     assert data_schema["description"] == "Arbitrary key-value pairs"
+
+
+def test_get_json_schema_typed_dict_unchanged():
+    """Ensure typed Dict[K, V] still works correctly (regression test)."""
+    # Dict[str, int] should use typed additionalProperties
+    typed_dict = get_json_schema_for_arg(Dict[str, int])
+    assert typed_dict["type"] == "object"
+    assert typed_dict["additionalProperties"] == {"type": "integer"}
+
+    # Lowercase dict[str, int] should work the same
+    typed_dict_lower = get_json_schema_for_arg(dict[str, int])
+    assert typed_dict_lower["type"] == "object"
+    assert typed_dict_lower["additionalProperties"] == {"type": "integer"}
 
 
 def test_get_json_schema_for_arg_union():
