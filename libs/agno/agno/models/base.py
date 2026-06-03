@@ -51,6 +51,7 @@ from agno.tools.function import (
     UserFeedbackOption,
     UserFeedbackQuestion,
     UserInputField,
+    resolve_requires_confirmation,
 )
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
@@ -1542,7 +1543,7 @@ class Model(ABC):
                         break
 
                     # If we have any tool calls that require confirmation, break the loop
-                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    if any(resolve_requires_confirmation(fc) for fc in function_calls_to_run):
                         break
 
                     # If we have any tool calls that require external execution, break the loop
@@ -1818,7 +1819,7 @@ class Model(ABC):
                         break
 
                     # If we have any tool calls that require confirmation, break the loop
-                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
+                    if any(resolve_requires_confirmation(fc) for fc in function_calls_to_run):
                         break
 
                     # If we have any tool calls that require external execution, break the loop
@@ -2305,7 +2306,7 @@ class Model(ABC):
             paused_tool_executions = []
 
             # The function requires user confirmation (HITL)
-            if fc.function.requires_confirmation:
+            if resolve_requires_confirmation(fc):
                 paused_tool_executions.append(
                     ToolExecution(
                         tool_call_id=fc.call_id,
@@ -2501,7 +2502,7 @@ class Model(ABC):
         for fc in function_calls_to_run:
             paused_tool_executions = []
             # The function cannot be executed without user confirmation
-            if fc.function.requires_confirmation and not skip_pause_check:
+            if resolve_requires_confirmation(fc) and not skip_pause_check:
                 paused_tool_executions.append(
                     ToolExecution(
                         tool_call_id=fc.call_id,
@@ -2649,7 +2650,7 @@ class Model(ABC):
                 fc
                 for fc in function_calls_to_run
                 if not (
-                    fc.function.requires_confirmation
+                    resolve_requires_confirmation(fc)
                     or fc.function.external_execution
                     or fc.function.requires_user_input
                 )
