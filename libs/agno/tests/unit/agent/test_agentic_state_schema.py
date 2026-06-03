@@ -5,15 +5,12 @@ The update_session_state tool should have a proper schema so the LLM knows
 how to call it with session_state_updates parameter.
 """
 
-from typing import Any, Dict
-
 import pytest
 
 from agno.agent import Agent
 from agno.agent._tools import aget_tools, get_tools, parse_tools
 from agno.run import RunContext
 from agno.run.agent import RunOutput
-from agno.tools.function import Function
 
 
 class TestAgenticStateToolSchema:
