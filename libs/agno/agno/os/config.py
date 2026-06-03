@@ -1,8 +1,8 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Generic, List, Optional, TypeVar
+from typing import Dict, Generic, List, Optional, TypeVar
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class AuthorizationConfig(BaseModel):
@@ -143,11 +143,39 @@ class ChatConfig(BaseModel):
         return v
 
 
+class Manifest(BaseModel):
+    """OS-level UI metadata for an agent/team/workflow.
+
+    Fields here are AgentOS UI metadata only. ``description`` is unrelated to
+    ``Agent.description`` / ``Team.description`` / ``Workflow.description``,
+    which are sent to the model.
+
+    Rendering surfaces:
+    - ``description``, ``labels``: home/landing card
+    - ``quick_prompts``: chat page (max 3)
+    """
+
+    description: Optional[str] = None
+    labels: Optional[List[str]] = None
+    quick_prompts: Optional[List[str]] = None
+
+    @field_validator("quick_prompts")
+    @classmethod
+    def _limit_quick_prompts(cls, v):
+        if v is not None and len(v) > 3:
+            raise ValueError("Too many quick prompts, maximum allowed is 3")
+        return v
+
+
 class AgentOSConfig(BaseModel):
     """General configuration for an AgentOS instance"""
 
     available_models: Optional[List[str]] = None
     chat: Optional[ChatConfig] = None
+    manifest: Optional[Dict[str, Manifest]] = Field(
+        default=None,
+        description="Per-entity UI metadata keyed by agent/team/workflow id",
+    )
     evals: Optional[EvalsConfig] = None
     knowledge: Optional[KnowledgeConfig] = None
     memory: Optional[MemoryConfig] = None
