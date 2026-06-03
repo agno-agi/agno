@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
@@ -96,6 +97,26 @@ async def http_client_lifespan(_):
     await aclose_default_clients()
 
 
+async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
+    """Await in-flight cancel-persist writes before databases close on shutdown."""
+    from agno.agent._run import _background_tasks as agent_tasks
+    from agno.team._run import _background_tasks as team_tasks
+    from agno.workflow.workflow import _workflow_background_tasks as workflow_tasks
+
+    # Re-snapshot until the sets drain (a disconnect handled mid-shutdown can schedule
+    # another persist), bounded by timeout so it never hangs shutdown.
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        pending = {t for t in (*agent_tasks, *team_tasks, *workflow_tasks) if not t.done()}
+        if not pending:
+            return
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            log_warning(f"Timed out draining {len(pending)} cancel-persist task(s) before database shutdown")
+            return
+        await asyncio.wait(pending, timeout=remaining)
+
+
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
@@ -105,6 +126,8 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
 
     yield
 
+    # Let in-flight cancel-persist tasks finish writing before the pool closes
+    await _drain_cancel_persist_tasks()
     await agent_os._close_databases()
 
 
@@ -329,6 +352,13 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._populate_registry_managers()
+
+        # Discover knowledge instances and mirror them into the registry so that
+        # GET /registry?resource_type=knowledge is consistent right after construction
+        # (not only after get_app()/resync()).
+        self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
@@ -377,11 +407,13 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._populate_registry_managers()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
 
         if self.enable_mcp_server:
             from agno.os.mcp import get_mcp_server
@@ -639,6 +671,66 @@ class AgentOS:
                     self.registry.teams.append(team)
                     existing_team_ids.add(team_id)
 
+    def _populate_registry_knowledge(self) -> None:
+        """Add discovered knowledge instances to the registry.
+
+        Sources are the knowledge instances collected by
+        ``_auto_discover_knowledge_instances`` (agents, teams, the AgentOS
+        ``knowledge`` param, and ``registry.knowledge``). That discovery only
+        keeps instances backed by a ``contents_db``, so a ``contents_db`` is
+        required for a knowledge base to be resolvable from a Studio/Builder
+        component config (vector-search-only knowledge is not registered).
+        """
+        if self.registry is None:
+            self.registry = Registry()
+
+        if self.knowledge_instances:
+            existing_names = {getattr(k, "name", None) for k in self.registry.knowledge}
+            for kb in self.knowledge_instances:
+                kb_name = getattr(kb, "name", None)
+                if kb_name is not None and kb_name not in existing_names:
+                    self.registry.knowledge.append(kb)
+                    existing_names.add(kb_name)
+
+    def _populate_registry_managers(self) -> None:
+        """Add memory and session summary managers from agents/teams to the registry.
+
+        Each manager is tagged with a generated id of the form `{owner_id}__{kind}` so
+        it can be looked up later. Managers are deduplicated by that id.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+
+        registry = self.registry
+        memory_ids = registry.get_memory_manager_ids()
+        summary_ids = registry.get_session_summary_manager_ids()
+
+        def _register(owner: Any, owner_type: str) -> None:
+            owner_id = getattr(owner, "id", None)
+
+            mm = getattr(owner, "memory_manager", None)
+            if mm is not None:
+                mm_id = getattr(mm, "id", None)
+                if mm_id is not None and mm_id not in memory_ids:
+                    mm.owner_id = owner_id
+                    mm.owner_type = owner_type
+                    registry.memory_managers.append(mm)
+                    memory_ids.add(mm_id)
+
+            sm = getattr(owner, "session_summary_manager", None)
+            if sm is not None:
+                sm_id = getattr(sm, "id", None)
+                if sm_id is not None and sm_id not in summary_ids:
+                    sm.owner_id = owner_id
+                    sm.owner_type = owner_type
+                    registry.session_summary_managers.append(sm)
+                    summary_ids.add(sm_id)
+
+        for agent in self._agents:
+            _register(agent, "agent")
+        for team in self._teams:
+            _register(team, "team")
+
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 
@@ -759,6 +851,7 @@ class AgentOS:
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
 
         routers = [
             get_session_router(dbs=self.dbs),
@@ -1235,6 +1328,10 @@ class AgentOS:
 
         for knowledge_base in self.knowledge or []:
             _add_knowledge_if_not_duplicate(knowledge_base)
+
+        if self.registry is not None:
+            for knowledge_base in self.registry.knowledge or []:
+                _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
 

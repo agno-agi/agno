@@ -15,7 +15,7 @@ from agno.tools.parallel import ParallelTools
 
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.1"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[ParallelTools()],
     instructions="No need to tell me its based on your research.",
     markdown=True,

@@ -318,7 +318,9 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
                     "type": "document",
                     "source": {
                         "type": "text",
-                        "media_type": media_type,
+                        # Anthropic's text document source only accepts "text/plain". Other
+                        # text/* subtypes (markdown, csv, html, ...) are sent as plain text.
+                        "media_type": "text/plain",
                         "data": raw_bytes.decode("utf-8", errors="replace"),
                     },
                 }
@@ -345,7 +347,9 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
                 "type": "document",
                 "source": {
                     "type": "text",
-                    "media_type": media_type,
+                    # Anthropic's text document source only accepts "text/plain". Other
+                    # text/* subtypes (markdown, csv, html, ...) are sent as plain text.
+                    "media_type": "text/plain",
                     "data": file.content.decode("utf-8", errors="replace"),
                 },
             }
