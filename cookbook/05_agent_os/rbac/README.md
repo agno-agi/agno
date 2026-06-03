@@ -343,6 +343,40 @@ app.add_middleware(
 - Without this flag, JWT validation occurs but scope checks are skipped
 - All authenticated users will have access to all resources
 
+## Pluggable authorization providers (experimental)
+
+The default scope matcher above is one implementation of a swappable seam:
+`AuthorizationConfig(authorization_provider=...)`. Supply your own
+`AuthorizationProvider` to change the decision engine without touching the
+request pipeline. Two enforcement points (the middleware route gate and the
+per-resource handler check) both go through it.
+
+Three tiers, pick the lowest that fits:
+
+| Tier | You write | Dependency |
+|------|-----------|------------|
+| Scopes (default) | scopes in the JWT | none |
+| Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[casbin]` (hidden) |
+| Raw provider | your own `AuthorizationProvider` (e.g. a Casbin model) | yours |
+
+Each cookbook below runs the whole scenario in-process and prints an
+`ALLOWED`/`DENIED` transcript, then exits (no server, no curl needed):
+
+- `casbin_provider.py` — swap in a Casbin enforcer (roles, hierarchy, wildcards).
+- `casbin_external_idp.py` — one AgentOS trusting both external-IdP tokens (roles
+  from the token) and self-minted tokens (roles from the Casbin store).
+- `casbin_runtime_policy.py` — policy in your own DB, granted/revoked at runtime,
+  reflected on the next request with the same token.
+- `managed_roles.py` — the agno-native managed-roles API: define roles and assign
+  them in scope terms, Casbin hidden inside the store.
+- `managed_roles_api.py` — an admin-only REST API (`/authz/...`) to manage roles
+  over HTTP.
+- `managed_roles_sessions.py` — roles gating the real session endpoints: a
+  read-only role is blocked (403) from deleting sessions; an operator deletes for
+  real.
+
+Install the optional extra first: `pip install "agno[casbin]"`.
+
 ## Additional Resources
 
 - [AgentOS Documentation](https://docs.agno.com/agent-os/security/overview)

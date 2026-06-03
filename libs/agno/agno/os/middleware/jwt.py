@@ -13,9 +13,9 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.authz.provider import AuthorizationContext
 from agno.os.scopes import (
     AgentOSScope,
-    get_accessible_resource_ids,
     get_default_scope_mappings,
     has_required_scopes,
 )
@@ -531,6 +531,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
         )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
         self.user_isolation = user_isolation
+        # Lazily-built default provider for manual-setup deployments that don't
+        # populate app.state.authorization_provider (see _resolve_provider).
+        self._fallback_provider = None
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
@@ -543,6 +546,25 @@ class JWTMiddleware(BaseHTTPMiddleware):
             "/openapi.json",
             "/docs/oauth2-redirect",
         ]
+
+    def _resolve_provider(self, request: Request):
+        """Resolve the active AuthorizationProvider.
+
+        Prefers the instance AgentOS set on ``app.state.authorization_provider``;
+        falls back to a default ``ScopeAuthorizationProvider`` for manual
+        ``app.add_middleware(JWTMiddleware)`` setups that never populated it.
+        Cached on the middleware instance after first use to avoid rebuilding a
+        fallback provider on every request.
+        """
+        provider = getattr(getattr(request, "app", None), "state", None)
+        provider = getattr(provider, "authorization_provider", None) if provider is not None else None
+        if provider is not None:
+            return provider
+        if self._fallback_provider is None:
+            from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+            self._fallback_provider = ScopeAuthorizationProvider()
+        return self._fallback_provider
 
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
@@ -839,29 +861,35 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
                 # Empty list [] means no scopes required (allow access)
                 if required_scopes:
-                    # Use the scope validation system
-                    has_access = has_required_scopes(
-                        scopes,
-                        required_scopes,
+                    # Resolve the active authorization provider. Defaults to the
+                    # scope-based provider (identical behaviour); a custom provider
+                    # configured via AuthorizationConfig owns the decision instead.
+                    # Build one context and reuse it for the route gate and the
+                    # listing-endpoint filtering below.
+                    provider = self._resolve_provider(request)
+                    first_required = required_scopes[0]
+                    action_for_ctx: Optional[str] = (
+                        first_required.rsplit(":", 1)[1] if ":" in first_required else None
+                    )
+                    authz_ctx = AuthorizationContext(
+                        principal_id=user_id,
+                        scopes=scopes,
+                        claims=payload,
                         resource_type=resource_type,
                         resource_id=resource_id,
+                        action=action_for_ctx,
                         admin_scope=self.admin_scope,
                     )
+
+                    has_access = provider.authorize_route(authz_ctx, required_scopes)
 
                     # Special handling for listing endpoints (no resource_id)
                     if not has_access and not resource_id and resource_type:
                         # For listing endpoints, always allow access but store accessible IDs for filtering
                         # This allows endpoints to return filtered results (including empty list) instead of 403.
-                        # Pass the action from required_scopes (e.g. "read" for "agents:read") so the cached
-                        # IDs only include resources the user is authorised for under that action — otherwise
-                        # a user with only `agents:run` would leak through `GET /agents`.
-                        required_action: Optional[str] = None
-                        first_required = required_scopes[0]
-                        if ":" in first_required:
-                            required_action = first_required.rsplit(":", 1)[1]
-                        accessible_ids = get_accessible_resource_ids(
-                            scopes, resource_type, admin_scope=self.admin_scope, action=required_action
-                        )
+                        # The provider decides which IDs are accessible (the scope provider keys off the
+                        # action so a user with only `agents:run` doesn't leak through `GET /agents`).
+                        accessible_ids = provider.accessible_resource_ids(authz_ctx)
                         has_access = True  # Always allow listing endpoints
                         request.state.accessible_resource_ids = accessible_ids
 

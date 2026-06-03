@@ -6,7 +6,7 @@ from typing import Any, List, Optional, Set
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from agno.os.scopes import get_accessible_resource_ids, has_required_scopes
+from agno.os.scopes import has_required_scopes
 from agno.os.settings import AgnoAPISettings
 
 # Create a global HTTPBearer instance
@@ -153,6 +153,46 @@ def build_insufficient_permissions_detail(required_scopes: Optional[List[str]]) 
     return base
 
 
+def _resolve_authorization_provider(request: Request):
+    """Resolve the active AuthorizationProvider for this request.
+
+    Prefers ``request.app.state.authorization_provider`` (set by AgentOS from
+    ``AuthorizationConfig``); otherwise falls back to the default
+    ``ScopeAuthorizationProvider`` so manual setups keep their original behaviour.
+    This is the per-resource (route-handler) counterpart to the route gate in
+    JWTMiddleware, so both enforcement points consult the same provider.
+    """
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    provider = getattr(getattr(request, "app", None), "state", None)
+    provider = getattr(provider, "authorization_provider", None) if provider is not None else None
+    if provider is not None:
+        return provider
+    return ScopeAuthorizationProvider()
+
+
+def _build_authorization_context(
+    request: Request,
+    resource_type: Optional[str] = None,
+    resource_id: Optional[str] = None,
+    action: Optional[str] = None,
+):
+    """Assemble an AuthorizationContext from the claims on request.state."""
+    from agno.os.authz.provider import AuthorizationContext
+
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    return AuthorizationContext(
+        principal_id=getattr(request.state, "user_id", None),
+        scopes=getattr(request.state, "scopes", []) or [],
+        claims=getattr(request.state, "claims", {}) or {},
+        resource_type=resource_type,
+        resource_id=resource_id,
+        action=action,
+        admin_scope=admin_scope,
+    )
+
+
 def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     """
     Get the set of resource IDs the user has access to based on their scopes.
@@ -194,24 +234,12 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     if cached_ids is not None:
         return cached_ids
 
-    # Get user's scopes from request state (set by JWT middleware)
-    user_scopes = getattr(request.state, "scopes", [])
-
-    # Honour any custom admin_scope configured on JWTMiddleware (set on
-    # request.state by the middleware). Without this, list endpoints reject
-    # custom-admin tokens with 403 even though check_resource_access would
-    # accept them.
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-
-    # Get accessible resource IDs
-    accessible_ids = get_accessible_resource_ids(
-        user_scopes=user_scopes,
-        resource_type=resource_type,
-        admin_scope=admin_scope,
-    )
-
-    return accessible_ids
+    # Delegate to the active authorization provider. The default
+    # ScopeAuthorizationProvider reproduces the original behaviour; a custom
+    # provider can answer from a different model entirely.
+    provider = _resolve_authorization_provider(request)
+    ctx = _build_authorization_context(request, resource_type=resource_type)
+    return provider.accessible_resource_ids(ctx)
 
 
 def filter_resources_by_access(request: Request, resources: List, resource_type: str) -> List:
@@ -279,25 +307,16 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
         >>> check_resource_access(request, "my-agent", "agents", "run")
         False
     """
-    user_scopes = getattr(request.state, "scopes", [])
-    # Honour the configured admin scope (set by JWTMiddleware on request.state)
-    # so custom-admin tokens are recognised here too. Non-string values (e.g.
-    # MagicMock attributes in tests) are ignored.
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    accessible_ids = get_accessible_resource_ids(
-        user_scopes=user_scopes,
-        resource_type=resource_type,
-        action=action,
-        admin_scope=admin_scope,
+    # Delegate to the active authorization provider. The default
+    # ScopeAuthorizationProvider reproduces the original scope-matching
+    # behaviour; a custom provider (Casbin/ReBAC/ABAC/external) can decide from a
+    # different model. This is the per-resource gate that complements the route
+    # gate in JWTMiddleware, both go through the same provider.
+    provider = _resolve_authorization_provider(request)
+    ctx = _build_authorization_context(
+        request, resource_type=resource_type, resource_id=resource_id, action=action
     )
-
-    # Wildcard access grants all permissions
-    if "*" in accessible_ids:
-        return True
-
-    # Check if user has access to this specific resource
-    return resource_id in accessible_ids
+    return provider.check(ctx)
 
 
 def require_resource_access(resource_type: str, action: str, resource_id_param: str):

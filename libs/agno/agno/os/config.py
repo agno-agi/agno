@@ -1,6 +1,6 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Optional, TypeVar
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -8,12 +8,19 @@ from pydantic import BaseModel, Field, field_validator
 class AuthorizationConfig(BaseModel):
     """Configuration for the JWT middleware"""
 
+    model_config = {"arbitrary_types_allowed": True}
+
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
     admin_scope: Optional[str] = None
+    # Pluggable authorization strategy. When None, AgentOS uses the built-in
+    # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency).
+    # Supply an AuthorizationProvider instance to swap in a different model
+    # (ReBAC/ABAC/Casbin/OpenFGA/Cerbos) without changing the request pipeline.
+    authorization_provider: Optional[Any] = None
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers

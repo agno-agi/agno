@@ -984,6 +984,7 @@ class AgentOS:
         audience = None
         admin_scope: Optional[str] = None
         user_isolation = False
+        authorization_provider = None
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
@@ -993,6 +994,7 @@ class AgentOS:
             audience = self.authorization_config.audience
             admin_scope = self.authorization_config.admin_scope
             user_isolation = self.authorization_config.user_isolation
+            authorization_provider = self.authorization_config.authorization_provider
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -1012,6 +1014,14 @@ class AgentOS:
         # JWT/RBAC still apply but the per-user DB wrapper and ownership gates
         # added by the user-scoped-DB work stay dormant.
         fastapi_app.state.user_isolation_enabled = user_isolation
+
+        # Resolve the authorization provider. Defaults to the built-in
+        # scope-based RBAC; a custom AuthorizationProvider can be supplied via
+        # AuthorizationConfig to swap the decision engine (ReBAC/ABAC/external)
+        # without touching the request pipeline.
+        from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+        fastapi_app.state.authorization_provider = authorization_provider or ScopeAuthorizationProvider()
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms
