@@ -144,6 +144,46 @@ def test_http_api_records_actor_from_jwt():
     ]
 
 
+def test_decision_audit_records_allow_and_deny():
+    """Each authorization decision (allow/deny) is recorded with the principal and
+    a non-secret token reference when an audit sink is on AuthorizationConfig."""
+    sink = _CapturingSink()
+    store = ManagedRoleStore()
+    store.set_role_scopes("viewer", ["agents:*:read"])
+    store.assign("bob", "viewer")
+
+    db = InMemoryDb()
+    agent = Agent(id="research-agent", name="Research Agent", db=db)
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=store.provider,
+            audit=sink,  # <- decision audit
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+
+    client.get("/agents/research-agent", headers=_auth("bob"))  # allowed (viewer reads)
+    client.delete("/sessions/s1", headers=_auth("bob"))  # denied (no sessions:delete)
+
+    by_action = {(e.action, e.actor) for e in sink.events}
+    assert ("access.allowed", "bob") in by_action
+    assert ("access.denied", "bob") in by_action
+
+    denied = next(e for e in sink.events if e.action == "access.denied")
+    assert denied.target.startswith("DELETE /sessions")
+    assert "sessions:delete" in (denied.metadata.get("required") or [])
+    # a token reference is captured, but NOT the raw token
+    assert denied.metadata.get("token") and len(denied.metadata["token"]) <= 16
+
+
 def test_audit_endpoint_returns_trail(tmp_path):
     """GET /authz/audit returns the change trail (newest first) for admins only."""
     db_file = tmp_path / "audit.db"

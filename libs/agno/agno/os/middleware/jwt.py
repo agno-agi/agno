@@ -623,6 +623,48 @@ class JWTMiddleware(BaseHTTPMiddleware):
             self._fallback_provider = ScopeAuthorizationProvider()
         return self._fallback_provider
 
+    def _record_decision(
+        self,
+        request: Request,
+        *,
+        allowed: bool,
+        method: str,
+        path: str,
+        principal: Optional[str],
+        required_scopes: List[str],
+        scopes: List[str],
+        token: Optional[str],
+    ) -> None:
+        """Record one authorization decision to the audit sink (if configured).
+
+        Captures the principal, route, required scopes, and a NON-secret token
+        reference (a short SHA-256 of the token, never the token itself) so you
+        can tell which token was used without storing the credential. Never
+        raises into the request path.
+        """
+        state = getattr(getattr(request, "app", None), "state", None)
+        sink = getattr(state, "authz_audit", None) if state is not None else None
+        if sink is None:
+            return
+        try:
+            import hashlib
+            import time
+
+            from agno.os.authz.audit import AuditEvent
+
+            token_ref = hashlib.sha256(token.encode()).hexdigest()[:12] if token else None
+            sink.record(
+                AuditEvent(
+                    action="access.allowed" if allowed else "access.denied",
+                    actor=principal,
+                    target=f"{method} {path}",
+                    timestamp=int(time.time()),
+                    metadata={"required": required_scopes, "token": token_ref, "scopes": scopes},
+                )
+            )
+        except Exception as e:  # pragma: no cover - audit must never break requests
+            log_debug(f"decision audit failed: {e}")
+
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
         Extract resource ID from a path.
@@ -954,6 +996,19 @@ class JWTMiddleware(BaseHTTPMiddleware):
                             log_debug(f"User has specific {resource_type} scopes. Accessible IDs: {accessible_ids}")
                         else:
                             log_debug(f"User has no {resource_type} scopes. Will return empty list.")
+
+                    # Decision audit: record the allow/deny with a non-secret
+                    # token reference, if an audit sink is configured.
+                    self._record_decision(
+                        request,
+                        allowed=has_access,
+                        method=method,
+                        path=path,
+                        principal=user_id,
+                        required_scopes=required_scopes,
+                        scopes=scopes,
+                        token=token,
+                    )
 
                     if not has_access:
                         log_warning(

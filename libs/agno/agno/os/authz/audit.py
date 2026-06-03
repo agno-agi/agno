@@ -111,6 +111,7 @@ class DbAuditSink(AuditSink):
             sa.Column("target", sa.String(255), nullable=False),
             sa.Column("before", sa.Text),
             sa.Column("after", sa.Text),
+            sa.Column("metadata", sa.Text),
         )
         if create_table:
             metadata.create_all(self._engine)
@@ -125,6 +126,7 @@ class DbAuditSink(AuditSink):
                     target=event.target,
                     before=json.dumps(event.before) if event.before is not None else None,
                     after=json.dumps(event.after) if event.after is not None else None,
+                    metadata=json.dumps(event.metadata) if event.metadata else None,
                 )
             )
 
@@ -146,6 +148,7 @@ class DbAuditSink(AuditSink):
                 "target": r["target"],
                 "before": json.loads(r["before"]) if r["before"] else None,
                 "after": json.loads(r["after"]) if r["after"] else None,
+                "metadata": json.loads(r["metadata"]) if r["metadata"] else None,
             }
             for r in rows
         ]

@@ -25,6 +25,11 @@ class AuthorizationConfig(BaseModel):
     # Supply an AuthorizationProvider instance to swap in a different model
     # (ReBAC/ABAC/Casbin/OpenFGA/Cerbos) without changing the request pipeline.
     authorization_provider: Optional[Any] = None
+    # Optional AuditSink. When set, AgentOS records each authorization decision
+    # (allow/deny) at the route gate — principal, route, required scopes, and a
+    # non-secret token reference — so you get an access trail, not just a change
+    # trail. Pass the same sink you give ManagedRoleStore to unify both.
+    audit: Optional[Any] = None
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers

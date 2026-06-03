@@ -986,6 +986,7 @@ class AgentOS:
         admin_scope: Optional[str] = None
         user_isolation = False
         authorization_provider = None
+        authz_audit = None
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
@@ -997,6 +998,7 @@ class AgentOS:
             admin_scope = self.authorization_config.admin_scope
             user_isolation = self.authorization_config.user_isolation
             authorization_provider = self.authorization_config.authorization_provider
+            authz_audit = self.authorization_config.audit
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -1025,6 +1027,8 @@ class AgentOS:
         from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
         fastapi_app.state.authorization_provider = authorization_provider or ScopeAuthorizationProvider()
+        # Optional decision-audit sink (records allow/deny at the route gate).
+        fastapi_app.state.authz_audit = authz_audit
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms
