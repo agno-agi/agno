@@ -145,9 +145,9 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             return {"type": "array", "items": json_schema_for_items}
         elif type_origin is dict:
-            # Handle both key and value types for dictionaries
+            # Dict[K, V] with type args — use typed additionalProperties
             key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
-            value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
+            value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {}
             return {"type": "object", "propertyNames": key_schema, "additionalProperties": value_schema}
         elif is_origin_union_type(type_origin):
             types = []
@@ -198,6 +198,10 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         if required:
             arg_json_schema["required"] = required
         return arg_json_schema
+
+    # Bare dict means "arbitrary key-value pairs" — allow any properties
+    if type_hint is dict:
+        return {"type": "object", "additionalProperties": True}
 
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint.__name__)}
     if json_schema["type"] == "object":
