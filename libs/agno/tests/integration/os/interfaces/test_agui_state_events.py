@@ -213,7 +213,6 @@ Be brief in your responses.""",
 
         assert response.status_code == 200
         events = parse_sse_events(response.text)
-        types = get_event_types(events)
 
         # Final snapshot should preserve nested metadata
         final_snapshot = [e for e in events if e.get("type") == "STATE_SNAPSHOT"][-1]
