@@ -1,5 +1,6 @@
 """Logic used by the AG-UI router."""
 
+import asyncio
 import json
 import uuid
 from collections.abc import Iterator
@@ -32,7 +33,7 @@ from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEve
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
 from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
 from agno.run.agent import ReasoningStepEvent as AgentReasoningStepEvent
-from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
+from agno.run.agent import RunCompletedEvent, RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
@@ -41,6 +42,12 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
+
+# Upper bound (seconds) for `response_stream.aclose()` in the async AGUI
+# translator. If the upstream iterator's cleanup path awaits longer than
+# this (nested telemetry flushes, DB close, etc.), we log and continue
+# so terminal RUN_FINISHED emission is never blocked by slow cleanup.
+_ACLOSE_TIMEOUT_SECONDS = 1.0
 
 
 def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
@@ -581,9 +588,12 @@ def stream_agno_response_as_agui_events(
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
         ):
-            # Store completion chunk but don't process it yet
+            # Store completion chunk and stop consuming the iterator so
+            # any post-completion work upstream cannot block terminal
+            # event emission (mirrors the async path behaviour).
             completion_chunk = chunk
             stream_completed = True
+            break
         else:
             # Process regular chunk immediately
             events_from_chunk, message_started, message_id = _create_events_from_chunk(
@@ -596,7 +606,7 @@ def stream_agno_response_as_agui_events(
                     yield emit_event
 
     # Process ONLY completion cleanup events, not content from completion chunk
-    if completion_chunk:
+    if completion_chunk is not None:
         completion_events = _create_completion_events(
             completion_chunk, event_buffer, message_started, message_id, thread_id, run_id
         )
@@ -608,8 +618,6 @@ def stream_agno_response_as_agui_events(
     # Ensure completion events are always emitted even when stream ends naturally
     if not stream_completed:
         # Create a synthetic completion event to ensure proper cleanup
-        from agno.run.agent import RunCompletedEvent
-
         synthetic_completion = RunCompletedEvent()
         completion_events = _create_completion_events(
             synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id
@@ -633,17 +641,25 @@ async def async_stream_agno_response_as_agui_events(
     stream_completed = False
     completion_chunk = None
 
-    async for chunk in response_stream:
-        # Check if this is a completion event
-        if (
-            chunk.event == RunEvent.run_completed
-            or chunk.event == TeamRunEvent.run_completed
-            or chunk.event == RunEvent.run_paused
-        ):
-            # Store completion chunk but don't process it yet
-            completion_chunk = chunk
-            stream_completed = True
-        else:
+    try:
+        async for chunk in response_stream:
+            # Check if this is a completion event
+            if (
+                chunk.event == RunEvent.run_completed
+                or chunk.event == TeamRunEvent.run_completed
+                or chunk.event == RunEvent.run_paused
+            ):
+                # Store the completion chunk and stop consuming the iterator.
+                # Post-completion awaits in the agent stream (telemetry, DB
+                # close) would otherwise block this loop and prevent
+                # RUN_FINISHED from reaching the client — the production SSE
+                # hang. Note: break + aclose() close the agent generator
+                # here, so its post-completion telemetry call is skipped for
+                # AG-UI runs; run/session persistence is unaffected
+                # (acleanup_and_store runs before the completion event).
+                completion_chunk = chunk
+                stream_completed = True
+                break
             # Process regular chunk immediately
             events_from_chunk, message_started, message_id = _create_events_from_chunk(
                 chunk, message_id, message_started, event_buffer
@@ -653,9 +669,32 @@ async def async_stream_agno_response_as_agui_events(
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
                     yield emit_event
+    finally:
+        # Close the upstream iterator promptly so its own cleanup cannot
+        # block the SSE response. That cleanup may itself await (telemetry,
+        # DB close), so bound aclose() with a short timeout; on timeout,
+        # log and continue so terminal-event emission is still guaranteed.
+        # A real cancellation still propagates out of the try/finally.
+        aclose = getattr(response_stream, "aclose", None)
+        if aclose is not None:
+            try:
+                await asyncio.wait_for(aclose(), timeout=_ACLOSE_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                log_warning(
+                    "AGUI response_stream.aclose() timed out after "
+                    f"{_ACLOSE_TIMEOUT_SECONDS}s (thread_id={thread_id!r}, run_id={run_id!r}); "
+                    "continuing to emit terminal events"
+                )
+            except Exception as e:
+                # Surface cleanup failures instead of swallowing silently;
+                # otherwise upstream iterator bugs become invisible.
+                log_warning(
+                    f"AGUI response_stream.aclose() failed ({type(e).__name__}): {e} "
+                    f"(thread_id={thread_id!r}, run_id={run_id!r})"
+                )
 
     # Process ONLY completion cleanup events, not content from completion chunk
-    if completion_chunk:
+    if completion_chunk is not None:
         completion_events = _create_completion_events(
             completion_chunk, event_buffer, message_started, message_id, thread_id, run_id
         )
@@ -667,8 +706,6 @@ async def async_stream_agno_response_as_agui_events(
     # Ensure completion events are always emitted even when stream ends naturally
     if not stream_completed:
         # Create a synthetic completion event to ensure proper cleanup
-        from agno.run.agent import RunCompletedEvent
-
         synthetic_completion = RunCompletedEvent()
         completion_events = _create_completion_events(
             synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id
