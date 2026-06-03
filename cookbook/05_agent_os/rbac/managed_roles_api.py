@@ -22,6 +22,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.authz.audit import DbAuditSink
 from agno.os.authz.role_router import get_roles_router
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.config import AuthorizationConfig
@@ -35,9 +36,17 @@ JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bit
 OS_ID = "managed-roles-api-os"
 
 os.makedirs("tmp", exist_ok=True)
+for _f in ("tmp/managed_roles_api.db", "tmp/authz_audit.db"):
+    if os.path.exists(_f):
+        os.remove(_f)
+
+# Every role/assignment change is written to an append-only audit table (the
+# "who changed what, when" trail Casbin can't give you, since it never sees the
+# acting principal). The admin's JWT sub is recorded as the actor.
+audit = DbAuditSink(db_url="sqlite:///tmp/authz_audit.db")
 
 # Define a starting admin + viewer. Everything else can be done over HTTP.
-roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_roles_api.db")
+roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_roles_api.db", audit=audit)
 roles.set_role_scopes("viewer", ["agents:*:read"])
 roles.set_role_scopes("admin", ["agent_os:admin"])
 roles.assign("alice", "admin")
@@ -128,3 +137,16 @@ if __name__ == "__main__":
     show("alice         DELETE /authz/users/bob/roles/runner", client.get("/authz/users/bob/roles", headers=auth("alice")), "revoked -> bob back to viewer")
     show("bob           POST   /agents/research-agent/runs", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "after revoke -> blocked again")
     print("=" * 72)
+
+    # The append-only audit trail of everything the admin just did over HTTP.
+    import sqlalchemy as sa
+
+    print("\nAudit trail (authz_audit table, actor taken from the admin's jwt):")
+    eng = sa.create_engine("sqlite:///tmp/authz_audit.db")
+    with eng.connect() as conn:
+        for row in conn.execute(
+            sa.text("select actor, action, target, before, after from authz_audit order by id")
+        ):
+            actor = row.actor or "system"  # None = changed in code at startup, not via the api
+            print(f"  {actor:6s} {row.action:18s} {row.target:8s} {row.before or '-'} -> {row.after or '-'}")
+    print()

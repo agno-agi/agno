@@ -68,16 +68,16 @@ def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: Li
         return {"role": role, "scopes": store.get_role_scopes(role)}
 
     @router.put("/roles/{role}")
-    def set_role(role: str, body: SetRoleScopesRequest) -> dict:
+    def set_role(role: str, body: SetRoleScopesRequest, actor: str = Depends(require_admin)) -> dict:
         try:
-            store.set_role_scopes(role, body.scopes)
+            store.set_role_scopes(role, body.scopes, actor=actor)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
         return {"role": role, "scopes": store.get_role_scopes(role)}
 
     @router.delete("/roles/{role}")
-    def delete_role(role: str) -> dict:
-        store.remove_role(role)
+    def delete_role(role: str, actor: str = Depends(require_admin)) -> dict:
+        store.remove_role(role, actor=actor)
         return {"role": role, "deleted": True}
 
     # ---- assignments ----------------------------------------------------
@@ -86,13 +86,13 @@ def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: Li
         return {"subject": subject, "roles": store.roles_of(subject)}
 
     @router.post("/users/{subject}/roles")
-    def assign_role(subject: str, body: AssignRoleRequest) -> dict:
-        store.assign(subject, body.role)
+    def assign_role(subject: str, body: AssignRoleRequest, actor: str = Depends(require_admin)) -> dict:
+        store.assign(subject, body.role, actor=actor)
         return {"subject": subject, "roles": store.roles_of(subject)}
 
     @router.delete("/users/{subject}/roles/{role}")
-    def revoke_role(subject: str, role: str) -> dict:
-        store.unassign(subject, role)
+    def revoke_role(subject: str, role: str, actor: str = Depends(require_admin)) -> dict:
+        store.unassign(subject, role, actor=actor)
         return {"subject": subject, "roles": store.roles_of(subject)}
 
     return router

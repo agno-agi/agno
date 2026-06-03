@@ -15,6 +15,7 @@ This mirrors the provider pattern used elsewhere in the ecosystem
 change rather than a fork of the request pipeline.
 """
 
+from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink, LoggingAuditSink
 from agno.os.authz.provider import (
     AuthorizationContext,
     AuthorizationProvider,
@@ -25,4 +26,8 @@ __all__ = [
     "AuthorizationContext",
     "AuthorizationProvider",
     "ScopeAuthorizationProvider",
+    "AuditEvent",
+    "AuditSink",
+    "LoggingAuditSink",
+    "DbAuditSink",
 ]

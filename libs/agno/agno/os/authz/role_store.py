@@ -30,9 +30,12 @@ Example::
     store.unassign("bob", "member")
 """
 
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agno.os.authz.casbin_provider import scope_to_obj_act
+
+if TYPE_CHECKING:
+    from agno.os.authz.audit import AuditSink
 
 _MODEL_TEXT = """
 [request_definition]
@@ -66,7 +69,13 @@ def _obj_act_to_scope(obj: str, act: str) -> str:
 class ManagedRoleStore:
     """Runtime-mutable, persisted role store. agno-native in, Casbin hidden."""
 
-    def __init__(self, db_url: Optional[str] = None, roles_claim: Optional[str] = None):
+    def __init__(
+        self,
+        db_url: Optional[str] = None,
+        roles_claim: Optional[str] = None,
+        audit: Optional["AuditSink"] = None,
+        decision_log: bool = False,
+    ):
         """
         Args:
             db_url: SQLAlchemy URL for the DB that holds the policy (e.g.
@@ -76,6 +85,13 @@ class ManagedRoleStore:
             roles_claim: JWT claim carrying a caller's roles (the external-IdP
                 case). When absent, roles come from this store's own assignments
                 (the no-IdP case). Both are served by the same store.
+            audit: optional :class:`~agno.os.authz.audit.AuditSink`. When set,
+                every role/assignment change emits an append-only AuditEvent with
+                the acting principal and the before/after (the change audit Casbin
+                can't give you, since it never sees the actor).
+            decision_log: when True, bump the ``casbin.enforcer`` logger to INFO so
+                *allow* decisions are logged too (denies are already at WARNING).
+                Off by default so we don't touch global logging behind your back.
         """
         try:
             import casbin  # noqa: F401
@@ -97,14 +113,48 @@ class ManagedRoleStore:
             self._enforcer = casbin.Enforcer(model)
         self._enforcer.enable_auto_save(True)  # mutations persist immediately
         self._roles_claim = roles_claim
+        self._audit = audit
+
+        if decision_log:
+            import logging
+
+            logging.getLogger("casbin.enforcer").setLevel(logging.INFO)
+
+    def _emit(
+        self,
+        action: str,
+        target: str,
+        before: Optional[List[str]],
+        after: Optional[List[str]],
+        actor: Optional[str],
+    ) -> None:
+        """Record one change to the audit sink (no-op when no sink is configured)."""
+        if self._audit is None:
+            return
+        import time
+
+        from agno.os.authz.audit import AuditEvent
+
+        self._audit.record(
+            AuditEvent(
+                action=action,
+                actor=actor,
+                target=target,
+                before=before,
+                after=after,
+                timestamp=int(time.time()),
+            )
+        )
 
     # ------------------------------------------------------------------ roles
-    def set_role_scopes(self, role: str, scopes: List[str]) -> None:
+    def set_role_scopes(self, role: str, scopes: List[str], actor: Optional[str] = None) -> None:
         """Define (or replace) what a role can do, in agno scope terms."""
+        before = self.get_role_scopes(role) if self._audit else None
         self._enforcer.remove_filtered_policy(0, role)
         for scope in scopes:
             obj, act = scope_to_obj_act(scope)
             self._enforcer.add_policy(role, obj, act)
+        self._emit("role.set_scopes", role, before, self.get_role_scopes(role) if self._audit else None, actor)
 
     def get_role_scopes(self, role: str) -> List[str]:
         """Return a role's scopes in agno terms (best-effort read-back)."""
@@ -112,20 +162,26 @@ class ManagedRoleStore:
             _obj_act_to_scope(p[1], p[2]) for p in self._enforcer.get_filtered_policy(0, role) if len(p) >= 3
         )
 
-    def remove_role(self, role: str) -> None:
+    def remove_role(self, role: str, actor: Optional[str] = None) -> None:
+        before = self.get_role_scopes(role) if self._audit else None
         self._enforcer.remove_filtered_policy(0, role)
         self._enforcer.remove_filtered_grouping_policy(1, role)
+        self._emit("role.removed", role, before, None, actor)
 
     def list_roles(self) -> List[str]:
         return sorted({p[0] for p in self._enforcer.get_policy()})
 
     # ------------------------------------------------------------- assignments
-    def assign(self, subject: str, role: str) -> None:
+    def assign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         """Give a subject a role (runtime, persisted)."""
+        before = self.roles_of(subject) if self._audit else None
         self._enforcer.add_role_for_user(subject, role)
+        self._emit("user.assigned", subject, before, self.roles_of(subject) if self._audit else None, actor)
 
-    def unassign(self, subject: str, role: str) -> None:
+    def unassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
+        before = self.roles_of(subject) if self._audit else None
         self._enforcer.delete_role_for_user(subject, role)
+        self._emit("user.unassigned", subject, before, self.roles_of(subject) if self._audit else None, actor)
 
     def roles_of(self, subject: str) -> List[str]:
         return list(self._enforcer.get_roles_for_user(subject))
