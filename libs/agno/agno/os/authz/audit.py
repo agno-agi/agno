@@ -127,3 +127,25 @@ class DbAuditSink(AuditSink):
                     after=json.dumps(event.after) if event.after is not None else None,
                 )
             )
+
+    def read(self, limit: int = 100) -> List[dict]:
+        """Return the most recent events (newest first) as plain dicts."""
+        import sqlalchemy as sa
+
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(sa.select(self._table).order_by(self._table.c.id.desc()).limit(limit))
+                .mappings()
+                .all()
+            )
+        return [
+            {
+                "ts": r["ts"],
+                "actor": r["actor"],
+                "action": r["action"],
+                "target": r["target"],
+                "before": json.loads(r["before"]) if r["before"] else None,
+                "after": json.loads(r["after"]) if r["after"] else None,
+            }
+            for r in rows
+        ]

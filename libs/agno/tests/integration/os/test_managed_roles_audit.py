@@ -142,3 +142,45 @@ def test_http_api_records_actor_from_jwt():
         ("user.assigned", "bob", "alice"),
         ("user.unassigned", "bob", "alice"),
     ]
+
+
+def test_audit_endpoint_returns_trail(tmp_path):
+    """GET /authz/audit returns the change trail (newest first) for admins only."""
+    db_file = tmp_path / "audit.db"
+    store = ManagedRoleStore(audit=DbAuditSink(db_url=f"sqlite:///{db_file}"))
+    store.set_role_scopes("admin", ["agent_os:admin"])
+    store.assign("alice", "admin")
+
+    agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=store.provider,
+        ),
+    )
+    app = agent_os.get_app()
+    app.include_router(get_roles_router(store))
+    client = TestClient(app)
+
+    # make a couple of changes over the API
+    client.put("/authz/roles/runner", headers=_auth("alice"), json={"scopes": ["agents:*:run"]})
+    client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "runner"})
+
+    # admin can read the trail; newest first
+    r = client.get("/authz/audit", headers=_auth("alice"))
+    assert r.status_code == 200
+    events = r.json()["events"]
+    assert events[0]["action"] == "user.assigned" and events[0]["actor"] == "alice"
+    assert events[0]["after"] == ["runner"]
+    assert any(e["action"] == "role.set_scopes" and e["target"] == "runner" for e in events)
+
+    # non-admin and anonymous are blocked
+    store.assign("bob", "runner")  # bob still isn't an admin
+    assert client.get("/authz/audit", headers=_auth("bob")).status_code == 403
+    assert client.get("/authz/audit").status_code == 401

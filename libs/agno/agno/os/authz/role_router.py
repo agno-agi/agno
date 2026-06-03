@@ -80,6 +80,13 @@ def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: Li
         store.remove_role(role, actor=actor)
         return {"role": role, "deleted": True}
 
+    # ---- audit ----------------------------------------------------------
+    @router.get("/audit")
+    def list_audit(limit: int = 100) -> dict:
+        """Recent change-audit events (newest first). Empty unless the store was
+        given a readable audit sink (e.g. DbAuditSink)."""
+        return {"events": store.audit_log(limit)}
+
     # ---- assignments ----------------------------------------------------
     @router.get("/users/{subject}/roles")
     def get_user_roles(subject: str) -> dict:

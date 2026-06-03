@@ -186,6 +186,16 @@ class ManagedRoleStore:
     def roles_of(self, subject: str) -> List[str]:
         return list(self._enforcer.get_roles_for_user(subject))
 
+    # ------------------------------------------------------------------ audit
+    def audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Recent change-audit events (newest first), if the audit sink supports
+        reading (e.g. ``DbAuditSink``). Returns ``[]`` when no readable sink is
+        configured (e.g. a logging-only sink, or no audit at all)."""
+        sink = self._audit
+        if sink is not None and hasattr(sink, "read"):
+            return sink.read(limit)
+        return []
+
     # ----------------------------------------------------------------- gating
     def can_manage(self, principal_id: Optional[str], claims: Optional[Dict[str, Any]] = None) -> bool:
         """True if the caller may administer roles (i.e. satisfies ``agent_os:admin``).
