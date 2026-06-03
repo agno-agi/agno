@@ -142,6 +142,18 @@ def test_granting_via_api_takes_effect_on_next_request(client_and_store):
     ).status_code == 403
 
 
+def test_scope_catalog_endpoint(client_and_store):
+    client, _ = client_and_store
+    r = client.get("/authz/scopes", headers=_auth("alice"))
+    assert r.status_code == 200
+    body = r.json()
+    assert "agents" in body["grouped"] and "read" in body["grouped"]["agents"]
+    assert "agents:run" in body["scopes"]
+    assert body["admin_scope"] == "agent_os:admin"
+    # non-admin is blocked
+    assert client.get("/authz/scopes", headers=_auth("bob")).status_code == 403
+
+
 def test_admin_via_token_claim_can_manage():
     """When roles come from the token (external IdP), an admin role on the token grants management."""
     store = ManagedRoleStore(roles_claim="roles")

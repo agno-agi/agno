@@ -80,6 +80,28 @@ def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: Li
         store.remove_role(role, actor=actor)
         return {"role": role, "deleted": True}
 
+    # ---- scope catalog --------------------------------------------------
+    @router.get("/scopes")
+    def list_scopes() -> dict:
+        """The catalog of scopes this AgentOS understands, grouped by resource.
+
+        Derived from the OS's own route→scope map, so it always matches what the
+        OS actually enforces. A UI renders this as a resource×action grid; a role
+        is then just a set of the resulting ``resource:action`` strings (plus the
+        ``agent_os:admin`` super-scope).
+        """
+        from agno.os.scopes import get_default_scope_mappings
+
+        grouped: dict = {}
+        for required in get_default_scope_mappings().values():
+            for scope in required:
+                parts = scope.split(":")
+                if len(parts) == 2:
+                    grouped.setdefault(parts[0], set()).add(parts[1])
+        grouped_sorted = {r: sorted(a) for r, a in sorted(grouped.items())}
+        flat = sorted(f"{r}:{a}" for r, acts in grouped_sorted.items() for a in acts)
+        return {"grouped": grouped_sorted, "scopes": flat, "admin_scope": "agent_os:admin"}
+
     # ---- audit ----------------------------------------------------------
     @router.get("/audit")
     def list_audit(limit: int = 100) -> dict:
