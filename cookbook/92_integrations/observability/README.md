@@ -15,6 +15,7 @@ Observability examples for tracing and monitoring Agno agents, teams, and workfl
 - `langsmith_via_openinference.py`
 - `langtrace_op.py`
 - `langwatch_op.py`
+- `latitude_via_openinference.py`
 - `logfire_via_openinference.py`
 - `mlflow_via_openinference.py`
 - `maxim_ops.py`
