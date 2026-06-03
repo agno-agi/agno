@@ -839,6 +839,43 @@ async def test_connect_failure_cleans_up_both_contexts_when_session_aenter_fails
 
 
 @pytest.mark.asyncio
+async def test_refresh_connection_tool_call_closes_dynamic_session_without_caching():
+    """A refresh_connection call should open and close its HTTP session inside
+    the same tool-call task instead of leaving it for later cleanup."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+        header_provider=lambda run_context: {"Authorization": f"Bearer {run_context.token}"},
+        refresh_connection=True,
+    )
+    fallback_session = _make_session_returning("fallback")
+    dynamic_session = _make_session_returning("fresh")
+    transport_context = _SucceedingAenterContext(("read", "write", None))
+    session_context = _SucceedingAenterContext(dynamic_session)
+
+    tool = _make_mcp_tool_mock("search_docs")
+    run_context = MagicMock()
+    run_context.run_id = "refresh-run"
+    run_context.token = "run-token"
+
+    with (
+        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=transport_context) as streamable_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=session_context),
+    ):
+        entrypoint = get_entrypoint_for_tool(tool, fallback_session, mcp_tools_instance=tools)
+        result = await entrypoint(_agno_run_context=run_context, query="anyio")
+
+    assert result.content == "fresh"
+    dynamic_session.call_tool.assert_awaited_once_with("search_docs", {"query": "anyio"})
+    fallback_session.call_tool.assert_not_awaited()
+    assert streamable_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer run-token"}
+    assert session_context.aexit_called
+    assert transport_context.aexit_called
+    assert tools._run_sessions == {}
+    assert tools._run_session_contexts == {}
+
+
+@pytest.mark.asyncio
 async def test_connect_public_does_not_raise_when_mcp_server_unreachable():
     """connect() entrypoint used by the agent run loop and AgentOS /agents endpoint.
     If the MCP server is down it must NOT raise"""
