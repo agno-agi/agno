@@ -152,32 +152,3 @@ class TestAgenticStateToolSchemaAsync:
         assert "session_state_updates" in update_tool.parameters.get("properties", {}), (
             f"Async path missing session_state_updates. Got: {update_tool.parameters}"
         )
-
-
-class TestDictSchemaGeneration:
-    """Test that bare dict type hint generates correct JSON schema."""
-
-    def test_bare_dict_allows_additional_properties(self):
-        """Bare dict should generate additionalProperties: true."""
-        from agno.utils.json_schema import get_json_schema_for_arg
-
-        schema = get_json_schema_for_arg(dict)
-
-        # Should be an object type
-        assert schema.get("type") == "object"
-
-        # Should allow additional properties (not False)
-        additional_props = schema.get("additionalProperties")
-        assert additional_props is not False, f"Bare dict should allow arbitrary keys. Got: {schema}"
-
-    def test_dict_in_function_parameters(self):
-        """A function with dict parameter should have correct schema."""
-        from agno.utils.json_schema import get_json_schema
-
-        type_hints = {"data": dict}
-        schema = get_json_schema(type_hints=type_hints, param_descriptions={})
-
-        data_schema = schema["properties"]["data"]
-
-        additional_props = data_schema.get("additionalProperties")
-        assert additional_props is not False, f"dict parameter should allow arbitrary keys. Got: {data_schema}"

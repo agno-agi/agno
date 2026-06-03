@@ -103,13 +103,44 @@ def test_get_json_schema_for_arg_collections():
     list_schema = get_json_schema_for_arg(List[str])
     assert list_schema == {"type": "array", "items": {"type": "string"}}
 
-    # Test dict type
+    # Test Dict[str, int] - typed dict
     dict_schema = get_json_schema_for_arg(Dict[str, int])
     assert dict_schema == {
         "type": "object",
         "propertyNames": {"type": "string"},
         "additionalProperties": {"type": "integer"},
     }
+
+
+def test_get_json_schema_for_arg_bare_dict():
+    """Test that bare dict allows arbitrary key-value pairs (issue #7175)."""
+    # Bare dict should allow any properties
+    bare_dict_schema = get_json_schema_for_arg(dict)
+    assert bare_dict_schema == {"type": "object", "additionalProperties": True}
+
+    # List of bare dicts should work correctly
+    list_dict_schema = get_json_schema_for_arg(List[dict])
+    assert list_dict_schema == {
+        "type": "array",
+        "items": {"type": "object", "additionalProperties": True},
+    }
+
+
+def test_get_json_schema_bare_dict_in_function():
+    """Test bare dict as a function parameter generates correct schema."""
+    type_hints = {"data": dict}
+    param_descriptions = {"data": "Arbitrary key-value pairs"}
+
+    schema = get_json_schema(type_hints, param_descriptions)
+
+    assert schema["type"] == "object"
+    assert "properties" in schema
+    assert "data" in schema["properties"]
+
+    data_schema = schema["properties"]["data"]
+    assert data_schema["type"] == "object"
+    assert data_schema["additionalProperties"] is True
+    assert data_schema["description"] == "Arbitrary key-value pairs"
 
 
 def test_get_json_schema_for_arg_union():
