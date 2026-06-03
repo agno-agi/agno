@@ -598,9 +598,21 @@ class Claude(Model):
         return None
 
     def _apply_cache_tools(self, request_kwargs: Dict[str, Any]) -> None:
-        """Tag the last tool with cache_control when cache_tools is enabled."""
+        """Tag the last tool with cache_control when cache_tools is enabled.
+
+        The TTL is matched to ``extended_cache_time`` so the tools block is not
+        cached for a shorter duration than the system block. Anthropic processes
+        cache blocks in the order tools -> system -> messages and rejects a
+        shorter TTL appearing before a longer one. A bare ``{"type": "ephemeral"}``
+        defaults to 5m, so emitting it before a 1h system block
+        (``extended_cache_time=True``) is a mixed-TTL violation that the API
+        rejects. Mirror the system-block TTL here to keep the order valid.
+        """
         if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
-            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+            cache_control: Dict[str, str] = {"type": "ephemeral"}
+            if self.extended_cache_time:
+                cache_control["ttl"] = "1h"
+            request_kwargs["tools"][-1]["cache_control"] = cache_control
 
     def _build_system(self, system_message: str) -> List[Dict[str, Any]]:
         """Assemble the Anthropic ``system`` array.

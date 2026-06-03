@@ -227,6 +227,41 @@ def test_vertexai_prepare_request_kwargs_signature_matches_parent():
 
 
 # =============================================================================
+# cache_tools TTL must match extended_cache_time (Anthropic mixed-TTL rule)
+# =============================================================================
+
+_TOOLS = [{"name": "test", "description": "test tool", "input_schema": {"type": "object", "properties": {}}}]
+
+
+def test_cache_tools_uses_1h_ttl_when_extended_cache_time():
+    """With extended_cache_time the tools block must be cached at 1h, matching the system block.
+
+    Anthropic processes cache blocks tools -> system -> messages and rejects a shorter TTL
+    before a longer one, so a bare (5m) tools block before a 1h system block is invalid.
+    """
+    model = AnthropicClaude(id="claude-haiku-4-5", cache_tools=True, extended_cache_time=True)
+    kwargs = model._prepare_request_kwargs("system prompt", tools=[dict(_TOOLS[0])])
+
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_cache_tools_uses_default_ttl_without_extended_cache_time():
+    """Without extended_cache_time the tools block stays at the default (5m) ephemeral cache."""
+    model = AnthropicClaude(id="claude-haiku-4-5", cache_tools=True, extended_cache_time=False)
+    kwargs = model._prepare_request_kwargs("system prompt", tools=[dict(_TOOLS[0])])
+
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_cache_tools_disabled_leaves_tools_uncached():
+    """With cache_tools off the tools block must not carry cache_control."""
+    model = AnthropicClaude(id="claude-haiku-4-5", cache_tools=False, extended_cache_time=True)
+    kwargs = model._prepare_request_kwargs("system prompt", tools=[dict(_TOOLS[0])])
+
+    assert "cache_control" not in kwargs["tools"][-1]
+
+
+# =============================================================================
 # temperature / top_p / top_k: zero values must not be silently dropped
 # =============================================================================
 
