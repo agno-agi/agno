@@ -168,6 +168,7 @@ def get_entrypoint_for_tool(
             return ToolResult(
                 content=response_str.strip(),
                 images=images if images else None,
+                meta=dict(result.meta) if result.meta else None,
             )
         except Exception as e:
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")

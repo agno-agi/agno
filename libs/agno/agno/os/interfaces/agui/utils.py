@@ -32,7 +32,7 @@ from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEve
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
 from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
 from agno.run.agent import ReasoningStepEvent as AgentReasoningStepEvent
-from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
+from agno.run.agent import FollowupsCompletedEvent, RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
@@ -430,6 +430,12 @@ def _create_events_from_chunk(
             )
             events_to_emit.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=reasoning_id))
             event_buffer.end_reasoning()
+
+    # Handle followup suggestions — emit before RUN_FINISHED so the client can render them
+    elif isinstance(chunk, FollowupsCompletedEvent):
+        if chunk.followups:
+            custom_event = CustomEvent(name="followups", value={"suggestions": chunk.followups})
+            events_to_emit.append(custom_event)
 
     # Handle custom events
     elif chunk.event == RunEvent.custom_event:
