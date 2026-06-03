@@ -1502,3 +1502,77 @@ def test_extract_agui_user_input_multimodal_content():
     result = extract_agui_user_input(messages)
 
     assert result == "describe this image"
+
+
+@pytest.mark.asyncio
+async def test_followups_completed_emits_custom_event():
+    """FollowupsCompletedEvent with non-empty suggestions must emit a CustomEvent
+    named 'followups' with value={'suggestions': [...]} before RUN_FINISHED.
+
+    Regression guard for issue #7398: previously the followups_completed
+    chunk was silently dropped because _create_events_from_chunk had no branch for it.
+    """
+    from agno.run.agent import FollowupsCompletedEvent, RunCompletedEvent
+
+    async def mock_stream_with_followups():
+        text = RunContentEvent()
+        text.content = "Looking for a house"
+        yield text
+        yield FollowupsCompletedEvent(followups=["budget?", "location?", "size?"])
+        yield RunCompletedEvent()
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_followups(), "thread_1", "run_1"):
+        events.append(event)
+
+    followup_events = [e for e in events if e.type == EventType.CUSTOM and getattr(e, "name", None) == "followups"]
+    assert len(followup_events) == 1, f"Expected 1 followups CustomEvent, got {len(followup_events)}"
+    assert getattr(followup_events[0], "value", None) == {"suggestions": ["budget?", "location?", "size?"]}
+
+    event_types = [e.type for e in events]
+    custom_idx = next(i for i, t in enumerate(event_types) if t == EventType.CUSTOM)
+    run_finished_idx = event_types.index(EventType.RUN_FINISHED)
+    assert custom_idx < run_finished_idx, "CustomEvent for followups must precede RUN_FINISHED"
+
+
+@pytest.mark.asyncio
+async def test_followups_completed_empty_skipped():
+    """FollowupsCompletedEvent with empty or None followups must NOT emit a CustomEvent.
+
+    Guards the truthy-check in the new branch; prevents spurious empty payload
+    emissions that would clutter the AGUI stream.
+    """
+    from agno.run.agent import FollowupsCompletedEvent, RunCompletedEvent
+
+    async def mock_stream_with_empty_followups():
+        yield FollowupsCompletedEvent(followups=None)
+        yield FollowupsCompletedEvent(followups=[])
+        yield RunCompletedEvent()
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_empty_followups(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    followup_customs = [e for e in events if e.type == EventType.CUSTOM and getattr(e, "name", None) == "followups"]
+    assert len(followup_customs) == 0
+
+
+@pytest.mark.asyncio
+async def test_followups_started_is_noop():
+    """FollowupsStartedEvent carries no payload and must not surface as a CUSTOM event."""
+    from agno.run.agent import FollowupsStartedEvent, RunCompletedEvent
+
+    async def mock_stream_with_followups_started():
+        yield FollowupsStartedEvent()
+        yield RunCompletedEvent()
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_followups_started(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    followup_customs = [e for e in events if e.type == EventType.CUSTOM and getattr(e, "name", None) == "followups"]
+    assert len(followup_customs) == 0
