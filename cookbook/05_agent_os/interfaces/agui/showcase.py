@@ -15,14 +15,12 @@ Endpoints:
 
 from typing import List
 
-from pydantic import BaseModel, Field
-
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from agno.tools import tool
-
+from pydantic import BaseModel, Field
 
 # 1. Agentic Chat — basic chat with web search
 agentic_chat_agent = Agent(
