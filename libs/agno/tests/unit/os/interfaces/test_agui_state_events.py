@@ -1,11 +1,12 @@
-"""End-to-end integration test for AG-UI state events (StateSnapshot + StateDelta).
+"""Integration tests for AG-UI state events (StateSnapshot + StateDelta).
 
 Tests the full pipeline: router -> streaming -> event emission, using mock agent responses.
-Also includes real API tests that run when AGNO_RUN_REAL_API_TESTS=1 and OPENAI_API_KEY are set.
 """
 
+import json
 import os
 import uuid
+from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -23,7 +24,34 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.tools import tool
-from tests.helpers import parse_sse_events
+
+
+def parse_sse_events(content: str) -> List[Dict[str, Any]]:
+    """Parse SSE event stream content into a list of event dictionaries."""
+    events = []
+    current_event: Dict[str, Any] = {}
+
+    for line in content.split("\n"):
+        line = line.strip()
+        if not line:
+            if current_event:
+                events.append(current_event)
+                current_event = {}
+            continue
+
+        if line.startswith("event:"):
+            current_event["event"] = line[6:].strip()
+        elif line.startswith("data:"):
+            data_str = line[5:].strip()
+            try:
+                current_event["data"] = json.loads(data_str)
+            except json.JSONDecodeError:
+                current_event["data"] = data_str
+
+    if current_event:
+        events.append(current_event)
+
+    return events
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
