@@ -268,6 +268,11 @@ class Claude(AnthropicClaude):
 
         self._apply_cache_tools(request_kwargs)
 
+        # Build output_format if response_format is provided
+        output_format = self._build_output_format(response_format)
+        if output_format:
+            request_kwargs["output_format"] = output_format
+
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs

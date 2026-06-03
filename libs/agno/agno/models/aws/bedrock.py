@@ -297,10 +297,11 @@ class AwsBedrock(Model):
         if schema.get("type") == "object":
             schema["additionalProperties"] = False
         for key, value in schema.items():
-            if key == "properties" and isinstance(value, dict):
-                for prop_schema in value.values():
-                    if isinstance(prop_schema, dict):
-                        self._ensure_additional_properties_false(prop_schema)
+            if key in ("properties", "$defs") and isinstance(value, dict):
+                # Both contain named sub-schemas
+                for sub_schema in value.values():
+                    if isinstance(sub_schema, dict):
+                        self._ensure_additional_properties_false(sub_schema)
             elif key in ("items", "allOf", "anyOf", "oneOf"):
                 if isinstance(value, dict):
                     self._ensure_additional_properties_false(value)

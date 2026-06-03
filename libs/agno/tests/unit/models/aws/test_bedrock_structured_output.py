@@ -103,6 +103,7 @@ class TestBuildOutputConfig:
         dict_schema = {"type": "object", "properties": {"city": {"type": "string"}}}
         result = self.model_native._build_output_config(dict_schema)
         import json
+
         schema_str = result["textFormat"]["structure"]["jsonSchema"]["schema"]
         assert isinstance(schema_str, str)
         parsed = json.loads(schema_str)
