@@ -1177,3 +1177,119 @@ def test_tool_parent_run_id():
     assert events[TeamRunEvent.tool_call_started][0].run_id == member_run.parent_run_id
     assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][0].run_id == member_run.parent_run_id
+
+
+# ---------------------------------------------------------------------------
+# Streamed-text-after-tool-call separator (team variant)
+# ---------------------------------------------------------------------------
+# Mirrors the agent-level test: when a team streams text, then a tool call,
+# then resumes with more text, the resumed text must not be glued onto the
+# pre-tool-call sentence.
+
+
+def _build_streamed_team_content(response_generator) -> str:
+    content = ""
+    for event in response_generator:
+        if event.event != TeamRunEvent.run_content:
+            continue
+        chunk = getattr(event, "content", None)
+        if isinstance(chunk, str):
+            content += chunk
+    return content
+
+
+def _assert_heading_not_glued(content: str) -> None:
+    for line in content.split("\n"):
+        stripped = line.lstrip()
+        if "##" in line and not stripped.startswith("#"):
+            raise AssertionError(f"Markdown heading fused onto prior text without a newline separator: {line!r}")
+
+
+def test_team_streamed_text_after_tool_call_has_separator():
+    """Streamed team text resuming after a tool call must be separated from prior content."""
+
+    def get_weather(city: str) -> str:
+        """Return a fixed weather report so the model has a stable post-tool output."""
+        return f"It is 72F and sunny in {city}."
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        tools=[get_weather],
+        instructions=[
+            "Before calling any tool, say in one sentence what you're about to do, ending with a period.",
+            "After the tool returns, begin your final answer with a markdown heading like '## Summary'.",
+        ],
+        markdown=True,
+        telemetry=False,
+    )
+
+    streamed_content = _build_streamed_team_content(
+        team.run("What's the weather in Tokyo?", stream=True, stream_events=True)
+    )
+
+    _assert_heading_not_glued(streamed_content)
+
+
+@pytest.mark.asyncio
+async def test_async_team_streamed_text_after_tool_call_has_separator():
+    """Async variant of the team streamed-after-tool-call separator check."""
+
+    def get_weather(city: str) -> str:
+        return f"It is 72F and sunny in {city}."
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        tools=[get_weather],
+        instructions=[
+            "Before calling any tool, say in one sentence what you're about to do, ending with a period.",
+            "After the tool returns, begin your final answer with a markdown heading like '## Summary'.",
+        ],
+        markdown=True,
+        telemetry=False,
+    )
+
+    content = ""
+    async for event in team.arun("What's the weather in Tokyo?", stream=True, stream_events=True):
+        if event.event != TeamRunEvent.run_content:
+            continue
+        chunk = getattr(event, "content", None)
+        if isinstance(chunk, str):
+            content += chunk
+
+    _assert_heading_not_glued(content)
+
+
+def test_team_streamed_content_matches_final_run_output_after_tool_call():
+    """The separator inserted into the team stream must also be reflected in run_response.content."""
+
+    def get_weather(city: str) -> str:
+        return f"It is 72F and sunny in {city}."
+
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        tools=[get_weather],
+        instructions=[
+            "Before calling any tool, say in one sentence what you're about to do, ending with a period.",
+            "After the tool returns, begin your final answer with a markdown heading like '## Summary'.",
+        ],
+        markdown=True,
+        telemetry=False,
+    )
+
+    final_run_output: TeamRunOutput | None = None
+    streamed_content = ""
+    for event in team.run("What's the weather in Tokyo?", stream=True, stream_events=True):
+        if event.event == TeamRunEvent.run_content:
+            chunk = getattr(event, "content", None)
+            if isinstance(chunk, str):
+                streamed_content += chunk
+        elif event.event == TeamRunEvent.run_completed:
+            final_run_output = event  # type: ignore[assignment]
+
+    assert final_run_output is not None
+    assert isinstance(final_run_output.content, str)
+    assert final_run_output.content == streamed_content
+    _assert_heading_not_glued(final_run_output.content)

@@ -1389,6 +1389,18 @@ def _handle_model_response_chunk(
                     )  # type: ignore
                     run_response.content_type = content_type
                 elif isinstance(model_response_event.content, str):
+                    # Insert a separator when text resumes after a tool call, so a streamed
+                    # chunk like "## Heading" doesn't get glued onto the prior sentence.
+                    if (
+                        full_model_response.extra is not None
+                        and full_model_response.extra.get("pending_text_separator")
+                        and model_response_event.content
+                    ):
+                        existing = full_model_response.content or ""
+                        incoming = model_response_event.content
+                        if existing and not existing.endswith("\n") and not incoming.startswith("\n"):
+                            model_response_event.content = "\n\n" + incoming
+                        full_model_response.extra.pop("pending_text_separator", None)
                     full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     run_response.content = full_model_response.content
                 should_yield = True
@@ -1538,6 +1550,12 @@ def _handle_model_response_chunk(
 
         # If the model response is a tool_call_completed, update the existing tool call in the run_response
         elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
+            # Mark that the next streamed text chunk should be separated from prior content,
+            # so post-tool-call text (e.g. a new "## Heading") doesn't fuse onto the prior sentence.
+            if full_model_response.extra is None:
+                full_model_response.extra = {}
+            full_model_response.extra["pending_text_separator"] = True
+
             if model_response_event.updated_session_state is not None:
                 # Update the session_state variable that TeamRunOutput references
                 if session_state is not None:

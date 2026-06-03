@@ -1447,3 +1447,120 @@ def test_custom_event_properties_persist_after_db_reload(shared_db):
     assert hasattr(custom_events[0], "data")
     assert custom_events[0].mime_type == "application/echart+json"
     assert custom_events[0].data["title"] == "Test Chart"
+
+
+# ---------------------------------------------------------------------------
+# Streamed-text-after-tool-call separator
+# ---------------------------------------------------------------------------
+# When a streamed run emits a text message, then a tool call, then resumes with
+# more text, the resumed text must not be glued onto the pre-tool-call sentence.
+# Without a separator, a model emitting "...now." then "## Results" produces
+# "...now.## Results" — the heading is swallowed and markdown rendering breaks.
+
+
+def _build_streamed_content(response_generator) -> str:
+    """Concatenate streamed content chunks the way a streaming UI would."""
+    content = ""
+    for event in response_generator:
+        if event.event != RunEvent.run_content:
+            continue
+        chunk = getattr(event, "content", None)
+        if isinstance(chunk, str):
+            content += chunk
+    return content
+
+
+def _assert_heading_not_glued(content: str) -> None:
+    """Headings emitted after a tool call must not fuse onto the prior line."""
+    for line in content.split("\n"):
+        stripped = line.lstrip()
+        if "##" in line and not stripped.startswith("#"):
+            raise AssertionError(f"Markdown heading fused onto prior text without a newline separator: {line!r}")
+
+
+def test_streamed_text_after_tool_call_has_separator():
+    """Streamed text resuming after a tool call must be separated from prior content."""
+
+    def get_weather(city: str) -> str:
+        """Return a fixed weather report so the model has a stable post-tool output."""
+        return f"It is 72F and sunny in {city}."
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_weather],
+        instructions=[
+            "Before calling any tool, say in one sentence what you're about to do, ending with a period.",
+            "After the tool returns, begin your final answer with a markdown heading like '## Summary'.",
+        ],
+        markdown=True,
+        telemetry=False,
+    )
+
+    streamed_content = _build_streamed_content(
+        agent.run("What's the weather in Tokyo?", stream=True, stream_events=True)
+    )
+
+    _assert_heading_not_glued(streamed_content)
+
+
+@pytest.mark.asyncio
+async def test_async_streamed_text_after_tool_call_has_separator():
+    """Async variant of the streamed-after-tool-call separator check."""
+
+    def get_weather(city: str) -> str:
+        return f"It is 72F and sunny in {city}."
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_weather],
+        instructions=[
+            "Before calling any tool, say in one sentence what you're about to do, ending with a period.",
+            "After the tool returns, begin your final answer with a markdown heading like '## Summary'.",
+        ],
+        markdown=True,
+        telemetry=False,
+    )
+
+    content = ""
+    async for event in agent.arun("What's the weather in Tokyo?", stream=True, stream_events=True):
+        if event.event != RunEvent.run_content:
+            continue
+        chunk = getattr(event, "content", None)
+        if isinstance(chunk, str):
+            content += chunk
+
+    _assert_heading_not_glued(content)
+
+
+def test_streamed_content_matches_final_run_output_after_tool_call():
+    """The separator inserted into the stream must also be reflected in run_response.content."""
+
+    def get_weather(city: str) -> str:
+        return f"It is 72F and sunny in {city}."
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        tools=[get_weather],
+        instructions=[
+            "Before calling any tool, say in one sentence what you're about to do, ending with a period.",
+            "After the tool returns, begin your final answer with a markdown heading like '## Summary'.",
+        ],
+        markdown=True,
+        telemetry=False,
+    )
+
+    final_run_output: RunOutput | None = None
+    streamed_content = ""
+    for event in agent.run("What's the weather in Tokyo?", stream=True, stream_events=True):
+        if event.event == RunEvent.run_content:
+            chunk = getattr(event, "content", None)
+            if isinstance(chunk, str):
+                streamed_content += chunk
+        elif event.event == RunEvent.run_completed:
+            final_run_output = event  # type: ignore[assignment]
+
+    assert final_run_output is not None
+    assert isinstance(final_run_output.content, str)
+    # The accumulated stream and the final content should agree on the separator.
+    assert final_run_output.content == streamed_content
+    _assert_heading_not_glued(final_run_output.content)
