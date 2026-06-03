@@ -369,13 +369,24 @@ New to authorization? Read them in this order:
    decides what they can do. Shows a change taking effect instantly.
 2. `managed_roles_sessions.py` — roles protecting real data: who is allowed to
    delete a saved chat session (and who gets stopped before any data is touched).
-3. `managed_roles_api.py` — managing roles over the web, who's allowed to do that,
-   and a permanent record of every change (the audit log).
-4. `casbin_external_idp.py` — where the user's login comes from: an outside login
-   service (Okta/WorkOS/Auth0) vs your own app, both on one AgentOS.
-5. `casbin_runtime_policy.py` — turning a person's access on and off live, instantly.
-6. `casbin_provider.py` — advanced: swapping the rules engine for Casbin while
+3. `casbin_runtime_policy.py` — turning a person's access on and off live, instantly.
+4. `casbin_provider.py` — advanced: swapping the rules engine for Casbin while
    everything else stays the same. Most people won't need this.
+
+### The three ways a company runs this
+
+A company either already has a login service (WorkOS/Okta/Auth0) or it doesn't,
+and either way we handle the "what are you allowed to do" part. The three setups,
+each with a runnable cookbook:
+
+| # | Their situation | Who owns "who has which role" | Do we store users? | Cookbook |
+|---|---|---|---|---|
+| 1 | They have a login service; we only enforce | the login service (role on the token) | no | `idp_enforce_only.py` |
+| 2 | No login service; they want us to manage it | us (define + assign roles, manage over HTTP) | yes | `managed_roles_api.py` |
+| 3 | A mix of both at once | both — token role if present, else our list | for the non-IdP users | `casbin_external_idp.py` |
+
+The same agent ends up protected the same way in all three; only where the role
+comes from changes.
 
 Install the optional extra first: `pip install "agno[casbin]"`.
 

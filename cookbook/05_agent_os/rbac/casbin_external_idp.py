@@ -1,28 +1,31 @@
 """
-Where does "who are you" come from - outside login vs your own login
+Scenario 3 of 3: a MIX - some users from a login service, some managed by us
 
 (New to this? Read managed_roles.py first.)
 
-Remember the token: the signed ID card a user carries. Someone has to issue that
-card. There are two common situations, and the nice thing is one AgentOS can
-accept both at the same time:
+The three ways a company can run this:
+  1. they already have a login service, we only enforce  -> idp_enforce_only.py
+  2. no login service, they want us to manage it          -> managed_roles_api.py
+  3. THIS FILE - a mix of both, at the same time
 
-1. The company uses an outside login service (Okta, WorkOS, Auth0, Google...).
-   That service issues the card and stamps the person's role right on it. agno
-   trusts cards from that service and reads the role off the card.
-2. The company has no such service, so their own app issues the card. The card
-   just says who the person is; agno looks up that person's role in its own list.
+Why a mix happens: a company's employees log in through WorkOS/Okta (so their
+role rides their token), but they also have external partners or service accounts
+that don't exist in WorkOS, so WE manage those in our own list. One AgentOS has
+to handle both. It does, with one simple rule:
 
-Either way the question agno answers is the same ("what is this person allowed to
-do?"), and the answer comes out the same. This file sets up both kinds of users
-against one AgentOS and shows each one getting ALLOWED or BLOCKED. Don't worry
-about the key/signing plumbing; the point is both login styles just work.
+  if the token already carries a role, use it (that's the login-service user).
+  if it doesn't, fall back to our own list of who-has-which-role.
+
+So the same agent is protected the same way no matter where the user came from.
 
 The cast (all asking to look at the research agent):
-- alice -> outside-login user whose card says role "member"  -> allowed
-- carol -> outside-login user whose card says role "guest"   -> blocked
-- bob   -> own-app user, listed as a "member" in agno         -> allowed
-- dave  -> own-app user with no role                          -> blocked
+- alice -> from the login service, token says role "member"      -> allowed
+- carol -> from the login service, token says role "guest"       -> blocked
+- bob   -> not in the login service; we listed him as a "member" -> allowed (fallback to our list)
+- dave  -> not in the login service; we gave him no role         -> blocked
+
+Don't worry about the key/signing plumbing below; the point is both kinds of user
+get the right answer from one AgentOS.
 
 Run it:
     pip install "agno[casbin]"
@@ -164,14 +167,14 @@ if __name__ == "__main__":
         print(f"  {label:46s} -> {verdict:7s} ({r.status_code})  {note}")
 
     print("\n" + "=" * 80)
-    print("TWO KINDS OF LOGIN, ONE AGENTOS")
+    print("A MIX: SOME USERS FROM THE LOGIN SERVICE, SOME MANAGED BY US")
     print("=" * 80)
     print("  everyone below is asking to look at the same agent.\n")
-    show("alice  (outside login, card says 'member')", alice, "trusted card + good role -> in")
-    show("carol  (outside login, card says 'guest')", carol, "trusted card, wrong role -> bounced")
-    show("bob    (your app's login, listed as member)", bob, "agno looks up his role -> in")
-    show("dave   (your app's login, no role)", dave, "no role anywhere -> bounced")
+    show("alice  (login service, role on token = member)", alice, "use the token's role -> in")
+    show("carol  (login service, role on token = guest)", carol, "use the token's role -> bounced")
+    show("bob    (not in login service, we listed as member)", bob, "no role on token, fall back to our list -> in")
+    show("dave   (not in login service, no role anywhere)", dave, "no role on token, none in our list -> bounced")
     print("=" * 80)
-    print("the point: it doesn't matter who issued the login card. agno asks the same")
-    print("question and protects the agent the same way for both kinds of user.")
+    print("the point: one AgentOS handles both. if the token brings a role we use it;")
+    print("if not, we fall back to our own list. same agent, same protection, either way.")
     print("=" * 80)

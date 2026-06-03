@@ -107,6 +107,8 @@ class CasbinAuthorizationProvider(AuthorizationProvider):
         """
         if self._roles_claim:
             roles = ctx.claims.get(self._roles_claim)
+            if isinstance(roles, str):  # e.g. WorkOS sends a single "role" string
+                roles = [roles]
             if isinstance(roles, list) and roles:
                 return any(bool(self._enforcer.enforce(role, obj, act)) for role in roles)
         if not ctx.principal_id:

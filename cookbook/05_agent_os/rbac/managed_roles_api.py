@@ -1,12 +1,22 @@
 """
-Managing roles over the web - and keeping a record of every change
+Scenario 2 of 3: NO login service - they want US to manage users and roles
 
 (If roles are new to you, read managed_roles.py first.)
 
-So far roles were set in code. In real life an admin needs to manage them while
-the app is running, from a dashboard or a script. This file adds a small set of
-web endpoints (a REST API) for exactly that: create a role, give it to someone,
-take it away - all over plain HTTP.
+The three ways a company can run this:
+  1. they already have a login service, we only enforce  -> idp_enforce_only.py
+  2. THIS FILE - no login service, we manage users + roles ourselves
+  3. a mix of both                                        -> casbin_external_idp.py
+
+In this scenario the company has no WorkOS/Okta. Their own app logs people in and
+issues them a token that just says who they are. Everything about permissions
+lives with US: we hold the list of roles, who has which role, and we let admins
+change it. (We are not doing the login itself - no passwords or MFA - just the
+"what are you allowed to do" part, which is what they asked us to provide.)
+
+So this file adds a small set of web endpoints (a REST API) for managing all of
+that while the app runs: create a role, give it to someone, take it away - over
+plain HTTP.
 
 Two important things this shows:
 

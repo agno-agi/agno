@@ -200,6 +200,8 @@ class ManagedRoleStore:
         """
         if self._roles_claim and claims:
             roles = claims.get(self._roles_claim)
+            if isinstance(roles, str):  # e.g. WorkOS sends a single "role" string
+                roles = [roles]
             if isinstance(roles, list):
                 if any(bool(self._enforcer.enforce(r, "*", "*")) for r in roles):
                     return True

@@ -109,6 +109,44 @@ def test_roles_from_token_claim_idp_case(tmp_path):
     assert prov.check(ctx_guest) is False
 
 
+def test_roles_from_token_claim_single_string(tmp_path):
+    """WorkOS sends a single `role` string (not a list); it must still authorize."""
+    prov = CasbinAuthorizationProvider(_enforcer(tmp_path), roles_claim="role")
+    ctx = AuthorizationContext(
+        principal_id="workos|abc", resource_type="agents", resource_id="research-agent",
+        action="run", claims={"role": "member"},  # a bare string, not ["member"]
+    )
+    assert prov.check(ctx) is True
+    ctx_guest = AuthorizationContext(
+        principal_id="workos|abc", resource_type="agents", resource_id="research-agent",
+        action="run", claims={"role": "guest"},
+    )
+    assert prov.check(ctx_guest) is False
+
+
+def test_enforce_only_no_store_assignments(tmp_path):
+    """Scenario 1: roles come from the token, the policy has only role definitions
+    (no `g` user->role rows). Authorization still works with no per-user store."""
+    import casbin
+
+    m = tmp_path / "m.conf"
+    p = tmp_path / "p.csv"
+    m.write_text(MODEL)
+    p.write_text("p, member, agents/*, read\np, member, agents/research-agent, run\n")  # no g rows
+    prov = CasbinAuthorizationProvider(casbin.Enforcer(str(m), str(p)), roles_claim="role")
+
+    allowed = AuthorizationContext(
+        principal_id="anyone", resource_type="agents", resource_id="research-agent",
+        action="run", claims={"role": "member"},
+    )
+    denied = AuthorizationContext(
+        principal_id="anyone", resource_type="agents", resource_id="research-agent",
+        action="run", claims={},  # no role on the token -> nothing to fall back to
+    )
+    assert prov.check(allowed) is True
+    assert prov.check(denied) is False
+
+
 def test_roles_from_store_when_no_claim(tmp_path):
     """Users WITHOUT an IdP: no roles claim -> fall back to Casbin's g store."""
     prov = CasbinAuthorizationProvider(_enforcer(tmp_path), roles_claim="roles")
