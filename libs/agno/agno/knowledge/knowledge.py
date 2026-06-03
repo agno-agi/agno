@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import json
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -150,7 +151,7 @@ class Knowledge(RemoteKnowledge):
             reader=reader,
             auth=auth,
         )
-        content.content_hash = self._build_content_hash(content)
+        content.content_hash = self._build_insert_content_hash(content, upsert)
         content.id = generate_id(content.content_hash)
 
         self._load_content(content, upsert, skip_if_exists, include, exclude)
@@ -218,7 +219,7 @@ class Knowledge(RemoteKnowledge):
             reader=reader,
             auth=auth,
         )
-        content.content_hash = self._build_content_hash(content)
+        content.content_hash = self._build_insert_content_hash(content, upsert)
         content.id = generate_id(content.content_hash)
 
         await self._aload_content(content, upsert, skip_if_exists, include, exclude)
@@ -2272,6 +2273,14 @@ class Knowledge(RemoteKnowledge):
 
         hash_input = ":".join(hash_parts)
         return hashlib.sha256(hash_input.encode()).hexdigest()
+
+    def _build_insert_content_hash(self, content: Content, upsert: bool) -> str:
+        content_hash = self._build_content_hash(content)
+        if upsert or not content.metadata:
+            return content_hash
+
+        metadata = json.dumps(content.metadata, sort_keys=True, default=str, separators=(",", ":"))
+        return hashlib.sha256(f"{content_hash}:metadata:{metadata}".encode()).hexdigest()
 
     def _build_document_content_hash(self, document: Document, content: Content) -> str:
         """

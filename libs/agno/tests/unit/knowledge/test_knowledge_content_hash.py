@@ -182,6 +182,30 @@ def test_path_hash_backward_compatibility():
     assert hash1 == hash2
 
 
+def test_insert_hash_includes_metadata_when_upsert_is_false():
+    """Different metadata should make non-upsert inserts distinct."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(path="/path/to/file.pdf", metadata={"server_id": "10"})
+    content2 = Content(path="/path/to/file.pdf", metadata={"server_id": "11"})
+
+    hash1 = knowledge._build_insert_content_hash(content1, upsert=False)
+    hash2 = knowledge._build_insert_content_hash(content2, upsert=False)
+
+    assert hash1 != hash2
+
+
+def test_insert_hash_ignores_metadata_when_upsert_is_true():
+    """Upsert keeps the same content identity when only metadata changes."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    content1 = Content(path="/path/to/file.pdf", metadata={"server_id": "10"})
+    content2 = Content(path="/path/to/file.pdf", metadata={"server_id": "11"})
+
+    hash1 = knowledge._build_insert_content_hash(content1, upsert=True)
+    hash2 = knowledge._build_insert_content_hash(content2, upsert=True)
+
+    assert hash1 == hash2
+
+
 def test_same_url_name_description_produces_same_hash():
     """Test that identical URL, name, and description produce the same hash."""
     knowledge = Knowledge(vector_db=MockVectorDb())
