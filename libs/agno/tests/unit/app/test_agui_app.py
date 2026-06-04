@@ -18,13 +18,8 @@ from ag_ui.core.types import (
 )
 
 from agno.os.interfaces.agui.router import run_agent, run_team
-from agno.os.interfaces.agui.utils import (
-    EventBuffer,
-    async_stream_agno_response_as_agui_events,
-    extract_agui_user_input,
-    extract_agui_user_input_and_images,
-    extract_agui_user_input_and_media,
-)
+from agno.os.interfaces.agui.media import extract_media, extract_user_input
+from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
 from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
@@ -1868,7 +1863,7 @@ async def test_no_delta_when_state_unchanged():
 # =============================================================================
 
 
-def test_extract_agui_user_input_and_images_from_multimodal_content():
+def test_extract_user_input_and_images():
     """Test extraction preserves image parts from the latest multimodal user message."""
     image_bytes = b"fake-image-bytes"
     messages = [
@@ -1887,7 +1882,8 @@ def test_extract_agui_user_input_and_images_from_multimodal_content():
         ),
     ]
 
-    user_input, images = extract_agui_user_input_and_images(messages)
+    user_input = extract_user_input(messages)
+    images, _, _, _ = extract_media(messages)
 
     assert user_input == "please inspect"
     assert len(images) == 2
@@ -1897,7 +1893,7 @@ def test_extract_agui_user_input_and_images_from_multimodal_content():
     assert images[1].mime_type == "image/jpeg"
 
 
-def test_extract_agui_user_input_and_media_from_multimodal_content():
+def test_extract_media_from_multimodal_content():
     """Test extraction preserves all AG-UI media input content types."""
     image_bytes = b"fake-image-bytes"
     audio_bytes = b"fake-audio-bytes"
@@ -1926,7 +1922,8 @@ def test_extract_agui_user_input_and_media_from_multimodal_content():
         ),
     ]
 
-    user_input, images, audio, videos, files = extract_agui_user_input_and_media(messages)
+    user_input = extract_user_input(messages)
+    images, audio, videos, files = extract_media(messages)
 
     assert user_input == "please inspect"
     assert len(images) == 1
@@ -1943,7 +1940,7 @@ def test_extract_agui_user_input_and_media_from_multimodal_content():
     assert files[0].mime_type == "application/pdf"
 
 
-def test_extract_agui_user_input_and_media_routes_binary_content_by_mime_type():
+def test_extract_media_routes_binary_content_by_mime_type():
     """Test AG-UI binary content is routed to the matching Agno media bucket."""
     image_bytes = b"binary-image"
     audio_bytes = b"binary-audio"
@@ -1971,7 +1968,8 @@ def test_extract_agui_user_input_and_media_routes_binary_content_by_mime_type():
         ),
     ]
 
-    user_input, images, audio, videos, files = extract_agui_user_input_and_media(messages)
+    user_input = extract_user_input(messages)
+    images, audio, videos, files = extract_media(messages)
 
     assert user_input == ""
     assert images[0].content == image_bytes
@@ -1985,7 +1983,7 @@ def test_extract_agui_user_input_and_media_routes_binary_content_by_mime_type():
     assert files[0].filename == "archive.bin"
 
 
-def test_extract_agui_user_input_and_media_skips_malformed_base64():
+def test_extract_media_skips_malformed_base64():
     """Test a content part with undecodable base64 data is skipped, not raised."""
     messages = [
         UserMessage(
@@ -1998,7 +1996,8 @@ def test_extract_agui_user_input_and_media_skips_malformed_base64():
         ),
     ]
 
-    user_input, images, audio, videos, files = extract_agui_user_input_and_media(messages)
+    user_input = extract_user_input(messages)
+    images, audio, videos, files = extract_media(messages)
 
     assert user_input == "check this"
     assert len(images) == 0

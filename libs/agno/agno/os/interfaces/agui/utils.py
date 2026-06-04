@@ -32,11 +32,7 @@ from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
 from agno.media import Image
-from agno.os.interfaces.agui.media import (
-    extract_agui_user_input,
-    extract_agui_user_input_and_images,
-    extract_agui_user_input_and_media,
-)
+from agno.os.interfaces.agui.media import extract_media, extract_user_input
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
