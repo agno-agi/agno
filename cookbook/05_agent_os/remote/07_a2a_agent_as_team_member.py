@@ -77,25 +77,14 @@ research_team = Team(
 
 
 # ---------------------------------------------------------------------------
-# Run Example
+# Run
 # ---------------------------------------------------------------------------
 
-
-async def main():
-    print("=" * 60)
-    print("A2A Agent as Team Member")
-    print("=" * 60)
-    print("\nThis demonstrates using RemoteAgent with A2A protocol")
-    print("to include agents from other frameworks as team members.\n")
-    print("Make sure agno_a2a_server.py is running on port 7779:")
-    print("  python cookbook/05_agent_os/remote/agno_a2a_server.py\n")
-
-    response = await research_team.arun(
-        "Research the Pythagorean theorem and calculate 3^2 + 4^2",
-        stream=False,
-    )
-    print(response.content)
-
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    # RemoteAgent only supports async (arun), so use aprint_response
+    asyncio.run(
+        research_team.aprint_response(
+            "Research the Pythagorean theorem and calculate 3^2 + 4^2",
+            stream=True,
+        )
+    )

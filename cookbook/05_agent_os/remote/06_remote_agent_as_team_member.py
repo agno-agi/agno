@@ -69,54 +69,15 @@ hybrid_team = Team(
     show_members_responses=True,
 )
 
-
-# ---------------------------------------------------------------------------
-# Run Examples
-# ---------------------------------------------------------------------------
-
-
-async def basic_example():
-    """Team delegates to remote agents."""
-    print("Hybrid Team - Basic Delegation:")
-    print("-" * 50)
-
-    response = await hybrid_team.arun(
-        "Calculate 15 * 23, then summarize what multiplication is.",
-        stream=False,
-    )
-    print(response.content)
-
-
-async def streaming_example():
-    """Stream responses when team delegates to remote members."""
-    print("\nHybrid Team - Streaming:")
-    print("-" * 50)
-
-    async for chunk in hybrid_team.arun(
-        "Calculate 7 * 8 and then summarize the result in one sentence.",
-        stream=True,
-    ):
-        if hasattr(chunk, "content") and chunk.content:
-            print(chunk.content, end="", flush=True)
-    print()
-
-
-async def main():
-    print("=" * 60)
-    print("Remote Agent as Team Member")
-    print("=" * 60)
-    print("\nThis demonstrates using RemoteAgent to include agents")
-    print("from another AgentOS server as team members.\n")
-    print("Make sure server.py is running on port 7778:")
-    print("  python cookbook/05_agent_os/remote/server.py\n")
-
-    await basic_example()
-    await streaming_example()
-
-
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # RemoteAgent only supports async (arun), so use aprint_response
+    asyncio.run(
+        hybrid_team.aprint_response(
+            "Calculate 15 * 23, then summarize what multiplication is.",
+            stream=True,
+        )
+    )
