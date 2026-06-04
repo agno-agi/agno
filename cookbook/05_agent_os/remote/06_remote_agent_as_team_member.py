@@ -33,18 +33,14 @@ local_summarizer = Agent(
 # Create Remote Members
 # ---------------------------------------------------------------------------
 
-# Connect to agents running on server.py (port 7778)
-# Uses AgentOS protocol (Agno's native REST API)
 remote_assistant = RemoteAgent(
     base_url="http://localhost:7778",
     agent_id="assistant-agent",
-    protocol="agentos",
 )
 
 remote_researcher = RemoteAgent(
     base_url="http://localhost:7778",
     agent_id="researcher-agent",
-    protocol="agentos",
 )
 
 # ---------------------------------------------------------------------------
@@ -55,9 +51,9 @@ hybrid_team = Team(
     name="Hybrid Research Team",
     model=OpenAIResponses(id="gpt-5-mini"),
     members=[
-        local_summarizer,   # Local agent
-        remote_assistant,   # Remote agent (server.py)
-        remote_researcher,  # Remote agent (server.py)
+        local_summarizer,
+        remote_assistant,
+        remote_researcher,
     ],
     instructions=[
         "You lead a hybrid team with local and remote agents.",
@@ -74,7 +70,6 @@ hybrid_team = Team(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # RemoteAgent only supports async (arun), so use aprint_response
     asyncio.run(
         hybrid_team.aprint_response(
             "Calculate 15 * 23, then summarize what multiplication is.",

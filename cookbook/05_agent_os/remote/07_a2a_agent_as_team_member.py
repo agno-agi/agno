@@ -34,25 +34,15 @@ local_calculator = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# Create Remote A2A Members
+# Create Remote A2A Member
 # ---------------------------------------------------------------------------
 
-# Connect to Agno agent exposed via A2A interface (agno_a2a_server.py)
-# Uses A2A protocol with REST variant
 remote_researcher = RemoteAgent(
     base_url="http://localhost:7779/a2a/agents/researcher-agent-2",
     agent_id="researcher-agent-2",
     protocol="a2a",
     a2a_protocol="rest",
 )
-
-# To connect to Google ADK agent (uses JSON-RPC variant):
-# adk_agent = RemoteAgent(
-#     base_url="http://localhost:7780",
-#     agent_id="facts_agent",
-#     protocol="a2a",
-#     a2a_protocol="json-rpc",
-# )
 
 # ---------------------------------------------------------------------------
 # Create Team with Local + A2A Members
@@ -62,8 +52,8 @@ research_team = Team(
     name="Cross-Framework Research Team",
     model=OpenAIResponses(id="gpt-5-mini"),
     members=[
-        local_calculator,   # Local Agno agent
-        remote_researcher,  # Remote A2A agent
+        local_calculator,
+        remote_researcher,
     ],
     instructions=[
         "You lead a cross-framework team.",
@@ -75,13 +65,11 @@ research_team = Team(
     show_members_responses=True,
 )
 
-
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # RemoteAgent only supports async (arun), so use aprint_response
     asyncio.run(
         research_team.aprint_response(
             "Research the Pythagorean theorem and calculate 3^2 + 4^2",
