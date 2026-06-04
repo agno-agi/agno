@@ -353,8 +353,8 @@ class FileGenerationTools(Toolkit):
     ) -> ToolResult:
         """Generate an HTML file from the provided content.
 
-        If the content already contains a full HTML document (an ``<html>`` tag), it is used
-        as-is. Otherwise the content is wrapped in a minimal HTML5 skeleton.
+        If the content already starts with a full HTML document (``<!doctype`` or ``<html``),
+        it is used as-is. Otherwise the content is wrapped in a minimal HTML5 skeleton.
 
         Args:
             content: The HTML markup or body content to write to the file.
@@ -367,7 +367,8 @@ class FileGenerationTools(Toolkit):
         try:
             log_debug(f"Generating HTML file with content length: {len(content)}")
 
-            if "<html" in content.lower():
+            stripped = content.lstrip()
+            if stripped[:9].lower().startswith(("<!doctype", "<html")):
                 html_content = content
             else:
                 page_title = title or "Generated Document"
