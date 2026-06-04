@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Dict, Set
 
 
 class BaseRunCancellationManager(ABC):
@@ -83,4 +83,30 @@ class BaseRunCancellationManager(ABC):
     @abstractmethod
     async def aget_active_runs(self) -> Dict[str, bool]:
         """Get all currently tracked runs and their cancellation status (async version)."""
+        pass
+
+    # Member-run tracking (team cancel-cascade). Default no-ops so existing custom
+    # managers stay instantiable; override these to support team cancel-cascade.
+    def register_member_run(self, team_run_id: str, member_run_id: str) -> None:
+        """Record that a member run belongs to a team run for cancel-cascade."""
+        pass
+
+    async def aregister_member_run(self, team_run_id: str, member_run_id: str) -> None:
+        """Record that a member run belongs to a team run for cancel-cascade (async version)."""
+        pass
+
+    def get_member_run_ids(self, team_run_id: str) -> Set[str]:
+        """Return the in-flight member run_ids of a team run."""
+        return set()
+
+    async def aget_member_run_ids(self, team_run_id: str) -> Set[str]:
+        """Return the in-flight member run_ids of a team run (async version)."""
+        return set()
+
+    def cleanup_member_runs(self, team_run_id: str) -> None:
+        """Drop a team run's member mapping when the team run finishes."""
+        pass
+
+    async def acleanup_member_runs(self, team_run_id: str) -> None:
+        """Drop a team run's member mapping when the team run finishes (async version)."""
         pass
