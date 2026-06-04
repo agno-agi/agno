@@ -1,5 +1,6 @@
-agno[os]
+agno[os,slack]
 anthropic
+google-genai
 fastapi[standard]
 mcp
 openai

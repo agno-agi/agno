@@ -6,6 +6,7 @@ Shared runtime objects. Keep model ids in one place.
 """
 
 from agno.models.anthropic import Claude
+from agno.models.google import Gemini
 from agno.models.openai import OpenAIResponses
 
 
@@ -22,3 +23,8 @@ def sub_agent_model() -> OpenAIResponses:
 def anthropic_model() -> Claude:
     """Anthropic Claude — used by the Swarm team to diversify across providers."""
     return Claude(id="claude-opus-4-7")
+
+
+def gemini_model() -> Gemini:
+    """Gemini 3.5 Flash — multimodal ingest (image, audio, video, PDF)."""
+    return Gemini(id="gemini-3.5-flash")

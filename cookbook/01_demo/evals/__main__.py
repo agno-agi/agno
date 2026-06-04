@@ -25,6 +25,7 @@ from agents.git_wiki import git_wiki_provider
 from agents.local_wiki import local_wiki_provider
 from agents.web_search import web_provider
 from agno.eval import AgentAsJudgeEval, ReliabilityEval
+from agno.media import Audio, Image
 from agno.run.agent import RunOutput
 from rich.console import Console
 from rich.live import Live
@@ -56,6 +57,13 @@ class CaseOutcome:
         return bool(checks) and all(checks)
 
 
+def _case_media(case: Case):
+    """Build media inputs (images/audio) for a case from filepaths."""
+    images = [Image(filepath=p) for p in case.image_paths] or None
+    audio = [Audio(filepath=p) for p in case.audio_paths] or None
+    return images, audio
+
+
 async def _run_case_async(case: Case, *, verbose: bool) -> CaseOutcome:
     judge_passed: bool | None = None
     rel_passed: bool | None = None
@@ -67,8 +75,11 @@ async def _run_case_async(case: Case, *, verbose: bool) -> CaseOutcome:
     response: RunOutput | None
     try:
         if verbose:
+            images, audio = _case_media(case)
             await case.agent.aprint_response(
                 input=case.input,
+                images=images,
+                audio=audio,
                 stream=True,
                 session_id=session_id,
                 markdown=True,
@@ -139,9 +150,12 @@ async def _run_with_live_spinner(case: Case, session_id: str) -> RunOutput | Non
     spinner = Status(base_label, spinner="dots")
 
     response: RunOutput | None = None
+    images, audio = _case_media(case)
     with Live(spinner, console=console, transient=True, refresh_per_second=10):
         async for event in case.agent.arun(
             input=case.input,
+            images=images,
+            audio=audio,
             stream=True,
             stream_events=True,
             yield_run_output=True,

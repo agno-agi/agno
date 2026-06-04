@@ -11,6 +11,7 @@ For a production-ready version of this demo, see the [agent-platform-railway](ht
 | **LocalWiki** | Read + write a local markdown wiki. Ingest URLs via the web — "add a page about X" fetches, digests, and files in one update call. | `WikiContextProvider(FileSystemBackend, web=ParallelMCPBackend)` |
 | **GitWiki** *(env-gated)* | Same as LocalWiki, but the wiki lives in a real git repo. Auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN` are set. | `WikiContextProvider(GitBackend, web=ParallelMCPBackend)` |
 | **NotionWiki** *(env-gated)* | Same as LocalWiki, but the wiki is a Notion database (one row per page). Writes round-trip through Notion blocks; the database is the source of truth. Registered when `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set. | `WikiContextProvider(NotionDatabaseBackend, web=ParallelMCPBackend)` |
+| **MediaIngest** *(env-gated)* | Multimodal ingest with Gemini 3.5 Flash. Drop an image, voice memo, video, or PDF — it digests the media into structured markdown, fills gaps with cited web research, and files a page. Writes to Notion when configured, else the local wiki. Registered when `GOOGLE_API_KEY` is set. Sample media in `assets/`. | `Gemini(gemini-3.5-flash)` + wiki + web providers |
 | **WebSearch** | Keyless web research via Parallel MCP. Returns answers with cited URLs. | `WebContextProvider(ParallelMCPBackend)` |
 | **CodeSearch** | Answers questions about this repository — file paths, line numbers. | `WorkspaceContextProvider` |
 | **Researcher** | Composes WebSearch + LocalWiki + CodeSearch on one agent. Checks the wiki first, searches the web, queries the codebase, and files findings back into the wiki. | composition of the three providers above |
@@ -48,13 +49,20 @@ export ANTHROPIC_API_KEY="..."   # required for the Swarm team's Claude member
 
 export PARALLEL_API_KEY="..."    # optional — raises rate ceiling on Parallel MCP
 
+# Optional — enables the MediaIngest agent (Gemini 3.5 Flash multimodal)
+export GOOGLE_API_KEY="..."
+
 # Optional — enables the GitWiki agent
 export WIKI_REPO_URL="https://github.com/<owner>/<repo>.git"
 export WIKI_GITHUB_TOKEN="ghp_..."   # PAT with contents:write
 
-# Optional — enables the NotionWiki agent
+# Optional — enables the NotionWiki agent (and where MediaIngest files to)
 export NOTION_API_KEY="ntn_..."          # integration token
 export NOTION_DATABASE_ID="..."          # UUID from the database URL
+
+# Optional — enables the Slack interface (see "Slack" below)
+export SLACK_BOT_TOKEN="xoxb-..."
+export SLACK_SIGNING_SECRET="..."
 ```
 
 ### 4. Serve
@@ -68,6 +76,22 @@ Then open [os.agno.com](https://os.agno.com) and sign in:
 1. **Add OS** → **Local**
 2. Connect to `http://localhost:8000`, call it Local AgentOS
 3. Chat with your agents
+
+## Slack (optional)
+
+Expose the demo in Slack via the AgentOS Slack interface. With `SLACK_BOT_TOKEN`
+and `SLACK_SIGNING_SECRET` set, `run.py` wires Slack to the **MediaIngest** agent
+(or the Researcher when Gemini isn't configured) — drop a photo or voice memo in
+Slack and it lands in your wiki.
+
+Local dev with ngrok:
+
+1. Serve the app (`fastapi dev cookbook/01_demo/run.py`) — it listens on port 8000.
+2. `ngrok http 8000` and copy the `https://` URL.
+3. In your Slack app's **Event Subscriptions**, set the Request URL to
+   `https://<ngrok>/slack/events` and subscribe to the `app_mention` and
+   `message.im` bot events.
+4. Install the app to your workspace, then DM it a file or @mention it in a channel.
 
 ## Evals
 

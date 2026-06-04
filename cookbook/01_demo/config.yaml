@@ -16,6 +16,11 @@ chat:
       - "What do you know about agno"
       - "What's in the wiki?"
 
+    media-ingest:
+      - "Attach an image, PDF, or voice memo, then: digest this and file it to the wiki."
+      - "Summarize the file I shared and save it under notes/, citing any sources."
+      - "What have you filed to the wiki recently?"
+
     web-search:
       - "What's the latest stable release of CPython? Cite the source."
       - "Summarize Anthropic's most recent agent research."

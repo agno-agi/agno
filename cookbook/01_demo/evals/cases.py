@@ -13,11 +13,13 @@ Add a case below, then run `python -m evals`.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Union
 
 from agents.code_search import code_search
 from agents.git_wiki import git_wiki
 from agents.local_wiki import local_wiki
+from agents.media_ingest import media_ingest
 from agents.notion_wiki import notion_wiki
 from agents.researcher import researcher
 from agents.web_search import web_search
@@ -44,6 +46,10 @@ class Case:
     # Tool-call assertion. Set `expected_tool_calls` to enable.
     expected_tool_calls: tuple[str, ...] | None = None
     allow_additional_tool_calls: bool = True
+
+    # Multimodal inputs (filepaths) attached to the agent run, if any.
+    image_paths: tuple[str, ...] = ()
+    audio_paths: tuple[str, ...] = ()
 
 
 _BASE_CASES: tuple[Case, ...] = (
@@ -155,4 +161,32 @@ _NOTION_WIKI_CASES: tuple[Case, ...] = (
 )
 
 
-CASES: tuple[Case, ...] = _BASE_CASES + _GIT_WIKI_CASES + _NOTION_WIKI_CASES
+# MediaIngest case — only when the agent is registered (GOOGLE_API_KEY set).
+# Ingests a sample diagram and files a page; judged on whether the digest is
+# accurate and the agent confirms it filed to the wiki.
+_ASSETS = Path(__file__).resolve().parents[1] / "assets"
+_MEDIA_INGEST_CASES: tuple[Case, ...] = (
+    (
+        Case(
+            name="media_ingest_digests_image_and_files_page",
+            agent=media_ingest,
+            input=(
+                "Digest the attached diagram into a structured markdown page, "
+                "then file it to the wiki under notes/."
+            ),
+            image_paths=(str(_ASSETS / "sample-diagram.png"),),
+            criteria=(
+                "Describes the content of the provided diagram in structured "
+                "markdown (headings or bullets) and confirms it filed a wiki "
+                "page. Does NOT claim it cannot see the image."
+            ),
+        ),
+    )
+    if media_ingest is not None
+    else ()
+)
+
+
+CASES: tuple[Case, ...] = (
+    _BASE_CASES + _GIT_WIKI_CASES + _NOTION_WIKI_CASES + _MEDIA_INGEST_CASES
+)

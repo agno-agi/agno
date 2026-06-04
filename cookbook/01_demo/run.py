@@ -19,11 +19,13 @@ Workflows
 """
 
 from contextlib import asynccontextmanager
+from os import getenv
 from pathlib import Path
 
 from agents.code_search import code_search, code_search_provider
 from agents.git_wiki import git_wiki, git_wiki_provider
 from agents.local_wiki import local_wiki, local_wiki_provider
+from agents.media_ingest import media_ingest
 from agents.notion_wiki import notion_wiki, notion_wiki_provider
 from agents.researcher import researcher
 from agents.web_search import web_provider, web_search
@@ -64,6 +66,31 @@ if notion_wiki is not None:
     # Slot just after GitWiki (or LocalWiki if GitWiki is disabled) so
     # the wiki agents stay grouped at the top of the list.
     _agents.insert(2 if git_wiki is not None else 1, notion_wiki)
+if media_ingest is not None:
+    # Place just after the wiki agents — they're the targets it files into.
+    _wiki_count = 1 + (git_wiki is not None) + (notion_wiki is not None)
+    _agents.insert(_wiki_count, media_ingest)
+
+
+# Slack interface — env-gated. With SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET
+# set, expose the multimodal MediaIngest agent (drop a photo or voice memo
+# in Slack and it lands in the wiki); fall back to the Researcher when Gemini
+# is not configured. For local dev, run `ngrok http 8000` and point the Slack
+# app's event subscription at https://<ngrok>/slack/events.
+_interfaces = []
+_slack_token = getenv("SLACK_BOT_TOKEN")
+_slack_secret = getenv("SLACK_SIGNING_SECRET")
+if _slack_token and _slack_secret:
+    from agno.os.interfaces.slack import Slack
+
+    _interfaces.append(
+        Slack(
+            agent=media_ingest or researcher,
+            token=_slack_token,
+            signing_secret=_slack_secret,
+            resolve_user_identity=True,
+        )
+    )
 
 
 agent_os = AgentOS(
@@ -71,6 +98,7 @@ agent_os = AgentOS(
     agents=_agents,
     teams=[swarm],
     workflows=[brief],
+    interfaces=_interfaces,
     db=get_db(),
     config=str(Path(__file__).parent / "config.yaml"),
     tracing=True,
