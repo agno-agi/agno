@@ -1,10 +1,3 @@
-"""Extract media from AG-UI multimodal messages.
-
-AG-UI sends media as base64-encoded content in typed parts (ImageInputContent,
-AudioInputContent, etc.) or deprecated BinaryInputContent. This module decodes
-and converts them to Agno media objects (Image, Audio, Video, File).
-"""
-
 import base64
 import urllib.request
 from typing import List, Optional, Tuple
