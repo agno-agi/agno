@@ -10,22 +10,32 @@ if TYPE_CHECKING:
 
 
 def extract_thinking_content(content: str) -> Tuple[Optional[str], str]:
-    """Extract thinking content from response text between <think> tags."""
-    if not content or "</think>" not in content:
+    """Extract thinking content from response text between <think> or <thinking> tags."""
+    if not content:
+        return None, content
+
+    # Check for </think> or </thinking> closing tags
+    if "</think>" in content:
+        end_tag = "</think>"
+        start_tag = "<think>"
+    elif "</thinking>" in content:
+        end_tag = "</thinking>"
+        start_tag = "<thinking>"
+    else:
         return None, content
 
     # Find the end of thinking content
-    end_idx = content.find("</think>")
+    end_idx = content.find(end_tag)
 
-    # Look for opening <think> tag, if not found, assume thinking starts at beginning
-    start_idx = content.find("<think>")
+    # Look for opening tag, if not found, assume thinking starts at beginning
+    start_idx = content.find(start_tag)
     if start_idx == -1:
         reasoning_content = content[:end_idx].strip()
     else:
-        start_idx = start_idx + len("<think>")
+        start_idx = start_idx + len(start_tag)
         reasoning_content = content[start_idx:end_idx].strip()
 
-    output_content = content[end_idx + len("</think>") :].strip()
+    output_content = content[end_idx + len(end_tag) :].strip()
 
     return reasoning_content, output_content
 

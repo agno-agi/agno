@@ -11,11 +11,13 @@ if TYPE_CHECKING:
 
 
 def is_ollama_reasoning_model(reasoning_model: Model) -> bool:
+    model_id_lower = reasoning_model.id.lower()
     return reasoning_model.__class__.__name__ == "Ollama" and (
-        "qwq" in reasoning_model.id
-        or "deepseek-r1" in reasoning_model.id
-        or "qwen2.5-coder" in reasoning_model.id
-        or "openthinker" in reasoning_model.id
+        "qwq" in model_id_lower
+        or "qwen3" in model_id_lower
+        or "deepseek-r1" in model_id_lower
+        or "qwen2.5-coder" in model_id_lower
+        or "openthinker" in model_id_lower
     )
 
 
