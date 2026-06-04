@@ -132,10 +132,10 @@ class Agent:
     # --- Checkpointing ---
     # When to persist run state to the database. See specs/agno/features/checkpointing/.
     #   "runs"  — default, write only at terminal states (today's behavior)
-    #   "steps" — write after each model turn (post-gather barrier)
+    #   "tool-batch" — write after each model turn (post-gather barrier)
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
     # None during construction means "fall back to OS-level setting, else 'runs'".
-    checkpoint: Optional[Literal["runs", "steps", "tools"]] = None
+    checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None
 
     # --- Agent History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -405,7 +405,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        checkpoint: Optional[Literal["runs", "steps", "tools"]] = None,
+        checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,

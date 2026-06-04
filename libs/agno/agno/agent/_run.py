@@ -5892,7 +5892,7 @@ def _persist_cancelled_run_in_background(
 
 
 # ---------------------------------------------------------------------------
-# Mid-run checkpointing (checkpoint="steps")
+# Mid-run checkpointing (checkpoint="tool-batch")
 # ---------------------------------------------------------------------------
 
 
@@ -5928,17 +5928,17 @@ def checkpoint_run(
     session: AgentSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    """Persist a mid-run checkpoint when ``agent.checkpoint == "steps"``.
+    """Persist a mid-run checkpoint when ``agent.checkpoint == "tool-batch"``.
 
     Sets ``RunStatus.running`` and ``last_checkpoint_at_message_index``, then
-    persists the run into the session. No-op when checkpointing is not "steps".
+    persists the run into the session. No-op when checkpointing is not "tool-batch".
     Idempotent — calling twice in a row writes the same state twice.
 
     Callers are responsible for ensuring ``run_response.messages`` and
     ``run_response.tools`` reflect the state to persist (see
     :func:`_sync_run_response_with_model_response`).
     """
-    if agent.checkpoint != "steps":
+    if agent.checkpoint != "tool-batch":
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
@@ -5953,7 +5953,7 @@ async def acheckpoint_run(
     run_context: Optional[RunContext] = None,
 ) -> None:
     """Async variant of :func:`checkpoint_run`."""
-    if agent.checkpoint != "steps":
+    if agent.checkpoint != "tool-batch":
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
@@ -5968,7 +5968,7 @@ def build_after_tool_results_callback(
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
 ) -> Optional[Any]:
-    """Build the sync ``after_tool_results`` callback for ``checkpoint="steps"``.
+    """Build the sync ``after_tool_results`` callback for ``checkpoint="tool-batch"``.
 
     Returns ``None`` when checkpointing is not enabled — the caller passes the
     result directly to the model's ``after_tool_results=`` kwarg, and the
@@ -5977,7 +5977,7 @@ def build_after_tool_results_callback(
     The returned callback receives the current ``ModelResponse``, syncs
     ``run_response`` with the in-flight messages/tools, and writes a checkpoint.
     """
-    if agent.checkpoint != "steps":
+    if agent.checkpoint != "tool-batch":
         return None
 
     def _callback(model_response: ModelResponse) -> None:
@@ -5995,7 +5995,7 @@ def abuild_after_tool_results_callback(
     run_context: Optional[RunContext] = None,
 ) -> Optional[Any]:
     """Async variant of :func:`build_after_tool_results_callback`."""
-    if agent.checkpoint != "steps":
+    if agent.checkpoint != "tool-batch":
         return None
 
     async def _callback(model_response: ModelResponse) -> None:

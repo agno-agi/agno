@@ -1000,7 +1000,7 @@ def update_run_response(
         run_response.model_provider_data = model_response.provider_data
 
     # Update the run_response tools with the model response tool_executions.
-    # Dedupe by tool_call_id: with checkpoint="steps" the per-batch callback
+    # Dedupe by tool_call_id: with checkpoint="tool-batch" the per-batch callback
     # already wrote tools into run_response, so naive extend would duplicate
     # every execution. Replace existing entries (in place, preserving order)
     # and append only genuinely new ones.

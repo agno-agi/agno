@@ -45,7 +45,7 @@ async def main() -> None:
             session_table="checkpoint_demo",
             db_file="tmp/checkpoint_forking.db",
         ),
-        checkpoint="steps",
+        checkpoint="tool-batch",
         tools=[get_weather],
     )
 

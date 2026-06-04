@@ -73,7 +73,7 @@ def test_agent_initialize_resolves_none_to_runs():
     assert agent.checkpoint == "runs"
 
 
-@pytest.mark.parametrize("level", ["runs", "steps"])
+@pytest.mark.parametrize("level", ["runs", "tool-batch"])
 def test_agent_initialize_preserves_explicit_level(level):
     agent = Agent(name="a", checkpoint=level)
     agent.initialize_agent()
@@ -101,16 +101,16 @@ def test_agentos_checkpoint_propagates_when_agent_has_none():
     agent = Agent(name="a", id="a-id")
     assert agent.checkpoint is None
 
-    AgentOS(agents=[agent], db=InMemoryDb(), checkpoint="steps", telemetry=False)
+    AgentOS(agents=[agent], db=InMemoryDb(), checkpoint="tool-batch", telemetry=False)
 
     # Inherited from OS, then resolved by initialize_agent
-    assert agent.checkpoint == "steps"
+    assert agent.checkpoint == "tool-batch"
 
 
 def test_agentos_checkpoint_does_not_override_agent_setting():
     agent = Agent(name="a", id="a-id", checkpoint="runs")
 
-    AgentOS(agents=[agent], db=InMemoryDb(), checkpoint="steps", telemetry=False)
+    AgentOS(agents=[agent], db=InMemoryDb(), checkpoint="tool-batch", telemetry=False)
 
     # Agent-level wins
     assert agent.checkpoint == "runs"

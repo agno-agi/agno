@@ -199,10 +199,10 @@ class Team:
     # --- Checkpointing ---
     # When to persist run state to the database. Mirrors Agent.checkpoint.
     #   "runs"  — default, write only at terminal states (today's behavior)
-    #   "steps" — write after each team-level model turn (post-gather barrier)
+    #   "tool-batch" — write after each team-level model turn (post-gather barrier)
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
     # None during construction means "fall back to OS-level setting, else 'runs'".
-    checkpoint: Optional[Literal["runs", "steps", "tools"]] = None
+    checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None
 
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
@@ -518,7 +518,7 @@ class Team:
         use_json_mode: bool = False,
         parse_response: bool = True,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        checkpoint: Optional[Literal["runs", "steps", "tools"]] = None,
+        checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
         enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run

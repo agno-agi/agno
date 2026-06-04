@@ -63,7 +63,7 @@ copy.
 ## Checkpoint policies (`Team(checkpoint=...)`)
 
 - `"runs"` (default) — write only at terminal states. Same as agent default.
-- `"steps"` — write after each team-level tool batch. Enables crash recovery.
+- `"tool-batch"` — write after each team-level tool batch. Enables crash recovery.
 - `"tools"` — reserved for 3.0 (raises `NotImplementedError`).
 
 ## Running the cookbooks

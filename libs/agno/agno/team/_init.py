@@ -144,7 +144,7 @@ def __init__(
     use_json_mode: bool = False,
     parse_response: bool = True,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-    checkpoint: Optional[Literal["runs", "steps", "tools"]] = None,
+    checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
     enable_agentic_memory: bool = False,
     update_memory_on_run: bool = False,
     enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
@@ -714,10 +714,12 @@ def set_checkpoint(team: "Team") -> None:
         team.checkpoint = "runs"
     elif team.checkpoint == "tools":
         raise NotImplementedError(
-            'checkpoint="tools" is reserved for the 3.0 runs-table split and not available yet. Use "steps" or "runs".'
+            'checkpoint="tools" is reserved for the 3.0 runs-table split and not available yet. Use "tool-batch" or "runs".'
         )
-    elif team.checkpoint not in ("runs", "steps"):
-        raise ValueError(f'Invalid checkpoint level: {team.checkpoint!r}. Expected one of: "runs", "steps", "tools".')
+    elif team.checkpoint not in ("runs", "tool-batch"):
+        raise ValueError(
+            f'Invalid checkpoint level: {team.checkpoint!r}. Expected one of: "runs", "tool-batch", "tools".'
+        )
 
 
 def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:

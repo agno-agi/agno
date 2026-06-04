@@ -1051,7 +1051,6 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
-
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = None
         if tools_data:

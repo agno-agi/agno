@@ -85,9 +85,9 @@ class TestTeamCheckpointConfig:
         assert t.checkpoint == "runs"
 
     def test_explicit_steps_preserved(self):
-        t = Team(members=[], name="t", checkpoint="steps")
+        t = Team(members=[], name="t", checkpoint="tool-batch")
         t.initialize_team()
-        assert t.checkpoint == "steps"
+        assert t.checkpoint == "tool-batch"
 
     def test_tools_raises_not_implemented(self):
         t = Team(members=[], name="t", checkpoint="tools")

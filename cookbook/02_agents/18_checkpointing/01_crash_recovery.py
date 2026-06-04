@@ -1,14 +1,14 @@
-"""Crash Recovery with checkpoint="steps".
+"""Crash Recovery with checkpoint="tool-batch".
 
 This example **actually crashes** an in-flight run, then demonstrates that
 ``/continue`` picks up from the last persisted checkpoint.
 
-Without ``checkpoint="steps"`` the run only persists at terminal states
+Without ``checkpoint="tool-batch"`` the run only persists at terminal states
 (COMPLETED, PAUSED, ERROR, CANCELLED). A worker that dies between tool batches
 loses everything — the session row exists, but this ``run_id`` was never
 recorded under it.
 
-``checkpoint="steps"`` writes after each tool batch (post-gather barrier).
+``checkpoint="tool-batch"`` writes after each tool batch (post-gather barrier).
 If the process crashes between the J-th and (J+1)-th tool batch, the DB row
 contains everything through turn J. ``/continue`` resumes from there.
 
@@ -24,7 +24,7 @@ Flow:
 3. Read the DB directly to prove a partial row exists with status=RUNNING.
 4. Call ``/continue`` to finish the work.
 
-To see the contrast, you can toggle ``checkpoint="steps"`` to ``"runs"`` and
+To see the contrast, you can toggle ``checkpoint="tool-batch"`` to ``"runs"`` and
 watch step 3 print "no run persisted" — without per-step writes, the crashed
 run is unrecoverable.
 """
@@ -60,7 +60,7 @@ def build_agent() -> Agent:
             session_table="checkpoint_demo",
             db_file=DB_FILE,
         ),
-        checkpoint="steps",
+        checkpoint="tool-batch",
         tools=[slow_search, slow_fetch_detail],
         instructions=(
             "Use slow_search to find results, then call slow_fetch_detail on EACH "

@@ -38,7 +38,7 @@ async def main() -> None:
             session_table="checkpoint_demo",
             db_file="tmp/checkpoint_branch_session.db",
         ),
-        checkpoint="steps",
+        checkpoint="tool-batch",
         markdown=True,
     )
 

@@ -118,7 +118,7 @@ class Message(BaseModel):
     # When True, the message will be sent to the Model but not persisted afterwards.
     temporary: bool = False
     # Status of the run when this message was the persisted checkpoint boundary.
-    # Used by checkpoint="steps" so clients can show resumable message boundaries
+    # Used by checkpoint="tool-batch" so clients can show resumable message boundaries
     # without a separate checkpoint table.
     checkpoint_status: Optional[str] = None
     checkpoint_created_at: Optional[int] = None

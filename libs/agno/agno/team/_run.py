@@ -4549,7 +4549,7 @@ def _persist_cancelled_team_run_in_background(
 
 
 # ---------------------------------------------------------------------------
-# Mid-run checkpointing (checkpoint="steps") for Team
+# Mid-run checkpointing (checkpoint="tool-batch") for Team
 # Mirrors the agent-side helpers in agno/agent/_run.py.
 # ---------------------------------------------------------------------------
 
@@ -4670,8 +4670,8 @@ def checkpoint_team_run(
     session: TeamSession,
     run_context: Optional[RunContext] = None,
 ) -> None:
-    """Persist a mid-run team checkpoint. No-op unless ``team.checkpoint == "steps"``."""
-    if team.checkpoint != "steps":
+    """Persist a mid-run team checkpoint. No-op unless ``team.checkpoint == "tool-batch"``."""
+    if team.checkpoint != "tool-batch":
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
@@ -4686,7 +4686,7 @@ async def acheckpoint_team_run(
     run_context: Optional[RunContext] = None,
 ) -> None:
     """Async variant of :func:`checkpoint_team_run`."""
-    if team.checkpoint != "steps":
+    if team.checkpoint != "tool-batch":
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
@@ -4701,13 +4701,13 @@ def build_team_after_tool_results_callback(
     run_messages: "RunMessages",  # noqa: F821
     run_context: Optional[RunContext] = None,
 ) -> Optional[Any]:
-    """Build the sync ``after_tool_results`` callback for ``team.checkpoint='steps'``.
+    """Build the sync ``after_tool_results`` callback for ``team.checkpoint='tool-batch'``.
 
     Returns ``None`` (the zero-cost path) when checkpointing is not enabled.
     Otherwise returns a callback that syncs run_response with the in-flight
     model_response and writes a checkpoint to the session.
     """
-    if team.checkpoint != "steps":
+    if team.checkpoint != "tool-batch":
         return None
 
     def _callback(model_response):
@@ -4725,7 +4725,7 @@ def abuild_team_after_tool_results_callback(
     run_context: Optional[RunContext] = None,
 ) -> Optional[Any]:
     """Async variant of :func:`build_team_after_tool_results_callback`."""
-    if team.checkpoint != "steps":
+    if team.checkpoint != "tool-batch":
         return None
 
     async def _callback(model_response):

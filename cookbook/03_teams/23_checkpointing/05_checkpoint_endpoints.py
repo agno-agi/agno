@@ -47,7 +47,7 @@ def main() -> None:
         members=[pop_agent],
         db=SqliteDb(session_table="team_endpoints", db_file=DB_FILE),
         instructions="Delegate population questions and summarize.",
-        checkpoint="steps",
+        checkpoint="tool-batch",
     )
 
     agent_os = AgentOS(description="team-checkpoint-endpoints demo", teams=[team])

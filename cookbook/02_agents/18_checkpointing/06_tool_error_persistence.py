@@ -55,7 +55,7 @@ async def scenario_a_tool_error() -> None:
         name="a-agent",
         model=OpenAIResponses(id="gpt-5.4"),
         db=SqliteDb(session_table="tool_err_demo_a", db_file=DB_FILE),
-        checkpoint="steps",
+        checkpoint="tool-batch",
         tools=[broken_tool],
         retries=0,
         instructions="Call broken_tool once with the user's query, then summarize.",
@@ -115,7 +115,7 @@ async def scenario_b_model_call_fails() -> str:
             name="b-agent",
             model=OpenAIResponses(id="gpt-5.4"),
             db=SqliteDb(session_table="tool_err_demo_b", db_file=DB_FILE),
-            checkpoint="steps",
+            checkpoint="tool-batch",
             retries=0,
             instructions="You are a helpful assistant. Answer concisely.",
         )
@@ -193,7 +193,7 @@ async def scenario_c_continue_failed_run(failed_run_id: str) -> None:
         name="b-agent",
         model=OpenAIResponses(id="gpt-5.4"),
         db=SqliteDb(session_table="tool_err_demo_b", db_file=DB_FILE),
-        checkpoint="steps",
+        checkpoint="tool-batch",
         instructions="You are a helpful assistant. Answer concisely.",
     )
 

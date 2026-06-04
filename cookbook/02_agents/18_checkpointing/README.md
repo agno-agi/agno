@@ -1,11 +1,11 @@
 # Checkpointing & /continue
 
-Examples covering mid-run persistence (`checkpoint="steps"`) and the unified
+Examples covering mid-run persistence (`checkpoint="tool-batch"`) and the unified
 `/continue` endpoint that advances any persisted run from its current state.
 
 | Example | What it shows |
 |---|---|
-| [`01_crash_recovery.py`](./01_crash_recovery.py) | `checkpoint="steps"` writes after each tool batch. If the agent process dies mid-run, the DB has the latest checkpoint and `/continue` resumes from there. |
+| [`01_crash_recovery.py`](./01_crash_recovery.py) | `checkpoint="tool-batch"` writes after each tool batch. If the agent process dies mid-run, the DB has the latest checkpoint and `/continue` resumes from there. |
 | [`02_time_travel.py`](./02_time_travel.py) | `/continue` with `continue_from="end"`, `"last_user"`, and a raw integer index. COMPLETED runs auto-fork, so the source is preserved. |
 | [`03_forking.py`](./03_forking.py) | `/continue` with `continue_from="last_user", fork=True` and the numeric form `continue_from=K, fork=True` — non-destructive siblings in the same session. |
 | [`04_regenerate.py`](./04_regenerate.py) | `/continue` with `regenerate=True` — sugar over `continue_from="last_user"` to redo the last response. Pair with `additional_instructions` to steer, `preserve_original=True` to keep the old one. |
@@ -13,13 +13,13 @@ Examples covering mid-run persistence (`checkpoint="steps"`) and the unified
 | [`06_tool_error_persistence.py`](./06_tool_error_persistence.py) | When a tool raises mid-run, in-flight messages are flushed onto the ERROR row so the failed conversation isn't lost. |
 | [`07_checkpoint_endpoints.py`](./07_checkpoint_endpoints.py) | Calls the two new GET endpoints — `/checkpoints` (timeline) and `/checkpoints/{message_index}` (snapshot) — via an in-process `TestClient`, prints raw payloads, and feeds the returned `message_index` back into `/continue`. |
 
-## When to use `checkpoint="steps"`
+## When to use `checkpoint="tool-batch"`
 
 The default `checkpoint="runs"` writes to the DB only at terminal states
 (`COMPLETED`, `PAUSED`, `CANCELLED`, `ERROR`). If a worker crashes mid-run, the
 session row exists but this `run_id` is never recorded — the work is lost.
 
-`checkpoint="steps"` writes after each model turn (post-gather barrier). For a
+`checkpoint="tool-batch"` writes after each model turn (post-gather barrier). For a
 run with K tool batches and a final no-tool turn, you get K + 1 DB writes (K
 mid-run + 1 terminal). Real write-amplification on the `session.runs` JSON
 column in 2.x — opt in deliberately for long research runs and

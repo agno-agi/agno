@@ -1495,12 +1495,12 @@ class TestBranchSession:
 
 
 # ---------------------------------------------------------------------------
-# Bug-fix tests: tool dedupe in update_run_response (checkpoint="steps")
+# Bug-fix tests: tool dedupe in update_run_response (checkpoint="tool-batch")
 # ---------------------------------------------------------------------------
 
 
 class TestToolDedupeOnUpdate:
-    """When ``checkpoint="steps"`` writes tools mid-run, the terminal
+    """When ``checkpoint="tool-batch"`` writes tools mid-run, the terminal
     ``update_run_response`` must not duplicate them by appending the same
     cumulative list again."""
 

@@ -777,7 +777,7 @@ class TeamRunOutput:
     requirements: Optional[list[RunRequirement]] = None
 
     # Checkpoint coordinate: index into messages at the most recent checkpoint write.
-    # Set when checkpoint="steps" (or any future non-default level) persists mid-run state.
+    # Set when checkpoint="tool-batch" (or any future non-default level) persists mid-run state.
     last_checkpoint_at_message_index: Optional[int] = None
 
     # Fork lineage. Distinct from parent_run_id (which carries workflow-step parentage

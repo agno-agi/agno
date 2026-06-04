@@ -16,7 +16,7 @@ Requires `OPENAI_API_KEY` to be set.
 
 **Status:** Not yet tested
 
-**Description:** Demonstrates `checkpoint="steps"` writing mid-run state to the DB
+**Description:** Demonstrates `checkpoint="tool-batch"` writing mid-run state to the DB
 after each tool batch, and the unified `/continue` accepting any persisted run.
 
 **Expected:** Initial run completes; printed checkpoint marker is non-None; the

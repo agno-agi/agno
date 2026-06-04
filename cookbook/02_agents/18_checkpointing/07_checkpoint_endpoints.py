@@ -39,7 +39,7 @@ def main() -> None:
             session_table="checkpoint_endpoints_demo",
             db_file="tmp/checkpoint_endpoints.db",
         ),
-        checkpoint="steps",
+        checkpoint="tool-batch",
         tools=[get_population],
     )
 
