@@ -23,6 +23,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.agui.media import extract_agui_media
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
     extract_agui_user_input,
@@ -40,6 +41,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — agent manages history via session DB.
         user_input = extract_agui_user_input(run_input.messages or [])
+        images, audio, videos, files = extract_agui_media(run_input.messages or [])
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -63,6 +65,10 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
             stream=True,
             stream_events=True,
             user_id=user_id,
+            images=images or None,
+            audio=audio or None,
+            videos=videos or None,
+            files=files or None,
             session_state=session_state,
             run_id=run_id,
         )
@@ -89,6 +95,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — team manages history via session DB.
         user_input = extract_agui_user_input(input.messages or [])
+        images, audio, videos, files = extract_agui_media(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Look for user_id in input.forwarded_props
@@ -111,6 +118,10 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             stream=True,
             stream_events=True,
             user_id=user_id,
+            images=images or None,
+            audio=audio or None,
+            videos=videos or None,
+            files=files or None,
             session_state=session_state,
             run_id=run_id,
         )

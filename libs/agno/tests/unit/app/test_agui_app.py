@@ -1,13 +1,28 @@
+import base64
 from unittest.mock import MagicMock
 
 import pytest
-from ag_ui.core import EventType
+from ag_ui.core import EventType, RunAgentInput
+from ag_ui.core.types import (
+    AudioInputContent,
+    BinaryInputContent,
+    DocumentInputContent,
+    ImageInputContent,
+    InputContentDataSource,
+    InputContentUrlSource,
+    TextInputContent,
+    UserMessage,
+    VideoInputContent,
+)
 
+from agno.os.interfaces.agui.media import extract_agui_media
+from agno.os.interfaces.agui.router import run_agent, run_team
 from agno.os.interfaces.agui.utils import (
     EventBuffer,
     async_stream_agno_response_as_agui_events,
+    extract_agui_user_input,
 )
-from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
 def test_event_buffer_initial_state():
@@ -1843,3 +1858,263 @@ async def test_no_delta_when_state_unchanged():
     assert EventType.STATE_DELTA not in event_types
     # But a final snapshot should still be emitted (run_state fallback)
     assert EventType.STATE_SNAPSHOT in event_types
+
+
+def test_extract_agui_media_with_images():
+    """Test extraction preserves image parts from the latest multimodal user message."""
+    image_bytes = b"fake-image-bytes"
+    messages = [
+        UserMessage(id="u1", content="previous prompt"),
+        UserMessage(
+            id="u2",
+            content=[
+                TextInputContent(text="please inspect"),
+                ImageInputContent(
+                    source=InputContentUrlSource(value="https://example.com/screenshot.png", mime_type="image/png")
+                ),
+                ImageInputContent(
+                    source=InputContentDataSource(value=base64.b64encode(image_bytes).decode(), mime_type="image/jpeg")
+                ),
+            ],
+        ),
+    ]
+
+    user_input = extract_agui_user_input(messages)
+    images, _, _, _ = extract_agui_media(messages)
+
+    assert user_input == "please inspect"
+    assert len(images) == 2
+    assert images[0].url == "https://example.com/screenshot.png"
+    assert images[0].mime_type == "image/png"
+    assert images[1].content == image_bytes
+    assert images[1].mime_type == "image/jpeg"
+
+
+def test_extract_agui_media_all_types():
+    """Test extraction preserves all AG-UI media input content types."""
+    image_bytes = b"fake-image-bytes"
+    audio_bytes = b"fake-audio-bytes"
+    video_bytes = b"fake-video-bytes"
+    document_bytes = b"fake-document-bytes"
+    messages = [
+        UserMessage(
+            id="u1",
+            content=[
+                TextInputContent(text="please inspect"),
+                ImageInputContent(
+                    source=InputContentDataSource(value=base64.b64encode(image_bytes).decode(), mime_type="image/png")
+                ),
+                AudioInputContent(
+                    source=InputContentDataSource(value=base64.b64encode(audio_bytes).decode(), mime_type="audio/mpeg")
+                ),
+                VideoInputContent(
+                    source=InputContentDataSource(value=base64.b64encode(video_bytes).decode(), mime_type="video/mp4")
+                ),
+                DocumentInputContent(
+                    source=InputContentDataSource(
+                        value=base64.b64encode(document_bytes).decode(), mime_type="application/pdf"
+                    )
+                ),
+            ],
+        ),
+    ]
+
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
+
+    assert user_input == "please inspect"
+    assert len(images) == 1
+    assert images[0].content == image_bytes
+    assert images[0].mime_type == "image/png"
+    assert len(audio) == 1
+    assert audio[0].content == audio_bytes
+    assert audio[0].mime_type == "audio/mpeg"
+    assert len(videos) == 1
+    assert videos[0].content == video_bytes
+    assert videos[0].mime_type == "video/mp4"
+    assert len(files) == 1
+    assert files[0].content == document_bytes
+    assert files[0].mime_type == "application/pdf"
+
+
+def test_extract_agui_media_binary_content():
+    """Test AG-UI binary content is routed to the matching Agno media bucket."""
+    image_bytes = b"binary-image"
+    audio_bytes = b"binary-audio"
+    video_bytes = b"binary-video"
+    file_bytes = b"binary-file"
+    messages = [
+        UserMessage(
+            id="u1",
+            content=[
+                BinaryInputContent(
+                    mime_type="image/png", data=base64.b64encode(image_bytes).decode(), filename="image.png"
+                ),
+                BinaryInputContent(
+                    mime_type="audio/mpeg", data=base64.b64encode(audio_bytes).decode(), filename="audio.mp3"
+                ),
+                BinaryInputContent(
+                    mime_type="video/mp4", data=base64.b64encode(video_bytes).decode(), filename="video.mp4"
+                ),
+                BinaryInputContent(
+                    mime_type="application/octet-stream",
+                    data=base64.b64encode(file_bytes).decode(),
+                    filename="archive.bin",
+                ),
+            ],
+        ),
+    ]
+
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
+
+    assert user_input == ""
+    assert images[0].content == image_bytes
+    assert images[0].mime_type == "image/png"
+    assert audio[0].content == audio_bytes
+    assert audio[0].mime_type == "audio/mpeg"
+    assert videos[0].content == video_bytes
+    assert videos[0].mime_type == "video/mp4"
+    assert files[0].content == file_bytes
+    assert files[0].mime_type is None
+    assert files[0].filename == "archive.bin"
+
+
+def test_extract_agui_media_url_without_mime():
+    """Test URL sources without mime_type route by part.type, not MIME."""
+    messages = [
+        UserMessage(
+            id="u1",
+            content=[
+                ImageInputContent(source=InputContentUrlSource(value="https://example.com/cat.png")),
+                AudioInputContent(source=InputContentUrlSource(value="https://example.com/song.mp3")),
+                VideoInputContent(source=InputContentUrlSource(value="https://example.com/movie.mp4")),
+            ],
+        ),
+    ]
+
+    images, audio, videos, files = extract_agui_media(messages)
+
+    assert len(images) == 1
+    assert images[0].url == "https://example.com/cat.png"
+    assert len(audio) == 1
+    assert audio[0].url == "https://example.com/song.mp3"
+    assert len(videos) == 1
+    assert videos[0].url == "https://example.com/movie.mp4"
+    assert len(files) == 0
+
+
+def test_extract_agui_media_skips_malformed_base64():
+    """Test a content part with undecodable base64 data is skipped, not raised."""
+    messages = [
+        UserMessage(
+            id="u1",
+            content=[
+                TextInputContent(text="check this"),
+                ImageInputContent(source=InputContentDataSource(value="!!!not-valid-base64!!!", mime_type="image/png")),
+                ImageInputContent(source=InputContentDataSource(value="!!!!", mime_type="image/png")),
+            ],
+        ),
+    ]
+
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
+
+    assert user_input == "check this"
+    assert len(images) == 0
+    assert len(audio) == 0
+    assert len(videos) == 0
+    assert len(files) == 0
+
+
+_AUDIO_BYTES = b"fake-audio-bytes"
+_VIDEO_BYTES = b"fake-video-bytes"
+_DOCUMENT_BYTES = b"fake-document-bytes"
+
+
+class _FakeRunner:
+    """Minimal Agent/Team stand-in: records arun kwargs, yields one completed run."""
+
+    def __init__(self):
+        self.captured_kwargs = {}
+
+    def arun(self, **kwargs):
+        self.captured_kwargs.update(kwargs)
+
+        async def response_stream():
+            completed_response = RunContentEvent()
+            completed_response.event = RunEvent.run_completed
+            completed_response.content = ""
+            yield completed_response
+
+        return response_stream()
+
+
+def _media_run_input():
+    """Build a RunAgentInput carrying one text part plus one of each media type."""
+    return RunAgentInput(
+        thread_id="thread_1",
+        run_id="run_1",
+        state={},
+        messages=[
+            UserMessage(
+                id="u1",
+                content=[
+                    TextInputContent(text="please inspect"),
+                    ImageInputContent(
+                        source=InputContentUrlSource(value="https://example.com/screenshot.png", mime_type="image/png")
+                    ),
+                    AudioInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(_AUDIO_BYTES).decode(), mime_type="audio/mpeg"
+                        )
+                    ),
+                    VideoInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(_VIDEO_BYTES).decode(), mime_type="video/mp4"
+                        )
+                    ),
+                    DocumentInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(_DOCUMENT_BYTES).decode(), mime_type="application/pdf"
+                        )
+                    ),
+                ],
+            )
+        ],
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+
+
+def _assert_media_forwarded(captured_kwargs):
+    """Assert the router forwarded every media part into the run kwargs."""
+    assert captured_kwargs["input"] == "please inspect"
+    assert len(captured_kwargs["images"]) == 1
+    assert captured_kwargs["images"][0].url == "https://example.com/screenshot.png"
+    assert captured_kwargs["images"][0].mime_type == "image/png"
+    assert captured_kwargs["audio"][0].content == _AUDIO_BYTES
+    assert captured_kwargs["audio"][0].mime_type == "audio/mpeg"
+    assert captured_kwargs["videos"][0].content == _VIDEO_BYTES
+    assert captured_kwargs["videos"][0].mime_type == "video/mp4"
+    assert captured_kwargs["files"][0].content == _DOCUMENT_BYTES
+    assert captured_kwargs["files"][0].mime_type == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_passes_agui_media_to_agent():
+    """Test the AG-UI router forwards extracted media parts to Agent.arun."""
+    fake_agent = _FakeRunner()
+    events = [event async for event in run_agent(fake_agent, _media_run_input())]
+    assert events[0].type == EventType.RUN_STARTED
+    _assert_media_forwarded(fake_agent.captured_kwargs)
+
+
+@pytest.mark.asyncio
+async def test_run_team_passes_agui_media_to_team():
+    """Test the AG-UI router forwards extracted media parts to Team.arun."""
+    fake_team = _FakeRunner()
+    events = [event async for event in run_team(fake_team, _media_run_input())]
+    assert events[0].type == EventType.RUN_STARTED
+    _assert_media_forwarded(fake_team.captured_kwargs)
