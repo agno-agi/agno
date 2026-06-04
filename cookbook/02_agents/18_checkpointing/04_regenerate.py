@@ -1,29 +1,29 @@
 """Regenerate the last response via /continue with regenerate=True.
 
-``regenerate=True`` is sugar over ``from_checkpoint``: it auto-picks the
-truncation index to land just after the last user message, drops the previous
-assistant reply, and re-runs the model loop.
+``regenerate=True`` is sugar over ``continue_from="last_user"``: it lands just
+after the last user message, drops the previous assistant reply, and re-runs
+the model loop.
 
 **Always non-destructive.** Every regenerate creates a NEW run with a fresh
 ``run_id`` and fresh ``RunMetrics``; the source run stays intact. This
-preserves the "1 run = 1 model loop" invariant — metrics, timestamps, and
+preserves the "1 run = 1 model loop" invariant - metrics, timestamps, and
 audit trails always reflect exactly one model loop.
 
 Two flavors:
-- ``regenerate=True``                            → fork. Both runs visible in
+- ``regenerate=True``                            -> fork. Both runs visible in
   session and history. Use when you want to compare attempts.
-- ``regenerate=True, preserve_original=True``    → fork, AND mark the source
+- ``regenerate=True, preserve_original=True``    -> fork, AND mark the source
   ``status=REGENERATED`` so history-builders skip it. The model sees only
   the new turn when re-rebuilding context for future runs.
-- ``regenerate=True, additional_instructions=X`` → append X as a user message
+- ``regenerate=True, additional_instructions=X`` -> append X as a user message
   before re-generating. Use this to steer the new output.
 
 These compose. ``regenerate=True, preserve_original=True,
 additional_instructions="be more concise"`` is the typical "let me try that
 again with guidance, hide the old one from future context" pattern.
 
-Compare to raw ``from_checkpoint`` (02_time_travel.py): same mechanism, but
-``regenerate`` does the message-index math for you.
+Compare to ``continue_from="last_user"`` (02_time_travel.py): same mechanism,
+but ``regenerate`` picks the boundary for you.
 """
 
 import asyncio

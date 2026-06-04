@@ -1,7 +1,7 @@
 """Forking a run via /continue with fork=true.
 
-Same mechanic as ``from_checkpoint`` but **non-destructive**: the original run
-is untouched and a new sibling run is created with:
+Use ``continue_from="last_user"`` to choose the message boundary. The original
+run is untouched and a new sibling run is created with:
 - a fresh ``run_id``
 - ``forked_from_run_id`` set to the original
 - ``forked_from_message_index`` set to the truncation index
@@ -20,7 +20,7 @@ Fork vs branch_session (see 05_branch_session.py):
 - **branch_session** → new session containing copies of every run (session-level)
 
 If you just want "redo the last response, keeping the old one around," the
-friendlier alias is ``regenerate=True, preserve_original=True`` — same
+friendlier alias is ``regenerate=True, preserve_original=True`` - same
 mechanic, no message index math required. See 04_regenerate.py.
 """
 
@@ -55,12 +55,12 @@ async def main() -> None:
     print("  content:", original.content)
     print()
 
-    # Fork from index 1 (just the user question) with a different prompt.
+    # Fork from just after the last user message with a different prompt.
     # The original is preserved; the fork is a new sibling in the same session.
     fork = await agent.acontinue_run(
         run_id=original.run_id,
         session_id=original.session_id,
-        from_checkpoint=1,
+        continue_from="last_user",
         fork=True,
         input="What's the weather in Tokyo and Lagos?",
     )
@@ -71,7 +71,34 @@ async def main() -> None:
     print("  content:", fork.content)
     print()
 
-    # Both runs coexist in the same session.
+    # Numeric form: fork at an exact message index. Useful when "last_user"
+    # doesn't land where you want — e.g. forking from before a tool was
+    # called, or right after a particular intermediate assistant turn.
+    # Inspect the original transcript to pick an index:
+    print("Original run transcript:")
+    for i, m in enumerate(original.messages or [], start=1):
+        preview = (m.content or "")[:60].replace("\n", " ")
+        print(f"  [{i}] {m.role}: {preview}")
+    print()
+
+    # Fork at message index 1 (keep only the original user question), then
+    # ask something completely different. This is the lower-level form
+    # underlying both "last_user" and regenerate sugar.
+    fork_at_index = await agent.acontinue_run(
+        run_id=original.run_id,
+        session_id=original.session_id,
+        continue_from=1,
+        fork=True,
+        input="What's the weather in Sydney?",
+    )
+    print("Forked at index 1")
+    print("  run_id:", fork_at_index.run_id, "(new)")
+    print("  forked_from_run_id:", fork_at_index.forked_from_run_id)
+    print("  forked_from_message_index:", fork_at_index.forked_from_message_index)
+    print("  content:", fork_at_index.content)
+    print()
+
+    # All runs coexist in the same session.
     session = agent.db.get_session(session_id=original.session_id, session_type="agent")
     print(f"Session has {len(session.runs or [])} runs:")
     for r in session.runs or []:

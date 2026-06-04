@@ -669,7 +669,7 @@ class TestInputAppend:
 
 
 # ---------------------------------------------------------------------------
-# from_checkpoint — time-travel truncation
+# message_index — time-travel truncation
 # ---------------------------------------------------------------------------
 
 
@@ -821,12 +821,12 @@ class TestForkHelper:
 
 
 # ---------------------------------------------------------------------------
-# Dispatch wiring for from_checkpoint and fork
+# Dispatch wiring for message_index and fork
 # ---------------------------------------------------------------------------
 
 
 class TestDispatchTruncate:
-    """End-to-end: continue_run_dispatch applies from_checkpoint to the loaded run."""
+    """End-to-end: continue_run_dispatch applies message_index to the loaded run."""
 
     def test_dispatch_truncates_messages(self, monkeypatch: pytest.MonkeyPatch):
         existing_run = RunOutput(
@@ -859,7 +859,7 @@ class TestDispatchTruncate:
             agent=agent,
             run_id="run-1",
             session_id="session-1",
-            from_checkpoint=1,
+            continue_from=1,
             stream=False,
         )
 
@@ -868,7 +868,7 @@ class TestDispatchTruncate:
         assert captured["checkpoint_idx"] == 1
 
     def test_dispatch_truncate_composes_with_input(self, monkeypatch: pytest.MonkeyPatch):
-        """from_checkpoint=K AND input="..." → truncate then append."""
+        """continue_from=K AND input="..." -> truncate then append."""
         existing_run = RunOutput(
             run_id="run-1",
             session_id="session-1",
@@ -895,7 +895,7 @@ class TestDispatchTruncate:
             agent=agent,
             run_id="run-1",
             session_id="session-1",
-            from_checkpoint=2,
+            continue_from=2,
             input="new follow-up",
             stream=False,
         )
@@ -905,6 +905,91 @@ class TestDispatchTruncate:
         assert len(msgs) == 3
         assert msgs[-1].role == "user"
         assert msgs[-1].content == "new follow-up"
+
+    def test_continue_from_end_literal_keeps_all_messages_and_forks_completed(self, monkeypatch: pytest.MonkeyPatch):
+        """continue_from='end' keeps the full transcript and auto-forks completed runs."""
+        keep = Message(role="user", content="original")
+        drop = Message(role="assistant", content="answer")
+        existing_run = RunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            messages=[keep, drop],
+        )
+        agent = _make_agent(monkeypatch, runs=[existing_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            captured["forked_from_run_id"] = run_response.forked_from_run_id
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-1",
+            session_id="session-1",
+            continue_from="end",
+            stream=False,
+        )
+
+        assert [m.id for m in captured["messages"]] == [keep.id, drop.id]
+        assert captured["forked_from_run_id"] == "run-1"
+
+    def test_continue_from_unknown_string_raises(self, monkeypatch: pytest.MonkeyPatch):
+        existing_run = RunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            messages=[Message(role="user", content="original")],
+        )
+        agent = _make_agent(monkeypatch, runs=[existing_run])
+
+        with pytest.raises(ValueError, match="integer message index"):
+            _run.continue_run_dispatch(
+                agent=agent,
+                run_id="run-1",
+                session_id="session-1",
+                continue_from="msg-not-supported",  # type: ignore[arg-type]
+                stream=False,
+            )
+
+    def test_continue_from_last_user_literal(self, monkeypatch: pytest.MonkeyPatch):
+        existing_run = RunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            messages=[
+                Message(role="user", content="q1"),
+                Message(role="assistant", content="a1"),
+                Message(role="user", content="q2"),
+                Message(role="assistant", content="a2"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[existing_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-1",
+            session_id="session-1",
+            continue_from="last_user",
+            stream=False,
+        )
+
+        assert [m.content for m in captured["messages"]] == ["q1", "a1", "q2"]
 
 
 class TestDispatchFork:
@@ -936,7 +1021,7 @@ class TestDispatchFork:
             run_id="origin-run",
             session_id="session-1",
             fork=True,
-            from_checkpoint=1,
+            continue_from=1,
             stream=False,
         )
 
@@ -947,8 +1032,8 @@ class TestDispatchFork:
         assert rr.session_id == "session-1", "Fork stays in the same session"
         assert len(rr.messages or []) == 1, "Truncated to index 1"
 
-    def test_fork_without_explicit_from_checkpoint_defaults_to_full_length(self, monkeypatch: pytest.MonkeyPatch):
-        """fork=True without from_checkpoint clones at the current end → no
+    def test_fork_without_explicit_continue_from_defaults_to_full_length(self, monkeypatch: pytest.MonkeyPatch):
+        """fork=True without continue_from clones at the current end -> no
         truncation, just a sibling that starts where the original left off."""
         original = RunOutput(
             run_id="origin-run",
@@ -1010,7 +1095,7 @@ class TestDispatchFork:
             run_id="origin-run",
             session_id="session-1",
             fork=True,
-            from_checkpoint=1,
+            continue_from=1,
             stream=False,
         )
 
@@ -1043,7 +1128,7 @@ class TestForkMetricsReset:
             messages=[Message(role="user", content="q")],
         )
 
-        forked = _fork_run(original, from_checkpoint=1)
+        forked = _fork_run(original, message_index=1)
 
         assert forked.metrics is not original.metrics, "Fresh metrics object expected"
         assert forked.metrics.input_tokens == 0
@@ -1063,7 +1148,7 @@ class TestForkMetricsReset:
             messages=[Message(role="user", content="q")],
         )
 
-        forked = _fork_run(original, from_checkpoint=1)
+        forked = _fork_run(original, message_index=1)
 
         assert forked.created_at > old_t, "Fork should have a fresh created_at"
         assert original.created_at == old_t, "Parent's created_at must not be touched"
@@ -1076,7 +1161,7 @@ class TestForkMetricsReset:
 
 class TestRegenerateSugar:
     """``regenerate=True``, ``preserve_original=True``, and ``additional_instructions``
-    are sugar params that normalize to the canonical ``fork`` / ``from_checkpoint``
+    are sugar params that normalize to the canonical ``fork`` / ``message_index``
     / ``input`` triple inside the dispatch."""
 
     def _build_run_with_assistant_tail(self) -> RunOutput:
@@ -1237,19 +1322,28 @@ class TestRegenerateSugar:
         assert run.run_id == "run-A"
         assert run.status == RunStatus.completed
 
-    def test_regenerate_conflicts_with_explicit_from_checkpoint(self, monkeypatch: pytest.MonkeyPatch):
+    def test_regenerate_allows_default_end_boundary(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
 
-        with pytest.raises(ValueError, match="derives `from_checkpoint`"):
-            _run.continue_run_dispatch(
-                agent=agent,
-                run_id="run-A",
-                session_id="s",
-                regenerate=True,
-                from_checkpoint=1,
-                stream=False,
-            )
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            continue_from="end",
+            stream=False,
+        )
+
+        assert [m.role for m in captured["messages"]] == ["user"]
 
     def test_regenerate_conflicts_with_explicit_fork(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
@@ -1505,7 +1599,17 @@ class TestStreamingParity:
                 session = await fake_aread_or_create_session(agent, session_id=session_id)
                 run_response = next((r for r in (session.runs or []) if r.run_id == rid), None)
                 # Manually apply modifiers since we're bypassing the real fn body
-                from agno.agent._run import _apply_continue_modifiers, _normalize_regenerate_params
+                from agno.agent._run import (
+                    _apply_continue_modifiers,
+                    _normalize_regenerate_params,
+                    _resolve_continue_from,
+                )
+
+                continue_index = _resolve_continue_from(
+                    run_response,
+                    continue_from=kw.get("continue_from", "end"),
+                    regenerate=kw.get("regenerate", False),
+                )
 
                 f, fc, inp = _normalize_regenerate_params(
                     run_response,
@@ -1513,9 +1617,11 @@ class TestStreamingParity:
                     preserve_original=kw.get("preserve_original", False),
                     additional_instructions=kw.get("additional_instructions"),
                     fork=kw.get("fork", False),
-                    from_checkpoint=kw.get("from_checkpoint"),
+                    continue_index=continue_index,
                     input=kw.get("input"),
                 )
+                if not f and run_response.status == RunStatus.completed:
+                    f = True
                 run_response = _apply_continue_modifiers(run_response, f, fc)
                 if inp:
                     from agno.agent._run import _maybe_append_input_message
@@ -1538,7 +1644,7 @@ class TestStreamingParity:
         result = agent.acontinue_run(
             run_id="run-S",
             session_id="sess-S",
-            from_checkpoint=2,
+            continue_from=2,
             fork=True,
             stream=True,
         )
@@ -1553,7 +1659,7 @@ class TestStreamingParity:
         assert len(rr.messages or []) == 2
 
     @pytest.mark.asyncio
-    async def test_stream_from_checkpoint_truncates(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_stream_continue_from_index_truncates(self, monkeypatch: pytest.MonkeyPatch):
         """Time-travel via stream=True must actually truncate."""
         captured: dict = {}
         agent = self._patch_stream_dispatch(monkeypatch, captured, runs=[self._build_run()])
@@ -1561,15 +1667,16 @@ class TestStreamingParity:
         result = agent.acontinue_run(
             run_id="run-S",
             session_id="sess-S",
-            from_checkpoint=1,
+            continue_from=1,
             stream=True,
         )
         async for _ in result:
             pass
 
         rr = captured["run_response"]
-        # In-place rewind: same run_id, messages truncated to length 1
-        assert rr.run_id == "run-S"
+        # Completed runs auto-fork, even when the rewind happens through stream=True.
+        assert rr.run_id != "run-S"
+        assert rr.forked_from_run_id == "run-S"
         assert len(rr.messages or []) == 1
 
     @pytest.mark.asyncio
@@ -1705,8 +1812,8 @@ class TestStreamingRealBody:
             lambda *a, **kw: type("RM", (), {"messages": []})(),
         )
 
-        from agno.agent._response import ahandle_model_response_stream as _orig  # noqa: F401
         import agno.agent._response as response_mod
+        from agno.agent._response import ahandle_model_response_stream as _orig  # noqa: F401
 
         monkeypatch.setattr(response_mod, "ahandle_model_response_stream", fake_ahandle_stream)
 
@@ -1723,7 +1830,7 @@ class TestStreamingRealBody:
             run_id="run-real",
             session_id="sess-real",
             fork=True,
-            from_checkpoint=1,
+            continue_from=1,
             stream=True,
         ):
             pass

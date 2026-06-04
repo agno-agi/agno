@@ -249,6 +249,8 @@ class TestCheckpointRun:
         checkpoint_run(agent, run_response, session)
 
         assert run_response.last_checkpoint_at_message_index == 3
+        assert run_response.messages[-1].checkpoint_status == RunStatus.running.value
+        assert run_response.messages[-1].checkpoint_created_at is not None
 
     def test_writes_to_db(self):
         db = InMemoryDb()

@@ -28,12 +28,11 @@ follow-up `/continue` call resolves cleanly with status=COMPLETED.
 
 **Status:** Not yet tested
 
-**Description:** Demonstrates `from_checkpoint=K` truncating a run in place and
-resuming with new context.
+**Description:** Demonstrates `continue_from="end"` for follow-ups and
+`continue_from="last_user"` for rewinding to a symbolic message boundary.
 
-**Expected:** First run answers about Paris. After `from_checkpoint=1` + new
-`input` for Tokyo, the same run_id now has fewer / different messages and
-content that mentions Tokyo's population.
+**Expected:** First run answers about Paris. Follow-up from `"end"` and rewind
+from `"last_user"` both auto-fork the completed run and preserve the source.
 
 ---
 

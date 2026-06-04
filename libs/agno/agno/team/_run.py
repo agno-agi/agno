@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
+from time import time as unix_time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -12,6 +13,7 @@ from typing import (
     Dict,
     Iterator,
     List,
+    Literal,
     Optional,
     Sequence,
     Tuple,
@@ -4653,6 +4655,15 @@ def _sync_team_run_response_with_model_response(
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
+def _mark_team_checkpoint_message(run_response: TeamRunOutput) -> None:
+    """Mark the current message boundary as checkpointed for client timelines."""
+    if not run_response.messages:
+        return
+    message = run_response.messages[-1]
+    message.checkpoint_status = run_response.status.value if run_response.status else None
+    message.checkpoint_created_at = int(unix_time())
+
+
 def checkpoint_team_run(
     team: "Team",
     run_response: TeamRunOutput,
@@ -4664,6 +4675,7 @@ def checkpoint_team_run(
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
+    _mark_team_checkpoint_message(run_response)
     _persist_team_run_in_session(team, run_response, session, run_context)
 
 
@@ -4678,6 +4690,7 @@ async def acheckpoint_team_run(
         return
     run_response.status = RunStatus.running
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
+    _mark_team_checkpoint_message(run_response)
     await _apersist_team_run_in_session(team, run_response, session, run_context)
 
 
@@ -5947,8 +5960,8 @@ async def _ahandle_model_response_for_continue(
 # ---------------------------------------------------------------------------
 
 
-def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", from_checkpoint: int) -> None:
-    """Truncate the team run's messages to length ``from_checkpoint`` and
+def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", message_index: int) -> None:
+    """Truncate the team run's messages to length ``message_index`` and
     prune tools / requirements that referenced removed messages.
 
     Time-travel for teams. Mirrors :func:`agno.agent._run._truncate_run_to_checkpoint`
@@ -5956,12 +5969,12 @@ def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", from_checkpo
     survives truncation untouched — a member completed delegation is a
     permanent fact in the team's history regardless of where we rewind to.
     """
-    if run_response.messages is None or from_checkpoint < 0:
+    if run_response.messages is None or message_index < 0:
         return
-    if from_checkpoint >= len(run_response.messages):
+    if message_index >= len(run_response.messages):
         return
 
-    run_response.messages = run_response.messages[:from_checkpoint]
+    run_response.messages = run_response.messages[:message_index]
 
     valid_tool_call_ids: set = set()
     for msg in run_response.messages:
@@ -5983,12 +5996,12 @@ def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", from_checkpo
             if req.tool_execution and req.tool_execution.tool_call_id in valid_tool_call_ids
         ]
 
-    run_response.last_checkpoint_at_message_index = from_checkpoint
+    run_response.last_checkpoint_at_message_index = message_index
 
 
-def _fork_team_run(run_response: "TeamRunOutput", from_checkpoint: int) -> "TeamRunOutput":
+def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRunOutput":
     """Deep-clone a team run with a new ``run_id``, set fork metadata, and
-    truncate to ``from_checkpoint``.
+    truncate to ``message_index``.
 
     Scope is the team's own state (messages, tools, requirements, metrics).
     Member runs that the original team produced stay where they are — they
@@ -6011,31 +6024,37 @@ def _fork_team_run(run_response: "TeamRunOutput", from_checkpoint: int) -> "Team
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())
     forked.forked_from_run_id = run_response.run_id
-    forked.forked_from_message_index = from_checkpoint
+    forked.forked_from_message_index = message_index
     forked.metrics = RunMetrics()
     forked.created_at = int(_time())
 
-    _truncate_team_run_to_checkpoint(forked, from_checkpoint)
+    _truncate_team_run_to_checkpoint(forked, message_index)
     return forked
 
 
 def _apply_continue_modifiers_team(
     run_response: "TeamRunOutput",
     fork: bool,
-    from_checkpoint: Optional[int],
+    message_index: Optional[int],
 ) -> "TeamRunOutput":
-    """Apply ``fork`` and/or ``from_checkpoint`` to a loaded team run_response.
+    """Apply ``fork`` and/or ``message_index`` to a loaded team run_response.
 
     Mirrors agent's :func:`_apply_continue_modifiers`. Returns the same
     instance when only truncating, a new instance (with cloned members)
     when forking.
     """
     if fork:
-        idx = from_checkpoint if from_checkpoint is not None else len(run_response.messages or [])
+        idx = message_index if message_index is not None else len(run_response.messages or [])
         return _fork_team_run(run_response, idx)
-    if from_checkpoint is not None:
-        _truncate_team_run_to_checkpoint(run_response, from_checkpoint)
+    if message_index is not None:
+        _truncate_team_run_to_checkpoint(run_response, message_index)
     return run_response
+
+
+def _will_truncate_team_run(run_response: "TeamRunOutput", message_index: Optional[int]) -> bool:
+    if message_index is None:
+        return False
+    return 0 <= message_index < len(run_response.messages or [])
 
 
 def _find_regenerate_checkpoint_team(run_response: "TeamRunOutput") -> int:
@@ -6052,6 +6071,29 @@ def _find_regenerate_checkpoint_team(run_response: "TeamRunOutput") -> int:
     raise ValueError("Cannot regenerate: team run has no user messages to regenerate from.")
 
 
+def _resolve_continue_from_team(
+    run_response: "TeamRunOutput",
+    *,
+    continue_from: Union[int, Literal["end", "last_user"]],
+    regenerate: bool = False,
+) -> int:
+    """Resolve the public continuation selector into a message boundary index."""
+    if regenerate:
+        if continue_from in ("end", "last_user"):
+            return _find_regenerate_checkpoint_team(run_response)
+        raise ValueError("`regenerate=True` derives `continue_from='last_user'` automatically.")
+
+    messages = run_response.messages or []
+    if isinstance(continue_from, int):
+        return continue_from
+    if continue_from == "end":
+        return len(messages)
+    if continue_from == "last_user":
+        return _find_regenerate_checkpoint_team(run_response)
+
+    raise ValueError("`continue_from` must be an integer message index, 'end', or 'last_user'.")
+
+
 def _normalize_regenerate_params_team(
     run_response: Optional["TeamRunOutput"],
     *,
@@ -6059,7 +6101,7 @@ def _normalize_regenerate_params_team(
     preserve_original: bool,
     additional_instructions: Optional[str],
     fork: bool,
-    from_checkpoint: Optional[int],
+    continue_index: Optional[int],
     input: Optional[str],
 ) -> Tuple[bool, Optional[int], Optional[str]]:
     """Normalize regenerate-sugar params for teams. Mirrors agent helper.
@@ -6074,10 +6116,8 @@ def _normalize_regenerate_params_team(
         raise ValueError("`preserve_original=True` only makes sense with `regenerate=True`.")
 
     if not regenerate:
-        return fork, from_checkpoint, input
+        return fork, continue_index, input
 
-    if from_checkpoint is not None:
-        raise ValueError("`regenerate=True` derives `from_checkpoint` automatically; do not pass it explicitly.")
     if fork:
         raise ValueError(
             "`regenerate=True` derives the destructive/preserving choice from "
@@ -6221,7 +6261,7 @@ def continue_run_dispatch(
     requirements: Optional[List[Any]] = None,
     # --- Continue sugar (mirrors agent dispatch) ---
     input: Optional[str] = None,
-    from_checkpoint: Optional[int] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
     preserve_original: bool = False,
@@ -6335,15 +6375,20 @@ def continue_run_dispatch(
         raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
     # --- Snapshot dispatch (regenerate / fork / time-travel) ----------------
-    # Normalize sugar params into canonical (fork, from_checkpoint, input)
+    continue_index: Optional[int] = _resolve_continue_from_team(
+        run_response,
+        continue_from=continue_from,
+        regenerate=regenerate,
+    )
+    # Normalize sugar params into canonical (fork, continue_index, input)
     # form. Mirrors the agent dispatch — see agno/agent/_run.py.
-    fork, from_checkpoint, input = _normalize_regenerate_params_team(
+    fork, continue_index, input = _normalize_regenerate_params_team(
         run_response,
         regenerate=regenerate,
         preserve_original=preserve_original,
         additional_instructions=additional_instructions,
         fork=fork,
-        from_checkpoint=from_checkpoint,
+        continue_index=continue_index,
         input=input,
     )
     original_run_id_for_lineage = run_response.run_id if regenerate else None
@@ -6353,13 +6398,13 @@ def continue_run_dispatch(
     # and must get a new run_id. Mid-flight states (RUNNING / PAUSED) resume
     # in place because their loop never finished. ERROR / CANCELLED are NOT
     # auto-forked (retry semantics) — same call as agent.
-    if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+    if not fork and run_response.status == RunStatus.completed:
         fork = True
 
     # Apply modifiers BEFORE the requirements machinery. If we forked, the
     # rest of the dispatch operates on the new run with cloned members.
-    _did_snapshot_dispatch = fork or from_checkpoint is not None
-    run_response = _apply_continue_modifiers_team(run_response, fork, from_checkpoint)
+    _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
+    run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
     if regenerate and original_run_id_for_lineage:
         run_response.regenerated_from = original_run_id_for_lineage
         if preserve_original and run_response.forked_from_run_id:
@@ -7394,6 +7439,12 @@ async def _acontinue_run_background_stream(
     run_response: Optional[TeamRunOutput] = None,
     run_id: Optional[str] = None,
     requirements: Optional[List[Any]] = None,
+    input: Optional[str] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
+    fork: bool = False,
+    regenerate: bool = False,
+    preserve_original: bool = False,
+    additional_instructions: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     stream_events: bool = False,
@@ -7452,6 +7503,12 @@ async def _acontinue_run_background_stream(
                 run_response=run_response,
                 run_context=run_context,
                 requirements=requirements,
+                input=input,
+                continue_from=continue_from,
+                fork=fork,
+                regenerate=regenerate,
+                preserve_original=preserve_original,
+                additional_instructions=additional_instructions,
                 run_id=_run_id,
                 user_id=user_id,
                 session_id=session_id,
@@ -7543,7 +7600,7 @@ def acontinue_run_dispatch(  # type: ignore
     requirements: Optional[List[Any]] = None,
     # --- Continue sugar (mirrors agent dispatch) ---
     input: Optional[str] = None,
-    from_checkpoint: Optional[int] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
     preserve_original: bool = False,
@@ -7566,7 +7623,7 @@ def acontinue_run_dispatch(  # type: ignore
 
     Routes between _acontinue_run, _acontinue_run_stream, and
     _acontinue_run_background_stream based on the stream and background options.
-    Snapshot dispatch parameters (``regenerate``, ``fork``, ``from_checkpoint``,
+    Snapshot dispatch parameters (``regenerate``, ``fork``, ``continue_from``,
     ``preserve_original``, ``additional_instructions``, ``input``) flow
     through to the inner functions which apply them after loading the run.
     """
@@ -7642,6 +7699,12 @@ def acontinue_run_dispatch(  # type: ignore
                 run_response=run_response,
                 run_context=run_context,
                 requirements=requirements,
+                input=input,
+                continue_from=continue_from,
+                fork=fork,
+                regenerate=regenerate,
+                preserve_original=preserve_original,
+                additional_instructions=additional_instructions,
                 run_id=run_id_resolved,
                 user_id=user_id,
                 session_id=session_id_resolved,
@@ -7662,7 +7725,7 @@ def acontinue_run_dispatch(  # type: ignore
             run_context=run_context,
             requirements=requirements,
             input=input,
-            from_checkpoint=from_checkpoint,
+            continue_from=continue_from,
             fork=fork,
             regenerate=regenerate,
             preserve_original=preserve_original,
@@ -7684,7 +7747,7 @@ def acontinue_run_dispatch(  # type: ignore
             run_context=run_context,
             requirements=requirements,
             input=input,
-            from_checkpoint=from_checkpoint,
+            continue_from=continue_from,
             fork=fork,
             regenerate=regenerate,
             preserve_original=preserve_original,
@@ -7707,7 +7770,7 @@ async def _acontinue_run(
     requirements: Optional[List[Any]] = None,
     # --- Snapshot dispatch sugar (mirrors sync continue_run_dispatch) ---
     input: Optional[str] = None,
-    from_checkpoint: Optional[int] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
     preserve_original: bool = False,
@@ -7758,24 +7821,29 @@ async def _acontinue_run(
                     raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                 # --- Snapshot dispatch (regenerate / fork / time-travel) ---
+                continue_index: Optional[int] = _resolve_continue_from_team(
+                    run_response,
+                    continue_from=continue_from,
+                    regenerate=regenerate,
+                )
                 # Mirrors the sync continue_run_dispatch.
-                fork, from_checkpoint, input = _normalize_regenerate_params_team(
+                fork, continue_index, input = _normalize_regenerate_params_team(
                     run_response,
                     regenerate=regenerate,
                     preserve_original=preserve_original,
                     additional_instructions=additional_instructions,
                     fork=fork,
-                    from_checkpoint=from_checkpoint,
+                    continue_index=continue_index,
                     input=input,
                 )
                 original_run_id_for_lineage = run_response.run_id if regenerate else None
 
                 # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
-                if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+                if not fork and run_response.status == RunStatus.completed:
                     fork = True
 
-                _did_snapshot_dispatch = fork or from_checkpoint is not None
-                run_response = _apply_continue_modifiers_team(run_response, fork, from_checkpoint)
+                _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
+                run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if preserve_original and run_response.forked_from_run_id:
@@ -8120,7 +8188,7 @@ async def _acontinue_run_stream(
     requirements: Optional[List[Any]] = None,
     # --- Snapshot dispatch sugar (mirrors sync continue_run_dispatch) ---
     input: Optional[str] = None,
-    from_checkpoint: Optional[int] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
     preserve_original: bool = False,
@@ -8179,24 +8247,29 @@ async def _acontinue_run_stream(
                     raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                 # --- Snapshot dispatch (regenerate / fork / time-travel) ---
+                continue_index: Optional[int] = _resolve_continue_from_team(
+                    run_response,
+                    continue_from=continue_from,
+                    regenerate=regenerate,
+                )
                 # Mirrors the sync continue_run_dispatch.
-                fork, from_checkpoint, input = _normalize_regenerate_params_team(
+                fork, continue_index, input = _normalize_regenerate_params_team(
                     run_response,
                     regenerate=regenerate,
                     preserve_original=preserve_original,
                     additional_instructions=additional_instructions,
                     fork=fork,
-                    from_checkpoint=from_checkpoint,
+                    continue_index=continue_index,
                     input=input,
                 )
                 original_run_id_for_lineage = run_response.run_id if regenerate else None
 
                 # Auto-fork on COMPLETED — preserves 1-run-1-loop invariant.
-                if not fork and from_checkpoint is None and run_response.status == RunStatus.completed:
+                if not fork and run_response.status == RunStatus.completed:
                     fork = True
 
-                _did_snapshot_dispatch = fork or from_checkpoint is not None
-                run_response = _apply_continue_modifiers_team(run_response, fork, from_checkpoint)
+                _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
+                run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if preserve_original and run_response.forked_from_run_id:

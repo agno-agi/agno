@@ -1,8 +1,8 @@
-"""Fork a team run at a specific message index.
+"""Fork a team run at a specific message.
 
-``fork=True`` + ``from_checkpoint=K`` creates a new team run by truncating
-the source's messages to length K. Same primitive that powers regenerate,
-but with explicit control over where to rewind to.
+``fork=True`` + ``continue_from="last_user"`` creates a new team run by
+truncating the source's messages at the last user boundary. Same primitive
+that powers regenerate, but with explicit control over where to rewind to.
 
 Use when you want to explore an alternative path from a specific point —
 e.g. an eval that varies the prompt after the first round of delegation.
@@ -50,14 +50,13 @@ async def main() -> None:
     print(f"  content: {original.content}")
     print()
 
-    # Fork from the first user message (index 1 — system msg at 0, user at 1).
-    # The fork drops everything after the user's question and replays from
-    # there with a different framing.
+    # Fork from the last user message. The fork drops everything after the
+    # user's question and replays from there with a different framing.
     forked = await team.acontinue_run(
         run_id=original.run_id,
         session_id="team-sess-fork",
         fork=True,
-        from_checkpoint=2,  # keep system + user
+        continue_from="last_user",
         input="Actually, give me a one-word answer.",
     )
     print(f"Forked: {forked.run_id}  (new)")

@@ -10,10 +10,10 @@ state, not member state.
 | Example | What it shows |
 |---|---|
 | [`01_regenerate.py`](./01_regenerate.py) | `team.continue_run(regenerate=True)` drops the last assistant turn and replays. New `run_id`, fresh metrics. Original team and original members untouched. |
-| [`02_fork.py`](./02_fork.py) | `fork=True, from_checkpoint=K` to fork at a specific message index. |
-| [`03_time_travel.py`](./03_time_travel.py) | `from_checkpoint=K` alone (no `fork`) is destructive — same run_id, rewound in place. |
-| [`04_crash_recovery.py`](./04_crash_recovery.py) | `Team(checkpoint="steps")` writes a snapshot after every team-level tool batch. Crash mid-flight → fresh team `/continue`s the same `run_id`. |
-| [`05_branch_session.py`](./05_branch_session.py) | `team.branch_session()` deep-copies every run into a new session. Independent conversation threads. |
+| [`02_fork.py`](./02_fork.py) | `fork=True, continue_from="last_user"` to fork at a clear message boundary. |
+| [`03_time_travel.py`](./03_time_travel.py) | `continue_from="end"`, `"last_user"`, and the numeric `continue_from=K` form for exact boundaries. COMPLETED runs auto-fork. |
+| [`04_branch_session.py`](./04_branch_session.py) | `team.branch_session()` deep-copies every run into a new session. Independent conversation threads. |
+| [`05_checkpoint_endpoints.py`](./05_checkpoint_endpoints.py) | Calls the two new GET endpoints — `/checkpoints` (timeline) and `/checkpoints/{message_index}` (snapshot) — via an in-process `TestClient`, prints raw payloads, and feeds the returned index back into `/continue`. |
 
 ## The unified `/continue` (same as agent)
 
@@ -25,8 +25,22 @@ state, not member state.
 | `regenerate=True` | Always forks: drop last assistant turn, fresh `run_id` |
 | `regenerate=True, additional_instructions=...` | Same with steering text appended |
 | `regenerate=True, preserve_original=True` | Source marked `REGENERATED` so history-builders skip it |
-| `fork=True, from_checkpoint=K` | Fork at message index K |
-| `from_checkpoint=K` (no fork) | Destructive rewind — same `run_id` |
+| `continue_from="end"` | Resume from the current end of the transcript |
+| `fork=True, continue_from="last_user"` | Fork just after the last user message |
+| `continue_from="last_user"` | Resume just after the last user message |
+| `continue_from=K` | Low-level numeric message index fallback |
+
+## Checkpoint endpoints for UI
+
+These endpoints expose checkpoint boundaries without adding a separate
+checkpoint table:
+
+| Endpoint | Use |
+|---|---|
+| `GET /teams/{team_id}/runs/{run_id}/checkpoints?session_id=...` | List message boundaries the UI can display |
+| `GET /teams/{team_id}/runs/{run_id}/checkpoints/{message_index}?session_id=...` | Get a derived team run snapshot truncated at that boundary |
+
+The returned `message_index` can be passed back as `continue_from=K`.
 
 ## Why members aren't cloned on team fork
 
@@ -58,6 +72,6 @@ copy.
 .venvs/demo/bin/python cookbook/03_teams/23_checkpointing/01_regenerate.py
 .venvs/demo/bin/python cookbook/03_teams/23_checkpointing/02_fork.py
 .venvs/demo/bin/python cookbook/03_teams/23_checkpointing/03_time_travel.py
-.venvs/demo/bin/python cookbook/03_teams/23_checkpointing/04_crash_recovery.py
-.venvs/demo/bin/python cookbook/03_teams/23_checkpointing/05_branch_session.py
+.venvs/demo/bin/python cookbook/03_teams/23_checkpointing/04_branch_session.py
+.venvs/demo/bin/python cookbook/03_teams/23_checkpointing/05_checkpoint_endpoints.py
 ```

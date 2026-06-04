@@ -1,16 +1,17 @@
 # Checkpointing & /continue
 
-Five examples covering mid-run persistence (`checkpoint="steps"`) and the
-unified `/continue` endpoint that advances any persisted run from its current
-state.
+Examples covering mid-run persistence (`checkpoint="steps"`) and the unified
+`/continue` endpoint that advances any persisted run from its current state.
 
 | Example | What it shows |
 |---|---|
 | [`01_crash_recovery.py`](./01_crash_recovery.py) | `checkpoint="steps"` writes after each tool batch. If the agent process dies mid-run, the DB has the latest checkpoint and `/continue` resumes from there. |
-| [`02_time_travel.py`](./02_time_travel.py) | `/continue` with `from_checkpoint=K` truncates the run's messages to index K, then resumes. **Destructive** — the original run is overwritten in place. |
-| [`03_forking.py`](./03_forking.py) | `/continue` with `from_checkpoint=K, fork=True` clones the run at K with a new `run_id`. **Non-destructive** sibling run within the same session. |
-| [`04_regenerate.py`](./04_regenerate.py) | `/continue` with `regenerate=True` — sugar that auto-picks `from_checkpoint` to redo the last response. Pair with `additional_instructions` to steer, `preserve_original=True` to keep the old one. |
+| [`02_time_travel.py`](./02_time_travel.py) | `/continue` with `continue_from="end"`, `"last_user"`, and a raw integer index. COMPLETED runs auto-fork, so the source is preserved. |
+| [`03_forking.py`](./03_forking.py) | `/continue` with `continue_from="last_user", fork=True` and the numeric form `continue_from=K, fork=True` — non-destructive siblings in the same session. |
+| [`04_regenerate.py`](./04_regenerate.py) | `/continue` with `regenerate=True` — sugar over `continue_from="last_user"` to redo the last response. Pair with `additional_instructions` to steer, `preserve_original=True` to keep the old one. |
 | [`05_branch_session.py`](./05_branch_session.py) | `agent.branch_session()` deep-copies every run into a **new session**. Different from `fork`, which makes a sibling run in the *same* session. |
+| [`06_tool_error_persistence.py`](./06_tool_error_persistence.py) | When a tool raises mid-run, in-flight messages are flushed onto the ERROR row so the failed conversation isn't lost. |
+| [`07_checkpoint_endpoints.py`](./07_checkpoint_endpoints.py) | Calls the two new GET endpoints — `/checkpoints` (timeline) and `/checkpoints/{message_index}` (snapshot) — via an in-process `TestClient`, prints raw payloads, and feeds the returned `message_index` back into `/continue`. |
 
 ## When to use `checkpoint="steps"`
 
@@ -35,8 +36,9 @@ crash-recoverable workflows, not for chatty agents.
 | empty + RUNNING / ERROR | **Resume in place** — the original loop never completed, so we continue the same `run_id` |
 | empty + COMPLETED | **Auto-fork** — a new `run_id` is created, source is preserved. Prevents two model loops from sharing one row. |
 | `input="..."` | Append a new user message before resuming (auto-forks if source is COMPLETED) |
-| `from_checkpoint=K` | Truncate messages to length K, then resume (**destructive**) |
-| `from_checkpoint=K, fork=True` | Clone with a new `run_id`, truncate, resume as sibling |
+| `continue_from="end"` | Resume from the current end of the transcript |
+| `continue_from="last_user"` | Resume just after the last user message |
+| `continue_from=K` | Low-level numeric message index fallback |
 | `regenerate=True` | **Always forks.** Drops the last assistant turn, fresh `run_id`, source preserved |
 | `regenerate=True, additional_instructions="..."` | Same, with steering text appended |
 | `regenerate=True, preserve_original=True` | Same + mark source `REGENERATED` so it's hidden from future history |
@@ -61,11 +63,23 @@ await agent.acontinue_run(
 | "Redo the last response" (drop assistant reply, fresh run_id) | `regenerate=True` |
 | Same, and hide the original from future history | `regenerate=True, preserve_original=True` |
 | Same, with a steering message | `regenerate=True, additional_instructions="..."` |
-| Drop the last *3* messages, not just the assistant reply | `from_checkpoint=K` (raw) |
-| Drop messages *and* keep the old run | `from_checkpoint=K, fork=True` |
+| Drop the last *3* messages, not just the assistant reply | `continue_from=K` |
+| Drop messages *and* keep the old run | `continue_from=K, fork=True` |
 
 The sugar (`regenerate=*`) is just internal math over the raw params
-(`from_checkpoint`, `fork`, `input`). Both are exposed.
+(`continue_from`, `fork`, `input`).
+
+## Checkpoint endpoints for UI
+
+These endpoints expose checkpoint boundaries without adding a separate
+checkpoint table:
+
+| Endpoint | Use |
+|---|---|
+| `GET /agents/{agent_id}/runs/{run_id}/checkpoints?session_id=...` | List message boundaries the UI can display |
+| `GET /agents/{agent_id}/runs/{run_id}/checkpoints/{message_index}?session_id=...` | Get a derived run snapshot truncated at that boundary |
+
+The returned `message_index` can be passed back as `continue_from=K`.
 
 ## Fork vs branch_session
 
@@ -88,6 +102,8 @@ state.
 .venvs/demo/bin/python cookbook/02_agents/18_checkpointing/03_forking.py
 .venvs/demo/bin/python cookbook/02_agents/18_checkpointing/04_regenerate.py
 .venvs/demo/bin/python cookbook/02_agents/18_checkpointing/05_branch_session.py
+.venvs/demo/bin/python cookbook/02_agents/18_checkpointing/06_tool_error_persistence.py
+.venvs/demo/bin/python cookbook/02_agents/18_checkpointing/07_checkpoint_endpoints.py
 ```
 
 Each example uses a local SQLite DB so the persisted state can be inspected

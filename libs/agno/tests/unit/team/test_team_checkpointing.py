@@ -25,14 +25,13 @@ from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
+from agno.session import TeamSession
 from agno.team import Team
 from agno.team import _init as team_init_mod
 from agno.team import _response as team_response_mod
 from agno.team import _run as team_run
 from agno.team import _storage as team_storage
 from agno.team import _tools as team_tools
-from agno.session import TeamSession
-
 
 # ---------------------------------------------------------------------------
 # Lineage fields round-trip
@@ -116,7 +115,7 @@ class TestTeamTruncate:
                 Message(role="user", content="c"),
             ],
         )
-        team_run._truncate_team_run_to_checkpoint(r, from_checkpoint=2)
+        team_run._truncate_team_run_to_checkpoint(r, message_index=2)
         assert len(r.messages) == 2
         assert r.messages[-1].content == "b"
 
@@ -133,7 +132,7 @@ class TestTeamTruncate:
             ],
         )
         # Truncate to 1 msg — neither tool_call_id is referenced
-        team_run._truncate_team_run_to_checkpoint(r, from_checkpoint=1)
+        team_run._truncate_team_run_to_checkpoint(r, message_index=1)
         assert r.tools == []
 
     def test_truncate_updates_checkpoint_marker(self):
@@ -141,13 +140,23 @@ class TestTeamTruncate:
             run_id="r1",
             messages=[Message(role="user", content="a"), Message(role="assistant", content="b")],
         )
-        team_run._truncate_team_run_to_checkpoint(r, from_checkpoint=1)
+        team_run._truncate_team_run_to_checkpoint(r, message_index=1)
         assert r.last_checkpoint_at_message_index == 1
 
     def test_truncate_noop_when_beyond_length(self):
         r = TeamRunOutput(run_id="r1", messages=[Message(role="user", content="a")])
-        team_run._truncate_team_run_to_checkpoint(r, from_checkpoint=10)
+        team_run._truncate_team_run_to_checkpoint(r, message_index=10)
         assert len(r.messages) == 1
+
+    def test_checkpoint_marker_is_stored_on_message(self):
+        r = TeamRunOutput(
+            run_id="r1",
+            status=RunStatus.running,
+            messages=[Message(role="user", content="a"), Message(role="assistant", content="b")],
+        )
+        team_run._mark_team_checkpoint_message(r)
+        assert r.messages[-1].checkpoint_status == RunStatus.running.value
+        assert r.messages[-1].checkpoint_created_at is not None
 
 
 # ---------------------------------------------------------------------------
@@ -190,14 +199,14 @@ class TestTeamFork:
 
     def test_fork_assigns_new_run_id(self):
         team = self._build_team_with_members()
-        forked = team_run._fork_team_run(team, from_checkpoint=5)
+        forked = team_run._fork_team_run(team, message_index=5)
         assert forked.run_id != team.run_id
         assert forked.forked_from_run_id == "team-orig"
         assert forked.forked_from_message_index == 5
 
     def test_fork_resets_metrics_and_created_at(self):
         team = self._build_team_with_members()
-        forked = team_run._fork_team_run(team, from_checkpoint=5)
+        forked = team_run._fork_team_run(team, message_index=5)
         assert forked.metrics is not team.metrics
         assert forked.metrics.input_tokens == 0
         # team's original metrics unchanged
@@ -210,7 +219,7 @@ class TestTeamFork:
         member runs keep their original IDs and parent_run_id pointing at
         the source team. No new member rows are written to the session."""
         team = self._build_team_with_members()
-        forked = team_run._fork_team_run(team, from_checkpoint=5)
+        forked = team_run._fork_team_run(team, message_index=5)
         # The data is deep-copied (so mutating the fork can't corrupt the
         # original) but IDs are preserved.
         assert len(forked.member_responses) == 2
@@ -224,7 +233,7 @@ class TestTeamFork:
         team = self._build_team_with_members()
         original_member_ids = [m.run_id for m in team.member_responses]
         original_member_parents = [m.parent_run_id for m in team.member_responses]
-        team_run._fork_team_run(team, from_checkpoint=5)
+        team_run._fork_team_run(team, message_index=5)
         # Originals untouched
         assert team.run_id == "team-orig"
         assert [m.run_id for m in team.member_responses] == original_member_ids
@@ -259,7 +268,7 @@ class TestRegenerateSugarNormalization:
             preserve_original=False,
             additional_instructions=None,
             fork=False,
-            from_checkpoint=None,
+            continue_index=None,
             input=None,
         )
         assert fork is True  # regenerate ALWAYS forks (1-run-1-loop)
@@ -272,7 +281,7 @@ class TestRegenerateSugarNormalization:
             preserve_original=True,
             additional_instructions=None,
             fork=False,
-            from_checkpoint=None,
+            continue_index=None,
             input=None,
         )
         assert fork is True
@@ -293,7 +302,7 @@ class TestRegenerateSugarNormalization:
             preserve_original=False,
             additional_instructions=None,
             fork=False,
-            from_checkpoint=None,
+            continue_index=None,
             input=None,
         )
         # Last user msg is at index 2, so checkpoint is index + 1 = 3
@@ -307,7 +316,7 @@ class TestRegenerateSugarNormalization:
             preserve_original=False,
             additional_instructions="be brief",
             fork=False,
-            from_checkpoint=None,
+            continue_index=None,
             input=None,
         )
         assert inp == "be brief"
@@ -321,7 +330,7 @@ class TestRegenerateSugarNormalization:
                 preserve_original=False,
                 additional_instructions="x",
                 fork=False,
-                from_checkpoint=None,
+                continue_index=None,
                 input="y",
             )
 
@@ -334,7 +343,7 @@ class TestRegenerateSugarNormalization:
                 preserve_original=True,
                 additional_instructions=None,
                 fork=False,
-                from_checkpoint=None,
+                continue_index=None,
                 input=None,
             )
 
@@ -446,6 +455,38 @@ class TestTeamContinueDispatchAutoFork:
         assert completed.run_id == "run-done"
         assert completed.status == RunStatus.completed
 
+    def test_continue_from_end_keeps_all_messages_and_forks_completed(self, monkeypatch):
+        keep = Message(role="user", content="Q")
+        drop = Message(role="assistant", content="A")
+        completed = TeamRunOutput(
+            run_id="run-done",
+            session_id="sess-1",
+            status=RunStatus.completed,
+            messages=[keep, drop],
+        )
+        team = Team(members=[], name="t")
+        _patch_team_sync_dispatch(team, monkeypatch, runs=[completed])
+
+        captured: dict = {}
+
+        def fake_continue_run(team, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            captured["forked_from"] = run_response.forked_from_run_id
+            return run_response
+
+        monkeypatch.setattr(team_run, "_continue_run", fake_continue_run)
+
+        team_run.continue_run_dispatch(
+            team=team,
+            run_id="run-done",
+            session_id="sess-1",
+            continue_from="end",
+            stream=False,
+        )
+
+        assert [m.id for m in captured["messages"]] == [keep.id, drop.id]
+        assert captured["forked_from"] == "run-done"
+
     def test_error_run_does_not_auto_fork(self, monkeypatch):
         """ERROR runs are not auto-forked — they resume in-place for retry
         semantics (1-run-1-loop is preserved because the source loop didn't
@@ -466,7 +507,7 @@ class TestTeamContinueDispatchAutoFork:
 
         should_fork = (
             not False  # fork
-            and None is None  # from_checkpoint
+            and None is None  # message_index
             and run.status == RS.completed
         )
         assert should_fork is False  # ERROR should not auto-fork

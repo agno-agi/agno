@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -30,6 +30,7 @@ from agno.os.auth import (
     require_approval_resolved,
     require_resource_access,
 )
+from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.managers import event_buffer, sse_subscriber_manager
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -209,7 +210,7 @@ async def agent_continue_response_streamer(
     run_id: str,
     updated_tools: Optional[List] = None,
     input: Optional[str] = None,
-    from_checkpoint: Optional[int] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
     preserve_original: bool = False,
@@ -234,7 +235,7 @@ async def agent_continue_response_streamer(
             run_id=run_id,
             updated_tools=updated_tools,
             input=input,
-            from_checkpoint=from_checkpoint,
+            continue_from=continue_from,
             fork=fork,
             regenerate=regenerate,
             preserve_original=preserve_original,
@@ -276,7 +277,7 @@ async def agent_resumable_continue_response_streamer(
     run_id: str,
     updated_tools: Optional[List] = None,
     input: Optional[str] = None,
-    from_checkpoint: Optional[int] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
     preserve_original: bool = False,
@@ -311,7 +312,7 @@ async def agent_resumable_continue_response_streamer(
             run_id=run_id,
             updated_tools=updated_tools,
             input=input,
-            from_checkpoint=from_checkpoint,
+            continue_from=continue_from,
             fork=fork,
             regenerate=regenerate,
             preserve_original=preserve_original,
@@ -935,13 +936,9 @@ def get_agent_router(
                 "to a RUNNING/ERROR resume."
             ),
         ),
-        from_checkpoint: Optional[int] = Form(
-            None,
-            description=(
-                "Optional message index to truncate to before resuming. Time-travel: "
-                "drops messages and tools past this index. Pair with ``fork=true`` to "
-                "explore an alternative path without mutating the original run."
-            ),
+        continue_from: str = Form(
+            "end",
+            description=("Continuation boundary. Use 'end', 'last_user', or a numeric message index."),
         ),
         fork: bool = Form(
             False,
@@ -955,7 +952,7 @@ def get_agent_router(
             False,
             description=(
                 "Sugar: regenerate the last response of this run. Auto-computes "
-                "``from_checkpoint`` to land just after the last user message. Pair with "
+                "``continue_from='last_user'`` to land just after the last user message. Pair with "
                 "``additional_instructions`` to steer the new output. Pair with "
                 "``preserve_original=true`` to keep the old response as a sibling instead "
                 "of overwriting it."
@@ -1054,19 +1051,6 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
-        # Fetch existing run for potential approval resolution. We no longer gate on
-        # RunStatus — /continue dispatches on body shape + persisted state (ADR-003 /
-        # ADR-004). HITL approvals still require resolved approvals, but that's
-        # enforced inside the dispatch logic in continue_run_dispatch rather than as
-        # a route-level 409.
-        existing_run = None
-        if session_id and not isinstance(agent, RemoteAgent):
-            if hasattr(agent, "aget_run_output"):
-                existing_run = await agent.aget_run_output(
-                    run_id=run_id,
-                    session_id=session_id,
-                    user_id=scoped_user_id or user_id,
-                )
 
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = None
@@ -1080,6 +1064,19 @@ def get_agent_router(
 
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
+        stripped_continue_from = continue_from.strip()
+        continue_from_value: Union[int, Literal["end", "last_user"]]
+        if stripped_continue_from.lstrip("-").isdigit():
+            continue_from_value = int(stripped_continue_from)
+        elif stripped_continue_from == "end":
+            continue_from_value = "end"
+        elif stripped_continue_from == "last_user":
+            continue_from_value = "last_user"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid continue_from. Use 'end', 'last_user', or a numeric message index.",
+            )
 
         if stream and background:
             # background=True, stream=True: resumable SSE streaming
@@ -1093,7 +1090,7 @@ def get_agent_router(
                     run_id=run_id,
                     updated_tools=updated_tools,
                     input=input,
-                    from_checkpoint=from_checkpoint,
+                    continue_from=continue_from_value,
                     fork=fork,
                     regenerate=regenerate,
                     preserve_original=preserve_original,
@@ -1113,7 +1110,7 @@ def get_agent_router(
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,
                     input=input,
-                    from_checkpoint=from_checkpoint,
+                    continue_from=continue_from_value,
                     fork=fork,
                     regenerate=regenerate,
                     preserve_original=preserve_original,
@@ -1139,7 +1136,7 @@ def get_agent_router(
                         run_id=run_id,  # run_id from path
                         updated_tools=updated_tools,
                         input=input,
-                        from_checkpoint=from_checkpoint,
+                        continue_from=continue_from_value,
                         fork=fork,
                         regenerate=regenerate,
                         preserve_original=preserve_original,
@@ -1451,6 +1448,126 @@ def get_agent_router(
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
+
+    @router.get(
+        "/agents/{agent_id}/runs/{run_id}/checkpoints",
+        tags=["Agents"],
+        operation_id="list_agent_run_checkpoints",
+        summary="List Agent Run Checkpoints",
+        description=(
+            "List FE-friendly continuation boundaries derived from the current stored run. "
+            "No separate checkpoint table is used; entries are inferred from message-level "
+            "checkpoint markers and the terminal end of the transcript."
+        ),
+        responses={
+            200: {"description": "Run checkpoints retrieved successfully"},
+            404: {"description": "Agent or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def list_agent_run_checkpoints(
+        request: Request,
+        agent_id: str,
+        run_id: str,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Checkpoint listing is not supported for remote agents")
+
+        user_id = get_scoped_user_id(request)
+        if hasattr(agent, "aget_session"):
+            session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
+
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+        if run_output is None or not run_matches_component(run_output, "agents", agent_id):
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        return {
+            "run_id": run_id,
+            "session_id": session_id,
+            "checkpoints": list_run_checkpoints(run_output),
+        }
+
+    @router.get(
+        "/agents/{agent_id}/runs/{run_id}/checkpoints/{message_index}",
+        tags=["Agents"],
+        operation_id="get_agent_run_checkpoint_snapshot",
+        summary="Get Agent Run Checkpoint Snapshot",
+        description=(
+            "Return a derived run snapshot truncated at a message boundary. "
+            "Use the returned message_index as `continue_from` when continuing this run."
+        ),
+        responses={
+            200: {"description": "Run checkpoint snapshot retrieved successfully"},
+            400: {"description": "Invalid checkpoint message index", "model": BadRequestResponse},
+            404: {"description": "Agent or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def get_agent_run_checkpoint_snapshot(
+        request: Request,
+        agent_id: str,
+        run_id: str,
+        message_index: int,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Checkpoint snapshots are not supported for remote agents")
+
+        user_id = get_scoped_user_id(request)
+        if hasattr(agent, "aget_session"):
+            session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
+
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+        if run_output is None or not run_matches_component(run_output, "agents", agent_id):
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        try:
+            return build_run_checkpoint_snapshot(run_output, message_index)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/resume",

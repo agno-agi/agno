@@ -117,6 +117,11 @@ class Message(BaseModel):
     created_at: int = Field(default_factory=lambda: int(time()))
     # When True, the message will be sent to the Model but not persisted afterwards.
     temporary: bool = False
+    # Status of the run when this message was the persisted checkpoint boundary.
+    # Used by checkpoint="steps" so clients can show resumable message boundaries
+    # without a separate checkpoint table.
+    checkpoint_status: Optional[str] = None
+    checkpoint_created_at: Optional[int] = None
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
 
@@ -299,6 +304,8 @@ class Message(BaseModel):
             "tool_calls": self.tool_calls,
             "redacted_reasoning_content": self.redacted_reasoning_content,
             "provider_data": self.provider_data,
+            "checkpoint_status": self.checkpoint_status,
+            "checkpoint_created_at": self.checkpoint_created_at,
         }
         # Filter out None and empty collections
         message_dict = {
