@@ -11,11 +11,9 @@ if TYPE_CHECKING:
 
 
 def extract_thinking_content(content: str) -> Tuple[Optional[str], str]:
-    """Extract all thinking content from response text between <think> or <thinking> tags.
+    """Extract thinking content from response text between <think> or <thinking> tags.
 
-    Handles multiple <think>...</think> or <thinking>...</thinking> blocks that
-    accumulate when models produce thinking content across tool-call iterations
-    (e.g., qwen3 via vLLM). Also handles <thinking> tags used by some providers.
+    Handles multiple blocks that accumulate across tool-call iterations.
     """
     if not content:
         return None, content
@@ -28,12 +26,12 @@ def extract_thinking_content(content: str) -> Tuple[Optional[str], str]:
     else:
         return None, content
 
+    # Extract all thinking blocks
     matches = pattern.findall(content)
+    if not matches:
+        return None, content
 
-    reasoning_content: Optional[str] = None
-    if matches:
-        reasoning_content = "\n".join(m.strip() for m in matches if m.strip())
-
+    reasoning_content = "\n".join(m.strip() for m in matches if m.strip())
     output_content = pattern.sub("", content).strip()
 
     return reasoning_content, output_content
