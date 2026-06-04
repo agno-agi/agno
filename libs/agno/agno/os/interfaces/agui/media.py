@@ -7,18 +7,6 @@ from ag_ui.core.types import Message as AGUIMessage
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_warning
 
-# MIME types whose Agno `format` differs from the raw subtype (e.g. OpenAI audio expects "mp3")
-_MIME_TO_FORMAT: Dict[str, str] = {
-    "audio/mpeg": "mp3",
-}
-
-
-def _format_from_mime_type(mime_type: Optional[str]) -> Optional[str]:
-    """Return the Agno media `format` for a MIME type (e.g. 'image/png' -> 'png'), or None."""
-    if not mime_type or "/" not in mime_type:
-        return None
-    return _MIME_TO_FORMAT.get(mime_type, mime_type.split("/")[-1])
-
 
 def _decode_agui_base64_content(value: str) -> Tuple[Optional[bytes], Optional[str]]:
     """Decode an AG-UI base64 value and return bytes plus any data URL MIME type."""
@@ -98,7 +86,6 @@ def _extract_agui_media(part: Any, media_cls: Type[_AGUIMedia], sanitize_mime: b
             extra_kwargs["filename"] = filename
 
     return media_cls(
-        format=_format_from_mime_type(mime_type),
         mime_type=_safe_file_mime_type(mime_type) if sanitize_mime else mime_type,
         **extra_kwargs,
         **content_kwargs,
@@ -121,7 +108,6 @@ def _extract_agui_binary(part: Any, media: AGUIUserInputMedia) -> None:
             return
 
     binary_mime_type = mime_type or data_url_mime_type
-    media_format = _format_from_mime_type(binary_mime_type)
     content_kwargs: Dict[str, Any]
     if url:
         content_kwargs = {"url": url}
@@ -131,18 +117,17 @@ def _extract_agui_binary(part: Any, media: AGUIUserInputMedia) -> None:
         return
 
     if binary_mime_type and binary_mime_type.startswith("image/"):
-        media.images.append(Image(id=binary_id, mime_type=binary_mime_type, format=media_format, **content_kwargs))
+        media.images.append(Image(id=binary_id, mime_type=binary_mime_type, **content_kwargs))
     elif binary_mime_type and binary_mime_type.startswith("audio/"):
-        media.audio.append(Audio(id=binary_id, mime_type=binary_mime_type, format=media_format, **content_kwargs))
+        media.audio.append(Audio(id=binary_id, mime_type=binary_mime_type, **content_kwargs))
     elif binary_mime_type and binary_mime_type.startswith("video/"):
-        media.videos.append(Video(id=binary_id, mime_type=binary_mime_type, format=media_format, **content_kwargs))
+        media.videos.append(Video(id=binary_id, mime_type=binary_mime_type, **content_kwargs))
     else:
         media.files.append(
             File(
                 id=binary_id,
                 mime_type=_safe_file_mime_type(binary_mime_type),
                 filename=filename,
-                format=media_format,
                 **content_kwargs,
             )
         )
