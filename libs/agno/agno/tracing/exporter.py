@@ -27,6 +27,10 @@ class DatabaseSpanExporter(SpanExporter):
         """
         self.db = db
         self._shutdown = False
+        # Hold strong references to pending async export tasks so the
+        # event loop's weak-reference tracking does not garbage-collect
+        # them before they complete (see #8182).
+        self._pending_tasks: set[asyncio.Task[None]] = set()
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         """
@@ -104,17 +108,17 @@ class DatabaseSpanExporter(SpanExporter):
             raise
 
     def _export_async(self, spans_by_trace: Dict[str, List[Span]]) -> None:
-        """Handle async database export"""
+        """Handle async database export — fire-and-forget with strong task reference."""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're in an async context, schedule the coroutine
-                asyncio.create_task(self._do_async_export(spans_by_trace))
-            else:
-                # No running loop, run in new loop
-                loop.run_until_complete(self._do_async_export(spans_by_trace))
+            loop = asyncio.get_running_loop()
+            # Schedule the coroutine and hold a strong reference so the
+            # event loop's weak-reference task tracking does not GC the
+            # task before it completes (fixes #8182).
+            task = asyncio.ensure_future(self._do_async_export(spans_by_trace))
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
         except RuntimeError:
-            # No event loop, create new one
+            # No running event loop — run synchronously in a new loop.
             try:
                 asyncio.run(self._do_async_export(spans_by_trace))
             except Exception as e:
