@@ -31,7 +31,6 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
-from agno.media import Image
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
@@ -194,8 +193,10 @@ def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
     """
     for msg in reversed(messages):
         if msg.role == "user" and msg.content is not None:
+            # UserMessage.content is Union[str, List[InputContent]]
             if isinstance(msg.content, str):
                 return msg.content
+            # Multimodal: extract text parts
             if isinstance(msg.content, list):
                 text_parts = []
                 for part in msg.content:
