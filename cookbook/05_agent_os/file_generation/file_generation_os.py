@@ -38,6 +38,7 @@ file_agent = Agent(
     instructions=[
         "When asked to create a file, pick the right generator tool for the requested format.",
         "Always provide meaningful content and a descriptive filename.",
+        "When generating HTML files, produce a complete HTML5 document with doctype, html, head, and body tags.",
         "Briefly explain what was generated.",
     ],
     markdown=True,

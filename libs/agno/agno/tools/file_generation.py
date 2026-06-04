@@ -348,18 +348,12 @@ class FileGenerationTools(Toolkit):
             logger.exception("Failed to generate text file")
             return ToolResult(content=f"Error generating text file: {e}")
 
-    def generate_html_file(
-        self, content: str, filename: Optional[str] = None, title: Optional[str] = None
-    ) -> ToolResult:
+    def generate_html_file(self, content: str, filename: Optional[str] = None) -> ToolResult:
         """Generate an HTML file from the provided content.
 
-        If the content already starts with a full HTML document (``<!doctype`` or ``<html``),
-        it is used as-is. Otherwise the content is wrapped in a minimal HTML5 skeleton.
-
         Args:
-            content: The HTML markup or body content to write to the file.
+            content: A complete, valid HTML5 document (including doctype, html, head, and body tags).
             filename: Optional filename for the generated file. If not provided, a UUID will be used.
-            title: Optional document title. Only used when content is wrapped in a skeleton.
 
         Returns:
             ToolResult: Result containing the generated HTML file as a FileArtifact.
@@ -367,27 +361,8 @@ class FileGenerationTools(Toolkit):
         try:
             log_debug(f"Generating HTML file with content length: {len(content)}")
 
-            stripped = content.lstrip()
-            if stripped[:9].lower().startswith(("<!doctype", "<html")):
-                html_content = content
-            else:
-                page_title = title or "Generated Document"
-                html_content = (
-                    "<!DOCTYPE html>\n"
-                    '<html lang="en">\n'
-                    "<head>\n"
-                    '    <meta charset="utf-8">\n'
-                    '    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
-                    f"    <title>{page_title}</title>\n"
-                    "</head>\n"
-                    "<body>\n"
-                    f"{content}\n"
-                    "</body>\n"
-                    "</html>\n"
-                )
-
             return self._create_file_artifact(
-                html_content,
+                content,
                 filename,
                 file_type="html",
                 mime_type="text/html",
