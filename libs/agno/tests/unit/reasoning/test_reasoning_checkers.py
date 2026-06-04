@@ -311,6 +311,38 @@ def test_vllm_matched_by_openai_checker():
     assert is_openai_reasoning_model(model) is True
 
 
+def test_dashscope_with_enable_thinking():
+    """DashScope extends OpenAILike, detected when enable_thinking=True."""
+    from agno.models.dashscope import DashScope
+
+    model = DashScope(id="qwen-plus", enable_thinking=True)
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_dashscope_without_enable_thinking():
+    """DashScope without enable_thinking returns False for non-reasoning model IDs."""
+    from agno.models.dashscope import DashScope
+
+    model = DashScope(id="qwen-plus")
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_dashscope_with_qwen3_model():
+    """DashScope with qwen3 in model ID is auto-detected as reasoning."""
+    from agno.models.dashscope import DashScope
+
+    model = DashScope(id="qwen3-72b")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_dashscope_with_qwq_model():
+    """DashScope with qwq model ID is auto-detected as reasoning."""
+    from agno.models.dashscope import DashScope
+
+    model = DashScope(id="qwq-32b-preview")
+    assert is_openai_reasoning_model(model) is True
+
+
 def test_openai_like_with_minimax_m3():
     """Test OpenAILike model with minimax-m3 in ID returns True."""
     from agno.models.openai.like import OpenAILike
