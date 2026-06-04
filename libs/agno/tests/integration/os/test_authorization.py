@@ -3096,3 +3096,68 @@ def test_jwks_parameter_takes_precedence_over_env(test_agent, rsa_key_pair, jwks
 
     # Should work because jwks_file parameter has the correct key
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Regression: resource-type detection must anchor to the first path segment.
+#
+# A naive substring check ("/agents" in path) misclassified unrelated routes
+# whose id segment merely starts with a resource-family name (e.g. a session
+# whose id is "agents-1" -> path "/sessions/agents-1"). The route would be
+# tagged as an *agents* route with no resource id, and the list-endpoint
+# fallback would wave it through WITHOUT the scope the route actually requires
+# ("sessions:read"). These tests pin the bypass shut.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("session_id", ["agents-1", "agents", "teams-x", "workflows_7"])
+def test_session_id_resembling_resource_family_is_not_a_bypass(test_agent, session_id):
+    """A caller without sessions:read must be denied on /sessions/<id> even when
+    <id> starts with a resource-family name. Previously this returned 404 (the
+    authz gate was skipped and the handler was reached); it must be 403."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    token = create_jwt_token(scopes=["config:read"])  # explicitly NOT sessions:read
+    response = client.get(f"/sessions/{session_id}", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403, response.text
+
+
+def test_session_with_proper_scope_still_reaches_handler(test_agent):
+    """The fix must not over-block: with sessions:read, /sessions/agents-1 passes
+    the authz gate (handler then 404s on the nonexistent session)."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    token = create_jwt_token(scopes=["sessions:read"])
+    response = client.get("/sessions/agents-1", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code != 403, response.text
+
+
+def test_real_agents_routes_unaffected_by_detection_fix(test_agent):
+    """Genuine /agents routes still classify as the agents resource family."""
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    # per-resource read on the real agent is allowed with a global agents:read
+    ok = create_jwt_token(scopes=["agents:read"])
+    assert client.get("/agents/test-agent", headers={"Authorization": f"Bearer {ok}"}).status_code == 200
+
+    # without agents:read it is denied (not silently allowed)
+    no = create_jwt_token(scopes=["config:read"])
+    assert client.get("/agents/test-agent", headers={"Authorization": f"Bearer {no}"}).status_code == 403

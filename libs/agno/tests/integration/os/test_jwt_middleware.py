@@ -2148,3 +2148,74 @@ def test_audience_verification_missing_custom_audience_claim(jwt_test_agent):
 
     assert response.status_code == 401
     assert 'missing the "custom_aud" claim' in response.json()["detail"]
+
+
+def test_verify_audience_without_expected_audience_fails_closed():
+    """verify_audience=True with no configured audience and no AgentOS id on
+    app.state must REJECT (fail closed), not silently skip the audience check.
+
+    Without this, the middleware would resolve expected_audience to None and the
+    validator would accept a token minted for any audience."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.get("/whoami")
+    def whoami():
+        return {"ok": True}
+
+    # Manual setup: no AgentOS, so request.app.state has no agent_os_id, and we
+    # deliberately don't pass an audience.
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        verify_audience=True,  # enabled...
+        # ...but no audience= and no AgentOS id to fall back on
+        authorization=False,
+    )
+
+    client = TestClient(app)
+
+    token = jwt.encode(
+        {"sub": "u", "aud": "some-other-audience", "exp": datetime.now(UTC) + timedelta(hours=1)},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    response = client.get("/whoami", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401, response.text
+    assert "audience" in response.json()["detail"].lower()
+
+
+def test_verify_audience_with_configured_audience_still_enforces():
+    """Sanity: when an audience IS configured, verification still works both ways."""
+    from fastapi import FastAPI
+
+    app = FastAPI()
+
+    @app.get("/whoami")
+    def whoami():
+        return {"ok": True}
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience="expected-os",
+        authorization=False,
+    )
+    client = TestClient(app)
+
+    good = jwt.encode(
+        {"sub": "u", "aud": "expected-os", "exp": datetime.now(UTC) + timedelta(hours=1)},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    bad = jwt.encode(
+        {"sub": "u", "aud": "wrong-os", "exp": datetime.now(UTC) + timedelta(hours=1)},
+        JWT_SECRET,
+        algorithm="HS256",
+    )
+    assert client.get("/whoami", headers={"Authorization": f"Bearer {good}"}).status_code == 200
+    assert client.get("/whoami", headers={"Authorization": f"Bearer {bad}"}).status_code == 401

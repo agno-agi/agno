@@ -698,6 +698,26 @@ class JWTMiddleware(BaseHTTPMiddleware):
             return hashlib.sha256(token.encode()).hexdigest()[:12]
         return None
 
+    # Resource families that get per-resource scopes + list filtering. Order is
+    # irrelevant — a path has at most one leading family segment.
+    _RESOURCE_TYPES = ("agents", "teams", "workflows")
+
+    def _detect_resource_type(self, path: str) -> Optional[str]:
+        """Classify a path's resource family by its FIRST segment, not a substring.
+
+        Must be a leading-segment match (``/agents`` or ``/agents/...``). A naive
+        ``"/agents" in path`` substring test misclassifies unrelated routes whose
+        id segment merely contains the family name — e.g. ``/sessions/agents-1``
+        (a session whose id starts with "agents") would be tagged as an *agents*
+        route with no resource id, and the list-endpoint fallback would then wave
+        it through without the scope the route actually requires. Anchoring to the
+        first segment closes that bypass.
+        """
+        for rt in self._RESOURCE_TYPES:
+            if path == f"/{rt}" or path.startswith(f"/{rt}/"):
+                return rt
+        return None
+
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
         Extract resource ID from a path.
@@ -920,6 +940,21 @@ class JWTMiddleware(BaseHTTPMiddleware):
             expected_audience = None
             if self.verify_audience:
                 expected_audience = self.audience or agent_os_id
+                # Fail closed: audience verification was explicitly requested but
+                # there is nothing to verify against (no configured audience and no
+                # AgentOS id on app.state). Silently skipping the check would accept
+                # tokens minted for any audience, defeating the point of enabling it.
+                if not expected_audience:
+                    log_warning(
+                        "verify_audience=True but no audience is configured and no AgentOS id is "
+                        "available; rejecting the request instead of skipping the audience check."
+                    )
+                    return self._create_error_response(
+                        401,
+                        "Audience verification is enabled but no expected audience is configured",
+                        origin,
+                        cors_allowed_origins,
+                    )
             payload: Dict[str, Any] = self.validator.validate_token(token, expected_audience)  # type: ignore
 
             # Extract standard claims and store in request.state
@@ -975,16 +1010,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             # RBAC scope checking (only if enabled)
             if self.authorization:
                 # Extract resource type and ID from path
-                resource_type = None
+                resource_type = self._detect_resource_type(path)
                 resource_id = None
-
-                if "/agents" in path:
-                    resource_type = "agents"
-                elif "/teams" in path:
-                    resource_type = "teams"
-                elif "/workflows" in path:
-                    resource_type = "workflows"
-
                 if resource_type:
                     resource_id = self._extract_resource_id_from_path(path, resource_type)
 
