@@ -56,11 +56,27 @@ def scope_to_obj_act(scope: str) -> Tuple[str, str]:
     if scope == "agent_os:admin":
         return ("*", "*")
     parts = scope.split(":")
+    if any(part == "" for part in parts):
+        raise ValueError(f"Unrecognised scope (empty component): {scope!r}")
     if len(parts) == 2:
-        return (f"{parts[0]}/*", parts[1])
-    if len(parts) == 3:
-        return (f"{parts[0]}/{parts[1]}", parts[2])
-    raise ValueError(f"Unrecognised scope: {scope!r}")
+        obj, act = f"{parts[0]}/*", parts[1]
+    elif len(parts) == 3:
+        obj, act = f"{parts[0]}/{parts[1]}", parts[2]
+    else:
+        raise ValueError(f"Unrecognised scope: {scope!r}")
+    # Reject an action wildcard. In Casbin's matcher ``*`` means "all actions",
+    # but the scope provider compares actions literally, so the SAME scope string
+    # (e.g. ``agents:*:*``) would grant everything here and nothing there. Refuse
+    # it so a managed role can't carry a silently-divergent broad grant; the one
+    # documented way to grant all actions is ``agent_os:admin``.
+    if act == "*":
+        raise ValueError(
+            f"Action wildcard '*' is not allowed in scope {scope!r}: it would mean 'all actions' "
+            f"under Casbin but nothing under the scope provider. List explicit actions "
+            f"(read/run/write/delete), use a resource-id wildcard like 'agents:*:run', or grant "
+            f"'agent_os:admin'."
+        )
+    return (obj, act)
 
 
 class CasbinAuthorizationProvider(AuthorizationProvider):
@@ -168,12 +184,18 @@ class CasbinAuthorizationProvider(AuthorizationProvider):
 
         ids: Set[str] = set()
         for perm in perms:
-            # perm is [sub, obj, act, ...]
-            p_obj = perm[1] if len(perm) > 1 else None
-            p_act = perm[2] if len(perm) > 2 else None
-            if p_obj is None:
+            # perm is [sub, obj, act, ...]. A row missing obj or act is malformed;
+            # skip it. Crucially we do NOT treat a missing/None act as "matches any
+            # action" — that was a fail-open that let a malformed policy row grant
+            # ids for actions it never authorised.
+            if len(perm) < 3:
                 continue
-            if action and p_act not in (None, action, "*"):
+            p_obj, p_act = perm[1], perm[2]
+            if p_obj is None or p_act is None:
+                continue
+            # When a concrete action is requested, only count grants for that exact
+            # action or a true Casbin action-wildcard ("*").
+            if action is not None and p_act != action and p_act != "*":
                 continue
             if p_obj in ("*", f"{rt}/*", rt):
                 return {"*"}

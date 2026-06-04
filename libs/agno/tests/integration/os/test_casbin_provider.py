@@ -184,3 +184,75 @@ def test_end_to_end_agentos_uses_casbin(tmp_path):
     # alice (member) may run research-agent; mallory (no role) may not.
     assert client.post("/agents/research-agent/runs", headers=token("alice"), data={"message": "hi"}).status_code == 200
     assert client.post("/agents/research-agent/runs", headers=token("mallory"), data={"message": "hi"}).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Hardening: scope_to_obj_act + accessible_resource_ids edge cases
+# ---------------------------------------------------------------------------
+
+from agno.os.authz.casbin_provider import scope_to_obj_act  # noqa: E402
+
+
+class _FakeEnforcer:
+    """Minimal enforcer stand-in to feed accessible_resource_ids exact policy rows
+    (including malformed ones the real management API wouldn't normally produce)."""
+
+    def __init__(self, perms):
+        self._perms = perms
+
+    def enforce(self, *args):  # provider __init__ only checks this attr exists
+        return False
+
+    def get_implicit_permissions_for_user(self, sub):
+        return self._perms
+
+
+def test_accessible_ids_ignores_malformed_policy_rows():
+    """A policy row missing its action column must NOT grant ids. Previously a
+    None action was treated as 'matches any action' — a fail-open."""
+    fake = _FakeEnforcer(
+        [
+            ["alice", "agents/secret"],  # malformed: no action -> must be ignored
+            ["alice", "agents/secret2", None],  # explicit None action -> ignored
+            ["alice", "agents/ok", "read"],  # well-formed
+        ]
+    )
+    prov = CasbinAuthorizationProvider(fake)
+    ids = prov.accessible_resource_ids(_ctx("alice", "agents", None, "read"))
+    assert ids == {"ok"}, f"malformed rows leaked ids: {ids}"
+
+
+def test_accessible_ids_honours_action_and_wildcard():
+    fake = _FakeEnforcer(
+        [
+            ["alice", "agents/a1", "read"],
+            ["alice", "agents/a2", "run"],
+            ["alice", "teams/t1", "*"],  # action wildcard (e.g. admin-style row)
+        ]
+    )
+    prov = CasbinAuthorizationProvider(fake)
+    assert prov.accessible_resource_ids(_ctx("alice", "agents", None, "read")) == {"a1"}
+    assert prov.accessible_resource_ids(_ctx("alice", "agents", None, "run")) == {"a2"}
+    # '*' action row matches any requested action
+    assert prov.accessible_resource_ids(_ctx("alice", "teams", None, "read")) == {"t1"}
+
+
+def test_scope_to_obj_act_valid_forms():
+    assert scope_to_obj_act("agent_os:admin") == ("*", "*")
+    assert scope_to_obj_act("sessions:write") == ("sessions/*", "write")
+    assert scope_to_obj_act("agents:research-agent:run") == ("agents/research-agent", "run")
+    assert scope_to_obj_act("agents:*:run") == ("agents/*", "run")  # resource-id wildcard is fine
+
+
+def test_scope_to_obj_act_rejects_action_wildcard():
+    """Action '*' would mean all-actions in Casbin but nothing in the scope
+    provider; refuse it so managed roles can't carry a divergent broad grant."""
+    for junk in ("agents:*:*", "agents:research-agent:*", "agents:*"):
+        with pytest.raises(ValueError, match="wildcard"):
+            scope_to_obj_act(junk)
+
+
+def test_scope_to_obj_act_rejects_empty_components():
+    for junk in (":read", "agents:", ":", "agents::run"):
+        with pytest.raises(ValueError):
+            scope_to_obj_act(junk)
