@@ -363,14 +363,15 @@ class Ollama(Model):
         if response_message.get("content") is not None:
             model_response.content = response_message.get("content")
 
-        # Extract thinking content between <think> tags if present
-        if model_response.content and model_response.content.find("<think>") != -1:
+        # Extract thinking content from separate field (gpt-oss, thinking models)
+        if response_message.get("thinking") is not None:
+            model_response.reasoning_content = response_message.get("thinking")
+        # Fallback: extract thinking content between <think> tags if present
+        elif model_response.content and model_response.content.find("<think>") != -1:
             reasoning_content, clean_content = extract_thinking_content(model_response.content)
 
             if reasoning_content:
-                # Store extracted thinking content separately
                 model_response.reasoning_content = reasoning_content
-                # Update main content with clean version
                 model_response.content = clean_content
 
         if response_message.get("tool_calls") is not None:
@@ -414,6 +415,11 @@ class Ollama(Model):
             content_delta = response_message.get("content")
             if content_delta is not None and content_delta != "":
                 model_response.content = content_delta
+
+            # Extract thinking content from separate field (gpt-oss, thinking models)
+            thinking_delta = response_message.get("thinking")
+            if thinking_delta is not None and thinking_delta != "":
+                model_response.reasoning_content = thinking_delta
 
             tool_calls = response_message.get("tool_calls")
             if tool_calls is not None:
