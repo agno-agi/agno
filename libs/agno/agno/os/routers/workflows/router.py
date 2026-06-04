@@ -1025,13 +1025,21 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            for db_workflow in get_workflows(db=os.db, registry=os.registry):
-                try:
-                    workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
-                except Exception:
-                    workflow_id = getattr(db_workflow, "id", "unknown")
-                    logger.exception(f"Error converting workflow {workflow_id} to response")
-                    continue
+            db_workflows = get_workflows(db=os.db, registry=os.registry)
+            if db_workflows:
+                # Apply the same RBAC filtering to DB-loaded workflows (mirrors get_agents);
+                # without this, a caller scoped to a single workflow sees every DB workflow.
+                if getattr(request.state, "authorization_enabled", False):
+                    from agno.os.auth import filter_resources_by_access
+
+                    db_workflows = filter_resources_by_access(request, db_workflows, "workflows")
+                for db_workflow in db_workflows:
+                    try:
+                        workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
+                    except Exception:
+                        workflow_id = getattr(db_workflow, "id", "unknown")
+                        logger.exception(f"Error converting workflow {workflow_id} to response")
+                        continue
 
         return workflows
 

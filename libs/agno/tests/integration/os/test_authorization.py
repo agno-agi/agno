@@ -3161,3 +3161,73 @@ def test_real_agents_routes_unaffected_by_detection_fix(test_agent):
     # without agents:read it is denied (not silently allowed)
     no = create_jwt_token(scopes=["config:read"])
     assert client.get("/agents/test-agent", headers={"Authorization": f"Bearer {no}"}).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Regression: DB-loaded resources must be filtered too.
+#
+# get_agents() filtered both static and DB-loaded agents, but get_teams() and
+# get_workflows() filtered only the static (os.teams/os.workflows) list and
+# appended DB-loaded ("component") resources unfiltered. A caller scoped to a
+# single team/workflow therefore saw EVERY team/workflow stored in the DB. We
+# masquerade a second resource as DB-loaded (monkeypatching the module-level
+# loader the handler imports) and assert it is filtered exactly like the static
+# ones.
+# ---------------------------------------------------------------------------
+
+
+def test_get_teams_filters_db_loaded_teams(test_team, second_team, shared_db, monkeypatch):
+    import agno.team.team as team_mod
+
+    # second_team stands in for a team loaded from the DB (is_component=True path)
+    monkeypatch.setattr(team_mod, "get_teams", lambda **kwargs: [second_team])
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        teams=[test_team],  # only test-team is static
+        db=shared_db,  # BaseDb -> the db-loaded branch runs
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    # scoped to test-team only: the DB-loaded second-team must NOT leak
+    scoped = create_jwt_token(scopes=["teams:test-team:read"])
+    r = client.get("/teams", headers={"Authorization": f"Bearer {scoped}"})
+    assert r.status_code == 200, r.text
+    ids = {t["id"] for t in r.json()}
+    assert "second-team" not in ids, f"DB-loaded team leaked to a scoped caller: {ids}"
+    assert ids == {"test-team"}
+
+    # global teams:read still sees the DB-loaded team (not over-filtered)
+    glob = create_jwt_token(scopes=["teams:read"])
+    r2 = client.get("/teams", headers={"Authorization": f"Bearer {glob}"})
+    assert r2.status_code == 200, r2.text
+    assert "second-team" in {t["id"] for t in r2.json()}
+
+
+def test_get_workflows_filters_db_loaded_workflows(test_workflow, second_workflow, shared_db, monkeypatch):
+    import agno.workflow.workflow as wf_mod
+
+    monkeypatch.setattr(wf_mod, "get_workflows", lambda **kwargs: [second_workflow])
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        workflows=[test_workflow],  # only test-workflow is static
+        db=shared_db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+    )
+    client = TestClient(agent_os.get_app())
+
+    scoped = create_jwt_token(scopes=["workflows:test-workflow:read"])
+    r = client.get("/workflows", headers={"Authorization": f"Bearer {scoped}"})
+    assert r.status_code == 200, r.text
+    ids = {w["id"] for w in r.json()}
+    assert "second-workflow" not in ids, f"DB-loaded workflow leaked to a scoped caller: {ids}"
+    assert ids == {"test-workflow"}
+
+    glob = create_jwt_token(scopes=["workflows:read"])
+    r2 = client.get("/workflows", headers={"Authorization": f"Bearer {glob}"})
+    assert r2.status_code == 200, r2.text
+    assert "second-workflow" in {w["id"] for w in r2.json()}
