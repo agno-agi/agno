@@ -175,6 +175,7 @@ def get_base_router(
             os_database=os.db.id if os.db else None,
             databases=list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             chat=os.config.chat if os.config else None,
+            manifest=os.config.manifest if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
             knowledge=os._get_knowledge_config(),
