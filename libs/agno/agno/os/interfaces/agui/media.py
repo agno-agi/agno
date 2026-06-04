@@ -61,21 +61,25 @@ def extract_agui_media(
                         content = _decode_base64(value)
 
             # 4. Create Agno media object and append to correct list
+            # Route by part.type first (typed content), fall back to MIME (binary content)
             if url or content:
                 kwargs = {"url": url} if url else {"content": content}
                 if filename:
                     kwargs["filename"] = filename
+                if mime:
+                    kwargs["mime_type"] = mime
 
-                if mime and mime.startswith("image/"):
-                    images.append(Image(mime_type=mime, **kwargs))
-                elif mime and mime.startswith("audio/"):
-                    audio.append(Audio(mime_type=mime, **kwargs))
-                elif mime and mime.startswith("video/"):
-                    videos.append(Video(mime_type=mime, **kwargs))
+                if part.type == "image" or (mime and mime.startswith("image/")):
+                    images.append(Image(**kwargs))
+                elif part.type == "audio" or (mime and mime.startswith("audio/")):
+                    audio.append(Audio(**kwargs))
+                elif part.type == "video" or (mime and mime.startswith("video/")):
+                    videos.append(Video(**kwargs))
                 else:
                     # File validates MIME — pass None for unsupported types to avoid raising
-                    safe_mime = mime if mime in File.valid_mime_types() else None
-                    files.append(File(mime_type=safe_mime, **kwargs))
+                    if mime and mime not in File.valid_mime_types():
+                        kwargs["mime_type"] = None
+                    files.append(File(**kwargs))
 
         return images, audio, videos, files
 

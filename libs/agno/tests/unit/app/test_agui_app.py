@@ -1858,12 +1858,7 @@ async def test_no_delta_when_state_unchanged():
     assert EventType.STATE_SNAPSHOT in event_types
 
 
-# =============================================================================
-# Multimodal Media Extraction Tests
-# =============================================================================
-
-
-def test_extract_user_input_and_images():
+def test_extract_agui_media_with_images():
     """Test extraction preserves image parts from the latest multimodal user message."""
     image_bytes = b"fake-image-bytes"
     messages = [
@@ -1893,7 +1888,7 @@ def test_extract_user_input_and_images():
     assert images[1].mime_type == "image/jpeg"
 
 
-def test_extract_media_from_multimodal_content():
+def test_extract_agui_media_all_types():
     """Test extraction preserves all AG-UI media input content types."""
     image_bytes = b"fake-image-bytes"
     audio_bytes = b"fake-audio-bytes"
@@ -1940,7 +1935,7 @@ def test_extract_media_from_multimodal_content():
     assert files[0].mime_type == "application/pdf"
 
 
-def test_extract_media_routes_binary_content_by_mime_type():
+def test_extract_agui_media_binary_content():
     """Test AG-UI binary content is routed to the matching Agno media bucket."""
     image_bytes = b"binary-image"
     audio_bytes = b"binary-audio"
@@ -1983,7 +1978,31 @@ def test_extract_media_routes_binary_content_by_mime_type():
     assert files[0].filename == "archive.bin"
 
 
-def test_extract_media_skips_malformed_base64():
+def test_extract_agui_media_url_without_mime():
+    """Test URL sources without mime_type route by part.type, not MIME."""
+    messages = [
+        UserMessage(
+            id="u1",
+            content=[
+                ImageInputContent(source=InputContentUrlSource(value="https://example.com/cat.png")),
+                AudioInputContent(source=InputContentUrlSource(value="https://example.com/song.mp3")),
+                VideoInputContent(source=InputContentUrlSource(value="https://example.com/movie.mp4")),
+            ],
+        ),
+    ]
+
+    images, audio, videos, files = extract_agui_media(messages)
+
+    assert len(images) == 1
+    assert images[0].url == "https://example.com/cat.png"
+    assert len(audio) == 1
+    assert audio[0].url == "https://example.com/song.mp3"
+    assert len(videos) == 1
+    assert videos[0].url == "https://example.com/movie.mp4"
+    assert len(files) == 0
+
+
+def test_extract_agui_media_skips_malformed_base64():
     """Test a content part with undecodable base64 data is skipped, not raised."""
     messages = [
         UserMessage(
@@ -2082,7 +2101,7 @@ def _assert_media_forwarded(captured_kwargs):
 
 
 @pytest.mark.asyncio
-async def test_run_agent_passes_agui_images_to_agent():
+async def test_run_agent_passes_agui_media_to_agent():
     """Test the AG-UI router forwards extracted media parts to Agent.arun."""
     fake_agent = _FakeRunner()
     events = [event async for event in run_agent(fake_agent, _media_run_input())]
@@ -2091,7 +2110,7 @@ async def test_run_agent_passes_agui_images_to_agent():
 
 
 @pytest.mark.asyncio
-async def test_run_team_passes_agui_images_to_team():
+async def test_run_team_passes_agui_media_to_team():
     """Test the AG-UI router forwards extracted media parts to Team.arun."""
     fake_team = _FakeRunner()
     events = [event async for event in run_team(fake_team, _media_run_input())]
