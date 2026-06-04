@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.6.9"
+version = "2.6.11"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -197,7 +197,7 @@ chonkie = [
 ]
 
 # Dependencies for AG-UI integration
-agui = ["ag-ui-protocol"]
+agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
 
 # Dependencies for A2A integration
 a2a = ["a2a-sdk>=0.3.0,<1.0"]
@@ -507,6 +507,7 @@ module = [
   "imghdr.*",
   "infinity_client.*",
   "jira.*",
+  "jsonpatch.*",
   "jwt.*",
   "kubernetes.*",
   "lancedb.*",
