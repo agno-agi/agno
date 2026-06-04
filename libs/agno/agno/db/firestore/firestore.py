@@ -1931,6 +1931,9 @@ class FirestoreDb(BaseDb):
                 )
                 new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
                 should_update_name = new_level > existing_level
+                should_update_run_id = trace.run_id is not None and (
+                    existing_data.get("run_id") is None or new_level > existing_level
+                )
 
                 # Parse existing start_time to calculate correct duration
                 existing_start_time_str = existing_data.get("start_time")
@@ -1954,7 +1957,7 @@ class FirestoreDb(BaseDb):
                 # that the existing row left blank. Otherwise a later upsert from
                 # a child span (e.g. a post-hook agent's run with a different
                 # session_id) would overwrite the trace's already-correct context.
-                if existing_data.get("run_id") is None and trace.run_id is not None:
+                if should_update_run_id:
                     update_values["run_id"] = trace.run_id
                 if existing_data.get("session_id") is None and trace.session_id is not None:
                     update_values["session_id"] = trace.session_id
