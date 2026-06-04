@@ -50,4 +50,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="test_file_gen_os:app", reload=True)
+    agent_os.serve(app="filegenerationos:app", reload=True)
