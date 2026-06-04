@@ -4,14 +4,12 @@ from unittest.mock import MagicMock
 import pytest
 from ag_ui.core import EventType, RunAgentInput
 from ag_ui.core.types import (
-    AssistantMessage,
     AudioInputContent,
     BinaryInputContent,
     DocumentInputContent,
     ImageInputContent,
     InputContentDataSource,
     InputContentUrlSource,
-    SystemMessage,
     TextInputContent,
     UserMessage,
     VideoInputContent,
