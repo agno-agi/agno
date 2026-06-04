@@ -687,13 +687,17 @@ def test_ollama_with_deepseek_r1():
     assert is_ollama_reasoning_model(model) is True
 
 
-def test_ollama_with_qwen2_5_coder():
-    """Test Ollama model with qwen2.5-coder in ID returns True."""
+def test_ollama_with_qwen2_5_coder_is_not_reasoning():
+    """Test Ollama model with qwen2.5-coder in ID returns False.
+
+    qwen2.5-coder is a code-focused model without <think> tag support.
+    Only Qwen3 and QwQ models have thinking capability.
+    """
     model = MockModel(
         class_name="Ollama",
         model_id="qwen2.5-coder:32b",
     )
-    assert is_ollama_reasoning_model(model) is True
+    assert is_ollama_reasoning_model(model) is False
 
 
 def test_ollama_with_openthinker():

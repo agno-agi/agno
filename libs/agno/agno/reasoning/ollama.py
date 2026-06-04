@@ -16,7 +16,6 @@ def is_ollama_reasoning_model(reasoning_model: Model) -> bool:
         "qwq" in model_id_lower
         or "qwen3" in model_id_lower
         or "deepseek-r1" in model_id_lower
-        or "qwen2.5-coder" in model_id_lower
         or "openthinker" in model_id_lower
     )
 
