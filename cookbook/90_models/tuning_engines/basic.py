@@ -3,13 +3,11 @@
 from os import getenv
 
 from agno.agent import Agent
-from agno.models.openai import OpenAILike
+from agno.models.tuning_engines import TuningEngines
 
 agent = Agent(
-    model=OpenAILike(
+    model=TuningEngines(
         id=getenv("TUNING_ENGINES_MODEL", "gpt-4o"),
-        api_key=getenv("TUNING_ENGINES_API_KEY"),
-        base_url="https://api.tuningengines.com/v1",
     ),
     markdown=True,
 )

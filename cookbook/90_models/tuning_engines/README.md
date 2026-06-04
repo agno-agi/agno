@@ -17,6 +17,12 @@ export TUNING_ENGINES_API_KEY=sk-te-your-inference-key
 export TUNING_ENGINES_MODEL=gpt-4o
 ```
 
+If you run Tuning Engines behind a custom host, also set:
+
+```shell
+export TUNING_ENGINES_BASE_URL=https://your-host.example.com/v1
+```
+
 ## 3. Install libraries
 
 ```shell
@@ -27,4 +33,13 @@ uv pip install -U agno openai
 
 ```shell
 python cookbook/90_models/tuning_engines/basic.py
+```
+
+The example uses the dedicated `TuningEngines` model provider:
+
+```python
+from agno.agent import Agent
+from agno.models.tuning_engines import TuningEngines
+
+agent = Agent(model=TuningEngines(id="gpt-4o"))
 ```
