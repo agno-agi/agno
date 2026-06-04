@@ -634,25 +634,27 @@ class JWTMiddleware(BaseHTTPMiddleware):
         required_scopes: List[str],
         scopes: List[str],
         token: Optional[str],
+        claims: Optional[dict] = None,
     ) -> None:
         """Record one authorization decision to the audit sink (if configured).
 
         Captures the principal, route, required scopes, and a NON-secret token
-        reference (a short SHA-256 of the token, never the token itself) so you
-        can tell which token was used without storing the credential. Never
-        raises into the request path.
+        reference so you can tell which token was used without storing the
+        credential. The reference is the token's ``jti`` (a standard, opaque token
+        id) when the token carries one — stable, correlatable to the issuer's logs,
+        and revocation-friendly — falling back to a short SHA-256 of the token
+        otherwise. Never the token itself, and never raises into the request path.
         """
         state = getattr(getattr(request, "app", None), "state", None)
         sink = getattr(state, "authz_audit", None) if state is not None else None
         if sink is None:
             return
         try:
-            import hashlib
             import time
 
             from agno.os.authz.audit import AuditEvent
 
-            token_ref = hashlib.sha256(token.encode()).hexdigest()[:12] if token else None
+            token_ref = self._token_reference(token, claims)
             sink.record(
                 AuditEvent(
                     action="access.allowed" if allowed else "access.denied",
@@ -664,6 +666,26 @@ class JWTMiddleware(BaseHTTPMiddleware):
             )
         except Exception as e:  # pragma: no cover - audit must never break requests
             log_debug(f"decision audit failed: {e}")
+
+    @staticmethod
+    def _token_reference(token: Optional[str], claims: Optional[dict]) -> Optional[str]:
+        """A non-secret reference to the presented token, for the decision trail.
+
+        Prefer the token's ``jti`` (RFC 7519 JWT ID): it's an opaque identifier the
+        issuer already minted for exactly this purpose, so it correlates to the
+        issuer's own logs and any revocation list. When the token has no ``jti``,
+        fall back to a short SHA-256 of the raw token so we can still tell two
+        distinct tokens apart — without storing the credential itself.
+        """
+        if claims:
+            jti = claims.get("jti")
+            if jti:
+                return str(jti)
+        if token:
+            import hashlib
+
+            return hashlib.sha256(token.encode()).hexdigest()[:12]
+        return None
 
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
@@ -1008,6 +1030,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                         required_scopes=required_scopes,
                         scopes=scopes,
                         token=token,
+                        claims=payload,
                     )
 
                     if not has_access:

@@ -34,15 +34,15 @@ class _CapturingSink(AuditSink):
         self.events.append(event)
 
 
-def _token(sub: str) -> str:
-    return jwt.encode(
-        {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
-        SECRET, algorithm="HS256",
-    )
+def _token(sub: str, jti: str | None = None) -> str:
+    claims = {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)}
+    if jti is not None:
+        claims["jti"] = jti
+    return jwt.encode(claims, SECRET, algorithm="HS256")
 
 
-def _auth(sub: str) -> dict:
-    return {"Authorization": f"Bearer {_token(sub)}"}
+def _auth(sub: str, jti: str | None = None) -> dict:
+    return {"Authorization": f"Bearer {_token(sub, jti)}"}
 
 
 def test_store_emits_change_events_with_actor_and_diff():
@@ -144,10 +144,9 @@ def test_http_api_records_actor_from_jwt():
     ]
 
 
-def test_decision_audit_records_allow_and_deny():
-    """Each authorization decision (allow/deny) is recorded with the principal and
-    a non-secret token reference when an audit sink is on AuthorizationConfig."""
-    sink = _CapturingSink()
+def _decision_os(sink):
+    """An AgentOS where viewer can read agents but not delete sessions, with the
+    given sink wired for decision audit."""
     store = ManagedRoleStore()
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.assign("bob", "viewer")
@@ -168,6 +167,14 @@ def test_decision_audit_records_allow_and_deny():
             audit=sink,  # <- decision audit
         ),
     )
+    return store, agent_os
+
+
+def test_decision_audit_records_allow_and_deny():
+    """Each authorization decision (allow/deny) is recorded with the principal and
+    a non-secret token reference when an audit sink is on AuthorizationConfig."""
+    sink = _CapturingSink()
+    _, agent_os = _decision_os(sink)
     client = TestClient(agent_os.get_app())
 
     client.get("/agents/research-agent", headers=_auth("bob"))  # allowed (viewer reads)
@@ -182,6 +189,106 @@ def test_decision_audit_records_allow_and_deny():
     assert "sessions:delete" in (denied.metadata.get("required") or [])
     # a token reference is captured, but NOT the raw token
     assert denied.metadata.get("token") and len(denied.metadata["token"]) <= 16
+
+
+def test_decision_token_ref_prefers_jti_over_hash():
+    """The token reference is the token's jti when present (so it correlates to the
+    issuer's logs); only without a jti do we fall back to a short hash."""
+    sink = _CapturingSink()
+    _, agent_os = _decision_os(sink)
+    client = TestClient(agent_os.get_app())
+
+    client.get("/agents/research-agent", headers=_auth("bob", jti="tok-abc-123"))  # has jti
+    client.get("/agents/research-agent", headers=_auth("bob"))  # no jti -> hash
+
+    refs = [e.metadata.get("token") for e in sink.events if e.action == "access.allowed"]
+    assert "tok-abc-123" in refs  # jti used verbatim
+    hashed = [r for r in refs if r != "tok-abc-123"]
+    assert hashed and all(len(r) == 12 for r in hashed)  # fallback is the short hash
+
+
+def test_decision_and_change_audit_go_to_separate_tables(tmp_path):
+    """One DbAuditSink, two physically separate tables: role/assignment changes in
+    authz_audit, per-request decisions in authz_decisions."""
+    import sqlalchemy as sa
+
+    db_file = tmp_path / "audit.db"
+    url = f"sqlite:///{db_file}"
+    sink = DbAuditSink(db_url=url)
+
+    store, agent_os = _decision_os(sink)
+    # also route the store's change events to the same sink
+    store._audit = sink  # noqa: SLF001 (test wiring)
+    store.set_role_scopes("viewer", ["agents:*:read", "agents:*:run"], actor="alice")  # a change
+
+    client = TestClient(agent_os.get_app())
+    client.get("/agents/research-agent", headers=_auth("bob", jti="jti-1"))  # a decision (allow)
+    client.delete("/sessions/s1", headers=_auth("bob", jti="jti-2"))  # a decision (deny)
+
+    eng = sa.create_engine(url)
+    with eng.connect() as c:
+        changes = c.execute(sa.text("select action, target from authz_audit order by id")).fetchall()
+        decisions = c.execute(
+            sa.text("select action, target, token_ref from authz_decisions order by id")
+        ).fetchall()
+
+    # change table holds only the role change, no access.* rows
+    assert [tuple(r) for r in changes] == [("role.set_scopes", "viewer")]
+    # decision table holds only access.* rows, with the jti as the token ref
+    actions = {(r[0], r[2]) for r in decisions}
+    assert ("access.allowed", "jti-1") in actions
+    assert ("access.denied", "jti-2") in actions
+    assert all(r[0].startswith("access.") for r in decisions)
+
+    # the readers are separated too
+    assert all(not e["action"].startswith("access.") for e in sink.read())
+    assert all(e["action"].startswith("access.") for e in sink.read_decisions())
+
+
+def test_decisions_endpoint_returns_trail_for_admin(tmp_path):
+    """GET /authz/decisions returns the decision trail (newest first) for admins;
+    it is separate from /authz/audit (changes)."""
+    db_file = tmp_path / "audit.db"
+    sink = DbAuditSink(db_url=f"sqlite:///{db_file}")
+    store = ManagedRoleStore(audit=sink)
+    store.set_role_scopes("admin", ["agent_os:admin"])
+    store.assign("alice", "admin")
+    store.set_role_scopes("viewer", ["agents:*:read"])
+    store.assign("bob", "viewer")
+
+    agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=store.provider,
+            audit=sink,  # decisions land here too
+        ),
+    )
+    app = agent_os.get_app()
+    app.include_router(get_roles_router(store))
+    client = TestClient(app)
+
+    client.get("/agents/research-agent", headers=_auth("bob", jti="dec-1"))  # allowed decision
+
+    # admin reads the decision trail
+    r = client.get("/authz/decisions", headers=_auth("alice"))
+    assert r.status_code == 200
+    events = r.json()["events"]
+    assert any(e["action"] == "access.allowed" and e["metadata"]["token"] == "dec-1" for e in events)
+
+    # /authz/audit (changes) does NOT contain the access.* decisions
+    changes = client.get("/authz/audit", headers=_auth("alice")).json()["events"]
+    assert all(not e["action"].startswith("access.") for e in changes)
+
+    # non-admin and anonymous are blocked
+    assert client.get("/authz/decisions", headers=_auth("bob")).status_code == 403
+    assert client.get("/authz/decisions").status_code == 401
 
 
 def test_audit_endpoint_returns_trail(tmp_path):

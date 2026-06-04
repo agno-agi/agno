@@ -105,9 +105,21 @@ def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: Li
     # ---- audit ----------------------------------------------------------
     @router.get("/audit")
     def list_audit(limit: int = 100) -> dict:
-        """Recent change-audit events (newest first). Empty unless the store was
-        given a readable audit sink (e.g. DbAuditSink)."""
+        """Recent *change* events (role/assignment mutations, newest first). Empty
+        unless the store was given a readable audit sink (e.g. DbAuditSink)."""
         return {"events": store.audit_log(limit)}
+
+    @router.get("/decisions")
+    def list_decisions(request: Request, limit: int = 100) -> dict:
+        """Recent *decision* events (allow/deny per request, newest first).
+
+        Decision audit is configured on ``AuthorizationConfig(audit=...)`` and lands
+        on ``app.state.authz_audit`` — a separate table from the change trail above,
+        so a high-volume decision log never buries the change history. Empty unless a
+        readable decision sink (e.g. DbAuditSink) is configured."""
+        sink = getattr(request.app.state, "authz_audit", None)
+        events = sink.read_decisions(limit) if sink is not None and hasattr(sink, "read_decisions") else []
+        return {"events": events}
 
     # ---- assignments ----------------------------------------------------
     @router.get("/users/{subject}/roles")

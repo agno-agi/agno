@@ -1,21 +1,27 @@
 """Audit trail for authorization changes.
 
-There are two kinds of "audit" people mean:
+There are two kinds of "audit" people mean, and we keep them in two separate
+tables (see :class:`DbAuditSink`) because they answer different questions:
 
-1. Decision audit ("was alice allowed to run agent X?") — Casbin already logs
-   every ``enforce()`` to the ``casbin.enforcer`` Python logger (deny at WARNING,
-   allow at INFO). Route that logger to your sink; ``ManagedRoleStore(decision_log=True)``
-   just bumps it to INFO so allows are captured too.
+1. Decision audit ("was alice allowed to run agent X, and with which token?") —
+   recorded by the JWT middleware on every protected request when an
+   :class:`AuditSink` is set on ``AuthorizationConfig(audit=...)``. Each row is an
+   ``access.allowed`` / ``access.denied`` event with the principal, the route, the
+   required scopes, the caller's scopes, and a NON-secret token reference (the
+   token's ``jti`` when present, otherwise a short hash — never the token itself).
+   (Casbin also logs every ``enforce()`` to the ``casbin.enforcer`` logger; that
+   remains available and ``ManagedRoleStore(decision_log=True)`` bumps it to INFO.)
 
 2. Change audit ("who granted alice the admin role, when, before/after?") — Casbin
    cannot provide this: its management API never sees the acting principal, and
    ``casbin_rule`` is overwrite-in-place with no history. So it must be captured at
-   the layer that knows the actor — the management API / store. That is what this
-   module is for.
+   the layer that knows the actor — the management API / store. Plug an
+   :class:`AuditSink` into :class:`~agno.os.authz.role_store.ManagedRoleStore`
+   (directly or via ``get_roles_router``) and every role/assignment mutation emits
+   a structured, append-only :class:`AuditEvent` with the actor and before/after.
 
-Plug an :class:`AuditSink` into :class:`~agno.os.authz.role_store.ManagedRoleStore`
-(directly or via ``get_roles_router``) and every role/assignment mutation emits a
-structured, append-only :class:`AuditEvent` with the actor and the before/after.
+The same :class:`DbAuditSink` instance can serve both: ``record()`` routes change
+events to ``authz_audit`` and decision events to ``authz_decisions``.
 """
 
 import json
@@ -80,11 +86,31 @@ class LoggingAuditSink(AuditSink):
         self._logger.log(self._level, json.dumps(event.to_dict()))
 
 
-class DbAuditSink(AuditSink):
-    """Append-only audit table in your own DB (SQLAlchemy).
+def _is_decision(action: str) -> bool:
+    """Decision events (``access.allowed`` / ``access.denied``) vs change events."""
+    return action.startswith("access.")
 
-    Writes are INSERT-only — rows are never updated or deleted — so the table is a
-    tamper-evident trail suitable for SOC2-style evidence. Point it at the same DB
+
+class DbAuditSink(AuditSink):
+    """Append-only audit tables in your own DB (SQLAlchemy).
+
+    The two kinds of audit are kept in two physically separate tables, because
+    they answer different questions, have different shapes, and grow at very
+    different rates:
+
+    - **changes** (``authz_audit``): who granted/changed a role, with before/after.
+      Low volume, one row per admin action.
+    - **decisions** (``authz_decisions``): every allow/deny on a request, with the
+      required scopes, the granted scopes, and a non-secret token reference. High
+      volume, one row per protected request.
+
+    Keeping them apart means a decision-log flood never buries the change trail,
+    each table has only the columns it needs, and you can retain/export them on
+    different schedules. ``record()`` routes by action; you read each side with
+    :meth:`read` (changes) and :meth:`read_decisions`.
+
+    Writes are INSERT-only — rows are never updated or deleted — so both tables are
+    tamper-evident trails suitable for SOC2-style evidence. Point it at the same DB
     as the role store or a separate one.
     """
 
@@ -93,6 +119,7 @@ class DbAuditSink(AuditSink):
         db_url: Optional[str] = None,
         engine: Optional[Any] = None,
         table_name: str = "authz_audit",
+        decision_table_name: str = "authz_decisions",
         create_table: bool = True,
     ):
         import sqlalchemy as sa
@@ -101,6 +128,7 @@ class DbAuditSink(AuditSink):
             raise ValueError("DbAuditSink needs either db_url or engine")
         self._engine = engine if engine is not None else sa.create_engine(db_url)
         metadata = sa.MetaData()
+        # change trail: role/assignment mutations with before/after
         self._table = sa.Table(
             table_name,
             metadata,
@@ -111,12 +139,30 @@ class DbAuditSink(AuditSink):
             sa.Column("target", sa.String(255), nullable=False),
             sa.Column("before", sa.Text),
             sa.Column("after", sa.Text),
-            sa.Column("metadata", sa.Text),
+        )
+        # decision trail: per-request allow/deny with the token reference
+        self._decisions = sa.Table(
+            decision_table_name,
+            metadata,
+            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+            sa.Column("ts", sa.Integer, nullable=False),
+            sa.Column("actor", sa.String(255)),
+            sa.Column("action", sa.String(255), nullable=False),  # access.allowed / access.denied
+            sa.Column("target", sa.String(512), nullable=False),  # "METHOD /path"
+            sa.Column("token_ref", sa.String(255)),  # jti (preferred) or short hash — never the token
+            sa.Column("required", sa.Text),  # scopes the route required (JSON)
+            sa.Column("scopes", sa.Text),  # scopes the caller had (JSON)
         )
         if create_table:
             metadata.create_all(self._engine)
 
     def record(self, event: AuditEvent) -> None:
+        if _is_decision(event.action):
+            self._record_decision(event)
+        else:
+            self._record_change(event)
+
+    def _record_change(self, event: AuditEvent) -> None:
         with self._engine.begin() as conn:
             conn.execute(
                 self._table.insert().values(
@@ -126,12 +172,26 @@ class DbAuditSink(AuditSink):
                     target=event.target,
                     before=json.dumps(event.before) if event.before is not None else None,
                     after=json.dumps(event.after) if event.after is not None else None,
-                    metadata=json.dumps(event.metadata) if event.metadata else None,
+                )
+            )
+
+    def _record_decision(self, event: AuditEvent) -> None:
+        meta = event.metadata or {}
+        with self._engine.begin() as conn:
+            conn.execute(
+                self._decisions.insert().values(
+                    ts=event.timestamp,
+                    actor=event.actor,
+                    action=event.action,
+                    target=event.target,
+                    token_ref=meta.get("token"),
+                    required=json.dumps(meta.get("required")) if meta.get("required") is not None else None,
+                    scopes=json.dumps(meta.get("scopes")) if meta.get("scopes") is not None else None,
                 )
             )
 
     def read(self, limit: int = 100) -> List[dict]:
-        """Return the most recent events (newest first) as plain dicts."""
+        """Recent *change* events (newest first) as plain dicts."""
         import sqlalchemy as sa
 
         with self._engine.connect() as conn:
@@ -148,7 +208,35 @@ class DbAuditSink(AuditSink):
                 "target": r["target"],
                 "before": json.loads(r["before"]) if r["before"] else None,
                 "after": json.loads(r["after"]) if r["after"] else None,
-                "metadata": json.loads(r["metadata"]) if r["metadata"] else None,
+            }
+            for r in rows
+        ]
+
+    def read_decisions(self, limit: int = 100) -> List[dict]:
+        """Recent *decision* events (newest first) as plain dicts.
+
+        ``metadata`` is reassembled to the same ``{required, token, scopes}`` shape
+        the in-memory event carried, so readers don't care which table it came from.
+        """
+        import sqlalchemy as sa
+
+        with self._engine.connect() as conn:
+            rows = (
+                conn.execute(sa.select(self._decisions).order_by(self._decisions.c.id.desc()).limit(limit))
+                .mappings()
+                .all()
+            )
+        return [
+            {
+                "ts": r["ts"],
+                "actor": r["actor"],
+                "action": r["action"],
+                "target": r["target"],
+                "metadata": {
+                    "required": json.loads(r["required"]) if r["required"] else None,
+                    "token": r["token_ref"],
+                    "scopes": json.loads(r["scopes"]) if r["scopes"] else None,
+                },
             }
             for r in rows
         ]
