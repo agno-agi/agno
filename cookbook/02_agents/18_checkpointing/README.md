@@ -8,7 +8,7 @@ Examples covering mid-run persistence (`checkpoint="tool-batch"`) and the unifie
 | [`01_crash_recovery.py`](./01_crash_recovery.py) | `checkpoint="tool-batch"` writes after each tool batch. If the agent process dies mid-run, the DB has the latest checkpoint and `/continue` resumes from there. |
 | [`02_time_travel.py`](./02_time_travel.py) | `/continue` with `continue_from="end"`, `"last_user"`, and a raw integer index. COMPLETED runs auto-fork, so the source is preserved. |
 | [`03_forking.py`](./03_forking.py) | `/continue` with `continue_from="last_user", fork=True` and the numeric form `continue_from=K, fork=True` — non-destructive siblings in the same session. |
-| [`04_regenerate.py`](./04_regenerate.py) | `/continue` with `regenerate=True` — sugar over `continue_from="last_user"` to redo the last response. Pair with `additional_instructions` to steer, `preserve_original=True` to keep the old one. |
+| [`04_regenerate.py`](./04_regenerate.py) | `/continue` with `regenerate=True` to redo the last response. Drops only the trailing assistant reply, **keeping intermediate tool exchanges** so tools aren't re-invoked. Pair with `additional_instructions` to steer, `preserve_original=True` to keep the old one. |
 | [`05_branch_session.py`](./05_branch_session.py) | `agent.branch_session()` deep-copies every run into a **new session**. Different from `fork`, which makes a sibling run in the *same* session. |
 | [`06_tool_error_persistence.py`](./06_tool_error_persistence.py) | When a tool raises mid-run, in-flight messages are flushed onto the ERROR row so the failed conversation isn't lost. |
 | [`07_checkpoint_endpoints.py`](./07_checkpoint_endpoints.py) | Calls the two new GET endpoints — `/checkpoints` (timeline) and `/checkpoints/{message_index}` (snapshot) — via an in-process `TestClient`, prints raw payloads, and feeds the returned `message_index` back into `/continue`. |
@@ -37,9 +37,9 @@ crash-recoverable workflows, not for chatty agents.
 | empty + COMPLETED | **Auto-fork** — a new `run_id` is created, source is preserved. Prevents two model loops from sharing one row. |
 | `input="..."` | Append a new user message before resuming (auto-forks if source is COMPLETED) |
 | `continue_from="end"` | Resume from the current end of the transcript |
-| `continue_from="last_user"` | Resume just after the last user message |
+| `continue_from="last_user"` | Resume just after the last user message — drops the whole post-user tail including intermediate tool exchanges (tools will be re-invoked) |
 | `continue_from=K` | Low-level numeric message index fallback |
-| `regenerate=True` | **Always forks.** Drops the last assistant turn, fresh `run_id`, source preserved |
+| `regenerate=True` | **Always forks.** Drops only the trailing no-tool-call assistant message and keeps intermediate tool exchanges (tools NOT re-invoked) |
 | `regenerate=True, additional_instructions="..."` | Same, with steering text appended |
 | `regenerate=True, preserve_original=True` | Same + mark source `REGENERATED` so it's hidden from future history |
 
@@ -68,6 +68,21 @@ await agent.acontinue_run(
 
 The sugar (`regenerate=*`) is just internal math over the raw params
 (`continue_from`, `fork`, `input`).
+
+## `regenerate=True` vs `continue_from="last_user"`
+
+Both rewind to the same "after the user spoke" general area, but they cut
+differently when tools are involved:
+
+| Form | What it keeps | What it drops | Tools re-invoked? |
+|---|---|---|---|
+| `regenerate=True` | Everything up to and including the last tool exchange | Only the trailing no-tool-call assistant turn | No |
+| `continue_from="last_user"` | Everything up to and including the last user message | Whole post-user tail (assistant tool_calls, tool results, final reply) | Yes |
+
+Use `regenerate=True` for "redo the final summary, same tool results" (cheap,
+deterministic input). Use `continue_from="last_user"` for "rewind to where the
+user spoke and try the whole turn fresh" (costs tool calls but explores a
+different reasoning path).
 
 ## Checkpoint endpoints for UI
 

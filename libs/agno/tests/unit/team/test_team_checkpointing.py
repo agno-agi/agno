@@ -305,8 +305,50 @@ class TestRegenerateSugarNormalization:
             continue_index=None,
             input=None,
         )
-        # Last user msg is at index 2, so checkpoint is index + 1 = 3
+        # Last assistant has no tool_calls — pop it. Q2 (user) blocks further pops.
+        # Checkpoint = 3 (keep [Q1, A1, Q2]).
         assert fc == 3
+
+    def test_regenerate_preserves_intermediate_tool_exchange(self):
+        """Regenerate drops only trailing no-tool-call
+        assistant messages, keeping intermediate tool exchanges intact."""
+        run = TeamRunOutput(
+            run_id="r1",
+            messages=[
+                Message(role="user", content="ask"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="result", tool_call_id="tc1"),
+                Message(role="assistant", content="summary"),
+            ],
+        )
+        _, fc, _ = team_run._normalize_regenerate_params_team(
+            run,
+            regenerate=True,
+            preserve_original=False,
+            additional_instructions=None,
+            fork=False,
+            continue_index=None,
+            input=None,
+        )
+        # Pop trailing plain assistant; tool/assistant(tool_calls) block further pops.
+        # Keep first 3 messages.
+        assert fc == 3
+
+    def test_continue_from_last_user_drops_tool_exchange(self):
+        """continue_from='last_user' is distinct from regenerate: drops the
+        whole post-user tail including intermediate tool exchanges."""
+        run = TeamRunOutput(
+            run_id="r1",
+            messages=[
+                Message(role="user", content="ask"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="result", tool_call_id="tc1"),
+                Message(role="assistant", content="summary"),
+            ],
+        )
+        idx = team_run._resolve_continue_from_team(run, continue_from="last_user", regenerate=False)
+        # Last user is at index 0, so keep first 1 message.
+        assert idx == 1
 
     def test_additional_instructions_maps_to_input(self):
         run = self._run_with_user()

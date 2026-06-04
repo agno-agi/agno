@@ -1,8 +1,9 @@
 """Regenerate the last response via /continue with regenerate=True.
 
-``regenerate=True`` is sugar over ``continue_from="last_user"``: it lands just
-after the last user message, drops the previous assistant reply, and re-runs
-the model loop.
+``regenerate=True`` drops the trailing assistant response and re-runs the
+model loop. Intermediate tool exchanges (assistant tool_calls + their
+tool-role results) are **preserved** — the model regenerates a fresh
+summary of the same tool outputs without re-invoking the tools.
 
 **Always non-destructive.** Every regenerate creates a NEW run with a fresh
 ``run_id`` and fresh ``RunMetrics``; the source run stays intact. This
@@ -22,8 +23,10 @@ These compose. ``regenerate=True, preserve_original=True,
 additional_instructions="be more concise"`` is the typical "let me try that
 again with guidance, hide the old one from future context" pattern.
 
-Compare to ``continue_from="last_user"`` (02_time_travel.py): same mechanism,
-but ``regenerate`` picks the boundary for you.
+Compare to ``continue_from="last_user"`` (02_time_travel.py): both rewind, but
+``"last_user"`` drops the whole post-user tail including tool exchanges,
+forcing tools to be re-invoked. ``regenerate=True`` keeps the tool exchange
+so only the final summary is regenerated.
 """
 
 import asyncio

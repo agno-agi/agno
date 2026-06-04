@@ -1198,6 +1198,78 @@ class TestRegenerateSugar:
         assert len(captured["messages"]) == 1
         assert captured["messages"][0].role == "user"
 
+    def test_regenerate_preserves_intermediate_tool_exchange(self, monkeypatch: pytest.MonkeyPatch):
+        """Regenerate drops only trailing no-tool-call
+        assistant messages — intermediate tool exchanges survive so the model
+        regenerates a fresh summary of the same tool results without re-invoking
+        the tools."""
+        run = RunOutput(
+            run_id="run-tool",
+            session_id="s",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="What is 2+2?"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="4", tool_call_id="tc1"),
+                Message(role="assistant", content="The answer is 4."),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[run])
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-tool",
+            session_id="s",
+            regenerate=True,
+            stream=False,
+        )
+
+        # Trailing plain assistant turn dropped; intermediate tool-calling
+        # assistant + tool result survive.
+        roles = [m.role for m in captured["messages"]]
+        assert roles == ["user", "assistant", "tool"]
+
+    def test_continue_from_last_user_drops_intermediate_tool_exchange(self, monkeypatch: pytest.MonkeyPatch):
+        """continue_from='last_user' is distinct from regenerate: it drops the
+        whole post-user tail, including intermediate tool exchanges."""
+        run = RunOutput(
+            run_id="run-tool",
+            session_id="s",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="What is 2+2?"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="4", tool_call_id="tc1"),
+                Message(role="assistant", content="The answer is 4."),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[run])
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-tool",
+            session_id="s",
+            continue_from="last_user",
+            stream=False,
+        )
+
+        # Only the user message survives — the tool exchange is dropped.
+        assert [m.role for m in captured["messages"]] == ["user"]
+
     def test_regenerate_with_additional_instructions_appends_user_msg(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
@@ -1387,7 +1459,9 @@ class TestRegenerateSugar:
                 stream=False,
             )
 
-    def test_regenerate_raises_on_run_with_no_user_message(self, monkeypatch: pytest.MonkeyPatch):
+    def test_regenerate_raises_on_run_with_only_assistant_messages(self, monkeypatch: pytest.MonkeyPatch):
+        """All messages are no-tool-call assistant turns → nothing to keep
+        once they're stripped → raise."""
         run = RunOutput(
             run_id="run-A",
             session_id="s",
@@ -1395,7 +1469,7 @@ class TestRegenerateSugar:
         )
         agent = _make_agent(monkeypatch, runs=[run])
 
-        with pytest.raises(ValueError, match="no user messages"):
+        with pytest.raises(ValueError, match="no non-assistant messages"):
             _run.continue_run_dispatch(
                 agent=agent,
                 run_id="run-A",

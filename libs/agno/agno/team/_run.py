@@ -6060,15 +6060,33 @@ def _will_truncate_team_run(run_response: "TeamRunOutput", message_index: Option
 def _find_regenerate_checkpoint_team(run_response: "TeamRunOutput") -> int:
     """For ``regenerate=True``, compute the message index to truncate to.
 
-    Mirrors agent's :func:`_find_regenerate_checkpoint`: walk backwards
-    until we find the last user message, return its index + 1 so the
-    truncated prefix ends *just after* the user's question.
+    Mirrors agent's :func:`_find_regenerate_checkpoint` (parity with PR
+    #7157's ``_strip_final_assistant_messages``): drop ONLY the trailing
+    assistant messages without ``tool_calls`` — i.e. the final response.
+    Intermediate tool-calling assistant messages and their tool results
+    are preserved, so regeneration produces a fresh summary of the same
+    tool outputs without re-running tools.
+    """
+    messages = run_response.messages or []
+    i = len(messages)
+    while i > 0 and messages[i - 1].role == "assistant" and not messages[i - 1].tool_calls:
+        i -= 1
+    if i == 0:
+        raise ValueError("Cannot regenerate: team run has no non-assistant messages to regenerate from.")
+    return i
+
+
+def _find_last_user_message_index_team(run_response: "TeamRunOutput") -> int:
+    """For ``continue_from="last_user"``: walk backwards to the last user
+    message and return its index + 1. Drops everything past it (including
+    intermediate tool exchanges) — distinct from regenerate, which keeps
+    intermediate tool calls.
     """
     messages = run_response.messages or []
     for i in range(len(messages) - 1, -1, -1):
         if messages[i].role == "user":
             return i + 1
-    raise ValueError("Cannot regenerate: team run has no user messages to regenerate from.")
+    raise ValueError("Cannot resolve `continue_from='last_user'`: team run has no user messages.")
 
 
 def _resolve_continue_from_team(
@@ -6077,11 +6095,16 @@ def _resolve_continue_from_team(
     continue_from: Union[int, Literal["end", "last_user"]],
     regenerate: bool = False,
 ) -> int:
-    """Resolve the public continuation selector into a message boundary index."""
+    """Resolve the public continuation selector into a message boundary index.
+
+    See :func:`agno.agent._run._resolve_continue_from` for the agent equivalent;
+    ``"last_user"`` and ``regenerate=True`` have intentionally different
+    semantics (the latter preserves intermediate tool exchanges).
+    """
     if regenerate:
         if continue_from in ("end", "last_user"):
             return _find_regenerate_checkpoint_team(run_response)
-        raise ValueError("`regenerate=True` derives `continue_from='last_user'` automatically.")
+        raise ValueError("`regenerate=True` derives the continuation boundary automatically.")
 
     messages = run_response.messages or []
     if isinstance(continue_from, int):
@@ -6089,7 +6112,7 @@ def _resolve_continue_from_team(
     if continue_from == "end":
         return len(messages)
     if continue_from == "last_user":
-        return _find_regenerate_checkpoint_team(run_response)
+        return _find_last_user_message_index_team(run_response)
 
     raise ValueError("`continue_from` must be an integer message index, 'end', or 'last_user'.")
 

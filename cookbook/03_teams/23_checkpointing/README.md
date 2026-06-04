@@ -9,7 +9,7 @@ state, not member state.
 
 | Example | What it shows |
 |---|---|
-| [`01_regenerate.py`](./01_regenerate.py) | `team.continue_run(regenerate=True)` drops the last assistant turn and replays. New `run_id`, fresh metrics. Original team and original members untouched. |
+| [`01_regenerate.py`](./01_regenerate.py) | `team.continue_run(regenerate=True)` drops only the trailing assistant turn (intermediate tool exchanges survive — tools not re-invoked). New `run_id`, fresh metrics. Original team and original members untouched. |
 | [`02_fork.py`](./02_fork.py) | `fork=True, continue_from="last_user"` to fork at a clear message boundary. |
 | [`03_time_travel.py`](./03_time_travel.py) | `continue_from="end"`, `"last_user"`, and the numeric `continue_from=K` form for exact boundaries. COMPLETED runs auto-fork. |
 | [`04_branch_session.py`](./04_branch_session.py) | `team.branch_session()` deep-copies every run into a new session. Independent conversation threads. |
@@ -22,12 +22,12 @@ state, not member state.
 | `tools=[...]` / `requirements=[...]` (PAUSED + HITL) | Apply tool results, resume |
 | empty + COMPLETED | **Auto-fork**: new `run_id`, source preserved |
 | empty + RUNNING / ERROR | Resume in place (loop didn't finish; retry semantics) |
-| `regenerate=True` | Always forks: drop last assistant turn, fresh `run_id` |
+| `regenerate=True` | Always forks: drops only the trailing no-tool-call assistant message, intermediate tool exchanges survive (tools NOT re-invoked) |
 | `regenerate=True, additional_instructions=...` | Same with steering text appended |
 | `regenerate=True, preserve_original=True` | Source marked `REGENERATED` so history-builders skip it |
 | `continue_from="end"` | Resume from the current end of the transcript |
-| `fork=True, continue_from="last_user"` | Fork just after the last user message |
-| `continue_from="last_user"` | Resume just after the last user message |
+| `fork=True, continue_from="last_user"` | Fork at the last user message — drops the post-user tail including tool exchanges |
+| `continue_from="last_user"` | Resume just after the last user message (tools will be re-invoked) |
 | `continue_from=K` | Low-level numeric message index fallback |
 
 ## Checkpoint endpoints for UI

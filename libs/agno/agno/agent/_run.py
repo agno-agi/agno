@@ -3059,20 +3059,37 @@ def _apply_continue_modifiers(
 def _find_regenerate_checkpoint(run_response: RunOutput) -> int:
     """Compute the message index at which to truncate when regenerating.
 
-    Regenerate semantics: keep everything through the last user message, drop
-    the final assistant response (and any trailing tool/assistant messages
-    after the last user message). The returned index is the message count to
-    keep — i.e. length-after-truncation.
+    Regenerate semantics: drop ONLY the trailing
+    assistant messages that have no tool_calls — i.e. the final response
+    turn. Intermediate assistant messages with tool_calls and the tool
+    results they produced are preserved, so the model regenerates a fresh
+    summary of the same tool outputs without re-invoking the tools.
 
-    Walks backwards: skips trailing assistant messages (with or without
-    tool_calls) and tool-role messages until it finds a user message. Returns
-    that index + 1. Raises ``ValueError`` if no user message exists.
+    Walks backwards: pops trailing ``assistant`` messages without
+    ``tool_calls``. Stops at the first message that isn't one. Returns
+    the message count to keep (length-after-truncation).
+
+    Raises ``ValueError`` if every message is a no-tool-call assistant
+    message (nothing to regenerate from).
+    """
+    messages = run_response.messages or []
+    i = len(messages)
+    while i > 0 and messages[i - 1].role == "assistant" and not messages[i - 1].tool_calls:
+        i -= 1
+    if i == 0:
+        raise ValueError("Cannot regenerate: run has no non-assistant messages to regenerate from.")
+    return i
+
+
+def _find_last_user_message_index(run_response: RunOutput) -> int:
+    """For ``continue_from="last_user"``: walk backwards to the last user
+    message and return its index + 1 (the message count to keep).
     """
     messages = run_response.messages or []
     for i in range(len(messages) - 1, -1, -1):
         if messages[i].role == "user":
             return i + 1
-    raise ValueError("Cannot regenerate: run has no user messages to regenerate from.")
+    raise ValueError("Cannot resolve `continue_from='last_user'`: run has no user messages.")
 
 
 def _resolve_continue_from(
@@ -3084,13 +3101,20 @@ def _resolve_continue_from(
     """Resolve the public continuation selector into a message boundary index.
 
     - ``"end"`` keeps the whole current transcript
-    - ``"last_user"`` keeps through the last user message
+    - ``"last_user"`` keeps through the last user message (drops trailing
+      assistant/tool messages, including intermediate tool exchanges)
     - ``int`` keeps ``messages[:int]``
+
+    When ``regenerate=True``, the boundary is computed by
+    :func:`_find_regenerate_checkpoint` — which keeps intermediate
+    tool_call exchanges so the model regenerates a fresh summary of the
+    same tool results. That semantics differs from ``"last_user"``;
+    do not conflate them.
     """
     if regenerate:
         if continue_from in ("end", "last_user"):
             return _find_regenerate_checkpoint(run_response)
-        raise ValueError("`regenerate=True` derives `continue_from='last_user'` automatically.")
+        raise ValueError("`regenerate=True` derives the continuation boundary automatically.")
 
     messages = run_response.messages or []
     if isinstance(continue_from, int):
@@ -3098,7 +3122,7 @@ def _resolve_continue_from(
     if continue_from == "end":
         return len(messages)
     if continue_from == "last_user":
-        return _find_regenerate_checkpoint(run_response)
+        return _find_last_user_message_index(run_response)
 
     raise ValueError("`continue_from` must be an integer message index, 'end', or 'last_user'.")
 

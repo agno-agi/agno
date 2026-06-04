@@ -6,7 +6,10 @@ team's perspective the member's output is just a tool-role message in the
 team's conversation.
 
 What `regenerate=True` does on a team:
-- Auto-picks the truncation index just after the last user message
+- Drops only the trailing no-tool-call assistant message — intermediate
+  tool exchanges (member delegations rendered as tool-role messages) are
+  preserved, so the team regenerates a fresh summary of the same member
+  outputs without re-delegating
 - Forks: produces a new ``run_id`` with fresh ``RunMetrics``
 - The forked team's ``forked_from_run_id`` / ``regenerated_from`` point at
   the source team
