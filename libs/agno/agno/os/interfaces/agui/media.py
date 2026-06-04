@@ -1,10 +1,3 @@
-"""AG-UI media extraction utilities.
-
-Converts AG-UI multimodal input content types (ImageInputContent, AudioInputContent,
-VideoInputContent, DocumentInputContent, BinaryInputContent) into Agno media objects
-(Image, Audio, Video, File).
-"""
-
 import base64
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
