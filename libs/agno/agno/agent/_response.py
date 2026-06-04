@@ -1155,11 +1155,14 @@ def handle_model_response_stream(
             run_context=run_context,
         )
 
-    # Extract <think> tags from accumulated streaming content.
-    # In the streaming path, models that embed thinking in <think> tags (e.g., Ollama, vLLM with qwen3)
-    # accumulate raw content including <think>...</think> tags. We extract them here to match
-    # the non-streaming behavior where extract_thinking_content is called in _parse_provider_response.
-    if run_response.content and isinstance(run_response.content, str) and "</think>" in run_response.content:
+    # Extract <think> or <thinking> tags from accumulated streaming content.
+    # In the streaming path, models that embed thinking in tags (e.g., Ollama, vLLM with qwen3)
+    # accumulate raw content including tags. We extract them here to match the non-streaming behavior.
+    if (
+        run_response.content
+        and isinstance(run_response.content, str)
+        and ("</think>" in run_response.content or "</thinking>" in run_response.content)
+    ):
         reasoning_content, clean_content = extract_thinking_content(run_response.content)
         if reasoning_content:
             if not run_response.reasoning_content:
@@ -1324,8 +1327,12 @@ async def ahandle_model_response_stream(
         ):
             yield event
 
-    # Extract <think> tags from accumulated streaming content (async variant).
-    if run_response.content and isinstance(run_response.content, str) and "</think>" in run_response.content:
+    # Extract <think> or <thinking> tags from accumulated streaming content (async variant).
+    if (
+        run_response.content
+        and isinstance(run_response.content, str)
+        and ("</think>" in run_response.content or "</thinking>" in run_response.content)
+    ):
         reasoning_content, clean_content = extract_thinking_content(run_response.content)
         if reasoning_content:
             if not run_response.reasoning_content:

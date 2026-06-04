@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import log_warning
+from agno.utils.reasoning import extract_thinking_content
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -36,17 +37,13 @@ def get_ai_foundry_reasoning(
 
         accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
-    reasoning_content: str = ""
-    # We use the normal content as no reasoning content is returned
-    if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
-        content = reasoning_agent_response.content
-        if "<think>" in content and "</think>" in content:
-            start_idx = content.find("<think>") + len("<think>")
-            end_idx = content.find("</think>")
-            reasoning_content = content[start_idx:end_idx].strip()
-        else:
-            reasoning_content = content
+    # 1. Prefer already-extracted reasoning_content
+    reasoning_content = getattr(reasoning_agent_response, "reasoning_content", None) or ""
+
+    # 2. Fall back to extracting from content if reasoning_content is empty
+    if not reasoning_content and reasoning_agent_response.content:
+        extracted, _ = extract_thinking_content(reasoning_agent_response.content)
+        reasoning_content = extracted or reasoning_agent_response.content
 
     return Message(
         role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
@@ -70,16 +67,13 @@ async def aget_ai_foundry_reasoning(
 
         accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
-    reasoning_content: str = ""
-    if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
-        content = reasoning_agent_response.content
-        if "<think>" in content and "</think>" in content:
-            start_idx = content.find("<think>") + len("<think>")
-            end_idx = content.find("</think>")
-            reasoning_content = content[start_idx:end_idx].strip()
-        else:
-            reasoning_content = content
+    # 1. Prefer already-extracted reasoning_content
+    reasoning_content = getattr(reasoning_agent_response, "reasoning_content", None) or ""
+
+    # 2. Fall back to extracting from content if reasoning_content is empty
+    if not reasoning_content and reasoning_agent_response.content:
+        extracted, _ = extract_thinking_content(reasoning_agent_response.content)
+        reasoning_content = extracted or reasoning_agent_response.content
 
     return Message(
         role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
