@@ -39,7 +39,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
     try:
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — agent manages history via session DB.
-        user_input, media = extract_agui_user_input_and_media(run_input.messages or [])
+        user_input, images, audio, videos, files = extract_agui_user_input_and_media(run_input.messages or [])
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -63,10 +63,10 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
             stream=True,
             stream_events=True,
             user_id=user_id,
-            audio=media.audio if media.audio else None,
-            images=media.images if media.images else None,
-            videos=media.videos if media.videos else None,
-            files=media.files if media.files else None,
+            images=images or None,
+            audio=audio or None,
+            videos=videos or None,
+            files=files or None,
             session_state=session_state,
             run_id=run_id,
         )
@@ -92,7 +92,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
     try:
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — team manages history via session DB.
-        user_input, media = extract_agui_user_input_and_media(input.messages or [])
+        user_input, images, audio, videos, files = extract_agui_user_input_and_media(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Look for user_id in input.forwarded_props
@@ -115,10 +115,10 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             stream=True,
             stream_events=True,
             user_id=user_id,
-            audio=media.audio if media.audio else None,
-            images=media.images if media.images else None,
-            videos=media.videos if media.videos else None,
-            files=media.files if media.files else None,
+            images=images or None,
+            audio=audio or None,
+            videos=videos or None,
+            files=files or None,
             session_state=session_state,
             run_id=run_id,
         )

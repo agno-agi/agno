@@ -33,7 +33,6 @@ from pydantic import BaseModel
 
 from agno.media import Image
 from agno.os.interfaces.agui.media import (
-    AGUIUserInputMedia,
     extract_agui_user_input,
     extract_agui_user_input_and_images,
     extract_agui_user_input_and_media,

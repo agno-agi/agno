@@ -1926,21 +1926,21 @@ def test_extract_agui_user_input_and_media_from_multimodal_content():
         ),
     ]
 
-    user_input, media = extract_agui_user_input_and_media(messages)
+    user_input, images, audio, videos, files = extract_agui_user_input_and_media(messages)
 
     assert user_input == "please inspect"
-    assert len(media.images) == 1
-    assert media.images[0].content == image_bytes
-    assert media.images[0].mime_type == "image/png"
-    assert len(media.audio) == 1
-    assert media.audio[0].content == audio_bytes
-    assert media.audio[0].mime_type == "audio/mpeg"
-    assert len(media.videos) == 1
-    assert media.videos[0].content == video_bytes
-    assert media.videos[0].mime_type == "video/mp4"
-    assert len(media.files) == 1
-    assert media.files[0].content == document_bytes
-    assert media.files[0].mime_type == "application/pdf"
+    assert len(images) == 1
+    assert images[0].content == image_bytes
+    assert images[0].mime_type == "image/png"
+    assert len(audio) == 1
+    assert audio[0].content == audio_bytes
+    assert audio[0].mime_type == "audio/mpeg"
+    assert len(videos) == 1
+    assert videos[0].content == video_bytes
+    assert videos[0].mime_type == "video/mp4"
+    assert len(files) == 1
+    assert files[0].content == document_bytes
+    assert files[0].mime_type == "application/pdf"
 
 
 def test_extract_agui_user_input_and_media_routes_binary_content_by_mime_type():
@@ -1971,18 +1971,18 @@ def test_extract_agui_user_input_and_media_routes_binary_content_by_mime_type():
         ),
     ]
 
-    user_input, media = extract_agui_user_input_and_media(messages)
+    user_input, images, audio, videos, files = extract_agui_user_input_and_media(messages)
 
     assert user_input == ""
-    assert media.images[0].content == image_bytes
-    assert media.images[0].mime_type == "image/png"
-    assert media.audio[0].content == audio_bytes
-    assert media.audio[0].mime_type == "audio/mpeg"
-    assert media.videos[0].content == video_bytes
-    assert media.videos[0].mime_type == "video/mp4"
-    assert media.files[0].content == file_bytes
-    assert media.files[0].mime_type is None
-    assert media.files[0].filename == "archive.bin"
+    assert images[0].content == image_bytes
+    assert images[0].mime_type == "image/png"
+    assert audio[0].content == audio_bytes
+    assert audio[0].mime_type == "audio/mpeg"
+    assert videos[0].content == video_bytes
+    assert videos[0].mime_type == "video/mp4"
+    assert files[0].content == file_bytes
+    assert files[0].mime_type is None
+    assert files[0].filename == "archive.bin"
 
 
 def test_extract_agui_user_input_and_media_skips_malformed_base64():
@@ -1998,13 +1998,13 @@ def test_extract_agui_user_input_and_media_skips_malformed_base64():
         ),
     ]
 
-    user_input, media = extract_agui_user_input_and_media(messages)
+    user_input, images, audio, videos, files = extract_agui_user_input_and_media(messages)
 
     assert user_input == "check this"
-    assert len(media.images) == 0
-    assert len(media.audio) == 0
-    assert len(media.videos) == 0
-    assert len(media.files) == 0
+    assert len(images) == 0
+    assert len(audio) == 0
+    assert len(videos) == 0
+    assert len(files) == 0
 
 
 _AUDIO_BYTES = b"fake-audio-bytes"
