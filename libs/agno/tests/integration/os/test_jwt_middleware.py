@@ -2219,3 +2219,66 @@ def test_verify_audience_with_configured_audience_still_enforces():
     )
     assert client.get("/whoami", headers={"Authorization": f"Bearer {good}"}).status_code == 200
     assert client.get("/whoami", headers={"Authorization": f"Bearer {bad}"}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Crypto hardening: JWTValidator guards (alg-confusion, require-exp, issuer, leeway)
+# ---------------------------------------------------------------------------
+
+from agno.os.middleware.jwt import JWTValidator  # noqa: E402
+
+_PUBLIC_PEM = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHfake\n-----END PUBLIC KEY-----"
+
+
+def test_public_key_with_hmac_algorithm_is_refused():
+    """RS256<->HS256 confusion: a public key used as an HMAC secret lets an
+    attacker forge tokens. The validator must refuse this at construction."""
+    with pytest.raises(ValueError, match="public key"):
+        JWTValidator(verification_keys=[_PUBLIC_PEM], algorithm="HS256")
+    # the same key with an asymmetric algorithm is fine (no raise at init)
+    JWTValidator(verification_keys=[_PUBLIC_PEM], algorithm="RS256")
+
+
+def test_expiration_is_required_by_default():
+    """A validated token with no exp must be rejected (best-in-class: no
+    never-expiring tokens); opt out only via require_expiration=False."""
+    v = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256")
+    no_exp = jwt.encode({"sub": "u"}, JWT_SECRET, algorithm="HS256")
+    with pytest.raises(jwt.InvalidTokenError):
+        v.validate_token(no_exp)
+
+    with_exp = jwt.encode(
+        {"sub": "u", "exp": datetime.now(UTC) + timedelta(hours=1)}, JWT_SECRET, algorithm="HS256"
+    )
+    assert v.validate_token(with_exp)["sub"] == "u"
+
+    lax = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", require_expiration=False)
+    assert lax.validate_token(no_exp)["sub"] == "u"
+
+
+def test_issuer_is_pinned_when_configured():
+    """When issuer is set, only tokens from that issuer validate."""
+    v = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", issuer="https://idp.example")
+    base = {"sub": "u", "exp": datetime.now(UTC) + timedelta(hours=1)}
+
+    good = jwt.encode({**base, "iss": "https://idp.example"}, JWT_SECRET, algorithm="HS256")
+    assert v.validate_token(good)["sub"] == "u"
+
+    wrong = jwt.encode({**base, "iss": "https://evil.example"}, JWT_SECRET, algorithm="HS256")
+    with pytest.raises(jwt.InvalidIssuerError):
+        v.validate_token(wrong)
+
+    missing = jwt.encode(base, JWT_SECRET, algorithm="HS256")
+    with pytest.raises(jwt.InvalidIssuerError):
+        v.validate_token(missing)
+
+    # no issuer configured -> not checked
+    v_open = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256")
+    assert v_open.validate_token(wrong)["sub"] == "u"
+
+
+def test_leeway_is_clamped():
+    """A huge leeway would silently accept long-expired tokens; it is clamped."""
+    assert JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", leeway=99999).leeway == 300
+    assert JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", leeway=-5).leeway == 0
+    assert JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256", leeway=30).leeway == 30

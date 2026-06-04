@@ -49,6 +49,19 @@ class TestParseScope:
         parsed = parse_scope("malformed:scope:with:too:many:parts")
         assert parsed.scope_type == "unknown"
 
+    def test_empty_components_are_unknown(self):
+        """Scopes with any empty component are junk, not live grants. Without this,
+        split(":") produces content-free parts that compare-equal to each other."""
+        for junk in (":read", "agents:", ":", "::", "agents::run", ":agent-1:read", "agents:agent-1:"):
+            assert parse_scope(junk).scope_type == "unknown", junk
+
+    def test_empty_component_scope_grants_nothing(self):
+        """A token carrying an empty-component scope can't satisfy any requirement."""
+        assert has_required_scopes([":read"], ["agents:read"]) is False
+        assert has_required_scopes(["agents:"], ["agents:read"]) is False
+        # and an (accidental) empty required scope isn't satisfied by junk
+        assert has_required_scopes(["agents:"], ["agents:"]) is False
+
 
 class TestHasRequiredScopes:
     def test_legacy_system_scope_grants_config_access(self):

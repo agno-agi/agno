@@ -76,6 +76,8 @@ class JWTValidator:
         session_id_claim: str = "session_id",
         audience_claim: str = "aud",
         leeway: int = 10,
+        issuer: Optional[Union[str, Iterable[str]]] = None,
+        require_expiration: bool = True,
     ):
         """
         Initialize the JWT validator.
@@ -91,7 +93,15 @@ class JWTValidator:
             user_id_claim: JWT claim name for user ID (default: "sub").
             session_id_claim: JWT claim name for session ID (default: "session_id").
             audience_claim: JWT claim name for audience (default: "aud").
-            leeway: Seconds of leeway for clock skew tolerance (default: 10).
+            leeway: Seconds of leeway for clock skew tolerance (default: 10). Clamped to
+                [0, 300] — a large leeway silently accepts long-expired tokens.
+            issuer: Optional expected issuer ("iss"). When set, the token's "iss" claim
+                must match (string or any-of an iterable). Pinning the issuer stops a
+                signature-valid token minted by one trusted issuer for a different
+                relying party from being accepted here. Default None (not checked).
+            require_expiration: Require an "exp" claim on validated tokens (default True).
+                Without this a token that simply omits "exp" never expires. Only applies
+                when validate=True.
         """
         self.algorithm = algorithm
         self.validate = validate
@@ -99,7 +109,10 @@ class JWTValidator:
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
-        self.leeway = leeway
+        # Clamp leeway: a huge value would accept tokens long past expiry.
+        self.leeway = max(0, min(int(leeway), 300))
+        self.issuer = issuer
+        self.require_expiration = require_expiration
 
         # Build list of verification keys
         self.verification_keys: List[str] = []
@@ -145,6 +158,21 @@ class JWTValidator:
                 "Set via verification_keys parameter, JWT_VERIFICATION_KEY environment variable, "
                 "jwks_file/JWT_JWKS_FILE, or jwks_url/JWT_JWKS_URL."
             )
+
+        # Guard against the classic RS256<->HS256 algorithm-confusion footgun:
+        # configuring an HMAC algorithm with what is clearly an asymmetric PUBLIC
+        # key. The public key is, by definition, public — so if it is used as the
+        # HMAC shared secret an attacker can forge a token by HMAC-signing with it.
+        # Fail closed at startup rather than silently accept forged tokens.
+        if self.validate and self.algorithm.upper().startswith("HS"):
+            for key in self.verification_keys:
+                if isinstance(key, str) and "-----BEGIN" in key and "PUBLIC KEY" in key:
+                    raise ValueError(
+                        f"Refusing to use an asymmetric public key with the symmetric "
+                        f"algorithm {self.algorithm!r}: an attacker could HMAC-sign tokens "
+                        f"with the (public) key as the secret. Use an asymmetric algorithm "
+                        f"(e.g. RS256/ES256) with this key, or supply an actual HMAC secret."
+                    )
 
     def _load_jwks_file(self, file_path: str) -> None:
         """
@@ -267,6 +295,10 @@ class JWTValidator:
             decode_kwargs["options"] = decode_options
             return jwt.decode(token, **decode_kwargs)
 
+        # Require an expiration so a token without "exp" can't live forever.
+        if self.require_expiration:
+            decode_options["require"] = ["exp"]
+
         if decode_options:
             decode_kwargs["options"] = decode_options
 
@@ -351,6 +383,16 @@ class JWTValidator:
             if not any(aud in expected_audiences for aud in token_audiences):
                 raise jwt.InvalidAudienceError(
                     f"Invalid audience. Expected one of: {expected_audiences}, got: {token_audiences}"
+                )
+
+        # Pin the issuer if configured. Like the audience check above, done
+        # manually for a clearer error and to support an allow-list of issuers.
+        if self.issuer:
+            expected_issuers = [self.issuer] if isinstance(self.issuer, str) else list(self.issuer)
+            token_issuer = payload.get("iss")
+            if token_issuer not in expected_issuers:
+                raise jwt.InvalidIssuerError(
+                    f"Invalid issuer. Expected one of: {expected_issuers}, got: {token_issuer!r}"
                 )
 
         return payload
@@ -476,6 +518,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
         audience_claim: str = "aud",
         audience: Optional[Union[str, Iterable[str]]] = None,
         verify_audience: bool = False,
+        issuer: Optional[Union[str, Iterable[str]]] = None,
+        leeway: int = 10,
+        require_expiration: bool = True,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
         scope_mappings: Optional[Dict[str, List[str]]] = None,
@@ -558,7 +603,22 @@ class JWTMiddleware(BaseHTTPMiddleware):
             user_id_claim=user_id_claim,
             session_id_claim=session_id_claim,
             audience_claim=audience_claim,
+            leeway=leeway,
+            issuer=issuer,
+            require_expiration=require_expiration,
         )
+
+        # Loud warning for a dangerous combination: skipping signature validation
+        # while still making authorization decisions. With validate=False the
+        # middleware trusts the token's claims (incl. scopes) without verifying the
+        # signature — anyone can mint "agent_os:admin". Only safe when an upstream
+        # gateway has already verified the signature.
+        if validate is False and authorization:
+            log_warning(
+                "JWTMiddleware: validate=False with authorization enabled — token signatures are "
+                "NOT verified, so scopes/roles in the token are attacker-controllable. Only use this "
+                "when a trusted upstream (API gateway/proxy) has already verified the JWT signature."
+            )
 
         # Store config for easy access
         self.validate = validate

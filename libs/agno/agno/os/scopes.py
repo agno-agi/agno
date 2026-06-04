@@ -134,6 +134,12 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
 
     parts = scope.split(":")
 
+    # Reject any scope with an empty component (e.g. ":read", "agents:", "a::b").
+    # Without this, split(":") yields content-free parts that compare-equal to
+    # other malformed scopes and would be treated as live grants instead of junk.
+    if any(part == "" for part in parts):
+        return ParsedScope(raw=scope, scope_type="unknown")
+
     # Global resource scope: resource:action (2 parts)
     if len(parts) == 2:
         resource = LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0])

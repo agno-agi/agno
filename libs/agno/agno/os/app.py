@@ -983,6 +983,9 @@ class AgentOS:
         verification_keys = None
         algorithm = "RS256"
         audience = None
+        issuer = None
+        leeway = 10
+        require_expiration = True
         admin_scope: Optional[str] = None
         user_isolation = False
         authorization_provider = None
@@ -995,6 +998,11 @@ class AgentOS:
             jwks_url = self.authorization_config.jwks_url
             verify_audience = self.authorization_config.verify_audience or False
             audience = self.authorization_config.audience
+            issuer = self.authorization_config.issuer
+            if self.authorization_config.leeway is not None:
+                leeway = self.authorization_config.leeway
+            if self.authorization_config.require_expiration is not None:
+                require_expiration = self.authorization_config.require_expiration
             admin_scope = self.authorization_config.admin_scope
             user_isolation = self.authorization_config.user_isolation
             authorization_provider = self.authorization_config.authorization_provider
@@ -1008,6 +1016,9 @@ class AgentOS:
             jwks_file=jwks_file,
             jwks_url=jwks_url,
             algorithm=algorithm,
+            leeway=leeway,
+            issuer=issuer,
+            require_expiration=require_expiration,
         )
         fastapi_app.state.jwt_validator = jwt_validator
         # Expose audience config + admin scope on app.state so WebSocket auth
@@ -1061,10 +1072,14 @@ class AgentOS:
             "algorithm": algorithm,
             "authorization": self.authorization,
             "verify_audience": verify_audience,
+            "leeway": leeway,
+            "require_expiration": require_expiration,
             "excluded_route_paths": excluded_route_paths,
         }
         if audience:
             middleware_kwargs["audience"] = audience
+        if issuer:
+            middleware_kwargs["issuer"] = issuer
         if admin_scope:
             middleware_kwargs["admin_scope"] = admin_scope
         # Default to False on the middleware; only forward when actually enabled
