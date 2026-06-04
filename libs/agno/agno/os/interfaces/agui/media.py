@@ -1,4 +1,5 @@
 import base64
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, TypeVar
 
@@ -8,21 +9,19 @@ from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_warning
 
 
-def _decode_agui_base64_content(value: str) -> Tuple[Optional[bytes], Optional[str]]:
-    """Decode an AG-UI base64 value and return bytes plus any data URL MIME type."""
-    mime_type = None
-    encoded_value = value
+def _decode_base64_content(value: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Decode base64 value (with or without data URL prefix) to bytes and MIME type.
 
-    if value.startswith("data:") and "," in value:
-        metadata, encoded_value = value.split(",", 1)
-        if metadata.startswith("data:"):
-            mime_type = metadata[5:].split(";", 1)[0] or None
-
+    Uses stdlib urllib which natively supports data URLs.
+    """
     try:
-        return base64.b64decode(encoded_value, validate=True), mime_type
-    except ValueError:
-        log_warning("Failed to decode AG-UI data source. Content part will be ignored.")
-        return None, mime_type
+        if value.startswith("data:"):
+            response = urllib.request.urlopen(value)
+            return response.read(), response.headers.get_content_type()
+        return base64.b64decode(value, validate=True), None
+    except Exception:
+        log_warning("Failed to decode base64 content. Part will be ignored.")
+        return None, None
 
 
 def _safe_file_mime_type(mime_type: Optional[str]) -> Optional[str]:
@@ -70,7 +69,7 @@ def _extract_agui_media(part: Any, media_cls: Type[_AGUIMedia], sanitize_mime: b
     if source_type == "url":
         content_kwargs = {"url": value}
     elif source_type == "data":
-        content, data_url_mime_type = _decode_agui_base64_content(value)
+        content, data_url_mime_type = _decode_base64_content(value)
         if content is None:
             return None
         content_kwargs = {"content": content}
@@ -103,7 +102,7 @@ def _extract_agui_binary(part: Any, media: AGUIUserInputMedia) -> None:
     data_url_mime_type = None
 
     if data:
-        content, data_url_mime_type = _decode_agui_base64_content(data)
+        content, data_url_mime_type = _decode_base64_content(data)
         if content is None:
             return
 
