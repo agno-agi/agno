@@ -17,7 +17,7 @@ class Toolkit:
     def __init__(
         self,
         name: str = "toolkit",
-        tools: Sequence[Union[Callable[..., Any], Function]] = [],
+        tools: Sequence[Union[Callable[..., Any], Function]] | None = None,
         async_tools: Optional[Sequence[tuple[Callable[..., Any], str]]] = None,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
