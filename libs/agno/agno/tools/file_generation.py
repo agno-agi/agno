@@ -44,6 +44,7 @@ class FileGenerationTools(Toolkit):
         enable_pdf_generation: bool = True,
         enable_docx_generation: bool = True,
         enable_txt_generation: bool = True,
+        enable_html_generation: bool = True,
         output_directory: Optional[str] = None,
         save_files: bool = False,
         all: bool = False,
@@ -54,6 +55,7 @@ class FileGenerationTools(Toolkit):
         self.enable_pdf_generation = enable_pdf_generation and PDF_AVAILABLE
         self.enable_docx_generation = enable_docx_generation and DOCX_AVAILABLE
         self.enable_txt_generation = enable_txt_generation
+        self.enable_html_generation = enable_html_generation
         # output_directory implies save_files=True for backward compatibility
         self.save_files = save_files or (output_directory is not None)
 
@@ -85,6 +87,8 @@ class FileGenerationTools(Toolkit):
             tools.append(self.generate_docx_file)
         if all or enable_txt_generation:
             tools.append(self.generate_text_file)
+        if all or enable_html_generation:
+            tools.append(self.generate_html_file)
 
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
@@ -343,6 +347,55 @@ class FileGenerationTools(Toolkit):
         except Exception as e:
             logger.exception("Failed to generate text file")
             return ToolResult(content=f"Error generating text file: {e}")
+
+    def generate_html_file(
+        self, content: str, filename: Optional[str] = None, title: Optional[str] = None
+    ) -> ToolResult:
+        """Generate an HTML file from the provided content.
+
+        If the content already contains a full HTML document (an ``<html>`` tag), it is used
+        as-is. Otherwise the content is wrapped in a minimal HTML5 skeleton.
+
+        Args:
+            content: The HTML markup or body content to write to the file.
+            filename: Optional filename for the generated file. If not provided, a UUID will be used.
+            title: Optional document title. Only used when content is wrapped in a skeleton.
+
+        Returns:
+            ToolResult: Result containing the generated HTML file as a FileArtifact.
+        """
+        try:
+            log_debug(f"Generating HTML file with content length: {len(content)}")
+
+            if "<html" in content.lower():
+                html_content = content
+            else:
+                page_title = title or "Generated Document"
+                html_content = (
+                    "<!DOCTYPE html>\n"
+                    '<html lang="en">\n'
+                    "<head>\n"
+                    '    <meta charset="utf-8">\n'
+                    '    <meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
+                    f"    <title>{page_title}</title>\n"
+                    "</head>\n"
+                    "<body>\n"
+                    f"{content}\n"
+                    "</body>\n"
+                    "</html>\n"
+                )
+
+            return self._create_file_artifact(
+                html_content,
+                filename,
+                file_type="html",
+                mime_type="text/html",
+                display_name="HTML",
+            )
+
+        except Exception as e:
+            logger.exception("Failed to generate HTML file")
+            return ToolResult(content=f"Error generating HTML file: {e}")
 
     def generate_docx_file(
         self, content: str, filename: Optional[str] = None, title: Optional[str] = None
