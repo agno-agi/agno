@@ -57,8 +57,10 @@ from agno.os.utils import (
     resolve_team,
 )
 from agno.registry import Registry
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import TeamRunOutput
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -67,6 +69,11 @@ from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
+
+def _is_run_output_accumulator(chunk: Any) -> bool:
+    """Return True for accumulated run outputs that are not SSE events."""
+    return isinstance(chunk, (RunOutput, TeamRunOutput))
 
 
 async def team_response_streamer(
@@ -110,6 +117,8 @@ async def team_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in run_response:
+            if _is_run_output_accumulator(run_response_chunk):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
@@ -420,6 +429,8 @@ async def team_continue_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in continue_response:
+            if _is_run_output_accumulator(run_response_chunk):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
