@@ -23,6 +23,11 @@ class Schedule:
     next_run_at: Optional[int] = None
     locked_by: Optional[str] = None
     locked_at: Optional[int] = None
+    # Owner of this schedule. Set from the JWT sub when ``user_isolation`` is on;
+    # ``None`` for system-created schedules (executor / poller / migrations).
+    # Routes scope reads/writes on this column; the executor poller intentionally
+    # ignores ownership so it can fire schedules across all users.
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
@@ -53,6 +58,7 @@ class Schedule:
             "next_run_at": self.next_run_at,
             "locked_by": self.locked_by,
             "locked_at": self.locked_at,
+            "user_id": self.user_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -76,6 +82,7 @@ class Schedule:
             "next_run_at",
             "locked_by",
             "locked_at",
+            "user_id",
             "created_at",
             "updated_at",
         }
@@ -100,6 +107,9 @@ class ScheduleRun:
     input: Optional[Dict[str, Any]] = None
     output: Optional[Dict[str, Any]] = None
     requirements: Optional[List[Dict[str, Any]]] = None
+    # Denormalised from the parent Schedule.user_id. Lets the runs router scope
+    # by owner without a JOIN. The executor populates it when creating the run.
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
 
     def __post_init__(self) -> None:
@@ -125,6 +135,7 @@ class ScheduleRun:
             "input": self.input,
             "output": self.output,
             "requirements": self.requirements,
+            "user_id": self.user_id,
             "created_at": self.created_at,
         }
 
@@ -145,6 +156,7 @@ class ScheduleRun:
             "input",
             "output",
             "requirements",
+            "user_id",
             "created_at",
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}

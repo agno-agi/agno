@@ -127,6 +127,10 @@ class ScheduleExecutor:
                     "input": None,
                     "output": None,
                     "requirements": None,
+                    # Denormalise the owner from the parent Schedule so the runs
+                    # router can scope by user_id without a JOIN. ``None`` for
+                    # system / legacy schedules.
+                    "user_id": sched.user_id,
                     "created_at": now,
                 }
 

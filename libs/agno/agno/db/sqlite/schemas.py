@@ -84,13 +84,20 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSON, "nullable": False, "default": "{}"},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": String, "nullable": False, "index": True},
+    # Owner of this metric bucket. Stored as an empty string for "no owner"
+    # (RBAC off / pre-isolation deployments / system runs) so the unique
+    # constraint behaves predictably across SQL backends — SQLite/Postgres
+    # treat multiple NULLs as distinct, which would break uniqueness.
+    # ``from_dict`` round-trips ``""`` back to the API as ``None`` so this
+    # is transparent to callers.
+    "user_id": {"type": String, "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
-            "name": "uq_metrics_date_period",
-            "columns": ["date", "aggregation_period"],
+            "name": "uq_metrics_user_date_period",
+            "columns": ["user_id", "date", "aggregation_period"],
         }
     ],
 }
@@ -232,10 +239,19 @@ SCHEDULE_TABLE_SCHEMA = {
     "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
     "locked_by": {"type": String, "nullable": True},
     "locked_at": {"type": BigInteger, "nullable": True},
+    # Owner for user_isolation. ``None`` = system-created (executor, migrations,
+    # legacy rows). The poller's ``claim_due_schedule`` deliberately ignores this
+    # column so it can fire schedules across all users.
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
+        # Poller queries on (enabled, next_run_at) — keep this for the hot path.
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+        # User-facing list endpoint queries on (user_id, enabled) for "my active
+        # schedules" — add a covering index so route reads don't fall back to a
+        # filesort on the user_id alone.
+        {"name": "user_enabled_next_run_at", "columns": ["user_id", "enabled", "next_run_at"]},
     ],
 }
 
@@ -292,6 +308,9 @@ def _get_schedule_runs_table_schema(schedules_table_name: str = "agno_schedules"
         "input": {"type": JSON, "nullable": True},
         "output": {"type": JSON, "nullable": True},
         "requirements": {"type": JSON, "nullable": True},
+        # Denormalised from agno_schedules.user_id so the runs router can scope
+        # by owner without a JOIN to schedules.
+        "user_id": {"type": String, "nullable": True, "index": True},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
     }
 
