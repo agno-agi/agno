@@ -3,19 +3,23 @@ Agno Demo — AgentOS Entrypoint
 ===============================
 
 Agents
-  LocalWiki   — read + write a local markdown wiki, ingest URLs via Parallel MCP
-  GitWiki     — same, but pushes to a git remote (env-gated)
-  NotionWiki  — same, but the wiki is a Notion database (env-gated)
-  WebSearch   — keyless web research via Parallel MCP
-  CodeSearch  — answers questions about this repository
-  Researcher  — composes web + local_wiki + code_search on one agent
+  LocalWiki    — read + write a local markdown wiki, ingest URLs via Parallel MCP
+  GitWiki      — same, but pushes to a git remote (env-gated)
+  NotionWiki   — same, but the wiki is a Notion database (env-gated)
+  MediaIngest  — Gemini multimodal: image / audio / video / PDF → wiki page (env-gated)
+  WebSearch    — keyless web research via Parallel MCP
+  CodeSearch   — answers questions about this repository
+  Researcher   — composes web + local_wiki + code_search on one agent
 
 Teams
-  Swarm       — broadcast: two web-search agents (OpenAI + Anthropic),
-                leader synthesizes both views
+  Swarm        — verified ensemble: broadcast to diverse-model proposers,
+                 a Verifier checks each citation, then the leader synthesizes
 
 Workflows
-  Brief       — sequential: WebSearch → LocalWiki, files a brief to the wiki
+  Brief        — sequential: WebSearch → LocalWiki, files a brief to the wiki
+
+Optional interface
+  Slack        — env-gated; drop a photo or voice memo and it lands in the wiki
 """
 
 from contextlib import asynccontextmanager

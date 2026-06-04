@@ -1,6 +1,6 @@
 # Agno Demo
 
-A minimal AgentOS to copy and build on. A small set of agents and a local SQLite database for sessions + memory.
+An AgentOS you can copy and build on: a multimodal knowledge base. Wiki agents (local, git, Notion), keyless web research, Gemini multimodal ingest, a verified multi-model swarm, and a research pipeline — all on AgentOS with SQLite sessions + memory, plus an optional Slack interface.
 
 For a production-ready version of this demo, see the [agent-platform-railway](https://github.com/agno-agi/agent-platform-railway) codebase. Comes with AgentOS (FastAPI) + Postgres. One-command deploy to Railway. JWT auth, Slack integration, eval suite, and recursive-improvement loops driven by Claude Code.
 
@@ -22,9 +22,9 @@ All agents share `db=get_db()` (SQLite at `data/demo.db`), agentic memory on, da
 
 | Team | What it does | Pattern |
 |------|--------------|---------|
-| **Swarm** | Broadcast the same question to two web-search agents — one on OpenAI gpt-5.5, one on Anthropic claude-opus-4-7 — and synthesize. Lead calls out where the models agree, disagree, and a confidence read. | `Team(mode=broadcast, members=[openai_agent, anthropic_agent])` |
+| **Swarm** | A verified k-model ensemble. Broadcast the same question to web-search proposers on different providers (OpenAI, Anthropic, and Google when `GOOGLE_API_KEY` is set), then a Verifier re-checks each claim against its cited sources before the leader synthesizes — flagging unsupported citations and giving a confidence read based on model agreement AND verification. | `Team(mode=broadcast, members=[proposers], tools=[verify_claims])` |
 
-This is the "assemble a bunch of agents on a common problem, mix OpenAI and Anthropic" pattern. Both members share the same web provider — one Parallel MCP session, two perspectives.
+This is the "assemble agents on a common problem, mix providers — but verify before you trust" pattern. The proposers and the Verifier share one Parallel MCP session; the Verifier catches confident-but-wrong citations that a plain k-LLM vote would average in.
 
 ## Get started
 
@@ -76,6 +76,15 @@ Then open [os.agno.com](https://os.agno.com) and sign in:
 1. **Add OS** → **Local**
 2. Connect to `http://localhost:8000`, call it Local AgentOS
 3. Chat with your agents
+
+## Try it
+
+A few prompts that show what the demo can do:
+
+- **Multimodal ingest** — attach a whiteboard photo, screenshot, or voice memo to **MediaIngest**: *"Digest this and file it to the wiki."* It turns the media into a structured, cited page.
+- **Verified swarm** — ask **Swarm** a contested factual question: *"What's the latest stable CPython release? Cite sources."* It proposes across OpenAI / Anthropic / Google, verifies each citation, then synthesizes with a confidence read.
+- **Research and file** — ask the **Researcher**: *"Research the CPython release cycle — check the wiki first, then the web — and file a summary under papers/."*
+- **Morning brief** — run the **Brief** workflow: *"Brief me on Agno's AgentOS. File it under briefs/."*
 
 ## Slack (optional)
 

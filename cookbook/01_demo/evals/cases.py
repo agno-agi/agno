@@ -109,15 +109,17 @@ _BASE_CASES: tuple[Case, ...] = (
         ),
         expected_tool_calls=("query_local_wiki", "query_web"),
     ),
-    # Swarm team — both models answer, leader synthesizes with disagreements + confidence.
+    # Swarm team — verified ensemble: proposers answer, Verifier checks, leader synthesizes.
     Case(
-        name="swarm_synthesizes_two_models",
+        name="swarm_verifies_and_synthesizes",
         agent=swarm,
         input="What is the latest stable release of CPython? Cite the source.",
         criteria=(
-            "Answers with a specific CPython version. Includes a 'Confidence:' line "
-            "(high/medium/low). If the two members disagreed, includes a 'Disagreement:' "
-            "line; otherwise indicates agreement implicitly. Cites at least one URL."
+            "Answers with a specific CPython version under an 'Answer' section, "
+            "includes a 'Confidence:' line (high/medium/low), and cites at least "
+            "one real URL (python.org, peps.python.org) under a 'Sources' section. "
+            "Reflects the verified-ensemble structure rather than stating every "
+            "claim as fact."
         ),
     ),
 )
