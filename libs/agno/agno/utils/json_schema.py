@@ -147,7 +147,7 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         elif type_origin is dict:
             # Dict[K, V] with type args — use typed additionalProperties
             key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
-            value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {}
+            value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
             return {"type": "object", "propertyNames": key_schema, "additionalProperties": value_schema}
         elif is_origin_union_type(type_origin):
             types = []
