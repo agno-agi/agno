@@ -26,13 +26,14 @@ Endpoints (default prefix ``/authz``):
     DELETE /authz/users/{subject}/roles/{role}   revoke a role
 """
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from agno.os.authz.role_store import ManagedRoleStore
+    from agno.os.authz.user_store import ManagedUserStore
 
 
 class SetRoleScopesRequest(BaseModel):
@@ -43,8 +44,29 @@ class AssignRoleRequest(BaseModel):
     role: str = Field(..., description="Role to grant the subject")
 
 
-def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: List[str] = ["Authorization"]) -> APIRouter:
-    """Build the admin-only roles-management router bound to ``store``."""
+class CreateUserRequest(BaseModel):
+    id: str = Field(..., description="The user's id — must equal the JWT 'sub' your app mints for them")
+    email: Optional[str] = Field(None, description="Optional email (label/audit only; not a credential)")
+    name: Optional[str] = Field(None, description="Optional display name")
+
+
+class UpdateUserRequest(BaseModel):
+    email: Optional[str] = Field(None, description="New email")
+    name: Optional[str] = Field(None, description="New display name")
+
+
+def get_roles_router(
+    store: "ManagedRoleStore",
+    prefix: str = "/authz",
+    tags: List[str] = ["Authorization"],
+    user_store: "Optional[ManagedUserStore]" = None,
+) -> APIRouter:
+    """Build the admin-only roles-management router bound to ``store``.
+
+    Pass ``user_store`` to also expose the credential-less user directory
+    (``/authz/users``) for the no-IdP case: list/create/update/remove users and
+    disable (revoke) them. User views merge in each user's roles from ``store``.
+    """
 
     def require_admin(request: Request) -> str:
         """Gate: caller must be authenticated and an admin of the store."""
@@ -135,5 +157,50 @@ def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: Li
     def revoke_role(subject: str, role: str, actor: str = Depends(require_admin)) -> dict:
         store.unassign(subject, role, actor=actor)
         return {"subject": subject, "roles": store.roles_of(subject)}
+
+    # ---- user directory (no-IdP) ---------------------------------------
+    # Only mounted when a user_store is supplied. Identity is still asserted by
+    # the app's JWT; this is a directory + revocation switch, never credentials.
+    if user_store is not None:
+
+        def _with_roles(user: dict) -> dict:
+            return {**user, "roles": store.roles_of(user["id"])}
+
+        @router.get("/users")
+        def list_users(include_disabled: bool = True, limit: int = 1000) -> dict:
+            """All users in the directory (newest first), each with their roles."""
+            return {"users": [_with_roles(u) for u in user_store.list(limit=limit, include_disabled=include_disabled)]}
+
+        @router.post("/users")
+        def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)) -> dict:
+            user = user_store.upsert(body.id, email=body.email, name=body.name, actor=actor)
+            return _with_roles(user)
+
+        @router.get("/users/{user_id}")
+        def get_user(user_id: str) -> dict:
+            user = user_store.get(user_id)
+            if user is None:
+                raise HTTPException(status_code=404, detail=f"User {user_id!r} not found")
+            return _with_roles(user)
+
+        @router.patch("/users/{user_id}")
+        def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)) -> dict:
+            user = user_store.upsert(user_id, email=body.email, name=body.name, actor=actor)
+            return _with_roles(user)
+
+        @router.delete("/users/{user_id}")
+        def delete_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
+            deleted = user_store.remove(user_id, actor=actor)
+            return {"id": user_id, "deleted": deleted}
+
+        @router.post("/users/{user_id}/disable")
+        def disable_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
+            """Revoke a user: they are denied at the enforcement point on their next
+            request, even with a still-valid token."""
+            return _with_roles(user_store.set_disabled(user_id, True, actor=actor))
+
+        @router.post("/users/{user_id}/enable")
+        def enable_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
+            return _with_roles(user_store.set_disabled(user_id, False, actor=actor))
 
     return router

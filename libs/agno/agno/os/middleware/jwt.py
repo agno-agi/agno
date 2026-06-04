@@ -711,6 +711,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         scopes: List[str],
         token: Optional[str],
         claims: Optional[dict] = None,
+        reason: Optional[str] = None,
     ) -> None:
         """Record one authorization decision to the audit sink (if configured).
 
@@ -731,13 +732,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
             from agno.os.authz.audit import AuditEvent
 
             token_ref = self._token_reference(token, claims)
+            metadata = {"required": required_scopes, "token": token_ref, "scopes": scopes}
+            if reason:
+                metadata["reason"] = reason
             sink.record(
                 AuditEvent(
                     action="access.allowed" if allowed else "access.denied",
                     actor=principal,
                     target=f"{method} {path}",
                     timestamp=int(time.time()),
-                    metadata={"required": required_scopes, "token": token_ref, "scopes": scopes},
+                    metadata=metadata,
                 )
             )
         except Exception as e:  # pragma: no cover - audit must never break requests
@@ -1049,6 +1053,41 @@ class JWTMiddleware(BaseHTTPMiddleware):
             # to None when this is False, so the DB wrapper and route-level
             # ownership gates stay dormant.
             request.state.user_isolation_enabled = self.user_isolation
+
+            # User directory (no-IdP): optionally auto-provision the subject from
+            # token claims, then enforce the disabled flag. This is the revocation
+            # kill-switch — a disabled user is denied even with a valid token, on
+            # EVERY route (independent of per-route scopes). Identity is still the
+            # app's to assert; we only gate it.
+            user_store = getattr(getattr(request.app, "state", None), "user_store", None)
+            if user_store is not None and user_id:
+                try:
+                    if getattr(request.app.state, "user_auto_provision", False):
+                        user_store.provision_from_claims(
+                            user_id,
+                            payload,
+                            email_claim=getattr(request.app.state, "user_email_claim", "email"),
+                            name_claim=getattr(request.app.state, "user_name_claim", "name"),
+                        )
+                    disabled = user_store.is_disabled(user_id)
+                except Exception as e:  # never let directory issues fail open OR crash the request
+                    log_warning(f"user directory check failed for {user_id!r}: {e}")
+                    disabled = False
+                if disabled:
+                    log_warning(f"Disabled user denied: {user_id} for {method} {path}")
+                    self._record_decision(
+                        request,
+                        allowed=False,
+                        method=method,
+                        path=path,
+                        principal=user_id,
+                        required_scopes=[],
+                        scopes=scopes,
+                        token=token,
+                        claims=payload,
+                        reason="user_disabled",
+                    )
+                    return self._create_error_response(403, "User is disabled", origin, cors_allowed_origins)
 
             # Extract dependencies claims
             dependencies = {}

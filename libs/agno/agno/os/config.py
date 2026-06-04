@@ -34,6 +34,17 @@ class AuthorizationConfig(BaseModel):
     # Supply an AuthorizationProvider instance to swap in a different model
     # (ReBAC/ABAC/Casbin/OpenFGA/Cerbos) without changing the request pipeline.
     authorization_provider: Optional[Any] = None
+    # Optional ManagedUserStore — the credential-less user directory for the
+    # no-IdP case. When set, AgentOS denies a disabled user at the enforcement
+    # point (revocation that outlives a valid token) and can auto-provision a
+    # directory row from token claims. Identity is still asserted by the JWT;
+    # this never stores credentials.
+    user_store: Optional[Any] = None
+    # Just-in-time provisioning: when True, the first valid token from a subject
+    # not yet in the directory creates a row from the token claims below.
+    auto_provision_users: bool = False
+    user_email_claim: str = "email"
+    user_name_claim: str = "name"
     # Optional AuditSink. When set, AgentOS records each authorization decision
     # (allow/deny) at the route gate — principal, route, required scopes, and a
     # non-secret token reference — so you get an access trail, not just a change

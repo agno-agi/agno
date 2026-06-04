@@ -990,6 +990,10 @@ class AgentOS:
         user_isolation = False
         authorization_provider = None
         authz_audit = None
+        user_store = None
+        auto_provision_users = False
+        user_email_claim = "email"
+        user_name_claim = "name"
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
@@ -1007,6 +1011,10 @@ class AgentOS:
             user_isolation = self.authorization_config.user_isolation
             authorization_provider = self.authorization_config.authorization_provider
             authz_audit = self.authorization_config.audit
+            user_store = self.authorization_config.user_store
+            auto_provision_users = self.authorization_config.auto_provision_users
+            user_email_claim = self.authorization_config.user_email_claim
+            user_name_claim = self.authorization_config.user_name_claim
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -1040,6 +1048,12 @@ class AgentOS:
         fastapi_app.state.authorization_provider = authorization_provider or ScopeAuthorizationProvider()
         # Optional decision-audit sink (records allow/deny at the route gate).
         fastapi_app.state.authz_audit = authz_audit
+        # Optional user directory (no-IdP). When present, the middleware denies
+        # disabled users and (optionally) auto-provisions from token claims.
+        fastapi_app.state.user_store = user_store
+        fastapi_app.state.user_auto_provision = auto_provision_users
+        fastapi_app.state.user_email_claim = user_email_claim
+        fastapi_app.state.user_name_claim = user_name_claim
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms
