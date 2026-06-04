@@ -1,9 +1,8 @@
 """
 
-Run:
-    .venvs/demo/bin/python tmp/test_file_gen_os.py
 
-Then open os.agno.com and chat with the agent, e.g.:
+
+open os.agno.com and chat with the agent, e.g.:
     "Generate a DOCX report on Q4 sales trends."
     "Generate a PDF about renewable energy."
     "Generate a CSV of 5 fictional employees."
