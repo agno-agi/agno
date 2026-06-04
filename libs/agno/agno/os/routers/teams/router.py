@@ -58,7 +58,7 @@ from agno.os.utils import (
 )
 from agno.registry import Registry
 from agno.run.base import RunStatus
-from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent, TeamRunOutput
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -110,6 +110,8 @@ async def team_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in run_response:
+            if isinstance(run_response_chunk, TeamRunOutput):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
@@ -420,6 +422,8 @@ async def team_continue_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in continue_response:
+            if isinstance(run_response_chunk, TeamRunOutput):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(

@@ -55,7 +55,7 @@ from agno.os.utils import (
     resolve_workflow,
 )
 from agno.run.base import RunStatus
-from agno.run.workflow import WorkflowErrorEvent
+from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.serialize import json_serializer
 from agno.workflow.factory import WorkflowFactory
@@ -620,6 +620,8 @@ async def workflow_response_streamer(
         )
 
         async for run_response_chunk in run_response:
+            if isinstance(run_response_chunk, WorkflowRunOutput):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
 
         # If the workflow paused, yield the full WorkflowRunOutput as a final SSE event
@@ -744,6 +746,8 @@ async def workflow_continue_response_streamer(
         )
 
         async for run_response_chunk in run_response:
+            if isinstance(run_response_chunk, WorkflowRunOutput):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
 
         # If the workflow re-paused, yield the full WorkflowRunOutput as a final SSE event

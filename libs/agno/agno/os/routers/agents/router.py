@@ -115,6 +115,8 @@ async def agent_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in run_response:  # type: ignore[union-attr]
+            if isinstance(run_response_chunk, RunOutput):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
@@ -235,6 +237,8 @@ async def agent_continue_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in continue_response:
+            if isinstance(run_response_chunk, RunOutput):
+                continue
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
