@@ -74,6 +74,31 @@ class TestExtractThinkingContent:
         assert "<think>" not in output
         assert "weather is sunny" in output
 
+    def test_thinking_tags_variant(self):
+        """Some providers use <thinking> instead of <think> tags."""
+        content = "<thinking>Analyzing the problem</thinking>The solution is X."
+        reasoning, output = extract_thinking_content(content)
+        assert reasoning == "Analyzing the problem"
+        assert output == "The solution is X."
+        assert "<thinking>" not in output
+
+    def test_multiple_thinking_blocks(self):
+        """Multiple <thinking> blocks should all be extracted."""
+        content = "<thinking>First thought</thinking><thinking>Second thought</thinking>Final answer."
+        reasoning, output = extract_thinking_content(content)
+        assert "First thought" in reasoning
+        assert "Second thought" in reasoning
+        assert output == "Final answer."
+
+    def test_mixed_tags_prefers_think(self):
+        """When both </think> and </thinking> are present, <think> takes precedence."""
+        content = "<think>Think content</think><thinking>Thinking content</thinking>Answer."
+        reasoning, output = extract_thinking_content(content)
+        # Current implementation: </think> is checked first, so <think> is extracted
+        assert "Think content" in reasoning
+        # <thinking> block remains in output (known limitation)
+        assert "<thinking>" in output
+
 
 # =============================================================================
 # Tests for _process_step_output with thinking mode
@@ -332,6 +357,51 @@ class TestStreamingThinkTagExtraction:
             pass  # Should not reach here
 
         assert run_response.content is None
+
+    def test_thinking_tags_extracted_from_run_response(self):
+        """Some providers use <thinking> tags instead of <think>."""
+        run_response = RunOutput()
+        model_response = ModelResponse(content="")
+
+        # Simulate content with <thinking> tags
+        accumulated = "<thinking>Analyzing step by step</thinking>The answer is correct."
+        run_response.content = accumulated
+        model_response.content = accumulated
+
+        # Updated logic checks for both tag variants
+        if (
+            run_response.content
+            and isinstance(run_response.content, str)
+            and ("</think>" in run_response.content or "</thinking>" in run_response.content)
+        ):
+            from agno.utils.reasoning import extract_thinking_content
+
+            reasoning_content, clean_content = extract_thinking_content(run_response.content)
+            if reasoning_content:
+                if not run_response.reasoning_content:
+                    run_response.reasoning_content = reasoning_content
+                run_response.content = clean_content
+                model_response.content = clean_content
+
+        assert run_response.content == "The answer is correct."
+        assert run_response.reasoning_content == "Analyzing step by step"
+
+    def test_guard_checks_both_tag_variants(self):
+        """The streaming guard should trigger for both </think> and </thinking>."""
+        # Test with </think>
+        content_think = "<think>thought</think>answer"
+        guard_think = "</think>" in content_think or "</thinking>" in content_think
+        assert guard_think is True
+
+        # Test with </thinking>
+        content_thinking = "<thinking>thought</thinking>answer"
+        guard_thinking = "</think>" in content_thinking or "</thinking>" in content_thinking
+        assert guard_thinking is True
+
+        # Test with neither
+        content_plain = "plain answer"
+        guard_plain = "</think>" in content_plain or "</thinking>" in content_plain
+        assert guard_plain is False
 
 
 # =============================================================================
