@@ -1,5 +1,5 @@
 """
-Tests for issue #7175: enable_agentic_state tool schema extraction.
+Enable_agentic_state tool schema extraction.
 
 The update_session_state tool should have a proper schema so the LLM knows
 how to call it with session_state_updates parameter.
