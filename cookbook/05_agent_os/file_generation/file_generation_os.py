@@ -13,7 +13,6 @@ Files are returned as base64-encoded artifacts in the AgentOS response (see
 File._normalise_content in agno/media.py) AND saved to tmp/file_gen_out/.
 """
 
-from dotenv import load_dotenv
 
 
 from agno.agent import Agent
@@ -50,4 +49,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="filegenerationos:app", reload=True)
+    agent_os.serve(app="file_generation_os:app", reload=True)
