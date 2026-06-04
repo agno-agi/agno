@@ -24,9 +24,10 @@ media_agent = Agent(
 )
 
 # Setup your AgentOS app
+# Dojo expects: http://localhost:9001/agentic_chat_multimodal/agui
 agent_os = AgentOS(
     agents=[media_agent],
-    interfaces=[AGUI(agent=media_agent)],
+    interfaces=[AGUI(agent=media_agent, prefix="/agentic_chat_multimodal")],
 )
 app = agent_os.get_app()
 
