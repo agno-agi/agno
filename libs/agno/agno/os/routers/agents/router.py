@@ -207,7 +207,7 @@ async def agent_resumable_response_streamer(
 async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent, AgentProtocol],
     run_id: str,
-    updated_tools: Optional[List] = None,
+    requirements: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -226,7 +226,7 @@ async def agent_continue_response_streamer(
 
         continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
-            updated_tools=updated_tools,
+            requirements=requirements,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -262,7 +262,7 @@ async def agent_continue_response_streamer(
 async def agent_resumable_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
-    updated_tools: Optional[List] = None,
+    requirements: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -291,7 +291,7 @@ async def agent_resumable_continue_response_streamer(
     try:
         async for sse_data in agent.acontinue_run(
             run_id=run_id,
-            updated_tools=updated_tools,
+            requirements=requirements,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -1011,13 +1011,14 @@ def get_agent_router(
                     detail=detail,
                 )
 
-        # Convert tools dict to ToolExecution objects if provided
-        updated_tools = None
+        # Convert tools dict to RunRequirement objects if provided
+        requirements = None
         if tools_data:
             try:
                 from agno.models.response import ToolExecution
+                from agno.run.requirement import RunRequirement
 
-                updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
+                requirements = [RunRequirement(tool_execution=ToolExecution.from_dict(tool)) for tool in tools_data]
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
 
@@ -1034,7 +1035,7 @@ def get_agent_router(
                 agent_resumable_continue_response_streamer(
                     agent,  # type: ignore[arg-type]
                     run_id=run_id,
-                    updated_tools=updated_tools,
+                    requirements=requirements,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1048,7 +1049,7 @@ def get_agent_router(
                 agent_continue_response_streamer(
                     agent,
                     run_id=run_id,  # run_id from path
-                    updated_tools=updated_tools,
+                    requirements=requirements,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1068,7 +1069,7 @@ def get_agent_router(
                     RunOutput,
                     await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
-                        updated_tools=updated_tools,
+                        requirements=requirements,
                         session_id=session_id,
                         user_id=user_id,
                         stream=False,

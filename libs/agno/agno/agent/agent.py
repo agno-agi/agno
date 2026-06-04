@@ -120,8 +120,6 @@ class Agent:
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     update_memory_on_run: bool = False
-    # Soon to be deprecated. Use update_memory_on_run
-    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
 
@@ -391,16 +389,12 @@ class Agent:
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
-        # Deprecated params — kept for backward compatibility
-        search_session_history: Optional[bool] = None,
-        num_history_sessions: Optional[int] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
-        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
@@ -512,12 +506,6 @@ class Agent:
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
 
-        # Deprecated param mapping
-        if search_session_history is not None and not search_past_sessions:
-            search_past_sessions = search_session_history
-        if num_history_sessions is not None and num_past_sessions_to_search is None:
-            num_past_sessions_to_search = num_history_sessions
-
         self.search_past_sessions = search_past_sessions
         self.num_past_sessions_to_search = num_past_sessions_to_search
         self.num_past_session_runs_in_search = num_past_session_runs_in_search
@@ -530,12 +518,7 @@ class Agent:
 
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
-
-        if enable_user_memories is not None:
-            self.update_memory_on_run = enable_user_memories
-        else:
-            self.update_memory_on_run = update_memory_on_run
-        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+        self.update_memory_on_run = update_memory_on_run
 
         self.add_memories_to_context = add_memories_to_context
 
@@ -1500,7 +1483,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
@@ -1519,7 +1501,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
@@ -1537,7 +1518,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
@@ -1555,7 +1535,6 @@ class Agent:
             self,
             run_response=run_response,
             run_id=run_id,
-            updated_tools=updated_tools,
             requirements=requirements,
             stream=stream,
             stream_events=stream_events,
@@ -1578,7 +1557,6 @@ class Agent:
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1597,7 +1575,6 @@ class Agent:
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1613,7 +1590,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
@@ -1632,7 +1608,6 @@ class Agent:
             self,
             run_response=run_response,
             run_id=run_id,
-            updated_tools=updated_tools,
             requirements=requirements,
             stream=stream,
             stream_events=stream_events,

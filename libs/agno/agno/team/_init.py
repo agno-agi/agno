@@ -87,9 +87,6 @@ def __init__(
     search_past_sessions: Optional[bool] = False,
     num_past_sessions_to_search: Optional[int] = None,
     num_past_session_runs_in_search: Optional[int] = None,
-    # Deprecated params — kept for backward compatibility
-    search_session_history: Optional[bool] = None,
-    num_history_sessions: Optional[int] = None,
     description: Optional[str] = None,
     instructions: Optional[Union[str, List[str], Callable]] = None,
     use_instruction_tags: bool = False,
@@ -146,7 +143,6 @@ def __init__(
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     enable_agentic_memory: bool = False,
     update_memory_on_run: bool = False,
-    enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
     add_memories_to_context: Optional[bool] = None,
     memory_manager: Optional[MemoryManager] = None,
     enable_session_summaries: bool = False,
@@ -252,12 +248,6 @@ def __init__(
     team.add_team_history_to_members = add_team_history_to_members
     team.num_team_history_runs = num_team_history_runs
 
-    # Deprecated param mapping
-    if search_session_history is not None and not search_past_sessions:
-        search_past_sessions = search_session_history
-    if num_history_sessions is not None and num_past_sessions_to_search is None:
-        num_past_sessions_to_search = num_history_sessions
-
     team.search_past_sessions = search_past_sessions
     team.num_past_sessions_to_search = num_past_sessions_to_search
     team.num_past_session_runs_in_search = num_past_session_runs_in_search
@@ -329,12 +319,7 @@ def __init__(
     team.db = db
 
     team.enable_agentic_memory = enable_agentic_memory
-
-    if enable_user_memories is not None:
-        team.update_memory_on_run = enable_user_memories
-    else:
-        team.update_memory_on_run = update_memory_on_run
-    team.enable_user_memories = team.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+    team.update_memory_on_run = update_memory_on_run
 
     team.add_memories_to_context = add_memories_to_context
     team.memory_manager = memory_manager

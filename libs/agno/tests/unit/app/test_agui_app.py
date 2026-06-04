@@ -15,9 +15,13 @@ from ag_ui.core.types import (
     VideoInputContent,
 )
 
-from agno.os.interfaces.agui.router import run_agent, run_team
 from agno.os.interfaces.agui.media import extract_agui_media
-from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events, extract_agui_user_input
+from agno.os.interfaces.agui.router import run_agent, run_team
+from agno.os.interfaces.agui.utils import (
+    EventBuffer,
+    async_stream_agno_response_as_agui_events,
+    extract_agui_user_input,
+)
 from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 

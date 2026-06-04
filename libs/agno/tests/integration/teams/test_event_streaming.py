@@ -254,12 +254,13 @@ def test_intermediate_steps_with_user_confirmation():
     assert team.run_response.tools[0].requires_confirmation
 
     # Mark the tool as confirmed
-    updated_tools = team.run_response.tools
     run_id = team.run_response.run_id
-    updated_tools[0].confirmed = True
+    team.run_response.tools[0].confirmed = True
 
     # Then we continue the run
-    response_generator = team.continue_run(run_id=run_id, updated_tools=updated_tools, stream=True, stream_events=True)
+    response_generator = team.continue_run(
+        run_id=run_id, requirements=team.run_response.requirements, stream=True, stream_events=True
+    )
 
     events = {}
     for run_response_delta in response_generator:
