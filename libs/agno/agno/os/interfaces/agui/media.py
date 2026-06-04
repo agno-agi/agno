@@ -10,25 +10,12 @@ from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_warning
 
 
-def extract_user_input(messages: List[AGUIMessage]) -> str:
-    """Extract text from the last user message."""
-    for msg in reversed(messages):
-        if msg.role != "user" or msg.content is None:
-            continue
-        if isinstance(msg.content, str):
-            return msg.content
-        return "\n".join(
-            getattr(p, "text", "") for p in msg.content if getattr(p, "type", None) == "text"
-        )
-    return ""
-
-
-def extract_media(
+def extract_agui_media(
     messages: List[AGUIMessage],
 ) -> Tuple[List[Image], List[Audio], List[Video], List[File]]:
     """Extract media from the last user message.
 
-    Returns (images, audio, videos, files) tuple - same pattern as Slack helpers.
+    Returns (images, audio, videos, files) tuple.
     """
     images: List[Image] = []
     audio: List[Audio] = []

@@ -18,8 +18,8 @@ from ag_ui.core.types import (
 )
 
 from agno.os.interfaces.agui.router import run_agent, run_team
-from agno.os.interfaces.agui.media import extract_media, extract_user_input
-from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
+from agno.os.interfaces.agui.media import extract_agui_media
+from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events, extract_agui_user_input
 from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
@@ -1882,8 +1882,8 @@ def test_extract_user_input_and_images():
         ),
     ]
 
-    user_input = extract_user_input(messages)
-    images, _, _, _ = extract_media(messages)
+    user_input = extract_agui_user_input(messages)
+    images, _, _, _ = extract_agui_media(messages)
 
     assert user_input == "please inspect"
     assert len(images) == 2
@@ -1922,8 +1922,8 @@ def test_extract_media_from_multimodal_content():
         ),
     ]
 
-    user_input = extract_user_input(messages)
-    images, audio, videos, files = extract_media(messages)
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
 
     assert user_input == "please inspect"
     assert len(images) == 1
@@ -1968,8 +1968,8 @@ def test_extract_media_routes_binary_content_by_mime_type():
         ),
     ]
 
-    user_input = extract_user_input(messages)
-    images, audio, videos, files = extract_media(messages)
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
 
     assert user_input == ""
     assert images[0].content == image_bytes
@@ -1996,8 +1996,8 @@ def test_extract_media_skips_malformed_base64():
         ),
     ]
 
-    user_input = extract_user_input(messages)
-    images, audio, videos, files = extract_media(messages)
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
 
     assert user_input == "check this"
     assert len(images) == 0

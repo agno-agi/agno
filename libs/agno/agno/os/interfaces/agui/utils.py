@@ -32,7 +32,7 @@ from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
 from agno.media import Image
-from agno.os.interfaces.agui.media import extract_media, extract_user_input
+from agno.os.interfaces.agui.media import extract_agui_media
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
@@ -184,6 +184,27 @@ class EventBuffer:
         """End the active reasoning session."""
         self.reasoning_message_id = None
         self.reasoning_step_count = 0
+
+
+def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
+    """Extract the last user message content from AG-UI messages.
+
+    AG-UI frontends send the full conversation history on every request.
+    The agent manages its own history via session DB, so we only need the
+    latest user message as input — matching the REST API pattern.
+    """
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content is not None:
+            if isinstance(msg.content, str):
+                return msg.content
+            if isinstance(msg.content, list):
+                text_parts = []
+                for part in msg.content:
+                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "\n".join(text_parts)
+    return ""
 
 
 def extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
