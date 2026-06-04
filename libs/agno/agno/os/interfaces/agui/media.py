@@ -1,4 +1,9 @@
-"""AG-UI media extraction utilities."""
+"""Extract media from AG-UI multimodal messages.
+
+AG-UI sends media as base64-encoded content in typed parts (ImageInputContent,
+AudioInputContent, etc.) or deprecated BinaryInputContent. This module decodes
+and converts them to Agno media objects (Image, Audio, Video, File).
+"""
 
 import base64
 import urllib.request
@@ -22,77 +27,75 @@ def extract_agui_media(
     videos: List[Video] = []
     files: List[File] = []
 
+    # 1. Find the last user message
     for msg in reversed(messages):
         if msg.role != "user" or msg.content is None:
             continue
+
+        # String content has no media
         if isinstance(msg.content, str):
             return images, audio, videos, files
 
+        # 2. Process each content part
         for part in msg.content:
-            part_type = getattr(part, "type", None)
+            if not hasattr(part, "type"):
+                continue
 
-            # Binary content has flat structure: url/data/mime_type/filename
-            if part_type == "binary":
-                url = getattr(part, "url", None)
-                data = getattr(part, "data", None)
+            # 3. Extract content bytes and MIME type based on part structure
+            content: Optional[bytes] = None
+            url: Optional[str] = None
+            mime: Optional[str] = None
+            filename: Optional[str] = None
+
+            if part.type == "binary":
+                # BinaryInputContent: flat structure (deprecated but still used)
                 mime = getattr(part, "mime_type", None)
                 filename = getattr(part, "filename", None)
+                url = getattr(part, "url", None)
+                data = getattr(part, "data", None)
+                if not url and data:
+                    content = _decode_base64(data)
 
-                if url:
-                    _append_media(images, audio, videos, files, mime, url=url, filename=filename)
-                elif data:
-                    content, data_mime = _decode_base64(data)
-                    if content:
-                        _append_media(images, audio, videos, files, mime or data_mime, content=content, filename=filename)
-
-            # Typed content has nested source: source.type/source.value/source.mime_type
-            elif part_type in ("image", "audio", "video", "document"):
+            elif part.type in ("image", "audio", "video", "document"):
+                # Typed content: nested source structure
                 source = getattr(part, "source", None)
-                if not source:
-                    continue
-                src_type = getattr(source, "type", None)
-                value = getattr(source, "value", None)
-                mime = getattr(source, "mime_type", None)
+                if source and hasattr(source, "type"):
+                    mime = getattr(source, "mime_type", None)
+                    value = getattr(source, "value", None)
+                    if source.type == "url" and value:
+                        url = value
+                    elif source.type == "data" and value:
+                        content = _decode_base64(value)
 
-                if src_type == "url" and value:
-                    _append_media(images, audio, videos, files, mime, url=value)
-                elif src_type == "data" and value:
-                    content, data_mime = _decode_base64(value)
-                    if content:
-                        _append_media(images, audio, videos, files, mime or data_mime, content=content)
+            # 4. Create Agno media object and append to correct list
+            if url or content:
+                kwargs = {"url": url} if url else {"content": content}
+                if filename:
+                    kwargs["filename"] = filename
+
+                if mime and mime.startswith("image/"):
+                    images.append(Image(mime_type=mime, **kwargs))
+                elif mime and mime.startswith("audio/"):
+                    audio.append(Audio(mime_type=mime, **kwargs))
+                elif mime and mime.startswith("video/"):
+                    videos.append(Video(mime_type=mime, **kwargs))
+                else:
+                    # File validates MIME — pass None for unsupported types to avoid raising
+                    safe_mime = mime if mime in File.valid_mime_types() else None
+                    files.append(File(mime_type=safe_mime, **kwargs))
 
         return images, audio, videos, files
 
     return images, audio, videos, files
 
 
-def _decode_base64(value: str) -> Tuple[Optional[bytes], Optional[str]]:
-    """Decode base64 (with or without data: URL prefix) to bytes and MIME type."""
+def _decode_base64(value: str) -> Optional[bytes]:
+    """Decode base64 string to bytes. Handles data: URLs and raw base64."""
     try:
+        # data: URLs embed MIME and base64 together, urllib handles them
         if value.startswith("data:"):
-            resp = urllib.request.urlopen(value)
-            return resp.read(), resp.headers.get_content_type()
-        return base64.b64decode(value, validate=True), None
+            return urllib.request.urlopen(value).read()
+        return base64.b64decode(value, validate=True)
     except Exception:
         log_warning("Failed to decode base64 content")
-        return None, None
-
-
-def _append_media(
-    images: List[Image],
-    audio: List[Audio],
-    videos: List[Video],
-    files: List[File],
-    mime: Optional[str],
-    **kwargs,
-) -> None:
-    """Append media object to the correct list based on MIME type."""
-    if mime and mime.startswith("image/"):
-        images.append(Image(mime_type=mime, **kwargs))
-    elif mime and mime.startswith("audio/"):
-        audio.append(Audio(mime_type=mime, **kwargs))
-    elif mime and mime.startswith("video/"):
-        videos.append(Video(mime_type=mime, **kwargs))
-    else:
-        safe_mime = mime if mime in File.valid_mime_types() else None
-        files.append(File(mime_type=safe_mime, **kwargs))
+        return None
