@@ -1,3 +1,4 @@
+import re
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 
 from agno.metrics import MessageMetrics
@@ -10,32 +11,30 @@ if TYPE_CHECKING:
 
 
 def extract_thinking_content(content: str) -> Tuple[Optional[str], str]:
-    """Extract thinking content from response text between <think> or <thinking> tags."""
+    """Extract all thinking content from response text between <think> or <thinking> tags.
+
+    Handles multiple <think>...</think> or <thinking>...</thinking> blocks that
+    accumulate when models produce thinking content across tool-call iterations
+    (e.g., qwen3 via vLLM). Also handles <thinking> tags used by some providers.
+    """
     if not content:
         return None, content
 
-    # Check for </think> or </thinking> closing tags
+    # Determine which tag format is present
     if "</think>" in content:
-        end_tag = "</think>"
-        start_tag = "<think>"
+        pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
     elif "</thinking>" in content:
-        end_tag = "</thinking>"
-        start_tag = "<thinking>"
+        pattern = re.compile(r"<thinking>(.*?)</thinking>", re.DOTALL)
     else:
         return None, content
 
-    # Find the end of thinking content
-    end_idx = content.find(end_tag)
+    matches = pattern.findall(content)
 
-    # Look for opening tag, if not found, assume thinking starts at beginning
-    start_idx = content.find(start_tag)
-    if start_idx == -1:
-        reasoning_content = content[:end_idx].strip()
-    else:
-        start_idx = start_idx + len(start_tag)
-        reasoning_content = content[start_idx:end_idx].strip()
+    reasoning_content: Optional[str] = None
+    if matches:
+        reasoning_content = "\n".join(m.strip() for m in matches if m.strip())
 
-    output_content = content[end_idx + len(end_tag) :].strip()
+    output_content = pattern.sub("", content).strip()
 
     return reasoning_content, output_content
 
