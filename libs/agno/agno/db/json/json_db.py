@@ -98,12 +98,12 @@ class JsonDb(BaseDb):
         self.db_path.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(file_path, "r") as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 return json.load(f)
 
         except FileNotFoundError:
             if create_table_if_not_found:
-                with open(file_path, "w") as f:
+                with open(file_path, "w", encoding="utf-8") as f:
                     json.dump([], f)
             return []
 
@@ -127,7 +127,7 @@ class JsonDb(BaseDb):
         self.db_path.mkdir(parents=True, exist_ok=True)
 
         try:
-            with open(file_path, "w") as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, default=str)
 
         except Exception as e:
