@@ -17,7 +17,7 @@ from agno.os.interfaces.agui import AGUI
 
 media_agent = Agent(
     name="Media Agent",
-    model=Gemini(id="gemini-flash-latest"),
+    model=Gemini(id="gemini-2.5-flash"),
     instructions="Analyze any image, audio, video, or document the user sends and answer their question about it.",
     add_datetime_to_context=True,
     markdown=True,
