@@ -106,7 +106,11 @@ class DatabaseSpanExporter(SpanExporter):
     def _export_async(self, spans_by_trace: Dict[str, List[Span]]) -> None:
         """Handle async database export"""
         try:
-            loop = asyncio.get_event_loop()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
             if loop.is_running():
                 # We're in an async context, schedule the coroutine
                 asyncio.create_task(self._do_async_export(spans_by_trace))
