@@ -1,25 +1,19 @@
 """
-A2A Agent as Team Member
-========================
+Example demonstrating how to use a remote A2A agent as a Team member.
 
-Demonstrates using RemoteAgent with the A2A protocol to include agents
-from any A2A-compatible framework as team members:
-- Another Agno instance with A2A interface
-- Google ADK agents
-- LangGraph agents
-- Any A2A-compatible agent
-
-The A2A (Agent-to-Agent) protocol is an open standard for cross-framework
-agent communication, enabling interoperability regardless of implementation.
+This shows how to include agents from an A2A-compatible server as members
+in a local Team, enabling cross-framework agent orchestration.
 
 Prerequisites:
 1. Install A2A SDK:
    pip install a2a-sdk
 
 2. Start the A2A server:
-   python cookbook/05_agent_os/remote/agno_a2a_server.py  (port 7779)
+   python cookbook/05_agent_os/remote/agno_a2a_server.py
 
-3. Set OPENAI_API_KEY
+   The server will run on http://localhost:7779
+
+3. Set your OPENAI_API_KEY environment variable
 """
 
 import asyncio

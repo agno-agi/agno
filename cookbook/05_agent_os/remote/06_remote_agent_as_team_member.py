@@ -1,27 +1,16 @@
 """
-Remote Agent as Team Member
-===========================
+Example demonstrating how to use RemoteAgent as a Team member.
 
-Demonstrates using RemoteAgent to include external agents as members
-in a local Team. This enables cross-framework agent collaboration where
-your Team can delegate to agents running on:
-- Another Agno AgentOS instance
-- Google ADK (via A2A protocol)
-- LangGraph (via A2A protocol)
-- Any A2A-compatible agent server
-
-This is the Agno equivalent of Google ADK's RemoteA2aAgent pattern:
-    prime_agent = RemoteA2aAgent(
-        name="prime_agent",
-        agent_card="http://localhost:8001/a2a/.../.well-known/agent.json"
-    )
-    root_agent = Agent(sub_agents=[roll_agent, prime_agent])
+This shows how to include agents from another AgentOS server as members
+in a local Team, enabling cross-service agent orchestration.
 
 Prerequisites:
 1. Start the server:
-   python cookbook/05_agent_os/remote/server.py  (port 7778)
+   python cookbook/05_agent_os/remote/server.py
 
-2. Set OPENAI_API_KEY
+   The server will run on http://localhost:7778
+
+2. Set your OPENAI_API_KEY environment variable
 """
 
 import asyncio
