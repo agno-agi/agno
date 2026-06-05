@@ -31,6 +31,11 @@ chat:
       - "Compare what the wiki says about agent memory with the current state of the agno.memory module."
       - "What's new in agent research from Anthropic this year? Cite sources."
 
+    file-generator:
+      - "Generate an HTML landing page for a coffee shop."
+      - "Generate a CSV of 5 fictional employees with name, role, and email."
+      - "Generate a PDF one-pager on renewable energy."
+
     # ----- Teams -----
     swarm:
       - "What is the latest stable release of CPython? Cite the source."
