@@ -61,6 +61,14 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
     active = [req for req in run_response.requirements if not req.is_resolved()]
     if not active:
         return "Team run paused."
+    all_silent_external = all(
+        req.needs_external_execution
+        and req.tool_execution
+        and getattr(req.tool_execution, "external_execution_silent", False)
+        for req in active
+    )
+    if all_silent_external:
+        return ""
     parts: list[str] = []
     for req in active:
         member = req.member_agent_name or "team"

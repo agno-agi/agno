@@ -755,16 +755,17 @@ async def run_team(
                 )
                 return
 
-            requirements = [
-                RunRequirement(
+            requirements = []
+            for msg in tool_messages:
+                req = RunRequirement(
                     tool_execution=ToolExecution(
                         tool_call_id=msg.tool_call_id,
                         external_execution_required=True,
                         result=msg.content or "",
                     )
                 )
-                for msg in tool_messages
-            ]
+                req.external_execution_result = msg.content or ""
+                requirements.append(req)
 
             state_dict = session_state or {}
             resume_from_state = _AGNO_RESUME_KEY in state_dict and not getattr(team, "db", None)

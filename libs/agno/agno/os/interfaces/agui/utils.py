@@ -45,6 +45,7 @@ from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
+from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
@@ -563,59 +564,62 @@ def _create_completion_events(
         events_to_emit.append(end_message_event)
 
     # Emit external execution tools
+    external_tools = []
     if isinstance(chunk, RunPausedEvent):
         external_tools = chunk.tools_awaiting_external_execution
-        if external_tools:
-            # First, emit an assistant message for external tool calls
-            assistant_message_id = str(uuid.uuid4())
-            assistant_start_event = TextMessageStartEvent(
-                type=EventType.TEXT_MESSAGE_START,
+    elif isinstance(chunk, TeamRunPausedEvent):
+        external_tools = [t for t in (chunk.tools or []) if getattr(t, "external_execution_required", False)]
+    if external_tools:
+        # First, emit an assistant message for external tool calls
+        assistant_message_id = str(uuid.uuid4())
+        assistant_start_event = TextMessageStartEvent(
+            type=EventType.TEXT_MESSAGE_START,
+            message_id=assistant_message_id,
+            role="assistant",
+        )
+        events_to_emit.append(assistant_start_event)
+
+        # Add any text content if present for the assistant message
+        if chunk.content:
+            content_event = TextMessageContentEvent(
+                type=EventType.TEXT_MESSAGE_CONTENT,
                 message_id=assistant_message_id,
-                role="assistant",
+                delta=str(chunk.content),
             )
-            events_to_emit.append(assistant_start_event)
+            events_to_emit.append(content_event)
 
-            # Add any text content if present for the assistant message
-            if chunk.content:
-                content_event = TextMessageContentEvent(
-                    type=EventType.TEXT_MESSAGE_CONTENT,
-                    message_id=assistant_message_id,
-                    delta=str(chunk.content),
-                )
-                events_to_emit.append(content_event)
+        # End the assistant message
+        assistant_end_event = TextMessageEndEvent(
+            type=EventType.TEXT_MESSAGE_END,
+            message_id=assistant_message_id,
+        )
+        events_to_emit.append(assistant_end_event)
 
-            # End the assistant message
-            assistant_end_event = TextMessageEndEvent(
-                type=EventType.TEXT_MESSAGE_END,
-                message_id=assistant_message_id,
+        # Emit tool call events for external execution
+        for tool in external_tools:
+            if tool.tool_call_id is None or tool.tool_name is None:
+                continue
+
+            start_event = ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool.tool_call_id,
+                tool_call_name=tool.tool_name,
+                parent_message_id=assistant_message_id,  # Use the assistant message as parent
             )
-            events_to_emit.append(assistant_end_event)
+            events_to_emit.append(start_event)
 
-            # Emit tool call events for external execution
-            for tool in external_tools:
-                if tool.tool_call_id is None or tool.tool_name is None:
-                    continue
+            args_event = ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool.tool_call_id,
+                delta=json.dumps(tool.tool_args),
+            )
+            events_to_emit.append(args_event)
 
-                start_event = ToolCallStartEvent(
-                    type=EventType.TOOL_CALL_START,
-                    tool_call_id=tool.tool_call_id,
-                    tool_call_name=tool.tool_name,
-                    parent_message_id=assistant_message_id,  # Use the assistant message as parent
-                )
-                events_to_emit.append(start_event)
-
-                args_event = ToolCallArgsEvent(
-                    type=EventType.TOOL_CALL_ARGS,
-                    tool_call_id=tool.tool_call_id,
-                    delta=json.dumps(tool.tool_args),
-                )
-                events_to_emit.append(args_event)
-
-                end_event = ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
-                    tool_call_id=tool.tool_call_id,
-                )
-                events_to_emit.append(end_event)
+            end_event = ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool.tool_call_id,
+            )
+            events_to_emit.append(end_event)
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)
