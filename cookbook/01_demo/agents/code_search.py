@@ -46,7 +46,6 @@ code_search = Agent(
     instructions=CODE_SEARCH_INSTRUCTIONS
     + "\n\n"
     + code_search_provider.instructions(),
-    enable_agentic_memory=True,
     add_datetime_to_context=True,
     add_history_to_context=True,
     num_history_runs=5,

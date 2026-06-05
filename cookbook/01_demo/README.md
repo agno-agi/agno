@@ -2,7 +2,7 @@
 
 A demo AgentOS running wiki agents. Ingest URLs, images, voice memos, or PDFs. Store them as clean, linked pages across three backends: **local markdown files, a git repo, or Notion**.
 
-Built on AgentOS with SQLite sessions + memory. Codebase is small enough to grok in an afternoon, and stable enough to build upon.
+Built on AgentOS with SQLite-backed sessions. Codebase is small enough to grok in an afternoon, and stable enough to build upon.
 
 > For a production version of this demo, see the [agent-platform-railway](https://github.com/agno-agi/agent-platform-railway) codebase.
 
@@ -14,6 +14,8 @@ Built on AgentOS with SQLite sessions + memory. Codebase is small enough to grok
 | **GitWiki** *(env-gated)* | The same agent, but the wiki is a real git repo. It auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN` are set. | `WikiContextProvider(GitBackend, …)` |
 | **NotionWiki** *(env-gated)* | The same agent, but the wiki is a Notion database (one row per page). The database is the source of truth your team opens in Notion. Registered when `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set. | `WikiContextProvider(NotionDatabaseBackend, …)` |
 | **CodeSearch** | A different kind of agent, left in as an example. It answers questions about this repository (file paths, line numbers). | `WorkspaceContextProvider` |
+
+The three wiki agents can also render a page as a downloadable HTML file, via agno's `FileGenerationTools` (HTML only).
 
 By default, agents run on **gpt-5.5**, but you can use any model (see `settings.py`).
 
@@ -65,9 +67,10 @@ Then open [os.agno.com](https://os.agno.com) and sign in:
 ## Try it
 
 - **Ingest a URL** with LocalWiki: *"Add https://docs.agno.com/ to the wiki."* It fetches, digests, and files a page.
-- **Ingest media** by attaching `assets/sample-diagram.png` (or your own image or PDF) to LocalWiki: *"Digest this and file it under notes/."*
+- **Ingest media** by attaching `evals/assets/sample-diagram.png` (or your own image or PDF) to LocalWiki: *"Digest this and file it under notes/."*
 - **Ask the wiki**: *"What's in the wiki?"* or *"What does the wiki say about X?"*
 - **Code Q&A** with CodeSearch: *"Which agents are registered in this demo?"*
+- **Generate HTML** with LocalWiki: *"Render the wiki's docs page as a standalone HTML page."* It returns a downloadable `.html` file.
 
 ## Evals
 

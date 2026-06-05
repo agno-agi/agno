@@ -24,7 +24,7 @@ from db import get_db
 
 eval_db = get_db()
 
-_ASSETS = Path(__file__).resolve().parents[1] / "assets"
+_ASSETS = Path(__file__).resolve().parent / "assets"
 
 
 @dataclass(frozen=True)
@@ -74,6 +74,20 @@ _BASE_CASES: tuple[Case, ...] = (
             "it cannot see the image."
         ),
         expected_tool_calls=("update_local_wiki",),
+    ),
+    # LocalWiki — generate a downloadable HTML page (FileGenerationTools).
+    # Reliability-only: the agent reliably CALLS generate_html_file and the file
+    # is produced, but the wiki-curator persona tends to narrate the result as
+    # "filed/recorded," which makes a strict response-text judge flaky. The
+    # tool-call assertion is the robust signal that HTML generation works.
+    Case(
+        name="local_wiki_generates_html",
+        agent=local_wiki,
+        input=(
+            "Generate a standalone HTML landing page for a coffee shop called "
+            "'Bean There'. Produce the HTML file."
+        ),
+        expected_tool_calls=("generate_html_file",),
     ),
     # CodeSearch — codebase tool fires AND response names the right agents.
     Case(

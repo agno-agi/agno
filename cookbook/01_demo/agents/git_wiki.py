@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.context.web import ParallelMCPBackend
 from agno.context.wiki import GitBackend, WikiContextProvider
 from db import get_db
-from settings import default_model, sub_agent_model
+from settings import default_model, html_tools, sub_agent_model
 
 _REPO_URL = getenv("WIKI_REPO_URL")
 _TOKEN = getenv("WIKI_GITHUB_TOKEN")
@@ -50,6 +50,11 @@ repo, so each update should stand on its own. What you do:
   points — then file it with update_git_wiki and show that digest in your
   reply, noting where it landed. The digest is the product, not the raw
   file; record that the source was the attachment.
+- Generating HTML: when asked to produce an HTML page or report, call
+  generate_html_file with a complete HTML5 document (doctype, html, head,
+  body). The .html file it returns is the deliverable on its own — do not
+  also file it as a wiki page unless asked. Tell the user you generated a
+  downloadable HTML file and name it.
 
 If an ask is ambiguous, ask one short question instead of guessing.
 Keep your own replies in tidy markdown.
@@ -76,9 +81,8 @@ if _REPO_URL and _TOKEN:
         name="GitWiki",
         model=default_model(),
         db=get_db(),
-        tools=git_wiki_provider.get_tools(),
+        tools=[*git_wiki_provider.get_tools(), html_tools()],
         instructions=GIT_WIKI_INSTRUCTIONS + "\n\n" + git_wiki_provider.instructions(),
-        enable_agentic_memory=True,
         add_datetime_to_context=True,
         add_history_to_context=True,
         num_history_runs=5,
