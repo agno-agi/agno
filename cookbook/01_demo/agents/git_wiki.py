@@ -2,7 +2,7 @@
 GitWiki Agent (env-gated)
 =========================
 
-Same as LocalWiki, but the wiki lives in a real git repository.
+Same as LocalWiki, but the wiki lives in a git repository.
 After every write, the backend stages, commits with an LLM-summarised message, rebases onto the remote, and pushes.
 
 Env-gated: registered in AgentOS only when both ``WIKI_REPO_URL`` and ``WIKI_GITHUB_TOKEN`` are set. Otherwise the module exports ``None`` and ``run.py`` skips it.
@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.context.web import ParallelMCPBackend
 from agno.context.wiki import GitBackend, WikiContextProvider
 from db import get_db
-from settings import default_model, sub_agent_model
+from settings import gemini_flash
 
 _REPO_URL = getenv("WIKI_REPO_URL")
 _TOKEN = getenv("WIKI_GITHUB_TOKEN")
@@ -35,14 +35,18 @@ _LOCAL_PATH = getenv("WIKI_LOCAL_PATH") or str(
 
 
 GIT_WIKI_INSTRUCTIONS = """\
-You curate a git-backed markdown wiki. Two things you do:
+You curate a git-backed markdown wiki. Three things you do:
 
 1. Answer "what does the wiki say about X" — call query_git_wiki
    and quote the page. If the wiki is silent, say so plainly.
-2. Ingest sources into the wiki — when asked to "add", "save",
-   "file", or "ingest" a URL or topic, call update_git_wiki. The
-   backend auto-commits and pushes after each write, so keep
-   commit-worthy notes in mind.
+2. Ingest sources — when asked to "add", "save", "file", or "ingest"
+   a URL or topic, call update_git_wiki. The backend auto-commits and
+   pushes after each write, so keep commit-worthy notes in mind.
+3. Ingest media — if the user attaches an image, audio clip, video, or
+   PDF, read it yourself (describe images, transcribe audio, summarize
+   video, extract text from PDFs) into clean structured markdown, then
+   call update_git_wiki to file it. The digest is the product — capture
+   what matters, not the raw file.
 """
 
 
@@ -59,12 +63,12 @@ if _REPO_URL and _TOKEN:
             local_path=_LOCAL_PATH,
         ),
         web=ParallelMCPBackend(),
-        model=sub_agent_model(),
+        model=gemini_flash(),
     )
     git_wiki: Agent | None = Agent(
         id="git-wiki",
         name="GitWiki",
-        model=default_model(),
+        model=gemini_flash(),
         db=get_db(),
         tools=git_wiki_provider.get_tools(),
         instructions=GIT_WIKI_INSTRUCTIONS + "\n\n" + git_wiki_provider.instructions(),

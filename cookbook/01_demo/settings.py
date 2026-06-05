@@ -2,29 +2,12 @@
 Settings
 ========
 
-Shared runtime objects. Keep model ids in one place.
+Shared runtime objects. Keep the model id in one place.
 """
 
-from agno.models.anthropic import Claude
 from agno.models.google import Gemini
-from agno.models.openai import OpenAIResponses
 
 
-def default_model() -> OpenAIResponses:
-    """Fresh OpenAI model — avoids shared-state footguns."""
-    return OpenAIResponses(id="gpt-5.5")
-
-
-def sub_agent_model() -> OpenAIResponses:
-    """Smaller OpenAI model for context-provider sub-agents (tool-routing work)."""
-    return OpenAIResponses(id="gpt-5.4-mini")
-
-
-def anthropic_model() -> Claude:
-    """Anthropic Claude — used by the Swarm team to diversify across providers."""
-    return Claude(id="claude-opus-4-7")
-
-
-def gemini_model() -> Gemini:
-    """Gemini 3.5 Flash — multimodal ingest (image, audio, video, PDF)."""
+def gemini_flash() -> Gemini:
+    """Gemini 3.5 Flash — every agent in the demo runs on this model."""
     return Gemini(id="gemini-3.5-flash")

@@ -14,7 +14,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.context.workspace import WorkspaceContextProvider
 from db import get_db
-from settings import default_model, sub_agent_model
+from settings import gemini_flash
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -22,7 +22,7 @@ code_search_provider = WorkspaceContextProvider(
     id="codebase",
     name="Agno Repo",
     root=REPO_ROOT,
-    model=sub_agent_model(),
+    model=gemini_flash(),
 )
 
 
@@ -34,7 +34,7 @@ You answer questions about the agno codebase. Be specific and concrete: quote re
 code_search = Agent(
     id="code-search",
     name="CodeSearch",
-    model=default_model(),
+    model=gemini_flash(),
     db=get_db(),
     tools=code_search_provider.get_tools(),
     instructions=CODE_SEARCH_INSTRUCTIONS

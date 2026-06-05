@@ -2,42 +2,30 @@
 Agno Demo — AgentOS Entrypoint
 ===============================
 
+A demo AgentOS of wiki agents: one multimodal capability across three
+backends. CodeSearch is left in as an example of a different kind of agent.
+
 Agents
-  LocalWiki    — read + write a local markdown wiki, ingest URLs via Parallel MCP
-  GitWiki      — same, but pushes to a git remote (env-gated)
-  NotionWiki   — same, but the wiki is a Notion database (env-gated)
-  MediaIngest  — Gemini multimodal: image / audio / video / PDF → wiki page (env-gated)
-  WebSearch    — keyless web research via Parallel MCP
-  CodeSearch   — answers questions about this repository
-  Researcher   — composes web + local_wiki + code_search on one agent
+  LocalWiki    — read + write a local markdown wiki; ingest URLs or media
+  GitWiki      — same agent, but the wiki is a git repo (env-gated)
+  NotionWiki   — same agent, but the wiki is a Notion database (env-gated)
+  CodeSearch   — answers questions about this repository (example agent)
 
-Teams
-  Swarm        — verified ensemble: broadcast to diverse-model proposers,
-                 a Verifier checks each citation, then the leader synthesizes
-
-Workflows
-  Brief        — sequential: WebSearch → LocalWiki, files a brief to the wiki
-
-Optional interface
-  Slack        — env-gated; drop a photo or voice memo and it lands in the wiki
+Every agent runs on Gemini 3.5 Flash (see settings.py), so every agent is
+multimodal: attach an image, audio, video, or PDF and the wiki agents
+digest it and file a page.
 """
 
 from contextlib import asynccontextmanager
-from os import getenv
 from pathlib import Path
 
 from agents.code_search import code_search, code_search_provider
 from agents.git_wiki import git_wiki, git_wiki_provider
 from agents.local_wiki import local_wiki, local_wiki_provider
-from agents.media_ingest import media_ingest
 from agents.notion_wiki import notion_wiki, notion_wiki_provider
-from agents.researcher import researcher
-from agents.web_search import web_provider, web_search
 from agno.os import AgentOS
 from agno.utils.log import log_info
 from db import get_db
-from teams.swarm import swarm
-from workflows.brief import brief
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +42,6 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
     finally:
         log_info("AgentOS lifespan: shutdown — closing context providers")
         await local_wiki_provider.aclose()
-        await web_provider.aclose()
         await code_search_provider.aclose()
         if git_wiki_provider is not None:
             await git_wiki_provider.aclose()
@@ -62,47 +49,19 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
             await notion_wiki_provider.aclose()
 
 
-# GitWiki + NotionWiki are conditional on their respective env vars.
-_agents = [local_wiki, web_search, code_search, researcher]
+# LocalWiki + CodeSearch are always on. GitWiki and NotionWiki register only
+# when their backend credentials are set; they slot in next to LocalWiki so
+# the wiki agents stay grouped at the front.
+_agents = [local_wiki, code_search]
 if git_wiki is not None:
     _agents.insert(1, git_wiki)
 if notion_wiki is not None:
-    # Slot just after GitWiki (or LocalWiki if GitWiki is disabled) so
-    # the wiki agents stay grouped at the top of the list.
     _agents.insert(2 if git_wiki is not None else 1, notion_wiki)
-if media_ingest is not None:
-    # Place just after the wiki agents — they're the targets it files into.
-    _wiki_count = 1 + (git_wiki is not None) + (notion_wiki is not None)
-    _agents.insert(_wiki_count, media_ingest)
-
-
-# Slack interface — env-gated. With SLACK_BOT_TOKEN + SLACK_SIGNING_SECRET
-# set, expose the multimodal MediaIngest agent (drop a photo or voice memo
-# in Slack and it lands in the wiki); fall back to the Researcher when Gemini
-# is not configured. For local dev, run `ngrok http 8000` and point the Slack
-# app's event subscription at https://<ngrok>/slack/events.
-_interfaces = []
-_slack_token = getenv("SLACK_BOT_TOKEN")
-_slack_secret = getenv("SLACK_SIGNING_SECRET")
-if _slack_token and _slack_secret:
-    from agno.os.interfaces.slack import Slack
-
-    _interfaces.append(
-        Slack(
-            agent=media_ingest or researcher,
-            token=_slack_token,
-            signing_secret=_slack_secret,
-            resolve_user_identity=True,
-        )
-    )
 
 
 agent_os = AgentOS(
     name="Demo AgentOS",
     agents=_agents,
-    teams=[swarm],
-    workflows=[brief],
-    interfaces=_interfaces,
     db=get_db(),
     config=str(Path(__file__).parent / "config.yaml"),
     tracing=True,

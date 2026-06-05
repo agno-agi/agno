@@ -23,7 +23,6 @@ import typer
 from agents.code_search import code_search_provider
 from agents.git_wiki import git_wiki_provider
 from agents.local_wiki import local_wiki_provider
-from agents.web_search import web_provider
 from agno.eval import AgentAsJudgeEval, ReliabilityEval
 from agno.media import Audio, Image
 from agno.run.agent import RunOutput
@@ -222,7 +221,6 @@ def _check_cell(passed: bool | None) -> str:
 async def _close_providers() -> None:
     """Release MCP sessions held by the context providers."""
     await local_wiki_provider.aclose()
-    await web_provider.aclose()
     await code_search_provider.aclose()
     if git_wiki_provider is not None:
         await git_wiki_provider.aclose()

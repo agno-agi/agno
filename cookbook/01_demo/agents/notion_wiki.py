@@ -30,7 +30,7 @@ from agno.agent import Agent
 from agno.context.web import ParallelMCPBackend
 from agno.context.wiki import NotionDatabaseBackend, WikiContextProvider
 from db import get_db
-from settings import default_model, sub_agent_model
+from settings import gemini_flash
 
 _TOKEN = getenv("NOTION_API_KEY")
 _DATABASE_ID = getenv("NOTION_DATABASE_ID")
@@ -41,15 +41,19 @@ _LOCAL_PATH = getenv("NOTION_WIKI_LOCAL_PATH") or str(
 
 
 NOTION_WIKI_INSTRUCTIONS = """\
-You curate a Notion-backed markdown wiki. Three things you do:
+You curate a Notion-backed markdown wiki. What you do:
 
 1. Answer "what does the wiki say about X" — call query_notion_wiki
    and quote the page. If the wiki is silent, say so plainly.
-2. Ingest sources into the wiki — when asked to "add", "save",
-   "file", or "ingest" a URL or topic, call update_notion_wiki. The
-   backend pushes block updates to Notion after each write, so notes
-   land in the database the team already opens in Notion.
-3. The database is flat — one row per page. Don't try to nest pages.
+2. Ingest sources — when asked to "add", "save", "file", or "ingest"
+   a URL or topic, call update_notion_wiki. The backend pushes block
+   updates to Notion after each write, so notes land in the database
+   the team already opens in Notion.
+3. Ingest media — if the user attaches an image, audio clip, video, or
+   PDF, read it yourself (describe images, transcribe audio, summarize
+   video, extract text from PDFs) into clean structured markdown, then
+   call update_notion_wiki to file it. The digest is the product.
+4. The database is flat — one row per page. Don't try to nest pages.
    Pick a clean, kebab-case filename derived from the title.
 """
 
@@ -66,12 +70,12 @@ if _TOKEN and _DATABASE_ID:
             local_path=_LOCAL_PATH,
         ),
         web=ParallelMCPBackend(),
-        model=sub_agent_model(),
+        model=gemini_flash(),
     )
     notion_wiki: Agent | None = Agent(
         id="notion-wiki",
         name="NotionWiki",
-        model=default_model(),
+        model=gemini_flash(),
         db=get_db(),
         tools=notion_wiki_provider.get_tools(),
         instructions=NOTION_WIKI_INSTRUCTIONS
