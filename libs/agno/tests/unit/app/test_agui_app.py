@@ -1,9 +1,24 @@
+import base64
 from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import EventType
 from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, Tool, ToolMessage, UserMessage
+from ag_ui.core import EventType, RunAgentInput
+from ag_ui.core.types import (
+    AudioInputContent,
+    BinaryInputContent,
+    DocumentInputContent,
+    ImageInputContent,
+    InputContentDataSource,
+    InputContentUrlSource,
+    TextInputContent,
+    UserMessage,
+    VideoInputContent,
+)
 
+from agno.os.interfaces.agui.media import extract_agui_media
+from agno.os.interfaces.agui.router import run_agent, run_team
 from agno.os.interfaces.agui.utils import (
     EventBuffer,
     _agui_tools_to_external_functions,
@@ -11,7 +26,7 @@ from agno.os.interfaces.agui.utils import (
     extract_agui_tool_messages,
     extract_agui_user_input,
 )
-from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
 def test_event_buffer_initial_state():
@@ -601,22 +616,208 @@ async def test_reasoning_events_handling():
 
     event_types = [event.type for event in events]
 
-    # Should have REASONING_* events (not generic STEP events)
-    assert EventType.REASONING_START in event_types, "Should have REASONING_START"
+    # Should have proper reasoning events
+    assert EventType.REASONING_START in event_types, "Should have REASONING_START for reasoning"
     assert EventType.REASONING_MESSAGE_START in event_types, "Should have REASONING_MESSAGE_START"
-    assert EventType.REASONING_MESSAGE_CONTENT in event_types, "Should have REASONING_MESSAGE_CONTENT"
     assert EventType.REASONING_MESSAGE_END in event_types, "Should have REASONING_MESSAGE_END"
     assert EventType.REASONING_END in event_types, "Should have REASONING_END"
 
-    # Verify correct ordering: START before CONTENT before END
-    r_start = event_types.index(EventType.REASONING_START)
-    r_msg_start = event_types.index(EventType.REASONING_MESSAGE_START)
-    r_content = event_types.index(EventType.REASONING_MESSAGE_CONTENT)
-    r_msg_end = event_types.index(EventType.REASONING_MESSAGE_END)
-    r_end = event_types.index(EventType.REASONING_END)
-    assert r_start < r_msg_start < r_content < r_msg_end < r_end
+    # Should have text content (the run_content event between reasoning phases)
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.RUN_FINISHED in event_types
 
-    # Should have text content after reasoning
+    # Verify reasoning event ordering: START before MESSAGE_START before MESSAGE_END before END
+    reasoning_start_idx = event_types.index(EventType.REASONING_START)
+    msg_start_idx = event_types.index(EventType.REASONING_MESSAGE_START)
+    msg_end_idx = event_types.index(EventType.REASONING_MESSAGE_END)
+    reasoning_end_idx = event_types.index(EventType.REASONING_END)
+    assert reasoning_start_idx < msg_start_idx < msg_end_idx < reasoning_end_idx
+
+
+@pytest.mark.asyncio
+async def test_reasoning_content_delta_streaming():
+    """Test that reasoning_content_delta events produce REASONING_MESSAGE_CONTENT events"""
+    from agno.run.agent import ReasoningContentDeltaEvent, RunEvent
+
+    async def mock_stream_with_reasoning_deltas():
+        # Start reasoning
+        reasoning_start = RunContentEvent()
+        reasoning_start.event = RunEvent.reasoning_started
+        reasoning_start.content = ""
+        yield reasoning_start
+
+        # Stream reasoning content deltas
+        for text in ["Let me ", "think about ", "this..."]:
+            delta = ReasoningContentDeltaEvent()
+            delta.event = RunEvent.reasoning_content_delta
+            delta.reasoning_content = text
+            yield delta
+
+        # End reasoning
+        reasoning_end = RunContentEvent()
+        reasoning_end.event = RunEvent.reasoning_completed
+        reasoning_end.content = ""
+        yield reasoning_end
+
+        # Normal response
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Here is my answer."
+        yield text_response
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_reasoning_deltas(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should have reasoning content events
+    reasoning_content_events = [e for e in events if e.type == EventType.REASONING_MESSAGE_CONTENT]
+    assert len(reasoning_content_events) == 3, (
+        f"Expected 3 reasoning content events, got {len(reasoning_content_events)}"
+    )
+    assert reasoning_content_events[0].delta == "Let me "
+    assert reasoning_content_events[1].delta == "think about "
+    assert reasoning_content_events[2].delta == "this..."
+
+    # All reasoning content events should share the same message_id
+    reasoning_msg_ids = {e.message_id for e in reasoning_content_events}
+    assert len(reasoning_msg_ids) == 1, "All reasoning content should share the same message_id"
+
+    # Normal text should also be present
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_reasoning_auto_start():
+    """Test that reasoning_content_delta without prior reasoning_started auto-creates reasoning phase"""
+    from agno.run.agent import ReasoningContentDeltaEvent, RunEvent
+
+    async def mock_stream_delta_without_start():
+        # Delta without prior reasoning_started
+        delta = ReasoningContentDeltaEvent()
+        delta.event = RunEvent.reasoning_content_delta
+        delta.reasoning_content = "Hmm, interesting..."
+        yield delta
+
+        # End reasoning
+        reasoning_end = RunContentEvent()
+        reasoning_end.event = RunEvent.reasoning_completed
+        reasoning_end.content = ""
+        yield reasoning_end
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_delta_without_start(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should auto-start reasoning
+    assert EventType.REASONING_START in event_types, "Should auto-start reasoning"
+    assert EventType.REASONING_MESSAGE_START in event_types, "Should auto-start reasoning message"
+    assert EventType.REASONING_MESSAGE_CONTENT in event_types, "Should have reasoning content"
+    assert EventType.REASONING_MESSAGE_END in event_types, "Should close reasoning message"
+    assert EventType.REASONING_END in event_types, "Should close reasoning"
+
+    # Verify ordering
+    reasoning_start_idx = event_types.index(EventType.REASONING_START)
+    content_idx = event_types.index(EventType.REASONING_MESSAGE_CONTENT)
+    assert reasoning_start_idx < content_idx, "Auto-start should come before content"
+
+
+@pytest.mark.asyncio
+async def test_raw_event_catch_all():
+    """Test that unmapped agno events are emitted as RawEvent"""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_with_unmapped_event():
+        # An unmapped event (e.g., memory_update_started)
+        unmapped = RunContentEvent()
+        unmapped.event = RunEvent.memory_update_started
+        unmapped.content = ""
+        yield unmapped
+
+        # Normal response
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello"
+        yield text_response
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream_with_unmapped_event(), "thread_1", "run_1"
+    ):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should have a RAW event for the unmapped event
+    assert EventType.RAW in event_types, "Unmapped events should produce RAW events"
+
+    raw_events = [e for e in events if e.type == EventType.RAW]
+    assert len(raw_events) == 1
+    assert raw_events[0].source == "agno"
+
+    # Normal events should still work
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_content_event_no_spurious_raw():
+    """Test that run_content events with empty content do NOT produce spurious RawEvents"""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream_empty_content():
+        # Content event with empty string (common during streaming)
+        empty_content = RunContentEvent()
+        empty_content.event = RunEvent.run_content
+        empty_content.content = ""
+        yield empty_content
+
+        # Normal content
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello"
+        yield text_response
+
+        # Complete run
+        completed_response = RunContentEvent()
+        completed_response.event = RunEvent.run_completed
+        completed_response.content = ""
+        yield completed_response
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_empty_content(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [event.type for event in events]
+
+    # Should NOT have RAW events (content events are handled, not catch-all'd)
+    assert EventType.RAW not in event_types, "Content events should not produce RAW events"
     assert EventType.TEXT_MESSAGE_CONTENT in event_types
     assert EventType.RUN_FINISHED in event_types
 
@@ -1455,53 +1656,454 @@ def test_validate_agui_state_with_invalid_to_dict():
     assert result is None
 
 
-def test_extract_agui_user_input_from_full_history():
-    """Test extracting last user message from a CopilotKit-style full conversation history."""
+# --- State Events Tests ---
+
+
+def test_event_buffer_state_snapshot_deep_copy():
+    """Test EventBuffer state snapshot stores a deep copy and computes deltas correctly."""
+    buffer = EventBuffer()
+
+    state = {"score": 0, "items": ["a"]}
+    buffer.set_state_snapshot(state)
+
+    # Verify deep copy: mutating original dict should not affect snapshot
+    state["score"] = 10
+    state["items"].append("b")
+
+    delta = buffer.compute_state_delta(state)
+    assert delta is not None
+    # Should have ops for score change and items change
+    ops_paths = [op["path"] for op in delta]
+    assert "/score" in ops_paths
+
+    # No change should return None
+    buffer.set_state_snapshot(state)
+    delta = buffer.compute_state_delta(state)
+    assert delta is None
+
+
+def test_event_buffer_compute_delta_no_snapshot():
+    """Test compute_state_delta returns None when no snapshot has been set."""
+    buffer = EventBuffer()
+    result = buffer.compute_state_delta({"key": "value"})
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_final_state_snapshot_at_completion():
+    """Test that a StateSnapshotEvent is emitted before RUN_FINISHED when state is provided."""
+    from agno.run.agent import RunCompletedEvent, RunEvent
+
+    final_state = {"score": 42, "done": True}
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Done"
+        yield text_response
+
+        completed = RunCompletedEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        completed.session_state = final_state
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state={"score": 0}
+    ):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.STATE_SNAPSHOT in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+    # StateSnapshotEvent must come before RUN_FINISHED
+    snapshot_idx = event_types.index(EventType.STATE_SNAPSHOT)
+    finished_idx = event_types.index(EventType.RUN_FINISHED)
+    assert snapshot_idx < finished_idx
+
+    # The snapshot should use the authoritative session_state from RunCompletedEvent
+    snapshot_event = events[snapshot_idx]
+    assert snapshot_event.snapshot == final_state
+
+
+@pytest.mark.asyncio
+async def test_state_delta_after_tool_call():
+    """Test that a StateDeltaEvent is emitted when state changes during a tool call."""
+    from agno.run.agent import RunEvent
+
+    # Shared mutable state dict (same reference the agent would use)
+    run_state = {"counter": 0, "status": "idle"}
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Processing"
+        yield text_response
+
+        tool_start = ToolCallStartedEvent()
+        tool_start.event = RunEvent.tool_call_started
+        tool_start.content = ""
+        tool = MagicMock()
+        tool.tool_call_id = "tool_1"
+        tool.tool_name = "increment"
+        tool.tool_args = {}
+        tool_start.tool = tool
+        yield tool_start
+
+        # Simulate agent mutating state during tool execution (before tool_call_completed)
+        run_state["counter"] = 1
+        run_state["status"] = "active"
+
+        tool_end = ToolCallCompletedEvent()
+        tool_end.event = RunEvent.tool_call_completed
+        tool_end.content = ""
+        tool.result = "incremented"
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state=run_state
+    ):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.STATE_DELTA in event_types
+
+    # StateDelta should come after ToolCallResult
+    delta_idx = event_types.index(EventType.STATE_DELTA)
+    result_idx = event_types.index(EventType.TOOL_CALL_RESULT)
+    assert delta_idx > result_idx
+
+    # Verify the delta contains the right operations
+    delta_event = events[delta_idx]
+    delta_paths = [op["path"] for op in delta_event.delta]
+    assert "/counter" in delta_paths
+    assert "/status" in delta_paths
+
+
+@pytest.mark.asyncio
+async def test_no_state_events_when_no_state():
+    """Test backward compatibility: no state events when run_state is None."""
+    from agno.run.agent import RunEvent
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Hello"
+        yield text_response
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.STATE_SNAPSHOT not in event_types
+    assert EventType.STATE_DELTA not in event_types
+
+
+@pytest.mark.asyncio
+async def test_no_delta_when_state_unchanged():
+    """Test that no StateDeltaEvent is emitted when a tool call does not mutate state."""
+    from agno.run.agent import RunEvent
+
+    run_state = {"counter": 0}
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Processing"
+        yield text_response
+
+        tool_start = ToolCallStartedEvent()
+        tool_start.event = RunEvent.tool_call_started
+        tool_start.content = ""
+        tool = MagicMock()
+        tool.tool_call_id = "tool_1"
+        tool.tool_name = "noop"
+        tool.tool_args = {}
+        tool_start.tool = tool
+        yield tool_start
+
+        # State is NOT mutated here
+
+        tool_end = ToolCallCompletedEvent()
+        tool_end.event = RunEvent.tool_call_completed
+        tool_end.content = ""
+        tool.result = "done"
+        tool_end.tool = tool
+        yield tool_end
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(
+        mock_stream(), "thread_1", "run_1", run_state=run_state
+    ):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    # No delta should be emitted since state was not changed
+    assert EventType.STATE_DELTA not in event_types
+    # But a final snapshot should still be emitted (run_state fallback)
+    assert EventType.STATE_SNAPSHOT in event_types
+
+
+def test_extract_agui_media_with_images():
+    """Test extraction preserves image parts from the latest multimodal user message."""
+    image_bytes = b"fake-image-bytes"
     messages = [
-        UserMessage(id="u1", content="hello 1"),
-        AssistantMessage(id="a1", content="response 1"),
-        UserMessage(id="u2", content="hello 2"),
+        UserMessage(id="u1", content="previous prompt"),
+        UserMessage(
+            id="u2",
+            content=[
+                TextInputContent(text="please inspect"),
+                ImageInputContent(
+                    source=InputContentUrlSource(value="https://example.com/screenshot.png", mime_type="image/png")
+                ),
+                ImageInputContent(
+                    source=InputContentDataSource(value=base64.b64encode(image_bytes).decode(), mime_type="image/jpeg")
+                ),
+            ],
+        ),
     ]
 
-    result = extract_agui_user_input(messages)
+    user_input = extract_agui_user_input(messages)
+    images, _, _, _ = extract_agui_media(messages)
 
-    # Should extract only the last user message, not the first
-    assert result == "hello 2"
-
-
-def test_extract_agui_user_input_single_message():
-    """Test extraction when only one user message is present."""
-    messages = [UserMessage(id="u1", content="just one")]
-
-    result = extract_agui_user_input(messages)
-
-    assert result == "just one"
+    assert user_input == "please inspect"
+    assert len(images) == 2
+    assert images[0].url == "https://example.com/screenshot.png"
+    assert images[0].mime_type == "image/png"
+    assert images[1].content == image_bytes
+    assert images[1].mime_type == "image/jpeg"
 
 
-def test_extract_agui_user_input_empty_list():
-    """Test extraction from empty message list returns empty string."""
-    assert extract_agui_user_input([]) == ""
-
-
-def test_extract_agui_user_input_no_user_messages():
-    """Test extraction when no user messages exist returns empty string."""
+def test_extract_agui_media_all_types():
+    """Test extraction preserves all AG-UI media input content types."""
+    image_bytes = b"fake-image-bytes"
+    audio_bytes = b"fake-audio-bytes"
+    video_bytes = b"fake-video-bytes"
+    document_bytes = b"fake-document-bytes"
     messages = [
-        AssistantMessage(id="a1", content="hello"),
-        SystemMessage(id="s1", content="you are helpful"),
+        UserMessage(
+            id="u1",
+            content=[
+                TextInputContent(text="please inspect"),
+                ImageInputContent(
+                    source=InputContentDataSource(value=base64.b64encode(image_bytes).decode(), mime_type="image/png")
+                ),
+                AudioInputContent(
+                    source=InputContentDataSource(value=base64.b64encode(audio_bytes).decode(), mime_type="audio/mpeg")
+                ),
+                VideoInputContent(
+                    source=InputContentDataSource(value=base64.b64encode(video_bytes).decode(), mime_type="video/mp4")
+                ),
+                DocumentInputContent(
+                    source=InputContentDataSource(
+                        value=base64.b64encode(document_bytes).decode(), mime_type="application/pdf"
+                    )
+                ),
+            ],
+        ),
     ]
 
-    result = extract_agui_user_input(messages)
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
 
-    assert result == ""
+    assert user_input == "please inspect"
+    assert len(images) == 1
+    assert images[0].content == image_bytes
+    assert images[0].mime_type == "image/png"
+    assert len(audio) == 1
+    assert audio[0].content == audio_bytes
+    assert audio[0].mime_type == "audio/mpeg"
+    assert len(videos) == 1
+    assert videos[0].content == video_bytes
+    assert videos[0].mime_type == "video/mp4"
+    assert len(files) == 1
+    assert files[0].content == document_bytes
+    assert files[0].mime_type == "application/pdf"
 
 
-def test_extract_agui_user_input_multimodal_content():
-    """Test extraction handles multimodal UserMessage.content (List[InputContent])."""
+def test_extract_agui_media_binary_content():
+    """Test AG-UI binary content is routed to the matching Agno media bucket."""
+    image_bytes = b"binary-image"
+    audio_bytes = b"binary-audio"
+    video_bytes = b"binary-video"
+    file_bytes = b"binary-file"
     messages = [
-        UserMessage(id="u1", content=[TextInputContent(text="describe this image")]),
+        UserMessage(
+            id="u1",
+            content=[
+                BinaryInputContent(
+                    mime_type="image/png", data=base64.b64encode(image_bytes).decode(), filename="image.png"
+                ),
+                BinaryInputContent(
+                    mime_type="audio/mpeg", data=base64.b64encode(audio_bytes).decode(), filename="audio.mp3"
+                ),
+                BinaryInputContent(
+                    mime_type="video/mp4", data=base64.b64encode(video_bytes).decode(), filename="video.mp4"
+                ),
+                BinaryInputContent(
+                    mime_type="application/octet-stream",
+                    data=base64.b64encode(file_bytes).decode(),
+                    filename="archive.bin",
+                ),
+            ],
+        ),
     ]
 
-    result = extract_agui_user_input(messages)
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
+
+    assert user_input == ""
+    assert images[0].content == image_bytes
+    assert images[0].mime_type == "image/png"
+    assert audio[0].content == audio_bytes
+    assert audio[0].mime_type == "audio/mpeg"
+    assert videos[0].content == video_bytes
+    assert videos[0].mime_type == "video/mp4"
+    assert files[0].content == file_bytes
+    assert files[0].mime_type is None
+    assert files[0].filename == "archive.bin"
+
+
+def test_extract_agui_media_url_without_mime():
+    """Test URL sources without mime_type route by part.type, not MIME."""
+    messages = [
+        UserMessage(
+            id="u1",
+            content=[
+                ImageInputContent(source=InputContentUrlSource(value="https://example.com/cat.png")),
+                AudioInputContent(source=InputContentUrlSource(value="https://example.com/song.mp3")),
+                VideoInputContent(source=InputContentUrlSource(value="https://example.com/movie.mp4")),
+            ],
+        ),
+    ]
+
+    images, audio, videos, files = extract_agui_media(messages)
+
+    assert len(images) == 1
+    assert images[0].url == "https://example.com/cat.png"
+    assert len(audio) == 1
+    assert audio[0].url == "https://example.com/song.mp3"
+    assert len(videos) == 1
+    assert videos[0].url == "https://example.com/movie.mp4"
+    assert len(files) == 0
+
+
+def test_extract_agui_media_skips_malformed_base64():
+    """Test a content part with undecodable base64 data is skipped, not raised."""
+    messages = [
+        UserMessage(
+            id="u1",
+            content=[
+                TextInputContent(text="check this"),
+                ImageInputContent(source=InputContentDataSource(value="!!!not-valid-base64!!!", mime_type="image/png")),
+                ImageInputContent(source=InputContentDataSource(value="!!!!", mime_type="image/png")),
+            ],
+        ),
+    ]
+
+    user_input = extract_agui_user_input(messages)
+    images, audio, videos, files = extract_agui_media(messages)
+
+    assert user_input == "check this"
+    assert len(images) == 0
+    assert len(audio) == 0
+    assert len(videos) == 0
+    assert len(files) == 0
+
+
+_AUDIO_BYTES = b"fake-audio-bytes"
+_VIDEO_BYTES = b"fake-video-bytes"
+_DOCUMENT_BYTES = b"fake-document-bytes"
+
+
+class _FakeRunner:
+    """Minimal Agent/Team stand-in: records arun kwargs, yields one completed run."""
+
+    def __init__(self):
+        self.captured_kwargs = {}
+
+    def arun(self, **kwargs):
+        self.captured_kwargs.update(kwargs)
+
+        async def response_stream():
+            completed_response = RunContentEvent()
+            completed_response.event = RunEvent.run_completed
+            completed_response.content = ""
+            yield completed_response
+
+        return response_stream()
+
+
+def _media_run_input():
+    """Build a RunAgentInput carrying one text part plus one of each media type."""
+    return RunAgentInput(
+        thread_id="thread_1",
+        run_id="run_1",
+        state={},
+        messages=[
+            UserMessage(
+                id="u1",
+                content=[
+                    TextInputContent(text="please inspect"),
+                    ImageInputContent(
+                        source=InputContentUrlSource(value="https://example.com/screenshot.png", mime_type="image/png")
+                    ),
+                    AudioInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(_AUDIO_BYTES).decode(), mime_type="audio/mpeg"
+                        )
+                    ),
+                    VideoInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(_VIDEO_BYTES).decode(), mime_type="video/mp4"
+                        )
+                    ),
+                    DocumentInputContent(
+                        source=InputContentDataSource(
+                            value=base64.b64encode(_DOCUMENT_BYTES).decode(), mime_type="application/pdf"
+                        )
+                    ),
+                ],
+            )
+        ],
+        tools=[],
+        context=[],
+        forwarded_props={},
+    )
+
+
+def _assert_media_forwarded(captured_kwargs):
+    """Assert the router forwarded every media part into the run kwargs."""
+    assert captured_kwargs["input"] == "please inspect"
+    assert len(captured_kwargs["images"]) == 1
+    assert captured_kwargs["images"][0].url == "https://example.com/screenshot.png"
+    assert captured_kwargs["images"][0].mime_type == "image/png"
+    assert captured_kwargs["audio"][0].content == _AUDIO_BYTES
+    assert captured_kwargs["audio"][0].mime_type == "audio/mpeg"
+    assert captured_kwargs["videos"][0].content == _VIDEO_BYTES
+    assert captured_kwargs["videos"][0].mime_type == "video/mp4"
+    assert captured_kwargs["files"][0].content == _DOCUMENT_BYTES
+    assert captured_kwargs["files"][0].mime_type == "application/pdf"
 
     assert result == "describe this image"
 

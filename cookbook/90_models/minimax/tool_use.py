@@ -1,32 +1,27 @@
 """
-Parallel Tools
-=============================
+MiniMax Tool Use
+================
 
-Demonstrates parallel tools.
+Cookbook example for `minimax/tool_use.py`.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-from agno.tools.parallel import ParallelTools
+from agno.models.minimax import MiniMax
+from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
-
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.1"),
-    tools=[ParallelTools()],
-    instructions="No need to tell me its based on your research.",
+    model=MiniMax(id="MiniMax-M3"),
     markdown=True,
+    tools=[WebSearchTools()],
 )
 
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    agent.print_response(
-        "Tell me about Agno's AgentOS?",
-        stream=True,
-        stream_events=True,
-    )
+    agent.print_response("What is happening in France?", stream=True)

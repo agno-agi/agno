@@ -13,6 +13,7 @@ try:
         RunAgentInput,
         RunErrorEvent,
         RunStartedEvent,
+        StateSnapshotEvent,
     )
     from ag_ui.encoder import EventEncoder
 except ImportError as e:
