@@ -4,6 +4,8 @@ __all__ = [
     "GoogleBigQueryTools",
     "GoogleCalendarTools",
     "GoogleDriveTools",
+    "GoogleMeetTools",
+    "GoogleTasksTools",
     "GmailTools",
     "GoogleMapTools",
     "GoogleSheetsTools",
@@ -31,6 +33,14 @@ def __getattr__(name: str):
         from agno.tools.google.drive import GoogleDriveTools
 
         return GoogleDriveTools
+    if name == "GoogleMeetTools":
+        from agno.tools.google.meet import GoogleMeetTools
+
+        return GoogleMeetTools
+    if name == "GoogleTasksTools":
+        from agno.tools.google.tasks import GoogleTasksTools
+
+        return GoogleTasksTools
     if name == "GmailTools":
         from agno.tools.google.gmail import GmailTools
 
