@@ -1,12 +1,13 @@
 """
-Scenario 2 of 3: NO login service - they want US to manage users and roles
+Scenario 2 of 2: NO login service - they want US to manage users and roles
 
 (If roles are new to you, read managed_roles.py first.)
 
-The three ways a company can run this:
-  1. they already have a login service, we only enforce  -> idp_enforce_only.py
+The two ways a company can run this:
+  1. they already have a login service, we only enforce  -> idp_workos_auth0.py
   2. THIS FILE - no login service, we manage users + roles ourselves
-  3. a mix of both                                        -> casbin_external_idp.py
+(a mix is possible too: a custom AuthorizationProvider that uses the token's role
+ if it carries one, and falls back to this store for users who don't.)
 
 In this scenario the company has no WorkOS/Okta. Their own app logs people in and
 issues them a token that just says who they are. Everything about permissions
@@ -36,7 +37,7 @@ The endpoints all live under /authz, for example:
     DELETE /authz/users/{who}/roles/{r}  -> take a role away
 
 Run it:
-    pip install "agno[casbin]"
+    pip install "agno[roles]"
     python managed_roles_api.py
 """
 
@@ -67,8 +68,8 @@ for _f in ("tmp/managed_roles_api.db", "tmp/authz_audit.db"):
         os.remove(_f)
 
 # Every role/assignment change is written to an append-only audit table (the
-# "who changed what, when" trail Casbin can't give you, since it never sees the
-# acting principal). The admin's JWT sub is recorded as the actor.
+# "who changed what, when" trail the policy engine can't give you on its own,
+# since it never sees the acting principal). The admin's JWT sub is the actor.
 audit = DbAuditSink(db_url="sqlite:///tmp/authz_audit.db")
 
 # Define a starting admin + viewer. Everything else can be done over HTTP.

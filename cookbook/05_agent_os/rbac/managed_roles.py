@@ -24,7 +24,7 @@ role while the server is running and their very next request reflects it, with n
 new login and no new token.
 
 Run it:
-    pip install "agno[casbin]"
+    pip install "agno[roles]"
     python managed_roles.py
 (no OpenAI key needed here - we are only checking who is allowed, not actually chatting)
 """

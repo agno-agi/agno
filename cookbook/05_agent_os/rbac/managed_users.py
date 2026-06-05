@@ -25,7 +25,7 @@ This file creates a few users, gives them roles, then:
 - re-enables him.
 
 Run it:
-    pip install "agno[casbin]"
+    pip install "agno[roles]"
     python managed_users.py
 (no OpenAI key needed - we are only checking who is allowed, not chatting)
 """

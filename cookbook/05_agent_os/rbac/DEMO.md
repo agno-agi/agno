@@ -10,12 +10,12 @@ PR: https://github.com/agno-agi/agno/pull/8221
 ```bash
 git clone https://github.com/agno-agi/agno.git
 cd agno && git checkout poc/agentos-authz-providers
-pip install -e "libs/agno[casbin,openai]"
+pip install -e "libs/agno[roles,openai]"
 
 cd cookbook/05_agent_os/rbac
-python idp_enforce_only.py        # scenario 1: they have WorkOS, we just enforce
+python idp_workos_auth0.py        # scenario 1: they have WorkOS/Auth0, we just enforce
 python managed_roles_api.py       # scenario 2: no login service, we manage it (+ audit log)
-python casbin_external_idp.py     # scenario 3: a mix of both
+python managed_users.py           # scenario 2: the user directory + instant disable
 ```
 
 No OpenAI key needed — each file signs in fake users, makes real requests, and
@@ -24,23 +24,30 @@ Every file opens with a plain-English explainer; start with `managed_roles.py`.
 
 ## What you'll see (captured output)
 
-## Scenario 1 — they have a login service (WorkOS); we only enforce
+## Scenario 1 — they have a login service (WorkOS/Auth0); we only enforce
 
 ```
-================================================================================
-THEY HAVE A LOGIN SERVICE - WE ONLY ENFORCE (no user store on our side)
-================================================================================
-  the login service put each person's role on their token. we just read it.
+====================================================================================
+LOGIN SERVICE OWNS IDENTITY + ROLES - WE ONLY ENFORCE
+====================================================================================
+  the login service signs the token and stamps the role. we verify it and
+  decide what that role may do. no users or assignments stored on our side.
 
-  alice (token says role=member) RUN agent         -> ALLOWED (200)  member can run
-  alice (token says role=member) LOOK at agent     -> ALLOWED (200)  member can look
-  carol (token says role=guest)  LOOK at agent     -> BLOCKED (403)  guest has no permissions -> bounced
-  dave  (token has no role)      LOOK at agent     -> BLOCKED (403)  no role on the token -> bounced
-  root  (token says role=admin)  RUN agent         -> ALLOWED (200)  admin can do anything
-================================================================================
-the point: we stored no users and no assignments. WorkOS owns 'who is a
-member'. we only own 'what a member can do', and we enforce it on every call.
-================================================================================
+  alice (roles=['member']) RUN the agent               -> ALLOWED (200)  member can run
+  bob   (roles='member')   LOOK at agent               -> ALLOWED (200)  single-string role also works
+  carol (roles=['guest'])  LOOK at agent               -> BLOCKED (403)  guest maps to nothing -> bounced
+  dave  (no roles claim)   LOOK at agent               -> BLOCKED (403)  no role -> bounced
+  root  (roles=['admin'])  RUN the agent               -> ALLOWED (200)  admin can do anything
+
+  the token plumbing is enforced too (not just the role):
+
+  mallory (token signed by a DIFFERENT key)            -> BLOCKED (401)  signature doesn't match the JWKS -> rejected
+  eve (valid role but wrong issuer)                    -> BLOCKED (401)  issuer not trusted -> rejected
+====================================================================================
+the point: the login service owns WHO has a role; the ~30-line provider owns
+WHAT a role can do. tokens are verified against the service's published keys,
+and pinned to the right issuer + audience. nothing about users is stored here.
+====================================================================================
 ```
 
 ## Scenario 2 — no login service; we manage users + roles (and log every change)
@@ -77,21 +84,31 @@ THE RECORD: every change is logged - who did it, what changed, before -> after.
 
 ```
 
-## Scenario 3 — a mix of both at once
+## Scenario 2 (cont.) — the user directory + instant disable
 
 ```
 ================================================================================
-A MIX: SOME USERS FROM THE LOGIN SERVICE, SOME MANAGED BY US
+A USER DIRECTORY - no identity provider, just AgentOS
 ================================================================================
-  everyone below is asking to look at the same agent.
 
-  alice  (login service, role on token = member) -> ALLOWED (200)  use the token's role -> in
-  carol  (login service, role on token = guest)  -> BLOCKED (403)  use the token's role -> bounced
-  bob    (not in login service, we listed as member) -> ALLOWED (200)  no role on token, fall back to our list -> in
-  dave   (not in login service, no role anywhere) -> BLOCKED (403)  no role on token, none in our list -> bounced
+  the directory (asked for by alice, an admin):
+    - alice    alice@co     roles=['admin']  disabled=False
+    - bob      bob@co       roles=['viewer']  disabled=False
+
+  bob is a viewer, so he can look at the agent:
+  bob asks to LOOK at the agent                    -> ALLOWED (200)  viewers can look
+
+  >> now an admin DISABLES bob (e.g. he left the company)...
+
+  bob asks to LOOK at the agent                    -> BLOCKED (403)  same valid token, but he's blocked now
+
+  >> ...bob is back, re-enable him...
+
+  bob asks to LOOK at the agent                    -> ALLOWED (200)  allowed again, instantly
 ================================================================================
-the point: one AgentOS handles both. if the token brings a role we use it;
-if not, we fall back to our own list. same agent, same protection, either way.
+the point: you keep the list of users and an off-switch per person. disabling
+someone blocks their NEXT request even though their token is still valid -
+something you can't do with tokens alone. no passwords are ever stored here.
 ================================================================================
 ```
 
@@ -143,26 +160,4 @@ only the operator's delete went through, and you can see the count drop.
 ==============================================================================
 ```
 
-## Building block — turning access on/off live
-
-```
-==============================================================================
-TURNING ACCESS ON AND OFF, LIVE
-==============================================================================
-  bob holds ONE login card the whole time. we never give him a new one.
-
-  bob asks to look at the agent      -> BLOCKED (403)  starts with no access -> bounced
-
-  >> grant bob access now (while the server is running)...
-
-  bob asks again (same card)         -> ALLOWED (200)  access flipped on -> he's in
-
-  >> ...now cut his access...
-
-  bob asks again (same card)         -> BLOCKED (403)  access flipped off -> bounced again
-==============================================================================
-the point: you can revoke access instantly. bob never logged in again and
-his card never changed - only the rule on the server side did.
-==============================================================================
-```
 

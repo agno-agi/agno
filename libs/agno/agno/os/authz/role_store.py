@@ -7,7 +7,7 @@ scope terms (``agents:*:read``, ``agents:research-agent:run``,
 adapter is the engine under the hood (so changes persist and take effect on the
 next request, no token re-mint), but it is an implementation detail.
 
-Requires the optional extra: ``pip install "agno[casbin]"``.
+Requires the optional extra: ``pip install "agno[roles]"``.
 
 Example::
 
@@ -97,8 +97,8 @@ class ManagedRoleStore:
             import casbin  # noqa: F401
         except ImportError as e:  # pragma: no cover
             raise ImportError(
-                "ManagedRoleStore needs the optional casbin extra. "
-                'Install it with: pip install "agno[casbin]"'
+                "ManagedRoleStore needs the optional managed-roles extra. "
+                'Install it with: pip install "agno[roles]"'
             ) from e
 
         import casbin
