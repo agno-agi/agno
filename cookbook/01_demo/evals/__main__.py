@@ -10,7 +10,7 @@ Each case runs the agent once, then optionally checks the response with
 `AgentAsJudgeEval` (when `criteria` is set) and `ReliabilityEval` (when
 `expected_tool_calls` is set).
 
-Both log to Postgres through `eval_db`. Connect AgentOS at os.agno.com to see history.
+Both log to SQLite through `eval_db`. Connect AgentOS at os.agno.com to see history.
 
 Exit 0 on all-pass, non-zero on any failure or error.
 """
@@ -23,6 +23,7 @@ import typer
 from agents.code_search import code_search_provider
 from agents.git_wiki import git_wiki_provider
 from agents.local_wiki import local_wiki_provider
+from agents.notion_wiki import notion_wiki_provider
 from agno.eval import AgentAsJudgeEval, ReliabilityEval
 from agno.media import Audio, Image
 from agno.run.agent import RunOutput
@@ -30,6 +31,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.status import Status
 from rich.table import Table
+from settings import judge_model
 
 from evals.cases import CASES, Case, eval_db
 
@@ -104,6 +106,7 @@ async def _run_case_async(case: Case, *, verbose: bool) -> CaseOutcome:
                 name=case.name,
                 criteria=case.criteria,
                 scoring_strategy="binary",
+                model=judge_model(),
                 db=eval_db,
             ).arun(input=case.input, output=output_str, print_results=verbose)
         except Exception as exc:
@@ -224,6 +227,8 @@ async def _close_providers() -> None:
     await code_search_provider.aclose()
     if git_wiki_provider is not None:
         await git_wiki_provider.aclose()
+    if notion_wiki_provider is not None:
+        await notion_wiki_provider.aclose()
 
 
 async def _amain(cases: list[Case], *, verbose: bool) -> list[CaseOutcome]:

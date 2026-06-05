@@ -1,6 +1,8 @@
 # Agno Demo
 
-A demo AgentOS running wiki agents. Ingest URLs, images, voice memos, or PDFs. Store as clean, linked page across three backends: **local markdown files, a git repo, or Notion**. Built on AgentOS with SQLite sessions + memory, small enough to grok in an afternoon, stable enough to productionize.
+A demo AgentOS running wiki agents. Ingest URLs, images, voice memos, or PDFs. Store them as clean, linked pages across three backends: **local markdown files, a git repo, or Notion**.
+
+Built on AgentOS with SQLite sessions + memory. Codebase is small enough to grok in an afternoon, and stable enough to build upon.
 
 > For a production version of this demo, see the [agent-platform-railway](https://github.com/agno-agi/agent-platform-railway) codebase.
 
@@ -8,12 +10,12 @@ A demo AgentOS running wiki agents. Ingest URLs, images, voice memos, or PDFs. S
 
 | Agent | What it does | Backing |
 |-------|--------------|---------|
-| **LocalWiki** | Read + write a markdown wiki. Ingest a URL *or* an attached image or PDF — it digests and files a page in one call. | `WikiContextProvider(FileSystemBackend, web=ParallelMCPBackend)` |
-| **GitWiki** *(env-gated)* | The same agent, but the wiki is a real git repo — auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN` are set. | `WikiContextProvider(GitBackend, …)` |
-| **NotionWiki** *(env-gated)* | The same agent, but the wiki is a Notion database (one row per page); the database is the source of truth your team opens in Notion. Registered when `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set. | `WikiContextProvider(NotionDatabaseBackend, …)` |
-| **CodeSearch** | A different kind of agent, left in as an example — answers questions about this repository (file paths, line numbers). | `WorkspaceContextProvider` |
+| **LocalWiki** | Read + write a markdown wiki. Ingest a URL, an attached image, or a PDF. It digests and files a page in one call. | `WikiContextProvider(FileSystemBackend, web=ParallelMCPBackend)` |
+| **GitWiki** *(env-gated)* | The same agent, but the wiki is a real git repo. It auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN` are set. | `WikiContextProvider(GitBackend, …)` |
+| **NotionWiki** *(env-gated)* | The same agent, but the wiki is a Notion database (one row per page). The database is the source of truth your team opens in Notion. Registered when `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set. | `WikiContextProvider(NotionDatabaseBackend, …)` |
+| **CodeSearch** | A different kind of agent, left in as an example. It answers questions about this repository (file paths, line numbers). | `WorkspaceContextProvider` |
 
-Every agent runs on **gpt-5.5** (see `settings.py`); the wiki agents are multimodal — they read attached images and PDFs. (`settings.gemini_flash()` stays as a per-agent swap-in for audio/video, when its quota allows.) All share `db=get_db()` (SQLite at `data/demo.db`), agentic memory, datetime + history in context, and markdown output.
+By default, agents run on **gpt-5.5**, but you can use any model (see `settings.py`).
 
 ## Get started
 
@@ -33,17 +35,17 @@ uv pip install -r cookbook/01_demo/requirements.txt
 ### 3. Set your API keys
 
 ```bash
-export OPENAI_API_KEY="..."      # required — every agent runs on gpt-5.5
+export OPENAI_API_KEY="..."      # required: every agent runs on gpt-5.5
 
-export PARALLEL_API_KEY="..."    # optional — raises the limits on the keyless Parallel MCP web ingest
+export PARALLEL_API_KEY="..."    # optional: raises the limits on the keyless Parallel MCP web ingest
 
-export GOOGLE_API_KEY="..."      # optional — only if you swap settings.gemini_flash() into an agent (audio/video)
+export GOOGLE_API_KEY="..."      # optional: only if you swap settings.gemini_flash() into an agent (audio/video)
 
-# Optional — enables the GitWiki agent
+# Optional: enables the GitWiki agent
 export WIKI_REPO_URL="https://github.com/<owner>/<repo>.git"
 export WIKI_GITHUB_TOKEN="ghp_..."       # PAT with contents:write
 
-# Optional — enables the NotionWiki agent
+# Optional: enables the NotionWiki agent
 export NOTION_API_KEY="ntn_..."          # integration token
 export NOTION_DATABASE_ID="..."          # UUID from the database URL
 ```
@@ -62,10 +64,10 @@ Then open [os.agno.com](https://os.agno.com) and sign in:
 
 ## Try it
 
-- **Ingest a URL** — LocalWiki: *"Add https://docs.agno.com/ to the wiki."* It fetches, digests, and files a page.
-- **Ingest media** — attach `assets/sample-diagram.png` (or your own image or PDF) to LocalWiki: *"Digest this and file it under notes/."*
-- **Ask the wiki** — *"What's in the wiki?"* or *"What does the wiki say about X?"*
-- **Code Q&A** — CodeSearch: *"Which agents are registered in this demo?"*
+- **Ingest a URL** with LocalWiki: *"Add https://docs.agno.com/ to the wiki."* It fetches, digests, and files a page.
+- **Ingest media** by attaching `assets/sample-diagram.png` (or your own image or PDF) to LocalWiki: *"Digest this and file it under notes/."*
+- **Ask the wiki**: *"What's in the wiki?"* or *"What does the wiki say about X?"*
+- **Code Q&A** with CodeSearch: *"Which agents are registered in this demo?"*
 
 ## Evals
 
@@ -85,7 +87,7 @@ python -m evals -v
 python -m evals --case <name>
 ```
 
-Each case runs one agent once, then checks the response with `AgentAsJudgeEval` (LLM rubric, binary pass/fail) and optionally `ReliabilityEval` (tool-call assertion). Results log to SQLite — connect AgentOS at os.agno.com to see history.
+Each case runs one agent once, then checks the response with `AgentAsJudgeEval` (LLM rubric, binary pass/fail) and optionally `ReliabilityEval` (tool-call assertion). Results log to SQLite. Connect AgentOS at os.agno.com to see history.
 
 ## Extending
 
@@ -97,4 +99,4 @@ To add an agent: drop a file in `agents/`, register it in `run.py`'s `AgentOS(ag
 ./cookbook/01_demo/generate_requirements.sh
 ```
 
-Edits to `requirements.in` are the source of truth; the `.txt` is regenerated and pinned via `uv pip compile`.
+Edits to `requirements.in` are the source of truth. The `.txt` is regenerated and pinned via `uv pip compile`.

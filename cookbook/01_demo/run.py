@@ -50,13 +50,13 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
 
 
 # LocalWiki + CodeSearch are always on. GitWiki and NotionWiki register only
-# when their backend credentials are set; they slot in next to LocalWiki so
-# the wiki agents stay grouped at the front.
+# when their backend credentials are set; they're appended after the
+# always-on agents, so the optional wiki backends come last.
 _agents = [local_wiki, code_search]
 if git_wiki is not None:
-    _agents.insert(1, git_wiki)
+    _agents.append(git_wiki)
 if notion_wiki is not None:
-    _agents.insert(2 if git_wiki is not None else 1, notion_wiki)
+    _agents.append(notion_wiki)
 
 
 agent_os = AgentOS(

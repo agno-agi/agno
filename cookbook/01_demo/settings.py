@@ -19,6 +19,15 @@ def sub_agent_model() -> OpenAIResponses:
     return OpenAIResponses(id="gpt-5.5")
 
 
+def judge_model() -> OpenAIResponses:
+    """Model for the eval LLM judge (AgentAsJudgeEval).
+
+    Pinned here so the eval suite is reliable: the library default is a
+    smaller model whose verdicts on these rubrics are noticeably flakier.
+    """
+    return OpenAIResponses(id="gpt-5.5")
+
+
 def gemini_flash() -> Gemini:
     """Gemini 3.5 Flash — swap in per agent for heavier multimodal (audio, video)
     when its quota allows."""
