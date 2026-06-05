@@ -25,7 +25,6 @@ async def main():
     # 1. Create a local agent
     analyst = Agent(
         name="Analyst",
-        agent_id="analyst",
         model=OpenAIResponses(id="gpt-4o-mini"),
         instructions="You analyze and interpret data findings.",
     )

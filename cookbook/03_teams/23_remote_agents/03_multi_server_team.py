@@ -23,7 +23,6 @@ async def main():
     # 1. Local coordinator agent
     coordinator = Agent(
         name="Coordinator",
-        agent_id="coordinator",
         model=OpenAIResponses(id="gpt-4o-mini"),
         instructions="You coordinate tasks and synthesize results from multiple sources.",
     )

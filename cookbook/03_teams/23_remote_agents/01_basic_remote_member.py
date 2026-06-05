@@ -28,7 +28,6 @@ async def main():
     # 1. Create a local agent
     summarizer = Agent(
         name="Summarizer",
-        agent_id="summarizer",
         model=OpenAIResponses(id="gpt-4o-mini"),
         instructions="You summarize information concisely in 2-3 sentences.",
     )
