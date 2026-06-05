@@ -9,7 +9,6 @@ from agno.utils.log import log_debug, log_error
 
 
 def sign_state(payload: Dict[str, Any], secret: str, ttl_seconds: int = 600) -> str:
-    """Return an HS256-signed JWT carrying payload with iat and exp claims."""
     import jwt
 
     now = int(time.time())
@@ -21,7 +20,6 @@ def sign_state(payload: Dict[str, Any], secret: str, ttl_seconds: int = 600) -> 
 
 
 def verify_state(token: str, secret: str, leeway_seconds: int = 60) -> Dict[str, Any]:
-    """Verify and decode a token from sign_state. Raises jwt.InvalidTokenError on failure."""
     import jwt
 
     return jwt.decode(
@@ -33,7 +31,6 @@ def verify_state(token: str, secret: str, leeway_seconds: int = 60) -> Dict[str,
 
 
 def decode_state_insecure(token: str) -> Dict[str, Any]:
-    """Decode without signature verification. For debugging only."""
     import jwt
 
     return jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256"])
@@ -44,14 +41,6 @@ def _derive_key(secret: str) -> bytes:
 
 
 def generate_pkce_pair() -> tuple[str, str]:
-    """Generate PKCE code_verifier and code_challenge (S256).
-
-    Returns:
-        (code_verifier, code_challenge) tuple.
-
-    code_verifier: 64-char random string (A-Z, a-z, 0-9, -._~)
-    code_challenge: Base64URL(SHA256(code_verifier)), no padding
-    """
     code_verifier = secrets.token_urlsafe(48)
     digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
     code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
@@ -66,12 +55,6 @@ def store_pkce_state(
     code_verifier: str,
     state_id: str,
 ) -> bool:
-    """Store PKCE state for OAuth flow, preserving existing token_data and granted_scopes.
-
-    Passes token_data={} and granted_scopes=[] to signal upsert_auth_token
-    to preserve existing values on conflict, avoiding read-modify-write races.
-    Requested scopes live in the OAuth URL and signed JWT, not in the PKCE row.
-    """
     if db is None:
         return False
 

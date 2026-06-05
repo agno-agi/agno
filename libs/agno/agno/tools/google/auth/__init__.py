@@ -10,22 +10,7 @@ __all__ = [
 
 
 def google_authenticate(service_name: str):
-    """Decorator that ensures credentials and service are ready before method execution.
-
-    Each toolkit creates a module-level alias:
-        authenticate = google_authenticate("gmail")
-
-    The decorator:
-    1. Resolves credentials via _resolve_creds() if not already valid
-    2. Builds the service client via _build_service() if not already built
-    3. Calls the wrapped method
-
-    Expects the toolkit class to define:
-        - self.creds: Google OAuth credentials (or None)
-        - self._service: Built API client (or None)
-        - self._resolve_creds(): Returns valid credentials
-        - self._build_service(creds): Returns API service client
-    """
+    """Decorator that resolves credentials and builds service before method execution."""
     import json
     from functools import wraps
 

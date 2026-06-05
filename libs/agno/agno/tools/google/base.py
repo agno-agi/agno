@@ -10,28 +10,7 @@ if TYPE_CHECKING:
 
 
 class GoogleToolkit(Toolkit):
-    """Base class for Google Workspace API toolkits.
-
-    Provides unified credential resolution, DB token storage, and service building.
-    Subclasses set class attributes and implement hooks.
-
-    Credential resolution order:
-    1. Explicit creds passed to constructor
-    2. Service account file (if path provided)
-    3. DB lookup via agent.db (if enabled)
-    4. File fallback (token.json for local development)
-    5. Interactive OAuth (browser-based, local only)
-
-    Subclasses must set:
-        api_name: str - Google API name (e.g., "gmail", "calendar")
-        api_version: str - API version (e.g., "v1", "v3")
-        google_service_name: str - Name for GoogleAuth registry (e.g., "gmail")
-        default_scopes: List[str] | Dict[str, str] - Default scopes (list) or tiered scope levels (dict)
-
-    Optional overrides:
-        require_delegated_user_for_service_account: bool - If True, service account
-            auth requires delegated_user (Gmail needs this for domain-wide delegation)
-    """
+    """Base class for Google Workspace API toolkits."""
 
     api_name: str = ""
     api_version: str = ""

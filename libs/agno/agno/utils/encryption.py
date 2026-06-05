@@ -6,23 +6,20 @@ from typing import Any, Dict, Optional
 
 
 def _derive_fernet_key(secret: str) -> bytes:
-    """Derive a 32-byte Fernet key from an arbitrary secret using SHA256."""
+    # Fernet requires exactly 32 bytes, base64-encoded
     raw_key = hashlib.sha256(secret.encode()).digest()
     return base64.urlsafe_b64encode(raw_key)
 
 
 def get_encryption_key() -> Optional[str]:
-    """Get encryption key from AGNO_ENCRYPTION_KEY env var."""
     return os.getenv("AGNO_ENCRYPTION_KEY")
 
 
 def is_encrypted(data: Dict[str, Any]) -> bool:
-    """Check if data is wrapped in encryption envelope."""
     return isinstance(data, dict) and "encrypted" in data and len(data) == 1
 
 
 def encrypt_dict(data: Dict[str, Any], key: Optional[str] = None) -> Dict[str, str]:
-    """Encrypt a dict to {"encrypted": "<ciphertext>"} envelope."""
     try:
         from cryptography.fernet import Fernet
     except ImportError:
@@ -40,7 +37,6 @@ def encrypt_dict(data: Dict[str, Any], key: Optional[str] = None) -> Dict[str, s
 
 
 def decrypt_dict(data: Dict[str, Any], key: Optional[str] = None) -> Dict[str, Any]:
-    """Decrypt envelope if encrypted, pass through if plaintext."""
     if not is_encrypted(data):
         return data
 

@@ -4,32 +4,21 @@ from agno.utils.log import log_error, log_warning
 
 
 def sign_state(payload: Dict[str, Any], secret: str, ttl_seconds: int = 600) -> str:
-    """Sign OAuth state payload using JWT.
-
-    Re-exports from oauth_state for convenience.
-    """
+    """Sign OAuth state payload using JWT."""
     from agno.utils.oauth_state import sign_state as _sign_state
 
     return _sign_state(payload, secret, ttl_seconds)
 
 
 def verify_state(token: str, secret: str, leeway_seconds: int = 60) -> Dict[str, Any]:
-    """Verify and decode OAuth state token.
-
-    Re-exports from oauth_state for convenience.
-    """
+    """Verify and decode OAuth state token."""
     from agno.utils.oauth_state import verify_state as _verify_state
 
     return _verify_state(token, secret, leeway_seconds)
 
 
 def verify_jwt_state(state: str, secret: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """Verify JWT-signed OAuth state parameter.
-
-    Returns:
-        (state_data, None) on success
-        (None, error_message) on failure
-    """
+    """Verify JWT-signed OAuth state. Returns (state_data, None) or (None, error)."""
     try:
         import jwt
     except ImportError:
@@ -56,12 +45,7 @@ def exchange_code(
     scopes: List[str],
     include_granted_scopes: bool = False,
 ) -> Tuple[Any, Optional[str]]:
-    """Exchange authorization code for tokens using PKCE verifier.
-
-    Returns:
-        (credentials, None) on success
-        (None, error_message) on failure
-    """
+    """Exchange authorization code for tokens. Returns (credentials, None) or (None, error)."""
     from google_auth_oauthlib.flow import Flow
 
     try:

@@ -8,7 +8,6 @@ if TYPE_CHECKING:
 
 @dataclass
 class GoogleAuth:
-    """GCP credentials for Google toolkits. Defaults from env vars."""
 
     # --- OAuth credentials ---
     client_id: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_CLIENT_ID"))
