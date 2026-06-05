@@ -98,6 +98,13 @@ def _download_workos_jwks(client_id: str, dest: str) -> str:
 
 # ---------------------------------------------------------------------------
 # RBAC provisioning via the WorkOS API (all idempotent)
+#
+# DEMO ONLY: this whole section just bootstraps a fresh WorkOS account so the
+# example runs end to end with no dashboard clicks. If you already have WorkOS
+# auth set up (orgs, roles, permissions, users), you do NOT need any of this -
+# your users log in through your existing WorkOS flow and AgentOS only has to
+# verify the token (see the JWTMiddleware setup below, which is the real
+# integration).
 # ---------------------------------------------------------------------------
 
 
@@ -168,6 +175,7 @@ def _mint_token(email: str) -> str:
 
 # ---------------------------------------------------------------------------
 # AgentOS configured to verify WorkOS tokens via JWKS + `permissions` claim
+# This is the actual WorkOS integration - the only part you need in production.
 # ---------------------------------------------------------------------------
 
 _download_workos_jwks(WORKOS_CLIENT_ID, _JWKS_FILE)
