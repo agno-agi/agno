@@ -27,8 +27,9 @@ from agno.agent.remote import RemoteAgent
 from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 
-# Update this to your Coda server URL
-CODA_URL = "http://localhost:7777"
+# Public Coda instance for testing (no auth required)
+# For production, run your own Coda server with authentication enabled
+CODA_URL = "https://coda-production-26ad.up.railway.app"
 
 
 async def main():
