@@ -5,20 +5,30 @@ Settings
 Shared runtime objects. Keep model ids in one place.
 """
 
-from agno.models.anthropic import Claude
+from agno.models.google import Gemini
 from agno.models.openai import OpenAIResponses
 
 
 def default_model() -> OpenAIResponses:
-    """Fresh OpenAI model — avoids shared-state footguns."""
+    """Top-level agent model."""
     return OpenAIResponses(id="gpt-5.5")
 
 
 def sub_agent_model() -> OpenAIResponses:
-    """Smaller OpenAI model for context-provider sub-agents (tool-routing work)."""
-    return OpenAIResponses(id="gpt-5.4-mini")
+    """Model for the context-provider sub-agents (read/write tool-routing work)."""
+    return OpenAIResponses(id="gpt-5.5")
 
 
-def anthropic_model() -> Claude:
-    """Anthropic Claude — used by the Swarm team to diversify across providers."""
-    return Claude(id="claude-opus-4-7")
+def judge_model() -> OpenAIResponses:
+    """Model for the eval LLM judge (AgentAsJudgeEval).
+
+    Pinned here so the eval suite is reliable: the library default is a
+    smaller model whose verdicts on these rubrics are noticeably flakier.
+    """
+    return OpenAIResponses(id="gpt-5.5")
+
+
+def gemini_flash() -> Gemini:
+    """Gemini 3.5 Flash — swap in per agent for heavier multimodal (audio, video)
+    when its quota allows."""
+    return Gemini(id="gemini-3.5-flash")

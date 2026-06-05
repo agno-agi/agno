@@ -2,20 +2,18 @@
 Agno Demo — AgentOS Entrypoint
 ===============================
 
+A demo AgentOS of wiki agents: one multimodal capability across three
+backends. CodeSearch is left in as an example of a different kind of agent.
+
 Agents
-  LocalWiki   — read + write a local markdown wiki, ingest URLs via Parallel MCP
-  GitWiki     — same, but pushes to a git remote (env-gated)
-  NotionWiki  — same, but the wiki is a Notion database (env-gated)
-  WebSearch   — keyless web research via Parallel MCP
-  CodeSearch  — answers questions about this repository
-  Researcher  — composes web + local_wiki + code_search on one agent
+  LocalWiki    — read + write a local markdown wiki; ingest URLs or media
+  GitWiki      — same agent, but the wiki is a git repo (env-gated)
+  NotionWiki   — same agent, but the wiki is a Notion database (env-gated)
+  CodeSearch   — answers questions about this repository (example agent)
 
-Teams
-  Swarm       — broadcast: two web-search agents (OpenAI + Anthropic),
-                leader synthesizes both views
-
-Workflows
-  Brief       — sequential: WebSearch → LocalWiki, files a brief to the wiki
+Every agent runs on gpt-5.5 (see settings.py). The wiki agents are
+multimodal — attach an image or PDF and they digest it and file a page.
+(Swap settings.gemini_flash() in for an agent when you need audio or video.)
 """
 
 from contextlib import asynccontextmanager
@@ -26,13 +24,9 @@ from agents.file_generator import file_generator
 from agents.git_wiki import git_wiki, git_wiki_provider
 from agents.local_wiki import local_wiki, local_wiki_provider
 from agents.notion_wiki import notion_wiki, notion_wiki_provider
-from agents.researcher import researcher
-from agents.web_search import web_provider, web_search
 from agno.os import AgentOS
 from agno.utils.log import log_info
 from db import get_db
-from teams.swarm import swarm
-from workflows.brief import brief
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +43,6 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
     finally:
         log_info("AgentOS lifespan: shutdown — closing context providers")
         await local_wiki_provider.aclose()
-        await web_provider.aclose()
         await code_search_provider.aclose()
         if git_wiki_provider is not None:
             await git_wiki_provider.aclose()
@@ -57,21 +50,19 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
             await notion_wiki_provider.aclose()
 
 
-# GitWiki + NotionWiki are conditional on their respective env vars.
-_agents = [local_wiki, web_search, code_search, researcher, file_generator]
+# LocalWiki + CodeSearch are always on. GitWiki and NotionWiki register only
+# when their backend credentials are set; they're appended after the
+# always-on agents, so the optional wiki backends come last.
+_agents = [local_wiki, code_search]
 if git_wiki is not None:
-    _agents.insert(1, git_wiki)
+    _agents.append(git_wiki)
 if notion_wiki is not None:
-    # Slot just after GitWiki (or LocalWiki if GitWiki is disabled) so
-    # the wiki agents stay grouped at the top of the list.
-    _agents.insert(2 if git_wiki is not None else 1, notion_wiki)
+    _agents.append(notion_wiki)
 
 
 agent_os = AgentOS(
     name="Demo AgentOS",
     agents=_agents,
-    teams=[swarm],
-    workflows=[brief],
     db=get_db(),
     config=str(Path(__file__).parent / "config.yaml"),
     tracing=True,
