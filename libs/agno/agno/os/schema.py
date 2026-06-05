@@ -14,6 +14,7 @@ from agno.os.config import (
     ChatConfig,
     EvalsConfig,
     KnowledgeConfig,
+    Manifest,
     MemoryConfig,
     MetricsConfig,
     SessionConfig,
@@ -101,11 +102,29 @@ class ManagerResponse(BaseModel):
     route: str = Field(..., description="API route path")
 
 
+class Model(BaseModel):
+    id: Optional[str] = Field(None, description="Model identifier")
+    provider: Optional[str] = Field(None, description="Model provider name")
+
+
+def _extract_model(entity: Any) -> Optional[Model]:
+    """Pull id/provider off an entity's model, if present."""
+    raw = getattr(entity, "model", None)
+    if raw is None:
+        return None
+    model_id = getattr(raw, "id", None)
+    provider = getattr(raw, "provider", None)
+    if model_id is None and provider is None:
+        return None
+    return Model(id=model_id, provider=provider)
+
+
 class AgentSummaryResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    model: Optional[Model] = Field(None, description="Model used by the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
@@ -115,13 +134,18 @@ class AgentSummaryResponse(BaseModel):
         metadata = {"framework": framework} if framework else None
         if isinstance(agent, AgentFactory):
             return cls(
-                id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None
+                id=agent.id,
+                name=agent.name,
+                description=agent.description,
+                db_id=agent.db.id if agent.db else None,
+                model=_extract_model(agent),
             )
         return cls(
             id=agent.id,
             name=agent.name,
             description=getattr(agent, "description", None),
             db_id=agent_db.id if agent_db else None,
+            model=_extract_model(agent),
             metadata=metadata,
         )
 
@@ -132,14 +156,28 @@ class TeamSummaryResponse(BaseModel):
     description: Optional[str] = Field(None, description="Description of the team")
     db_id: Optional[str] = Field(None, description="Database identifier")
     mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
+    model: Optional[Model] = Field(None, description="Model used by the team leader")
 
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
         if isinstance(team, TeamFactory):
-            return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
+            return cls(
+                id=team.id,
+                name=team.name,
+                description=team.description,
+                db_id=team.db.id if team.db else None,
+                model=_extract_model(team),
+            )
         db_id = team.db.id if team.db else None
         mode = team.mode.value if hasattr(team, "mode") and team.mode else None
-        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
+        return cls(
+            id=team.id,
+            name=team.name,
+            description=team.description,
+            db_id=db_id,
+            mode=mode,
+            model=_extract_model(team),
+        )
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -205,6 +243,10 @@ class ConfigResponse(BaseModel):
     os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
     databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
+    manifest: Optional[Dict[str, Manifest]] = Field(
+        None,
+        description="Per-entity UI metadata keyed by agent/team/workflow id",
+    )
 
     session: Optional[SessionConfig] = Field(None, description="Session configuration")
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
@@ -217,11 +259,6 @@ class ConfigResponse(BaseModel):
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
     workflows: List[WorkflowSummaryResponse] = Field(..., description="List of registered workflows")
     interfaces: List[InterfaceResponse] = Field(..., description="List of available interfaces")
-
-
-class Model(BaseModel):
-    id: Optional[str] = Field(None, description="Model identifier")
-    provider: Optional[str] = Field(None, description="Model provider name")
 
 
 class ModelResponse(BaseModel):

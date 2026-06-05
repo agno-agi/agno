@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
@@ -96,6 +97,26 @@ async def http_client_lifespan(_):
     await aclose_default_clients()
 
 
+async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
+    """Await in-flight cancel-persist writes before databases close on shutdown."""
+    from agno.agent._run import _background_tasks as agent_tasks
+    from agno.team._run import _background_tasks as team_tasks
+    from agno.workflow.workflow import _workflow_background_tasks as workflow_tasks
+
+    # Re-snapshot until the sets drain (a disconnect handled mid-shutdown can schedule
+    # another persist), bounded by timeout so it never hangs shutdown.
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        pending = {t for t in (*agent_tasks, *team_tasks, *workflow_tasks) if not t.done()}
+        if not pending:
+            return
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            log_warning(f"Timed out draining {len(pending)} cancel-persist task(s) before database shutdown")
+            return
+        await asyncio.wait(pending, timeout=remaining)
+
+
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
@@ -105,6 +126,8 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
 
     yield
 
+    # Let in-flight cancel-persist tasks finish writing before the pool closes
+    await _drain_cancel_persist_tasks()
     await agent_os._close_databases()
 
 
