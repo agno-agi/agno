@@ -386,22 +386,15 @@ class TestStreamingThinkTagExtraction:
         assert run_response.content == "The answer is correct."
         assert run_response.reasoning_content == "Analyzing step by step"
 
-    def test_guard_checks_both_tag_variants(self):
-        """The streaming guard should trigger for both </think> and </thinking>."""
-        # Test with </think>
-        content_think = "<think>thought</think>answer"
-        guard_think = "</think>" in content_think or "</thinking>" in content_think
-        assert guard_think is True
+    def test_extraction_handles_plain_content(self):
+        """Plain content without tags should pass through unchanged."""
+        from agno.utils.reasoning import extract_thinking_content
 
-        # Test with </thinking>
-        content_thinking = "<thinking>thought</thinking>answer"
-        guard_thinking = "</think>" in content_thinking or "</thinking>" in content_thinking
-        assert guard_thinking is True
+        content = "plain answer without any tags"
+        reasoning, output = extract_thinking_content(content)
 
-        # Test with neither
-        content_plain = "plain answer"
-        guard_plain = "</think>" in content_plain or "</thinking>" in content_plain
-        assert guard_plain is False
+        assert reasoning is None
+        assert output == content
 
 
 # =============================================================================

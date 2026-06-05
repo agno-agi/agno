@@ -1156,17 +1156,12 @@ def handle_model_response_stream(
         )
 
     # Extract <think> or <thinking> tags from accumulated streaming content
-    if (
-        run_response.content
-        and isinstance(run_response.content, str)
-        and ("</think>" in run_response.content or "</thinking>" in run_response.content)
-    ):
+    if run_response.content and isinstance(run_response.content, str):
         reasoning_content, clean_content = extract_thinking_content(run_response.content)
         if reasoning_content:
             if not run_response.reasoning_content:
                 run_response.reasoning_content = reasoning_content
             run_response.content = clean_content
-            # Also update model_response to keep them in sync
             model_response.content = clean_content
             if not model_response.reasoning_content:
                 model_response.reasoning_content = reasoning_content
@@ -1326,11 +1321,7 @@ async def ahandle_model_response_stream(
             yield event
 
     # Extract <think> or <thinking> tags from accumulated streaming content
-    if (
-        run_response.content
-        and isinstance(run_response.content, str)
-        and ("</think>" in run_response.content or "</thinking>" in run_response.content)
-    ):
+    if run_response.content and isinstance(run_response.content, str):
         reasoning_content, clean_content = extract_thinking_content(run_response.content)
         if reasoning_content:
             if not run_response.reasoning_content:

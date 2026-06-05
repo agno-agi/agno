@@ -1109,11 +1109,7 @@ def _handle_model_response_stream(
         )
 
     # Extract <think> or <thinking> tags from accumulated streaming content
-    if (
-        full_model_response.content
-        and isinstance(full_model_response.content, str)
-        and ("</think>" in full_model_response.content or "</thinking>" in full_model_response.content)
-    ):
+    if full_model_response.content and isinstance(full_model_response.content, str):
         reasoning_content, clean_content = extract_thinking_content(full_model_response.content)
         if reasoning_content:
             full_model_response.content = clean_content
@@ -1277,11 +1273,7 @@ async def _ahandle_model_response_stream(
             yield event
 
     # Extract <think> or <thinking> tags from accumulated streaming content
-    if (
-        full_model_response.content
-        and isinstance(full_model_response.content, str)
-        and ("</think>" in full_model_response.content or "</thinking>" in full_model_response.content)
-    ):
+    if full_model_response.content and isinstance(full_model_response.content, str):
         reasoning_content, clean_content = extract_thinking_content(full_model_response.content)
         if reasoning_content:
             full_model_response.content = clean_content

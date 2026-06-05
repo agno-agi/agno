@@ -371,7 +371,9 @@ class Ollama(Model):
             reasoning_content, clean_content = extract_thinking_content(model_response.content)
 
             if reasoning_content:
+                # Store extracted thinking content separately
                 model_response.reasoning_content = reasoning_content
+                # Update main content with clean version
                 model_response.content = clean_content
 
         if response_message.get("tool_calls") is not None:
