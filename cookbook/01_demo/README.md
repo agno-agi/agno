@@ -1,29 +1,21 @@
 # Agno Demo
 
-A minimal AgentOS to copy and build on. A small set of agents and a local SQLite database for sessions + memory.
+A demo AgentOS running wiki agents. Ingest URLs, images, voice memos, or PDFs. Store them as clean, linked pages across three backends: **local markdown files, a git repo, or Notion**.
 
-For a production-ready version of this demo, see the [agent-platform-railway](https://github.com/agno-agi/agent-platform-railway) codebase. Comes with AgentOS (FastAPI) + Postgres. One-command deploy to Railway. JWT auth, Slack integration, eval suite, and recursive-improvement loops driven by Claude Code.
+Built on AgentOS with SQLite sessions + memory. Codebase is small enough to grok in an afternoon, and stable enough to build upon.
+
+> For a production version of this demo, see the [agent-platform-railway](https://github.com/agno-agi/agent-platform-railway) codebase.
 
 ## Agents
 
 | Agent | What it does | Backing |
 |-------|--------------|---------|
-| **LocalWiki** | Read + write a local markdown wiki. Ingest URLs via the web — "add a page about X" fetches, digests, and files in one update call. | `WikiContextProvider(FileSystemBackend, web=ParallelMCPBackend)` |
-| **GitWiki** *(env-gated)* | Same as LocalWiki, but the wiki lives in a real git repo. Auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN` are set. | `WikiContextProvider(GitBackend, web=ParallelMCPBackend)` |
-| **NotionWiki** *(env-gated)* | Same as LocalWiki, but the wiki is a Notion database (one row per page). Writes round-trip through Notion blocks; the database is the source of truth. Registered when `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set. | `WikiContextProvider(NotionDatabaseBackend, web=ParallelMCPBackend)` |
-| **WebSearch** | Keyless web research via Parallel MCP. Returns answers with cited URLs. | `WebContextProvider(ParallelMCPBackend)` |
-| **CodeSearch** | Answers questions about this repository — file paths, line numbers. | `WorkspaceContextProvider` |
-| **Researcher** | Composes WebSearch + LocalWiki + CodeSearch on one agent. Checks the wiki first, searches the web, queries the codebase, and files findings back into the wiki. | composition of the three providers above |
+| **LocalWiki** | Read + write a markdown wiki. Ingest a URL, an attached image, or a PDF. It digests and files a page in one call. | `WikiContextProvider(FileSystemBackend, web=ParallelMCPBackend)` |
+| **GitWiki** *(env-gated)* | The same agent, but the wiki is a real git repo. It auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN` are set. | `WikiContextProvider(GitBackend, …)` |
+| **NotionWiki** *(env-gated)* | The same agent, but the wiki is a Notion database (one row per page). The database is the source of truth your team opens in Notion. Registered when `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set. | `WikiContextProvider(NotionDatabaseBackend, …)` |
+| **CodeSearch** | A different kind of agent, left in as an example. It answers questions about this repository (file paths, line numbers). | `WorkspaceContextProvider` |
 
-All agents share `db=get_db()` (SQLite at `data/demo.db`), agentic memory on, datetime + history in context, markdown output.
-
-## Teams
-
-| Team | What it does | Pattern |
-|------|--------------|---------|
-| **Swarm** | Broadcast the same question to two web-search agents — one on OpenAI gpt-5.5, one on Anthropic claude-opus-4-7 — and synthesize. Lead calls out where the models agree, disagree, and a confidence read. | `Team(mode=broadcast, members=[openai_agent, anthropic_agent])` |
-
-This is the "assemble a bunch of agents on a common problem, mix OpenAI and Anthropic" pattern. Both members share the same web provider — one Parallel MCP session, two perspectives.
+By default, agents run on **gpt-5.5**, but you can use any model (see `settings.py`).
 
 ## Get started
 
@@ -43,16 +35,17 @@ uv pip install -r cookbook/01_demo/requirements.txt
 ### 3. Set your API keys
 
 ```bash
-export OPENAI_API_KEY="..."
-export ANTHROPIC_API_KEY="..."   # required for the Swarm team's Claude member
+export OPENAI_API_KEY="..."      # required: every agent runs on gpt-5.5
 
-export PARALLEL_API_KEY="..."    # optional — raises rate ceiling on Parallel MCP
+export PARALLEL_API_KEY="..."    # optional: raises the limits on the keyless Parallel MCP web ingest
 
-# Optional — enables the GitWiki agent
+export GOOGLE_API_KEY="..."      # optional: only if you swap settings.gemini_flash() into an agent (audio/video)
+
+# Optional: enables the GitWiki agent
 export WIKI_REPO_URL="https://github.com/<owner>/<repo>.git"
-export WIKI_GITHUB_TOKEN="ghp_..."   # PAT with contents:write
+export WIKI_GITHUB_TOKEN="ghp_..."       # PAT with contents:write
 
-# Optional — enables the NotionWiki agent
+# Optional: enables the NotionWiki agent
 export NOTION_API_KEY="ntn_..."          # integration token
 export NOTION_DATABASE_ID="..."          # UUID from the database URL
 ```
@@ -68,6 +61,13 @@ Then open [os.agno.com](https://os.agno.com) and sign in:
 1. **Add OS** → **Local**
 2. Connect to `http://localhost:8000`, call it Local AgentOS
 3. Chat with your agents
+
+## Try it
+
+- **Ingest a URL** with LocalWiki: *"Add https://docs.agno.com/ to the wiki."* It fetches, digests, and files a page.
+- **Ingest media** by attaching `assets/sample-diagram.png` (or your own image or PDF) to LocalWiki: *"Digest this and file it under notes/."*
+- **Ask the wiki**: *"What's in the wiki?"* or *"What does the wiki say about X?"*
+- **Code Q&A** with CodeSearch: *"Which agents are registered in this demo?"*
 
 ## Evals
 
@@ -87,11 +87,11 @@ python -m evals -v
 python -m evals --case <name>
 ```
 
-Each case runs the agent (or team / workflow) once, then checks the response with `AgentAsJudgeEval` (LLM rubric, binary pass/fail) and optionally `ReliabilityEval` (tool-call assertion). Results log to SQLite — connect AgentOS at os.agno.com to see history.
+Each case runs one agent once, then checks the response with `AgentAsJudgeEval` (LLM rubric, binary pass/fail) and optionally `ReliabilityEval` (tool-call assertion). Results log to SQLite. Connect AgentOS at os.agno.com to see history.
 
 ## Extending
 
-To add an agent: drop a file in `agents/`, register it in `run.py`'s `AgentOS(agents=[...])` list, add quick prompts to `config.yaml`, restart. Same pattern for `teams/` and `workflows/`. Add eval cases in `evals/cases.py` once it's stable.
+To add an agent: drop a file in `agents/`, register it in `run.py`'s `AgentOS(agents=[...])` list, add quick prompts to `config.yaml`, restart. Add eval cases in `evals/cases.py` once it's stable.
 
 ## Regenerating requirements
 
@@ -99,4 +99,4 @@ To add an agent: drop a file in `agents/`, register it in `run.py`'s `AgentOS(ag
 ./cookbook/01_demo/generate_requirements.sh
 ```
 
-Edits to `requirements.in` are the source of truth; the `.txt` is regenerated and pinned via `uv pip compile`.
+Edits to `requirements.in` are the source of truth. The `.txt` is regenerated and pinned via `uv pip compile`.

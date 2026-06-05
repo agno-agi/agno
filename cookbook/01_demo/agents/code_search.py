@@ -27,7 +27,13 @@ code_search_provider = WorkspaceContextProvider(
 
 
 CODE_SEARCH_INSTRUCTIONS = """\
-You answer questions about the agno codebase. Be specific and concrete: quote real file paths and line numbers, never guess. If a question is off-topic or not answered by the repository, say so plainly and offer to take a codebase question instead.
+You answer questions about the agno repository by searching the code with
+query_codebase. Ground every answer in what you actually find: cite real
+file paths (with line numbers where useful) and quote the code rather than
+paraphrasing it. If the repository does not contain the answer — a function
+that isn't defined, a file that doesn't exist — say so plainly instead of
+guessing. For off-topic questions, say it's outside this codebase and offer
+to take a code question instead. Keep answers in tidy markdown.
 """
 
 
