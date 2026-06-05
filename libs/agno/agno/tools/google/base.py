@@ -47,6 +47,10 @@ class GoogleToolkit(Toolkit):
         # Normalize auth config: auth= takes precedence over auth_config=
         self._auth = auth or auth_config
 
+        # Register scopes with shared auth for aggregation
+        if self._auth:
+            self._auth.register_scopes(self.scopes)
+
         # Legacy params — only used if no auth config provided
         self._legacy_service_account_path = service_account_path
         self._legacy_delegated_user = delegated_user
@@ -148,35 +152,51 @@ class GoogleToolkit(Toolkit):
         return creds if creds.valid else None
 
     def _resolve_creds(self) -> Any:
-        """Resolve credentials using the priority chain. Returns credentials."""
+        """Resolve credentials using the priority chain. Returns credentials.
+
+        When using shared GoogleAuth, credentials are cached on the auth object
+        and scopes are aggregated across all toolkits sharing that auth.
+        """
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
         from google_auth_oauthlib.flow import InstalledAppFlow
 
-        # 1. Existing valid creds
+        # 1. Shared creds from GoogleAuth (already authenticated by another toolkit)
+        if self._auth and self._auth.creds and self._auth.creds.valid:
+            return self._auth.creds
+
+        # 2. Instance creds (passed directly or already resolved)
         if self.creds and self.creds.valid:
             return self.creds
 
-        # 2. Service account (never stored in DB)
+        # 3. Service account (never stored in DB)
         service_account_path = self._get_service_account_path()
         if service_account_path:
-            return self._get_service_account_creds(service_account_path)
+            creds = self._get_service_account_creds(service_account_path)
+            if self._auth:
+                self._auth.creds = creds
+            return creds
 
-        # 3. DB lookup (if configured via auth.db)
+        # Use aggregated scopes from GoogleAuth if available
+        oauth_scopes = self._auth.scopes if self._auth else self.scopes
+
+        # 4. DB lookup (if configured via auth.db)
         db = getattr(self._auth, "db", None) if self._auth else None
         if db:
             creds = self._load_from_db(db, user_id=None)
             if creds:
+                if self._auth:
+                    self._auth.creds = creds
                 return creds
 
-        # 4. File fallback (local mode)
+        # 5. File fallback (local mode)
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
 
         creds = None
         if token_file.exists():
             try:
-                creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+                creds = Credentials.from_authorized_user_file(str(token_file), oauth_scopes)
             except ValueError:
                 creds = None
 
@@ -188,10 +208,11 @@ class GoogleToolkit(Toolkit):
                 creds = None
 
         if creds and creds.valid:
+            if self._auth:
+                self._auth.creds = creds
             return creds
 
-        # 5. Interactive OAuth (local only)
-        # Build client config from auth config or env vars
+        # 6. Interactive OAuth (local only) — uses AGGREGATED scopes
         client_id = self._auth.client_id if self._auth else os.getenv("GOOGLE_CLIENT_ID")
         client_secret = self._auth.client_secret if self._auth else os.getenv("GOOGLE_CLIENT_SECRET")
         redirect_uri = self._auth.redirect_uri if self._auth else os.getenv("GOOGLE_REDIRECT_URI", "http://localhost")
@@ -208,9 +229,9 @@ class GoogleToolkit(Toolkit):
             }
         }
         if creds_file.exists():
-            flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), oauth_scopes)
         else:
-            flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+            flow = InstalledAppFlow.from_client_config(client_config, oauth_scopes)
 
         oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
         login_hint = self._auth.login_hint if self._auth else self._legacy_login_hint
@@ -221,13 +242,15 @@ class GoogleToolkit(Toolkit):
             oauth_kwargs["hd"] = hosted_domain
         creds = flow.run_local_server(port=self.oauth_port or 0, **oauth_kwargs)
 
-        # Save to DB or file
+        # Save to DB or file, then cache on GoogleAuth
         if creds and creds.valid:
             if db:
                 self._save_to_db(db, creds, user_id=None)
             else:
                 token_file.write_text(creds.to_json())
                 log_debug(f"{self.google_service_name.title()} credentials saved to file")
+            if self._auth:
+                self._auth.creds = creds
 
         return creds
 
@@ -254,7 +277,7 @@ class GoogleToolkit(Toolkit):
                 "user_id": user_id,
                 "service": "google",
                 "token_data": token_data,
-                "granted_scopes": list(creds.scopes) if creds.scopes else self.scopes,
+                "granted_scopes": list(creds.scopes) if creds.scopes else (self._auth.scopes if self._auth else self.scopes),
             })
             log_debug(f"{self.google_service_name.title()} credentials saved to DB")
             return True
