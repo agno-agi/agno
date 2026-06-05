@@ -221,9 +221,43 @@ class GoogleToolkit(Toolkit):
             oauth_kwargs["hd"] = hosted_domain
         creds = flow.run_local_server(port=self.oauth_port or 0, **oauth_kwargs)
 
-        # Save to file
+        # Save to DB or file
         if creds and creds.valid:
-            token_file.write_text(creds.to_json())
-            log_debug(f"{self.google_service_name.title()} credentials saved to file")
+            if db:
+                self._save_to_db(db, creds, user_id=None)
+            else:
+                token_file.write_text(creds.to_json())
+                log_debug(f"{self.google_service_name.title()} credentials saved to file")
 
         return creds
+
+    def _save_to_db(self, db: Any, creds: Any, user_id: Optional[str]) -> bool:
+        """Save credentials to DB."""
+        from agno.utils.encryption import encrypt_dict
+
+        token_data = {
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+        }
+
+        # Encrypt if key provided
+        key = getattr(self._auth, "token_encryption_key", None)
+        if key:
+            token_data = encrypt_dict(token_data, key=key)
+
+        try:
+            db.upsert_auth_token({
+                "provider": "google",
+                "user_id": user_id,
+                "service": "google",
+                "token_data": token_data,
+                "granted_scopes": list(creds.scopes) if creds.scopes else self.scopes,
+            })
+            log_debug(f"{self.google_service_name.title()} credentials saved to DB")
+            return True
+        except Exception as e:
+            log_debug(f"Failed to save credentials to DB: {e}")
+            return False
