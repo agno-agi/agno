@@ -570,10 +570,20 @@ class AgentOS:
                 if self.db is not None and entry.db is None:
                     entry.db = self.db
 
-        if not self._agents:
+        # Collect all agents that need initialization: from agents list AND from interfaces
+        agents_to_init: List[Agent] = list(self._agents) if self._agents else []
+
+        # Include agents from interfaces (AGUI, A2A, etc.) so they receive the same
+        # initialization as agents in the main list (db injection, initialize_agent, etc.)
+        for interface in self.interfaces or []:
+            if hasattr(interface, "agent") and interface.agent is not None:
+                if isinstance(interface.agent, Agent) and interface.agent not in agents_to_init:
+                    agents_to_init.append(interface.agent)
+
+        if not agents_to_init:
             return
 
-        for agent in self._agents:
+        for agent in agents_to_init:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
                 agent.db = self.db
@@ -597,10 +607,20 @@ class AgentOS:
 
     def _initialize_teams(self) -> None:
         """Initialize and configure all teams for AgentOS usage."""
-        if not self._teams:
+        # Collect all teams that need initialization: from teams list AND from interfaces
+        teams_to_init: List[Team] = list(self._teams) if self._teams else []
+
+        # Include teams from interfaces (AGUI, A2A, etc.) so they receive the same
+        # initialization as teams in the main list (db injection, initialize_team, etc.)
+        for interface in self.interfaces or []:
+            if hasattr(interface, "team") and interface.team is not None:
+                if isinstance(interface.team, Team) and interface.team not in teams_to_init:
+                    teams_to_init.append(interface.team)
+
+        if not teams_to_init:
             return
 
-        for team in self._teams:
+        for team in teams_to_init:
             # Set the default db to teams without their own
             if self.db is not None and team.db is None:
                 team.db = self.db
