@@ -32,7 +32,7 @@ agent = Agent(
             auth=auth,
             include_tools=["list_events", "create_event", "get_event", "update_event"],
         ),
-        GoogleMeetTools(),
+        GoogleMeetTools(auth=auth),
         GmailTools(auth=auth, include_tools=["create_draft", "send_email"]),
     ],
     instructions=[

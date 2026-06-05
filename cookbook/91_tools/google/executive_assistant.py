@@ -29,7 +29,7 @@ agent = Agent(
     tools=[
         GmailTools(auth=auth, include_tools=["search_emails", "get_emails_by_thread"]),
         GoogleCalendarTools(auth=auth, include_tools=["list_events", "get_event"]),
-        GoogleTasksTools(),
+        GoogleTasksTools(auth=auth),
     ],
     instructions=[
         "You are an executive assistant helping manage the day.",

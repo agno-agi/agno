@@ -32,7 +32,7 @@ agent = Agent(
         GoogleCalendarTools(auth=auth, include_tools=["list_events", "get_event"]),
         GmailTools(auth=auth, include_tools=["search_emails", "get_emails_by_thread"]),
         GoogleDriveTools(auth=auth),
-        GoogleMeetTools(),
+        GoogleMeetTools(auth=auth),
     ],
     instructions=[
         "You help prepare for meetings by gathering context.",

@@ -31,7 +31,7 @@ agent = Agent(
             auth=auth,
             include_tools=["search_emails", "get_emails_by_thread", "mark_email_as_read"],
         ),
-        GoogleTasksTools(),
+        GoogleTasksTools(auth=auth),
     ],
     instructions=[
         "You process emails and extract action items into tasks.",

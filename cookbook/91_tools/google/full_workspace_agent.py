@@ -38,8 +38,8 @@ agent = Agent(
         GoogleDriveTools(auth=auth),
         GoogleSheetsTools(auth=auth),
         GoogleSlidesTools(auth=auth),
-        GoogleMeetTools(),
-        GoogleTasksTools(),
+        GoogleMeetTools(auth=auth),
+        GoogleTasksTools(auth=auth),
     ],
     instructions=[
         "You have full access to Google Workspace.",
