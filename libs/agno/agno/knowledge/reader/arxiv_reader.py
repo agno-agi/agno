@@ -57,9 +57,10 @@ class ArxivReader(Reader):
         """
 
         documents = []
+        client = arxiv.Client()
         search = arxiv.Search(query=query, max_results=self.max_results, sort_by=self.sort_by)
 
-        for result in search.results():
+        for result in client.results(search):
             links = ", ".join([x.href for x in result.links])
 
             documents.append(
