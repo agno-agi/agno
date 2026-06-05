@@ -2,7 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -59,6 +59,7 @@ from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
+    collect_components_from_os,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -360,6 +361,9 @@ class AgentOS:
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
+
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
 
@@ -414,6 +418,9 @@ class AgentOS:
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
+
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
 
         if self.enable_mcp_server:
             from agno.os.mcp import get_mcp_server
@@ -731,6 +738,61 @@ class AgentOS:
         for team in self._teams:
             _register(team, "team")
 
+    def _populate_registry_components(self) -> None:
+        """Auto-populate the registry with components found in agents, teams and workflows.
+
+        Recursively walks every agent, team and workflow (including nested teams,
+        workflow steps and branch/route steps) and collects the models, tools,
+        databases and vector databases they reference. This keeps the registry,
+        and therefore ``GET /registry``, consistent with what is actually wired
+        into the AgentOS without requiring components to be declared twice.
+
+        Deduplication is by id/name so user-provided registry components and
+        instances shared across many agents are never duplicated. User objects
+        are only referenced, never mutated. The walk degrades gracefully: a
+        malformed node is skipped rather than failing AgentOS construction.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+
+        try:
+            collector = collect_components_from_os(self._agents, self._teams, self._workflows)
+        except Exception as e:
+            log_debug(f"Registry auto-population skipped: {e}")
+            return
+
+        def _merge(existing: List[Any], discovered: List[Any], key_fn: Callable[[Any], Any]) -> None:
+            def _safe_key(item: Any) -> Any:
+                try:
+                    return key_fn(item)
+                except Exception:
+                    return id(item)
+
+            existing_keys = {_safe_key(item) for item in existing}
+            for item in discovered:
+                key = _safe_key(item)
+                if key not in existing_keys:
+                    existing.append(item)
+                    existing_keys.add(key)
+
+        def _model_key(model: Any) -> Any:
+            return ("model", getattr(model, "provider", None), getattr(model, "id", None))
+
+        def _tool_key(tool: Any) -> Any:
+            name = getattr(tool, "name", None) or getattr(tool, "__name__", None) or tool.__class__.__name__
+            return ("tool", name)
+
+        def _db_key(db: Any) -> Any:
+            return ("db", getattr(db, "id", None) or id(db))
+
+        def _vector_db_key(vector_db: Any) -> Any:
+            return ("vector_db", getattr(vector_db, "id", None) or getattr(vector_db, "name", None) or id(vector_db))
+
+        _merge(self.registry.models, collector.models, _model_key)
+        _merge(self.registry.tools, collector.tools, _tool_key)
+        _merge(self.registry.dbs, collector.dbs, _db_key)
+        _merge(self.registry.vector_dbs, collector.vector_dbs, _vector_db_key)
+
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 
@@ -852,6 +914,9 @@ class AgentOS:
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
+
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
 
         routers = [
             get_session_router(dbs=self.dbs),
