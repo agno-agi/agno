@@ -22,19 +22,16 @@ Add these scopes in the OAuth consent screen under "Scopes for Google APIs".
 
 import json
 import textwrap
-from os import getenv
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
-from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
+from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error, log_info
 
+if TYPE_CHECKING:
+    from agno.tools.google.auth import GoogleAuth
+
 try:
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import Resource, build
     from googleapiclient.errors import HttpError
 except ImportError:
@@ -67,21 +64,25 @@ TASKS_INSTRUCTIONS = textwrap.dedent("""\
 authenticate = google_authenticate("tasks")
 
 
-class GoogleTasksTools(Toolkit):
-    DEFAULT_SCOPES = [
+class GoogleTasksTools(GoogleToolkit):
+    api_name = "tasks"
+    api_version = "v1"
+    google_service_name = "tasks"
+    default_scopes = [
         "https://www.googleapis.com/auth/tasks.readonly",
         "https://www.googleapis.com/auth/tasks",
     ]
 
     def __init__(
         self,
-        creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
+        scopes: Optional[List[str]] = None,
+        creds: Optional[Any] = None,
+        token_path: Optional[str] = None,
         credentials_path: Optional[str] = None,
-        token_path: Optional[str] = "token.json",
+        auth: Optional["GoogleAuth"] = None,
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        scopes: Optional[List[str]] = None,
-        oauth_port: int = 8080,
+        oauth_port: int = 0,
         login_hint: Optional[str] = None,
         list_task_lists: bool = True,
         get_task_list: bool = True,
@@ -100,47 +101,20 @@ class GoogleTasksTools(Toolkit):
         add_instructions: bool = True,
         **kwargs: Any,
     ):
-        """Initialize GoogleTasksTools with authentication and tool selection.
+        super().__init__(
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            auth=auth,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
+            **kwargs,
+        )
 
-        Args:
-            creds: Pre-fetched credentials to skip a new auth flow.
-            credentials_path: Path to OAuth credentials JSON file.
-            token_path: Path to cached token file. Created on first auth.
-            service_account_path: Path to service account JSON key. When set, OAuth is skipped.
-            delegated_user: Email to impersonate via domain-wide delegation. Optional for Tasks.
-            scopes: Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            oauth_port: Port for OAuth local redirect server (default: 8080).
-            login_hint: Email to pre-select in the OAuth consent screen.
-            list_task_lists: Register the list_task_lists tool (read).
-            get_task_list: Register the get_task_list tool (read).
-            list_tasks: Register the list_tasks tool (read).
-            get_task: Register the get_task tool (read).
-            create_task_list: Register the create_task_list tool (write).
-            update_task_list: Register the update_task_list tool (write).
-            create_task: Register the create_task tool (write).
-            update_task: Register the update_task tool (write).
-            complete_task: Register the complete_task tool (write).
-            move_task: Register the move_task tool (write).
-            delete_task_list: Register the delete_task_list tool (destructive, disabled by default).
-            delete_task: Register the delete_task tool (destructive, disabled by default).
-            clear_completed_tasks: Register the clear_completed_tasks tool (destructive, disabled by default).
-            instructions: Custom instructions for the toolkit. If None, uses default.
-            add_instructions: Whether to inject instructions into the agent system prompt.
-        """
-        if instructions is None:
-            self.instructions = TASKS_INSTRUCTIONS
-        else:
-            self.instructions = instructions
-
-        self.creds = creds
-        self.service: Optional[Resource] = None
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.scopes = scopes or self.DEFAULT_SCOPES
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
+        self.instructions = instructions if instructions is not None else TASKS_INSTRUCTIONS
 
         tools: List[Any] = []
         if list_task_lists:
@@ -201,76 +175,6 @@ class GoogleTasksTools(Toolkit):
             write_scope = "https://www.googleapis.com/auth/tasks"
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
-
-    def _build_service(self):
-        return build("tasks", "v1", credentials=self.creds)
-
-    def _auth(self) -> None:
-        """Authenticate with Google Tasks API using service account (priority) or OAuth flow."""
-        if self.creds and self.creds.valid:
-            return
-
-        # Service account authentication takes priority over OAuth
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            sa_creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            # Tasks service accounts can optionally impersonate a user
-            if delegated_user:
-                sa_creds = sa_creds.with_subject(delegated_user)
-            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
-            sa_creds.refresh(Request())
-            self.creds = sa_creds
-            return
-
-        # OAuth flow
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        if token_file.exists():
-            try:
-                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                # Token file missing refresh_token — fall through to re-auth
-                self.creds = None
-
-        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore[union-attr]
-            try:
-                self.creds.refresh(Request())
-            except Exception:
-                # Refresh token revoked or expired — fall through to re-auth
-                self.creds = None
-
-        if not self.creds or not self.creds.valid:
-            client_config = {
-                "installed": {
-                    "client_id": getenv("GOOGLE_CLIENT_ID"),
-                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                    "project_id": getenv("GOOGLE_PROJECT_ID"),
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                }
-            }
-            if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-            else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            # prompt=consent forces Google to return a refresh_token every time
-            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-            if self.login_hint:
-                oauth_kwargs["login_hint"] = self.login_hint
-            oauth_kwargs["port"] = self.oauth_port
-            self.creds = flow.run_local_server(**oauth_kwargs)
-
-        if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            log_debug("Successfully authenticated with Google Tasks API.")
-            log_info(f"Token file path: {token_file}")
 
     @authenticate
     def list_task_lists(self, max_results: int = 100) -> str:

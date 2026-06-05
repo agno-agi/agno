@@ -31,19 +31,16 @@ Notes:
 
 import json
 import textwrap
-from os import getenv
-from pathlib import Path
-from typing import Any, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional
 
-from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
+from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error
 
+if TYPE_CHECKING:
+    from agno.tools.google.auth import GoogleAuth
+
 try:
-    from google.auth.transport.requests import Request
-    from google.oauth2.credentials import Credentials
-    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import Resource, build
     from googleapiclient.errors import HttpError
 except ImportError:
@@ -73,8 +70,11 @@ MEET_INSTRUCTIONS = textwrap.dedent("""\
 authenticate = google_authenticate("meet")
 
 
-class GoogleMeetTools(Toolkit):
-    DEFAULT_SCOPES = [
+class GoogleMeetTools(GoogleToolkit):
+    api_name = "meet"
+    api_version = "v2"
+    google_service_name = "meet"
+    default_scopes = [
         "https://www.googleapis.com/auth/meetings.space.created",
         "https://www.googleapis.com/auth/meetings.space.readonly",
         "https://www.googleapis.com/auth/drive.readonly",
@@ -82,13 +82,14 @@ class GoogleMeetTools(Toolkit):
 
     def __init__(
         self,
-        creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
+        scopes: Optional[List[str]] = None,
+        creds: Optional[Any] = None,
+        token_path: Optional[str] = None,
         credentials_path: Optional[str] = None,
-        token_path: Optional[str] = "token.json",
+        auth: Optional["GoogleAuth"] = None,
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        scopes: Optional[List[str]] = None,
-        oauth_port: int = 8080,
+        oauth_port: int = 0,
         login_hint: Optional[str] = None,
         create_meeting_space: bool = True,
         get_meeting_space: bool = True,
@@ -103,45 +104,20 @@ class GoogleMeetTools(Toolkit):
         add_instructions: bool = True,
         **kwargs,
     ):
-        """Initialize GoogleMeetTools with authentication and tool selection.
+        super().__init__(
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            auth=auth,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
+            **kwargs,
+        )
 
-        Args:
-            creds: Pre-fetched credentials to skip a new auth flow.
-            credentials_path: Path to OAuth credentials JSON file.
-            token_path: Path to cached token file. Created on first auth.
-            service_account_path: Path to service account JSON key. When set, OAuth is skipped.
-            delegated_user: Email to impersonate via domain-wide delegation. Required for
-                service accounts to access user meetings.
-            scopes: Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            oauth_port: Port for the OAuth local redirect server. Defaults to 8080.
-            login_hint: Email to pre-select in the OAuth consent screen.
-            create_meeting_space: Enable creating new meeting spaces. Defaults to True.
-            get_meeting_space: Enable reading meeting space details. Defaults to True.
-            list_conference_records: Enable listing past conferences. Defaults to True.
-            get_conference_record: Enable reading a single conference record. Defaults to True.
-            list_participants: Enable listing participants of a conference. Defaults to True.
-            list_recordings: Enable listing recordings for a conference. Defaults to True.
-            list_transcripts: Enable listing transcripts for a conference. Defaults to True.
-            list_transcript_entries: Enable listing transcript entries. Defaults to True.
-            end_active_conference: Enable ending an active conference. Destructive — disabled
-                by default and requires confirmation when enabled.
-            instructions: Custom instructions for the toolkit. If None, uses default.
-            add_instructions: Whether to inject instructions into the agent system prompt.
-        """
-        if instructions is None:
-            self.instructions = MEET_INSTRUCTIONS
-        else:
-            self.instructions = instructions
-
-        self.creds = creds
-        self.service: Optional[Resource] = None
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.scopes = scopes or self.DEFAULT_SCOPES
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
+        self.instructions = instructions if instructions is not None else MEET_INSTRUCTIONS
 
         tools: List[Any] = []
 
@@ -184,64 +160,6 @@ class GoogleMeetTools(Toolkit):
                 raise ValueError(
                     "Scope 'meetings.space.created' is required to create meeting spaces or end conferences."
                 )
-
-    def _build_service(self) -> Resource:
-        return build("meet", "v2", credentials=self.creds)
-
-    def _auth(self) -> None:
-        if self.creds and self.creds.valid:
-            return
-
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            sa_creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            if delegated_user:
-                sa_creds = sa_creds.with_subject(delegated_user)
-            sa_creds.refresh(Request())
-            self.creds = sa_creds
-            return
-
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        if token_file.exists():
-            try:
-                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                self.creds = None
-
-        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore[union-attr]
-            try:
-                self.creds.refresh(Request())
-            except Exception:
-                self.creds = None
-
-        if not self.creds or not self.creds.valid:
-            client_config = {
-                "installed": {
-                    "client_id": getenv("GOOGLE_CLIENT_ID"),
-                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                    "project_id": getenv("GOOGLE_PROJECT_ID"),
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                }
-            }
-            if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-            else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            oauth_kwargs: dict = {"prompt": "consent"}
-            if self.login_hint:
-                oauth_kwargs["login_hint"] = self.login_hint
-            self.creds = flow.run_local_server(port=self.oauth_port, **oauth_kwargs)
-            if self.token_path:
-                token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
 
     @authenticate
     def create_meeting_space(self) -> str:
