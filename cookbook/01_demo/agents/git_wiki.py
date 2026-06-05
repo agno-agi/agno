@@ -7,8 +7,16 @@ After every write, the backend stages, commits with an LLM-summarised message, r
 
 Env-gated: registered in AgentOS only when both ``WIKI_REPO_URL`` and ``WIKI_GITHUB_TOKEN`` are set. Otherwise the module exports ``None`` and ``run.py`` skips it.
 
+Setup (see the cookbook README for the click-by-click version):
+  1. Pick a GitHub repo for the wiki. A fresh repo with an initial commit
+     works — the target branch (``main`` by default) must already exist to
+     clone.
+  2. Create a token with write access: a fine-grained PAT scoped to that repo
+     with Contents: Read and write, or a classic PAT with the ``repo`` scope.
+  3. Export the env vars below (HTTPS URL, not SSH) and restart the app.
+
 Required env:
-  WIKI_REPO_URL       (https://github.com/<owner>/<repo>.git)
+  WIKI_REPO_URL       (https://github.com/<owner>/<repo>.git — HTTPS, not SSH)
   WIKI_GITHUB_TOKEN   (PAT with contents:write on that repo)
 
 Optional env:

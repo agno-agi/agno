@@ -15,9 +15,20 @@ Env-gated: registered in AgentOS only when both ``NOTION_API_KEY`` and
 ``NOTION_DATABASE_ID`` are set. Otherwise the module exports ``None``
 and ``run.py`` skips it.
 
+Setup (see the cookbook README for the click-by-click version):
+  1. Create an internal integration at
+     https://www.notion.so/profile/integrations and copy its token.
+  2. Create a Notion database for the wiki. It's flat — one row per page —
+     and the built-in title column is the only one it needs.
+  3. Connect the integration to the database: open it as a full page ->
+     ``•••`` menu -> Connections -> add your integration. Required, or the
+     API can't see the database.
+  4. Copy the database id (the 32-char hex in the database URL, before the
+     ``?v=`` view id). Export the env vars below and restart the app.
+
 Required env:
-  NOTION_API_KEY        (integration token from Notion -> Settings -> Connections)
-  NOTION_DATABASE_ID    (UUID from the database URL)
+  NOTION_API_KEY        (integration token, starts with ``ntn_``)
+  NOTION_DATABASE_ID    (32-char hex in the database URL, before ``?v=``)
 
 Optional env:
   NOTION_WIKI_LOCAL_PATH (default: ./data/notion-wiki/ next to this cookbook)
