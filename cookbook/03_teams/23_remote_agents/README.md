@@ -26,34 +26,10 @@ remote_agent = RemoteAgent(
 - `team.arun()` instead of `team.run()`
 - `team.aprint_response()` instead of `team.print_response()`
 
-### Supported Protocols
-
-1. **AgentOS Protocol** (default): Agno's native REST API
-2. **A2A Protocol**: Agent-to-Agent protocol for cross-framework communication
-
-```python
-# A2A protocol example
-remote_agent = RemoteAgent(
-    base_url="http://a2a-server:8080",
-    agent_id="external-agent",
-    protocol="a2a",        # Use A2A instead of AgentOS
-    a2a_protocol="rest",   # "rest" or "json-rpc"
-)
-```
-
-## Examples
-
-| File | Description |
-|------|-------------|
-| `01_basic_remote_member.py` | Basic setup with local + remote agents |
-| `02_a2a_protocol.py` | Using A2A protocol for cross-framework agents |
-| `03_multi_server_team.py` | Distributed team across multiple servers |
-
-## Running the Examples
+## Running the Example
 
 1. **Start a remote AgentOS server:**
    ```bash
-   # On the remote machine
    python -m agno.os --agents path/to/agents.py --port 7777
    ```
 
@@ -92,9 +68,34 @@ remote_agent = RemoteAgent(
 └─────────────────┘
 ```
 
-## Use Cases
+## Code Path
 
-- **Specialized Hardware**: ML agents on GPU servers, RAG agents on high-memory machines
-- **Geographic Distribution**: Agents closer to data sources
-- **Security Isolation**: Sensitive agents on private networks
-- **Microservices**: Each agent as an independent service
+When a Team delegates to a RemoteAgent member:
+
+```
+team.arun()
+    │
+    ▼
+_run.py:2127 ─────────────────────────────────────────────────────────
+    │   _tools = _determine_tools_for_model(..., async_mode=True, ...)
+    │   # async_mode=True because we're in arun()
+    ▼
+_tools.py:306 ────────────────────────────────────────────────────────
+    │   delegate_task_func = _get_delegate_task_function(..., async_mode=True)
+    │   # Builds the async delegation tool
+    ▼
+_default_tools.py:773 ───────────────────────────────────────────────
+    │   async def adelegate_task_to_member(member_id, task):
+    │       ...
+    │       member_agent_run_response = await member_agent.arun(...)  # line 873
+    │   # Calls .arun() on member - works for both Agent and RemoteAgent
+    ▼
+remote.py:259 ────────────────────────────────────────────────────────
+    │   def arun(self, input, ...):
+    │       # Makes HTTP request to remote AgentOS server
+    │       return self.agentos_client.run_agent(...)  # line 329
+    ▼
+HTTP POST to remote server
+```
+
+The key insight: Team uses **duck typing** — it calls `member_agent.arun()` without checking if the member is a local `Agent` or `RemoteAgent`. Both implement the same interface.
