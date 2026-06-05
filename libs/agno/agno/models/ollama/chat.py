@@ -366,8 +366,8 @@ class Ollama(Model):
         # Extract thinking content from separate field (gpt-oss, thinking models)
         if response_message.get("thinking") is not None:
             model_response.reasoning_content = response_message.get("thinking")
-        # Fallback: extract thinking content between <think> tags if present
-        elif model_response.content and model_response.content.find("<think>") != -1:
+        # Fallback: extract thinking content between <think> or <thinking> tags if present
+        elif model_response.content and ("</think>" in model_response.content or "</thinking>" in model_response.content):
             reasoning_content, clean_content = extract_thinking_content(model_response.content)
 
             if reasoning_content:
