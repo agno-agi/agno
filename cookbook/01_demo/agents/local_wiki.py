@@ -17,7 +17,7 @@ from agno.agent import Agent
 from agno.context.web import ParallelMCPBackend
 from agno.context.wiki import FileSystemBackend, WikiContextProvider
 from db import get_db
-from settings import gemini_flash
+from settings import default_model, sub_agent_model
 
 WIKI_PATH = Path(__file__).resolve().parents[1] / "data" / "wiki"
 WIKI_PATH.mkdir(parents=True, exist_ok=True)
@@ -32,7 +32,7 @@ local_wiki_provider = WikiContextProvider(
     id="local_wiki",
     backend=FileSystemBackend(path=WIKI_PATH),
     web=ParallelMCPBackend(),
-    model=gemini_flash(),
+    model=sub_agent_model(),
 )
 
 
@@ -56,7 +56,7 @@ You curate a local markdown wiki. Three things you do:
 local_wiki = Agent(
     id="local-wiki",
     name="LocalWiki",
-    model=gemini_flash(),
+    model=default_model(),
     db=get_db(),
     tools=local_wiki_provider.get_tools(),
     instructions=LOCAL_WIKI_INSTRUCTIONS + "\n\n" + local_wiki_provider.instructions(),

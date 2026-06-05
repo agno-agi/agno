@@ -11,9 +11,9 @@ Agents
   NotionWiki   — same agent, but the wiki is a Notion database (env-gated)
   CodeSearch   — answers questions about this repository (example agent)
 
-Every agent runs on Gemini 3.5 Flash (see settings.py), so every agent is
-multimodal: attach an image, audio, video, or PDF and the wiki agents
-digest it and file a page.
+Every agent runs on gpt-5.5 (see settings.py). The wiki agents are
+multimodal — attach an image or PDF and they digest it and file a page.
+(Swap settings.gemini_flash() in for an agent when you need audio or video.)
 """
 
 from contextlib import asynccontextmanager

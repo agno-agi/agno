@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.context.web import ParallelMCPBackend
 from agno.context.wiki import GitBackend, WikiContextProvider
 from db import get_db
-from settings import gemini_flash
+from settings import default_model, sub_agent_model
 
 _REPO_URL = getenv("WIKI_REPO_URL")
 _TOKEN = getenv("WIKI_GITHUB_TOKEN")
@@ -63,12 +63,12 @@ if _REPO_URL and _TOKEN:
             local_path=_LOCAL_PATH,
         ),
         web=ParallelMCPBackend(),
-        model=gemini_flash(),
+        model=sub_agent_model(),
     )
     git_wiki: Agent | None = Agent(
         id="git-wiki",
         name="GitWiki",
-        model=gemini_flash(),
+        model=default_model(),
         db=get_db(),
         tools=git_wiki_provider.get_tools(),
         instructions=GIT_WIKI_INSTRUCTIONS + "\n\n" + git_wiki_provider.instructions(),

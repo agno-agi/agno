@@ -30,7 +30,7 @@ from agno.agent import Agent
 from agno.context.web import ParallelMCPBackend
 from agno.context.wiki import NotionDatabaseBackend, WikiContextProvider
 from db import get_db
-from settings import gemini_flash
+from settings import default_model, sub_agent_model
 
 _TOKEN = getenv("NOTION_API_KEY")
 _DATABASE_ID = getenv("NOTION_DATABASE_ID")
@@ -70,12 +70,12 @@ if _TOKEN and _DATABASE_ID:
             local_path=_LOCAL_PATH,
         ),
         web=ParallelMCPBackend(),
-        model=gemini_flash(),
+        model=sub_agent_model(),
     )
     notion_wiki: Agent | None = Agent(
         id="notion-wiki",
         name="NotionWiki",
-        model=gemini_flash(),
+        model=default_model(),
         db=get_db(),
         tools=notion_wiki_provider.get_tools(),
         instructions=NOTION_WIKI_INSTRUCTIONS
