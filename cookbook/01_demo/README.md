@@ -14,6 +14,7 @@ For a production-ready version of this demo, see the [agent-platform-railway](ht
 | **WebSearch** | Keyless web research via Parallel MCP. Returns answers with cited URLs. | `WebContextProvider(ParallelMCPBackend)` |
 | **CodeSearch** | Answers questions about this repository — file paths, line numbers. | `WorkspaceContextProvider` |
 | **Researcher** | Composes WebSearch + LocalWiki + CodeSearch on one agent. Checks the wiki first, searches the web, queries the codebase, and files findings back into the wiki. | composition of the three providers above |
+| **FileGenerator** | Generates downloadable files (JSON, CSV, PDF, DOCX, TXT, HTML) from prompts. Returns base64 artifacts on the response and saves to `data/file_gen_out/`. | `FileGenerationTools` |
 
 All agents share `db=get_db()` (SQLite at `data/demo.db`), agentic memory on, datetime + history in context, markdown output.
 

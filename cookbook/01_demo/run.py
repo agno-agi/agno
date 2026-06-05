@@ -22,6 +22,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from agents.code_search import code_search, code_search_provider
+from agents.file_generator import file_generator
 from agents.git_wiki import git_wiki, git_wiki_provider
 from agents.local_wiki import local_wiki, local_wiki_provider
 from agents.notion_wiki import notion_wiki, notion_wiki_provider
@@ -57,7 +58,7 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
 
 
 # GitWiki + NotionWiki are conditional on their respective env vars.
-_agents = [local_wiki, web_search, code_search, researcher]
+_agents = [local_wiki, web_search, code_search, researcher, file_generator]
 if git_wiki is not None:
     _agents.insert(1, git_wiki)
 if notion_wiki is not None:
