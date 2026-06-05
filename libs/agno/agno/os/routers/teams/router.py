@@ -120,6 +120,8 @@ async def team_response_streamer(
         )
         yield format_sse_event(error_response)
 
+    except GeneratorExit:
+        return
     except asyncio.CancelledError:
         return
     except Exception as e:
@@ -191,6 +193,8 @@ async def team_resumable_response_streamer(
             additional_data=e.additional_data,
         )
         yield format_sse_event(error_response)
+    except GeneratorExit:
+        return
     except asyncio.CancelledError:
         return
     except Exception as e:
@@ -492,6 +496,8 @@ async def team_resumable_continue_response_streamer(
             additional_data=e.additional_data,
         )
         yield format_sse_event(error_response)
+    except GeneratorExit:
+        return
     except asyncio.CancelledError:
         return
     except Exception as e:
