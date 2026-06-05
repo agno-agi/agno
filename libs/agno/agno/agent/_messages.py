@@ -148,6 +148,34 @@ def get_system_message(
                 run_context=run_context,
             )
 
+        # Append instructions if set alongside system_message
+        if agent.instructions is not None:
+            _sys_instructions = agent.instructions
+            if callable(agent.instructions):
+                _sys_instructions = execute_instructions(
+                    agent=agent, instructions=agent.instructions, session_state=session_state, run_context=run_context
+                )
+            instr_list: List[str] = []
+            if isinstance(_sys_instructions, str):
+                instr_list.append(_sys_instructions)
+            elif isinstance(_sys_instructions, list):
+                instr_list.extend(_sys_instructions)
+            if instr_list:
+                if agent.use_instruction_tags:
+                    sys_message_content += "\n<instructions>"
+                    if len(instr_list) > 1:
+                        for _instr in instr_list:
+                            sys_message_content += f"\n- {_instr}"
+                    else:
+                        sys_message_content += "\n" + instr_list[0]
+                    sys_message_content += "\n</instructions>"
+                else:
+                    if len(instr_list) > 1:
+                        for _instr in instr_list:
+                            sys_message_content += f"\n- {_instr}"
+                    else:
+                        sys_message_content += "\n" + instr_list[0]
+
         # type: ignore
         return Message(role=agent.system_message_role, content=sys_message_content)
 
@@ -495,6 +523,34 @@ async def aget_system_message(
                 sys_message_content,
                 run_context=run_context,
             )
+
+        # Append instructions if set alongside system_message
+        if agent.instructions is not None:
+            _sys_instructions = agent.instructions
+            if callable(agent.instructions):
+                _sys_instructions = await aexecute_instructions(
+                    agent=agent, instructions=agent.instructions, session_state=session_state, run_context=run_context
+                )
+            ainstr_list: List[str] = []
+            if isinstance(_sys_instructions, str):
+                ainstr_list.append(_sys_instructions)
+            elif isinstance(_sys_instructions, list):
+                ainstr_list.extend(_sys_instructions)
+            if ainstr_list:
+                if agent.use_instruction_tags:
+                    sys_message_content += "\n<instructions>"
+                    if len(ainstr_list) > 1:
+                        for _instr in ainstr_list:
+                            sys_message_content += f"\n- {_instr}"
+                    else:
+                        sys_message_content += "\n" + ainstr_list[0]
+                    sys_message_content += "\n</instructions>"
+                else:
+                    if len(ainstr_list) > 1:
+                        for _instr in ainstr_list:
+                            sys_message_content += f"\n- {_instr}"
+                    else:
+                        sys_message_content += "\n" + ainstr_list[0]
 
         # type: ignore
         return Message(role=agent.system_message_role, content=sys_message_content)
