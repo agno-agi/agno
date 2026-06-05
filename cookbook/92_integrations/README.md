@@ -22,6 +22,9 @@ Third-party RAG and retrieval-stack integrations (Infinity reranker, LightRAG, L
 ### [surrealdb](./surrealdb/)
 SurrealDB-backed memory manager integration examples.
 
+### [entroly](./entroly/)
+Context compression proxy that reduces LLM API costs by 70-95% for Agno agents. Uses knapsack optimization and cache alignment.
+
 ## Running Examples
 
 Use the demo environment:
