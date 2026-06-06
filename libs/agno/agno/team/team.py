@@ -324,6 +324,8 @@ class Team:
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
+    # When True with add_history_to_context, include stored member runs in leader history (requires store_member_responses).
+    include_member_messages_in_history: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: Optional[int] = None
     # Number of historical messages to include in the messages list sent to the Model.
@@ -491,6 +493,7 @@ class Team:
         store_history_messages: bool = False,
         send_media_to_model: bool = True,
         add_history_to_context: bool = False,
+        include_member_messages_in_history: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
@@ -613,6 +616,7 @@ class Team:
             store_history_messages=store_history_messages,
             send_media_to_model=send_media_to_model,
             add_history_to_context=add_history_to_context,
+            include_member_messages_in_history=include_member_messages_in_history,
             num_history_runs=num_history_runs,
             num_history_messages=num_history_messages,
             max_tool_calls_from_history=max_tool_calls_from_history,
@@ -1090,7 +1094,6 @@ class Team:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
-        background: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
         return _run.acontinue_run_dispatch(
@@ -1108,7 +1111,6 @@ class Team:
             metadata=metadata,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
-            background=background,
             **kwargs,
         )
 
@@ -1524,14 +1526,14 @@ class Team:
 
     # -*- Public convenience functions
     def get_run_output(
-        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+        self, run_id: str, session_id: Optional[str] = None
     ) -> Optional[Union[TeamRunOutput, RunOutput]]:
-        return _storage.get_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
+        return _storage.get_run_output(self, run_id=run_id, session_id=session_id)
 
     async def aget_run_output(
-        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+        self, run_id: str, session_id: Optional[str] = None
     ) -> Optional[Union[TeamRunOutput, RunOutput]]:
-        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
+        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
         return _storage.get_last_run_output(self, session_id=session_id)

@@ -470,17 +470,7 @@ def get_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Learning context (user profile, user memory, session context)
-    if team._learning is not None and team.add_learnings_to_context:
-        learning_context = team._learning.build_context(
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            team_id=team.id,
-        )
-        if learning_context:
-            system_message_content += learning_context + "\n"
-
-    # 2.4 Knowledge base instructions
+    # 2.3 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
@@ -490,7 +480,7 @@ def get_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
-    # 2.5 Memories
+    # 2.4 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -701,17 +691,7 @@ async def aget_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Learning context (user profile, user memory, session context)
-    if team._learning is not None and team.add_learnings_to_context:
-        learning_context = await team._learning.abuild_context(
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            team_id=team.id,
-        )
-        if learning_context:
-            system_message_content += learning_context + "\n"
-
-    # 2.4 Knowledge base instructions
+    # 2.3 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
@@ -721,7 +701,7 @@ async def aget_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
-    # 2.5 Memories
+    # 2.4 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -896,6 +876,7 @@ def _get_run_messages(
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
+            skip_member_messages=not team.include_member_messages_in_history,
         )
 
         if len(history) > 0:
@@ -1030,6 +1011,7 @@ async def _aget_run_messages(
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
+            skip_member_messages=not team.include_member_messages_in_history,
         )
 
         if len(history) > 0:

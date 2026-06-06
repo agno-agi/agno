@@ -56,7 +56,7 @@ from agno.utils.string import generate_id_from_name
 
 
 def get_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -64,17 +64,16 @@ def get_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
-        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
+    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
 
 
 async def aget_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -82,13 +81,12 @@ async def aget_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
-        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
+    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
 
 
 def get_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
@@ -520,14 +518,9 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_dependencies_to_context"] = team.add_dependencies_to_context
 
     # --- Knowledge settings ---
-    # Knowledge is a non-serializable object (it holds live db/vector_db connections),
-    # so we store a reference by name and resolve it from the registry on load.
-    if team.knowledge is not None:
-        knowledge_name = getattr(team.knowledge, "name", None)
-        if knowledge_name is not None:
-            config["knowledge"] = {"name": knowledge_name}
-        else:
-            log_warning("Team knowledge has no name; it cannot be referenced from the registry and will not be saved.")
+    # TODO: implement knowledge serialization
+    # if team.knowledge is not None:
+    #     config["knowledge"] = team.knowledge.to_dict()
     if team.knowledge_filters is not None:
         config["knowledge_filters"] = team.knowledge_filters
     if team.enable_agentic_knowledge_filters:
@@ -633,6 +626,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- History settings ---
     if team.add_history_to_context:
         config["add_history_to_context"] = team.add_history_to_context
+    if team.include_member_messages_in_history:
+        config["include_member_messages_in_history"] = team.include_member_messages_in_history
     if team.num_history_runs is not None:
         config["num_history_runs"] = team.num_history_runs
     if team.num_history_messages is not None:
@@ -858,16 +853,10 @@ def from_dict(
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
 
     # --- Handle Knowledge reconstruction ---
-    # Knowledge is stored as a reference by name and resolved from the registry,
-    # since it holds live db/vector_db connections that cannot be serialized.
-    if "knowledge" in config and isinstance(config["knowledge"], dict):
-        knowledge_name = config["knowledge"].get("name")
-        resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
-        if resolved_knowledge is not None:
-            config["knowledge"] = resolved_knowledge
-        else:
-            log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
-            del config["knowledge"]
+    # TODO: implement knowledge deserialization
+    # if "knowledge" in config and isinstance(config["knowledge"], dict):
+    #     from agno.knowledge import Knowledge
+    #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
 
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
@@ -933,7 +922,7 @@ def from_dict(
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context", False),
             # --- Knowledge settings ---
-            knowledge=config.get("knowledge"),
+            # knowledge=config.get("knowledge"),  # TODO
             knowledge_filters=config.get("knowledge_filters"),
             enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
             add_knowledge_to_context=config.get("add_knowledge_to_context", False),
@@ -969,6 +958,7 @@ def from_dict(
             add_learnings_to_context=config.get("add_learnings_to_context", True),
             # --- History settings ---
             add_history_to_context=config.get("add_history_to_context", False),
+            include_member_messages_in_history=config.get("include_member_messages_in_history", False),
             num_history_runs=config.get("num_history_runs"),
             num_history_messages=config.get("num_history_messages"),
             max_tool_calls_from_history=config.get("max_tool_calls_from_history"),

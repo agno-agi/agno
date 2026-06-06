@@ -125,6 +125,7 @@ def __init__(
     store_history_messages: bool = False,
     send_media_to_model: bool = True,
     add_history_to_context: bool = False,
+    include_member_messages_in_history: bool = False,
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
     max_tool_calls_from_history: Optional[int] = None,
@@ -239,6 +240,7 @@ def __init__(
     team.cache_session = cache_session
 
     team.add_history_to_context = add_history_to_context
+    team.include_member_messages_in_history = include_member_messages_in_history
     team.num_history_runs = num_history_runs
     team.num_history_messages = num_history_messages
     if team.num_history_messages is not None and team.num_history_runs is not None:
@@ -632,10 +634,6 @@ def _set_learning_machine(team: "Team") -> None:
         if team.learning.model is None:
             team.learning.model = team.model
         team._learning = team.learning
-
-        # PROPOSE/HITL modes need chat history for multi-turn confirmation
-        if team._learning.requires_history and not team.add_history_to_context:
-            team.add_history_to_context = True
 
 
 def _initialize_session(
