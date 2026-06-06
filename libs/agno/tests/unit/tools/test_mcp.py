@@ -1024,3 +1024,167 @@ async def test_mcp_tool_with_run_context_argument_does_not_collide():
     called_name, called_kwargs = session.call_tool.await_args.args
     assert called_name == "log_event"
     assert called_kwargs == {"event": "click", "run_context": "from-llm"}
+
+
+# =============================================================================
+# Cross-task cleanup guard tests (issue #8156)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_cleanup_run_session_from_different_task_is_safe():
+    """Simulate cleanup_run_session() called from a different task than the
+    one that created the session. The cross-task guard must skip __aexit__
+    (to avoid anyio cancel scope corruption) and still remove the tracking
+    entries, without raising any exception.
+    """
+    import asyncio
+
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {})
+    tools.session = MagicMock()
+
+    # Simulate a session that was created by a different task
+    run_id = "diff-task-run"
+
+    async def _simulate_session_creation():
+        """Create a session from a background task that we will
+        later attempt to clean up from the main test task."""
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+
+        mock_session_context = AsyncMock()
+        mock_session_context.__aenter__.return_value = mock_session
+
+        mock_context = AsyncMock()
+        mock_context.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
+
+        with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=mock_context):
+            with patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_context):
+                run_context = MagicMock()
+                run_context.run_id = run_id
+                await tools.get_session_for_run(run_context=run_context)
+
+        # Return the context mocks so we can assert on them
+        return mock_session_context, mock_context
+
+    # Create the session in a background task (different from the main test task)
+    bg_task = asyncio.create_task(_simulate_session_creation())
+    session_ctx_mock, transport_ctx_mock = await bg_task
+
+    # Verify the session was tracked
+    assert run_id in tools._run_sessions
+    assert run_id in tools._run_session_contexts
+    assert run_id in tools._run_session_tasks
+
+    # Now call cleanup_run_session from the MAIN task (different from the
+    # background task that created it). This must NOT call __aexit__ on the
+    # context managers (otherwise it would corrupt anyio cancel scopes), and
+    # it must NOT raise any exception.
+    try:
+        await tools.cleanup_run_session(run_id)
+    except Exception as e:
+        pytest.fail(f"cleanup_run_session from a different task raised: {e}")
+
+    # __aexit__ should NOT have been called (cross-task guard)
+    session_ctx_mock.__aexit__.assert_not_called()
+    transport_ctx_mock.__aexit__.assert_not_called()
+
+    # Tracking entries should be removed regardless
+    assert run_id not in tools._run_sessions
+    assert run_id not in tools._run_session_contexts
+    assert run_id not in tools._run_session_tasks
+
+
+@pytest.mark.asyncio
+async def test_cleanup_run_session_from_same_task_calls_aexit():
+    """When cleanup_run_session() is called from the SAME task that created
+    the session, __aexit__ must be called on both context managers to
+    perform proper resource cleanup.
+    """
+    tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {})
+    tools.session = MagicMock()
+
+    run_id = "same-task-run"
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+
+    mock_session_context = AsyncMock()
+    mock_session_context.__aenter__.return_value = mock_session
+
+    mock_context = AsyncMock()
+    mock_context.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
+
+    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=mock_context):
+        with patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_context):
+            run_context = MagicMock()
+            run_context.run_id = run_id
+            await tools.get_session_for_run(run_context=run_context)
+
+    # Verify the session was tracked
+    assert run_id in tools._run_sessions
+
+    # Now cleanup from the SAME task — __aexit__ should be called
+    await tools.cleanup_run_session(run_id)
+
+    session_ctx_mock.__aexit__.assert_called()
+    transport_ctx_mock.__aexit__.assert_called()
+
+    # Tracking entries should be removed
+    assert run_id not in tools._run_sessions
+    assert run_id not in tools._run_session_contexts
+    assert run_id not in tools._run_session_tasks
+
+
+@pytest.mark.asyncio
+async def test_close_from_different_task_skips_aexit():
+    """When close() is called from a different task than _connect(),
+    it must skip __aexit__/aclose() on the main contexts to avoid
+    anyio cancel scope corruption. Tracking entries should still be
+    cleaned up.
+    """
+    import asyncio
+
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+
+    # Use a background task to call _connect() so that _connect_task
+    # is set to a different task than the main test task.
+    connect_task = asyncio.create_task(
+        tools._connect() if False else asyncio.sleep(0)  # dummy — we'll mock instead
+    )
+
+    async def _connect_in_bg():
+        transport_ctx = _SucceedingAenterContext(("read", "write", None))
+        session_ctx = _SucceedingAenterContext(MagicMock())
+
+        with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=transport_ctx):
+            with patch("agno.tools.mcp.mcp.ClientSession", return_value=session_ctx):
+                with patch.object(tools, "initialize", new=AsyncMock()):
+                    await tools._connect()
+
+        return transport_ctx, session_ctx
+
+    bg_task = asyncio.create_task(_connect_in_bg())
+    transport_ctx, session_ctx = await bg_task
+
+    # Verify that _connect() was entered from the background task
+    assert tools._connect_task is not None
+    assert tools._connect_task is not asyncio.current_task()
+
+    # Ensure we are in a different task from the one that called _connect()
+    assert tools._connect_task is not asyncio.current_task()
+
+    # Now call close() from the MAIN task. It must NOT call __aexit__
+    # on the context managers.
+    await tools.close()
+
+    transport_ctx.aexit_called = transport_ctx.aexit_called  # from _SucceedingAenterContext
+    # The close() should have skipped __aexit__ since we are in a different task
+    # and the instance should be marked as not initialized
+    assert tools._initialized is False
+    assert tools.session is None
+    assert tools._session_context is None
+    assert tools._context is None
