@@ -38,14 +38,17 @@ _PREFILL_SUPPORTED_ALIASES = {
 }
 
 
-def supports_prefill(model_id: str) -> bool:
-    """Return True if the given model ID supports assistant message prefill.
+def _extract_claude_core_id(model_id: str) -> str:
+    """Extract the canonical Claude model identifier from a provider-specific ID.
 
-    Handles provider-specific ID formats:
+    Handles:
       - Anthropic direct:  "claude-sonnet-4-5-20250929"
       - Bedrock:           "us.anthropic.claude-sonnet-4-6-v1:0"
       - Vertex AI:         "claude-sonnet-4@20250514"
       - LiteLLM:           "anthropic/claude-sonnet-4-6"
+
+    Returns the core model ID (e.g. "claude-sonnet-4-5-20250929" or
+    "claude-sonnet-4-6"), suitable for prefix / exact-match lookups.
     """
     # Strip LiteLLM provider prefix (e.g. "anthropic/claude-sonnet-4-6")
     core_id = model_id.split("/")[-1] if "/" in model_id else model_id
@@ -56,6 +59,19 @@ def supports_prefill(model_id: str) -> bool:
     # Strip Bedrock version suffix (e.g. "claude-sonnet-4-5-20250929-v1:0")
     if ":0" in core_id:
         core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
+    return core_id
+
+
+def supports_prefill(model_id: str) -> bool:
+    """Return True if the given model ID supports assistant message prefill.
+
+    Handles provider-specific ID formats:
+      - Anthropic direct:  "claude-sonnet-4-5-20250929"
+      - Bedrock:           "us.anthropic.claude-sonnet-4-6-v1:0"
+      - Vertex AI:         "claude-sonnet-4@20250514"
+      - LiteLLM:           "anthropic/claude-sonnet-4-6"
+    """
+    core_id = _extract_claude_core_id(model_id)
 
     if not core_id.startswith("claude"):
         return True  # Non-Claude models are unaffected — don't inject trailing messages

@@ -45,9 +45,6 @@ class Claude(AnthropicClaude):
     def __post_init__(self):
         """Validate model configuration after initialization"""
         super().__post_init__()
-        # Overwrite output schema support for AWS Bedrock Claude
-        self.supports_native_structured_outputs = False
-        self.supports_json_schema_outputs = False
 
     def _get_client_params(self) -> Dict[str, Any]:
         if self.session:
@@ -212,6 +209,12 @@ class Claude(AnthropicClaude):
         # Build betas list - include existing betas and add new one if needed
         betas_list = list(self.betas) if self.betas else []
 
+        # Add structured outputs beta header if using structured outputs
+        if self._using_structured_outputs(response_format, tools):
+            beta_header = "structured-outputs-2025-11-13"
+            if beta_header not in betas_list:
+                betas_list.append(beta_header)
+
         # Include betas if any are present
         if betas_list:
             _request_params["betas"] = betas_list
@@ -242,6 +245,9 @@ class Claude(AnthropicClaude):
         Returns:
             Dict[str, Any]: The request keyword arguments.
         """
+        # Validate structured outputs usage
+        self._validate_structured_outputs_usage(response_format, tools)
+
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
         system = self._build_system(system_message)
@@ -253,6 +259,11 @@ class Claude(AnthropicClaude):
             request_kwargs["tools"] = format_tools_for_model(tools)
 
         self._apply_cache_tools(request_kwargs)
+
+        # Build output_format if response_format is provided
+        output_format = self._build_output_format(response_format)
+        if output_format:
+            request_kwargs["output_format"] = output_format
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

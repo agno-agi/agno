@@ -17,6 +17,7 @@ from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
+    _extract_claude_core_id,
     _validate_cache_ttl_order,
     build_system_blocks,
     format_messages,
@@ -219,12 +220,16 @@ class Claude(Model):
         """
         Check if the current model supports native structured outputs.
 
+        Handles provider-specific model IDs (Anthropic direct, Bedrock, Vertex AI,
+        LiteLLM) by first normalizing to a canonical core identifier.
+
         Returns:
             bool: True if model supports structured outputs
         """
-        if self.id in self.NON_STRUCTURED_OUTPUT_ALIASES:
+        model_id = _extract_claude_core_id(self.id)
+        if model_id in self.NON_STRUCTURED_OUTPUT_ALIASES:
             return False
-        if self.id.startswith(self.NON_STRUCTURED_OUTPUT_PREFIXES):
+        if model_id.startswith(self.NON_STRUCTURED_OUTPUT_PREFIXES):
             return False
         return True
 
