@@ -183,6 +183,10 @@ class Model(ABC):
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
+        # Track tool call count across stream resumes (e.g., HITL pauses).
+        # Preserved across aresponse_stream/response_stream invocations so that
+        # tool_call_limit remains effective after acontinue_run resumes a paused run.
+        self._function_call_count: int = 0
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate the delay before the next retry attempt."""
@@ -686,7 +690,7 @@ class Model(ABC):
             _log_messages(messages)
             model_response = ModelResponse()
 
-            function_call_count = 0
+            function_call_count = self._function_call_count
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
@@ -807,7 +811,7 @@ class Model(ABC):
                                     model_response.content += function_call_response.content  # type: ignore
 
                     # Add a function call for each successful execution
-                    function_call_count += len(function_call_results)
+                    self._function_call_count = function_call_count = function_call_count + len(function_call_results)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -914,7 +918,7 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            function_call_count = self._function_call_count
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1028,7 +1032,7 @@ class Model(ABC):
                                     model_response.content += function_call_response.content  # type: ignore
 
                     # Add a function call for each successful execution
-                    function_call_count += len(function_call_results)
+                    self._function_call_count = function_call_count = function_call_count + len(function_call_results)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -1403,7 +1407,7 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            function_call_count = self._function_call_count
 
             while True:
                 # Compress existing tool results BEFORE invoke
@@ -1520,7 +1524,7 @@ class Model(ABC):
                         yield function_call_response
 
                     # Add a function call for each successful execution
-                    function_call_count += len(function_call_results)
+                    self._function_call_count = function_call_count = function_call_count + len(function_call_results)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
@@ -1682,7 +1686,7 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            function_call_count = self._function_call_count
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1799,7 +1803,7 @@ class Model(ABC):
                         yield function_call_response
 
                     # Add a function call for each successful execution
-                    function_call_count += len(function_call_results)
+                    self._function_call_count = function_call_count = function_call_count + len(function_call_results)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
