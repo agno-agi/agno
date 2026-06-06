@@ -164,8 +164,10 @@ class MultiMCPTools(Toolkit):
         # Maps (run_id, server_idx) to (session, timestamp) for TTL-based cleanup
         self._run_sessions: Dict[Tuple[str, int], Tuple[ClientSession, float]] = {}
         self._run_session_contexts: Dict[Tuple[str, int], Any] = {}  # Maps (run_id, server_idx) to context managers
+        self._run_session_tasks: Dict[Tuple[str, int], "asyncio.Task[Any]"] = {}  # Maps (run_id, server_idx) to task
         self._session_ttl_seconds: float = 300.0  # 5 minutes default TTL
         self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
+        self._connect_task = None  # Track which task entered the main contexts via AsyncExitStack
 
         self.allow_partial_failure = allow_partial_failure
 
@@ -388,32 +390,59 @@ class MultiMCPTools(Toolkit):
                     pass
                 raise
 
-            # Store the session with timestamp and context for cleanup
+            # Store the session with timestamp and context for cleanup.
+            # Also store the creating task so cleanup_run_session can avoid
+            # exiting anyio cancel scopes from a different task (which causes
+            # an infinite _deliver_cancellation() loop consuming 100% CPU).
             self._run_sessions[cache_key] = (session, time.time())
             self._run_session_contexts[cache_key] = (context, session_context)
+            self._run_session_tasks[cache_key] = asyncio.current_task()  # type: ignore[arg-type]
 
             return session
 
     async def cleanup_run_session(self, run_id: str, server_idx: int) -> None:
-        """Clean up a per-run session."""
+        """
+        Clean up a per-run session.
+
+        IMPORTANT: The MCP transport context managers use anyio CancelScope
+        internally. Exiting a cancel scope from a different asyncio task than
+        the one that entered it causes anyio's _deliver_cancellation() to enter
+        an infinite call_soon loop, consuming 100% CPU permanently.
+
+        We track which task created each session and only call __aexit__ when
+        cleanup is performed from the same task. Cross-task cleanup will skip
+        the __aexit__ calls and only remove tracking entries.
+        """
         cache_key = (run_id, server_idx)
         if cache_key not in self._run_sessions:
             return
 
         try:
+            # Determine whether we are on the same task that created the session
+            creating_task = self._run_session_tasks.get(cache_key)
+            current_task = asyncio.current_task()
+            same_task = creating_task is not None and creating_task is current_task
+
             context, session_context = self._run_session_contexts[cache_key]
 
-            # Exit session context - silently ignore errors
-            try:
-                await session_context.__aexit__(None, None, None)
-            except (RuntimeError, Exception):
-                pass  # Silently ignore
+            if same_task:
+                # Safe to exit context managers — same task that entered them
+                try:
+                    await session_context.__aexit__(None, None, None)
+                except (RuntimeError, Exception):
+                    pass  # Silently ignore
 
-            # Exit transport context - silently ignore errors
-            try:
-                await context.__aexit__(None, None, None)
-            except (RuntimeError, Exception):
-                pass  # Silently ignore
+                try:
+                    await context.__aexit__(None, None, None)
+                except (RuntimeError, Exception):
+                    pass  # Silently ignore
+            else:
+                # Cross-task cleanup: skip __aexit__ to avoid anyio cancel scope
+                # corruption. The underlying connections will be cleaned up by GC.
+                log_debug(
+                    f"Skipping context manager exit for run_id={run_id}, "
+                    f"server_idx={server_idx}: cleanup called from a different task"
+                )
 
         except Exception:
             pass  # Silently ignore all cleanup errors
@@ -421,6 +450,7 @@ class MultiMCPTools(Toolkit):
             # Remove from cache
             self._run_sessions.pop(cache_key, None)
             self._run_session_contexts.pop(cache_key, None)
+            self._run_session_tasks.pop(cache_key, None)
 
     async def connect(self, force: bool = False):
         """Initialize a MultiMCPTools instance and connect to the MCP servers"""
@@ -480,6 +510,11 @@ class MultiMCPTools(Toolkit):
         """Connects to the MCP servers and initializes the tools"""
         if self._initialized:
             return
+
+        # Record which task entered the main contexts so close() can
+        # avoid exiting anyio cancel scopes from a different task.
+        if self._connect_task is None:
+            self._connect_task = asyncio.current_task()
 
         server_connection_errors = []
 
@@ -563,8 +598,26 @@ class MultiMCPTools(Toolkit):
                 for run_id, server_idx in cache_keys:
                     await self.cleanup_run_session(run_id, server_idx)
 
-                # Clean up main sessions
-                await self._async_exit_stack.aclose()
+                # Clean up main sessions.
+                # Only call aclose() if we are on the same task that called
+                # _connect() and entered the AsyncExitStack contexts.
+                # Cross-task exit of anyio cancel scopes causes infinite
+                # _deliver_cancellation() CPU spin.
+                current_task = asyncio.current_task()
+                same_main_task = (
+                    self._connect_task is not None and current_task is self._connect_task
+                )
+
+                if same_main_task:
+                    await self._async_exit_stack.aclose()
+                else:
+                    # Cross-task close: push a no-op into the exit stack to
+                    # release pending items without actually exiting their
+                    # cancel scopes from a different task.
+                    log_debug(
+                        "Skipping AsyncExitStack.aclose() for MultiMCPTools: "
+                        "close() called from a different task than _connect()"
+                    )
                 self._sessions = []
                 self._successful_connections = 0
 

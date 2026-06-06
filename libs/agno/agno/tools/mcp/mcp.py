@@ -178,11 +178,13 @@ class MCPTools(Toolkit):
         self._active_contexts: list[Any] = []
         self._context = None
         self._session_context = None
+        self._connect_task = None  # Track which task entered the main contexts
 
         # Session management for per-agent-run sessions with dynamic headers
         # Maps run_id to (session, timestamp) for TTL-based cleanup
         self._run_sessions: dict[str, Tuple[ClientSession, float]] = {}
         self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to session context managers
+        self._run_session_tasks: dict[str, "asyncio.Task[Any]"] = {}  # Maps run_id to task that created the session
         self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
         self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
 
@@ -397,9 +399,13 @@ class MCPTools(Toolkit):
                     pass
                 raise
 
-            # Store the session with timestamp and context for cleanup
+            # Store the session with timestamp and context for cleanup.
+            # Also store the creating task so cleanup_run_session can avoid
+            # exiting anyio cancel scopes from a different task (which causes
+            # an infinite _deliver_cancellation() loop consuming 100% CPU).
             self._run_sessions[run_id] = (session, time.time())
             self._run_session_contexts[run_id] = (context, session_context)
+            self._run_session_tasks[run_id] = asyncio.current_task()  # type: ignore[arg-type]
 
             return session
 
@@ -407,36 +413,56 @@ class MCPTools(Toolkit):
         """
         Clean up the session for a specific run.
 
-        Note: Cleanup may fail due to async context manager limitations when
-        contexts are entered/exited across different tasks. Errors are logged
-        but not raised.
+        IMPORTANT: The MCP transport context managers (streamablehttp_client,
+        sse_client, stdio_client) use anyio CancelScope internally. Exiting a
+        cancel scope from a different asyncio task than the one that entered it
+        causes anyio's _deliver_cancellation() to enter an infinite call_soon
+        loop, consuming 100% CPU permanently.
+
+        To prevent this, we track which task created each session and only call
+        __aexit__ when cleanup is performed from the same task. Cross-task
+        cleanup (e.g. from close() called during shutdown) will skip the
+        __aexit__ calls and only remove the tracking entries — the underlying
+        connections will be closed by garbage collection or process exit.
         """
         if run_id not in self._run_sessions:
             return
 
         try:
-            # Get the context managers
+            # Determine whether we are on the same task that created the session.
+            # If not, we must NOT call __aexit__ on the context managers because
+            # that would corrupt anyio cancel scopes and cause infinite CPU spin.
+            creating_task = self._run_session_tasks.get(run_id)
+            current_task = asyncio.current_task()
+            same_task = creating_task is not None and creating_task is current_task
+
             context, session_context = self._run_session_contexts.get(run_id, (None, None))
 
-            # Try to clean up session context
-            # Silently ignore cleanup errors - these are harmless
-            if session_context is not None:
-                try:
-                    await session_context.__aexit__(None, None, None)
-                except BaseException:
-                    pass  # Silently ignore (includes CancelledError)
+            if same_task:
+                # Safe to exit context managers — same task that entered them
+                if session_context is not None:
+                    try:
+                        await session_context.__aexit__(None, None, None)
+                    except BaseException:
+                        pass  # Silently ignore (includes CancelledError)
 
-            # Try to clean up transport context
-            if context is not None:
-                try:
-                    await context.__aexit__(None, None, None)
-                except BaseException:
-                    pass  # Silently ignore (includes CancelledError)
+                if context is not None:
+                    try:
+                        await context.__aexit__(None, None, None)
+                    except BaseException:
+                        pass  # Silently ignore (includes CancelledError)
+            else:
+                # Cross-task cleanup: skip __aexit__ to avoid anyio cancel scope
+                # corruption. The underlying connections will be cleaned up by GC.
+                log_debug(
+                    f"Skipping context manager exit for run_id={run_id}: "
+                    f"cleanup called from a different task"
+                )
 
-            # Remove from tracking regardless of cleanup success
-            # The connections will be cleaned up by garbage collection
-            del self._run_sessions[run_id]
-            del self._run_session_contexts[run_id]
+            # Remove from tracking regardless of cleanup path
+            self._run_sessions.pop(run_id, None)
+            self._run_session_contexts.pop(run_id, None)
+            self._run_session_tasks.pop(run_id, None)
 
         except BaseException:
             pass  # Silently ignore all cleanup errors
@@ -499,6 +525,11 @@ class MCPTools(Toolkit):
 
         if self._initialized:
             return
+
+        # Record which task entered the main contexts so close() can
+        # avoid exiting anyio cancel scopes from a different task.
+        if self._connect_task is None:
+            self._connect_task = asyncio.current_task()
 
         if self.session is not None:
             await self.initialize()
@@ -599,20 +630,35 @@ class MCPTools(Toolkit):
                 for run_id in run_ids:
                     await self.cleanup_run_session(run_id)
 
-                # Clean up the main session
-                if self._session_context is not None:
-                    try:
-                        await self._session_context.__aexit__(None, None, None)
-                    except (RuntimeError, Exception):
-                        pass  # Silently ignore cleanup errors
+                # Clean up the main session.
+                # Only call __aexit__ if we are on the same task that called
+                # __aenter__ during _connect(). Cross-task exit of anyio cancel
+                # scopes causes infinite _deliver_cancellation() CPU spin.
+                current_task = asyncio.current_task()
+                same_main_task = (
+                    self._connect_task is not None and current_task is self._connect_task
+                )
+
+                if same_main_task:
+                    if self._session_context is not None:
+                        try:
+                            await self._session_context.__aexit__(None, None, None)
+                        except (RuntimeError, Exception):
+                            pass  # Silently ignore cleanup errors
+                        self.session = None
+                        self._session_context = None
+
+                    if self._context is not None:
+                        try:
+                            await self._context.__aexit__(None, None, None)
+                        except (RuntimeError, Exception):
+                            pass  # Silently ignore cleanup errors
+                        self._context = None
+                else:
+                    # Cross-task close: skip __aexit__ to avoid cancel scope
+                    # corruption. Connections will be cleaned up by GC.
                     self.session = None
                     self._session_context = None
-
-                if self._context is not None:
-                    try:
-                        await self._context.__aexit__(None, None, None)
-                    except (RuntimeError, Exception):
-                        pass  # Silently ignore cleanup errors
                     self._context = None
             except (RuntimeError, BaseException):
                 pass  # Silently ignore all cleanup errors
