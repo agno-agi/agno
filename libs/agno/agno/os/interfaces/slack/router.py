@@ -1,25 +1,24 @@
 from __future__ import annotations
 
+import json
 from ssl import SSLContext
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.helpers import (
-    download_event_files_async,
-    extract_event_context,
-    send_slack_message_async,
-    should_respond,
-    upload_response_media_async,
-)
+
+try:
+    from agno.os.interfaces.slack.event_handler import SlackEventHandler
+    from agno.os.interfaces.slack.helpers import BotNameResolver
+    from agno.os.interfaces.slack.hitl import HITLHandler
+except ImportError as e:
+    raise ImportError("Slack dependencies not installed. Please install using `pip install 'agno[slack]'`") from e
+
 from agno.os.interfaces.slack.security import verify_slack_signature
-from agno.os.interfaces.slack.state import StreamState
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error
 from agno.workflow import RemoteWorkflow, Workflow
 
 # Slack sends lifecycle events for bots with these subtypes. Without this
@@ -35,9 +34,6 @@ _IGNORED_SUBTYPES = frozenset(
         "message_deleted",
     }
 )
-
-# User-facing error message for failed requests
-_ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
 
 class SlackEventResponse(BaseModel):
@@ -64,11 +60,16 @@ def attach_routes(
     ssl: Optional[SSLContext] = None,
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
+    resolve_user_identity: bool = False,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
     # entity_type drives event dispatch (agent vs team vs workflow events)
     entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
+    # Member HITL needs member runs embedded on Team run (member_responses).
+    # Without this, continue_run cannot reliably reload member tool state from DB.
+    if team is not None and not isinstance(team, RemoteTeam):
+        team.store_member_responses = True
     raw_name = getattr(entity, "name", None)
     # entity_name labels task cards; entity_id namespaces session IDs
     entity_name = raw_name if isinstance(raw_name, str) else entity_type
@@ -78,6 +79,35 @@ def attach_routes(
     entity_id = getattr(entity, "id", None) or entity_name
 
     slack_tools = SlackTools(token=token, ssl=ssl, max_file_size=max_file_size)
+    bot_name_resolver = BotNameResolver()
+    if entity is None:
+        raise ValueError("attach_routes requires agent, team, or workflow")
+    hitl = HITLHandler(
+        slack_tools=slack_tools,
+        ssl=ssl,
+        entity=entity,
+        entity_id=entity_id,
+        entity_name=entity_name,
+        entity_type=entity_type,
+        task_display_mode=task_display_mode,
+        buffer_size=buffer_size,
+    )
+    event_handler = SlackEventHandler(
+        slack_tools=slack_tools,
+        ssl=ssl,
+        entity=entity,
+        entity_id=entity_id,
+        entity_name=entity_name,
+        entity_type=entity_type,
+        bot_name_resolver=bot_name_resolver,
+        reply_to_mentions_only=reply_to_mentions_only,
+        resolve_user_identity=resolve_user_identity,
+        loading_text=loading_text,
+        loading_messages=loading_messages,
+        task_display_mode=task_display_mode,
+        buffer_size=buffer_size,
+        suggested_prompts=suggested_prompts,
+    )
 
     @router.post(
         "/events",
@@ -122,10 +152,12 @@ def attach_routes(
             event_type = event.get("type")
             # setSuggestedPrompts requires "Agents & AI Apps" mode (streaming UX only)
             if event_type == "assistant_thread_started" and streaming:
-                background_tasks.add_task(_handle_thread_started, event)
-            # Bot self-loop prevention: check bot_id at both the top-level event
-            # and inside message_changed's nested "message" object. Without the
-            # nested check, edited bot messages would be reprocessed as new events.
+                background_tasks.add_task(event_handler.handle_thread_started, event)
+            # Bot self-loop prevention: check bot_id at BOTH the top-level event
+            # AND inside message_changed's nested "message" object. Slack puts
+            # bot_id at different nesting levels depending on event shape — the
+            # nested check catches edited bot messages that would otherwise be
+            # reprocessed as new user events.
             elif (
                 event.get("bot_id")
                 or (event.get("message") or {}).get("bot_id")
@@ -133,256 +165,67 @@ def attach_routes(
             ):
                 pass
             elif streaming:
-                background_tasks.add_task(_stream_slack_response, data)
+                background_tasks.add_task(event_handler.handle_streaming, data)
             else:
-                background_tasks.add_task(_process_slack_event, event)
+                background_tasks.add_task(event_handler.handle_non_streaming, data)
 
         return SlackEventResponse(status="ok")
 
-    async def _process_slack_event(event: dict):
-        if not should_respond(event, reply_to_mentions_only):
-            return
+    @router.post(
+        "/interactions",
+        operation_id=f"slack_interactions_{op_suffix}",
+        name="slack_interactions",
+        description="Handle Slack interactive components (HITL buttons / form submit)",
+        response_model=SlackEventResponse,
+        response_model_exclude_none=True,
+        responses={
+            200: {"description": "Interaction accepted"},
+            400: {"description": "Malformed interaction payload"},
+            403: {"description": "Invalid Slack signature"},
+        },
+    )
+    async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
+        body = await request.body()
+        timestamp = request.headers.get("X-Slack-Request-Timestamp")
+        slack_signature = request.headers.get("X-Slack-Signature", "")
+        if not timestamp or not slack_signature:
+            raise HTTPException(status_code=400, detail="Missing Slack headers")
+        if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
+            raise HTTPException(status_code=403, detail="Invalid signature")
 
-        from slack_sdk.web.async_client import AsyncWebClient
+        # Pre-ack retry drop — Slack retries after ~3s if we don't ack. We ACK
+        # below; any retry arriving before that gets the same 200 response.
+        if request.headers.get("X-Slack-Retry-Num"):
+            return SlackEventResponse(status="ok")
 
-        ctx = extract_event_context(event)
-        # Namespace with entity_id so threads don't collide across mounted interfaces
-        session_id = f"{entity_id}:{ctx['thread_id']}"
-        async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
-
+        # Slack sends interactive payloads as application/x-www-form-urlencoded
+        # with a single form field `payload=<URL-encoded JSON>`.
+        form = await request.form()
+        payload_raw = form.get("payload")
+        if not isinstance(payload_raw, str) or not payload_raw:
+            raise HTTPException(status_code=400, detail="Missing payload")
         try:
-            await async_client.assistant_threads_setStatus(
-                channel_id=ctx["channel_id"],
-                thread_ts=ctx["thread_id"],
-                status=loading_text,
-            )
+            payload = json.loads(payload_raw)
         except Exception:
-            pass
+            raise HTTPException(status_code=400, detail="Malformed payload JSON")
 
-        try:
-            files, images, videos, audio, skipped = await download_event_files_async(
-                slack_tools.token, event, slack_tools.max_file_size
-            )
+        # Dispatch by action_id — only block_actions payloads carry HITL clicks.
+        if payload.get("type") != "block_actions":
+            return SlackEventResponse(status="ok")
+        actions = payload.get("actions") or []
+        if not actions:
+            return SlackEventResponse(status="ok")
+        action_id = actions[0].get("action_id", "")
 
-            message_text = ctx["message_text"]
-            if skipped:
-                notice = "[Skipped files: " + ", ".join(skipped) + "]"
-                message_text = f"{notice}\n{message_text}"
+        if action_id == "row_approve":
+            background_tasks.add_task(hitl.handle_row_approve, payload)
+        elif action_id == "row_reject":
+            background_tasks.add_task(hitl.handle_row_reject, payload)
+        elif action_id == "submit_pause":
+            background_tasks.add_task(hitl.handle_submit, payload)
+        # Silently ignore unknown action_ids — a non-HITL Slack app sharing
+        # the same endpoint might also post interactions here.
 
-            run_kwargs: Dict[str, Any] = {
-                "user_id": ctx["user"],
-                "session_id": session_id,
-                "files": files or None,
-                "images": images or None,
-                "videos": videos or None,
-                "audio": audio or None,
-            }
-
-            response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
-
-            if response:
-                if response.status == "ERROR":
-                    log_error(f"Error processing message: {response.content}")
-                    await send_slack_message_async(
-                        async_client,
-                        channel=ctx["channel_id"],
-                        message=f"{_ERROR_MESSAGE} Please try again later.",
-                        thread_ts=ctx["thread_id"],
-                    )
-                    return
-
-                if hasattr(response, "reasoning_content") and response.reasoning_content:
-                    rc = str(response.reasoning_content)
-                    formatted = "*Reasoning:*\n> " + rc.replace("\n", "\n> ")
-                    await send_slack_message_async(
-                        async_client,
-                        channel=ctx["channel_id"],
-                        message=formatted,
-                        thread_ts=ctx["thread_id"],
-                    )
-
-                content = str(response.content) if response.content else ""
-                await send_slack_message_async(
-                    async_client,
-                    channel=ctx["channel_id"],
-                    message=content,
-                    thread_ts=ctx["thread_id"],
-                )
-                await upload_response_media_async(async_client, response, ctx["channel_id"], ctx["thread_id"])
-        except Exception as e:
-            log_error(f"Error processing slack event: {e}")
-            await send_slack_message_async(
-                async_client,
-                channel=ctx["channel_id"],
-                message=_ERROR_MESSAGE,
-                thread_ts=ctx["thread_id"],
-            )
-        finally:
-            # Clear "Thinking..." status. In streaming mode stream.stop() handles
-            # this automatically, but the non-streaming path must clear explicitly.
-            try:
-                await async_client.assistant_threads_setStatus(
-                    channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
-                )
-            except Exception:
-                pass
-
-    async def _stream_slack_response(data: dict):
-        from slack_sdk.web.async_client import AsyncWebClient
-
-        event = data["event"]
-        if not should_respond(event, reply_to_mentions_only):
-            return
-
-        ctx = extract_event_context(event)
-        session_id = f"{entity_id}:{ctx['thread_id']}"
-
-        # Not consistently placed across Slack event envelope shapes
-        team_id = data.get("team_id") or event.get("team")
-        # CRITICAL: recipient_user_id must be the HUMAN user, not the bot.
-        # event["user"] = human who sent the message. data["authorizations"][0]["user_id"]
-        # = the bot's own user ID. Using the bot ID causes Slack to stream content
-        # to an invisible recipient, resulting in a blank bubble until stopStream.
-        user_id = ctx["user"]
-
-        async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
-        state = StreamState(entity_type=entity_type, entity_name=entity_name)
-        stream = None
-
-        try:
-            try:
-                status_kwargs: Dict[str, Any] = {
-                    "channel_id": ctx["channel_id"],
-                    "thread_ts": ctx["thread_id"],
-                    "status": loading_text,
-                }
-                if loading_messages:
-                    status_kwargs["loading_messages"] = loading_messages
-                await async_client.assistant_threads_setStatus(**status_kwargs)
-            except Exception:
-                pass
-
-            files, images, videos, audio, skipped = await download_event_files_async(
-                slack_tools.token, event, slack_tools.max_file_size
-            )
-
-            message_text = ctx["message_text"]
-            if skipped:
-                notice = "[Skipped files: " + ", ".join(skipped) + "]"
-                message_text = f"{notice}\n{message_text}"
-
-            run_kwargs: Dict[str, Any] = {
-                "stream": True,
-                # Enables event-level chunks for task card and tool lifecycle rendering
-                "stream_events": True,
-                "user_id": ctx["user"],
-                "session_id": session_id,
-                "files": files or None,
-                "images": images or None,
-                "videos": videos or None,
-                "audio": audio or None,
-            }
-
-            response_stream = entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
-
-            if response_stream is None:
-                try:
-                    await async_client.assistant_threads_setStatus(
-                        channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
-                    )
-                except Exception:
-                    pass
-                return
-
-            # Deferred so "Thinking..." indicator stays visible during file
-            # download and agent startup (opening earlier shows a blank bubble)
-            stream = await async_client.chat_stream(
-                channel=ctx["channel_id"],
-                thread_ts=ctx["thread_id"],
-                recipient_team_id=team_id,
-                recipient_user_id=user_id,
-                task_display_mode=task_display_mode,
-                buffer_size=buffer_size,
-            )
-
-            async for chunk in response_stream:
-                state.collect_media(chunk)
-
-                ev = getattr(chunk, "event", None)
-                if ev:
-                    if await process_event(ev, chunk, state, stream):
-                        break
-
-                if state.has_content():
-                    if not state.title_set:
-                        state.title_set = True
-                        title = ctx["message_text"][:50].strip() or "New conversation"
-                        try:
-                            await async_client.assistant_threads_setTitle(
-                                channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], title=title
-                            )
-                        except Exception:
-                            pass
-
-                    await stream.append(markdown_text=state.flush())
-
-            # Default to complete when no terminal error/cancel event arrived
-            final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
-            completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
-            stop_kwargs: Dict[str, Any] = {}
-            if state.has_content():
-                stop_kwargs["markdown_text"] = state.flush()
-            if completion_chunks:
-                stop_kwargs["chunks"] = completion_chunks
-            await stream.stop(**stop_kwargs)
-
-            await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
-
-        except Exception as e:
-            log_error(
-                f"Error streaming slack response: {e} [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
-            )
-            try:
-                await async_client.assistant_threads_setStatus(
-                    channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
-                )
-            except Exception:
-                pass
-            # Clean up open stream so Slack doesn't show stuck progress indicators
-            if stream is not None:
-                try:
-                    stop_kwargs_err: Dict[str, Any] = {}
-                    if state.task_cards:
-                        stop_kwargs_err["chunks"] = state.resolve_all_pending("error")
-                    await stream.stop(**stop_kwargs_err)
-                except Exception:
-                    pass
-            await send_slack_message_async(
-                async_client,
-                channel=ctx["channel_id"],
-                message=_ERROR_MESSAGE,
-                thread_ts=ctx["thread_id"],
-            )
-
-    async def _handle_thread_started(event: dict):
-        from slack_sdk.web.async_client import AsyncWebClient
-
-        async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
-        thread_info = event.get("assistant_thread", {})
-        channel_id = thread_info.get("channel_id", "")
-        thread_ts = thread_info.get("thread_ts", "")
-        if not channel_id or not thread_ts:
-            return
-
-        prompts = suggested_prompts or [
-            {"title": "Help", "message": "What can you help me with?"},
-            {"title": "Search", "message": "Search the web for..."},
-        ]
-        try:
-            await async_client.assistant_threads_setSuggestedPrompts(
-                channel_id=channel_id, thread_ts=thread_ts, prompts=prompts
-            )
-        except Exception as e:
-            log_error(f"Failed to set suggested prompts: {e}")
+        return SlackEventResponse(status="ok")
 
     return router

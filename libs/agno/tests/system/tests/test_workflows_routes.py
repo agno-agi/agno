@@ -12,6 +12,7 @@ import pytest
 from .test_utils import (
     EXPECTED_ALL_WORKFLOWS,
     REQUEST_TIMEOUT,
+    STREAMING_TIMEOUT,
     generate_jwt_token,
     parse_sse_events,
     validate_workflow_stream_events,
@@ -119,6 +120,7 @@ def test_create_workflow_run_streaming(client: httpx.Client, test_user_id: str):
             "session_id": session_id,
             "user_id": test_user_id,
         },
+        timeout=STREAMING_TIMEOUT,
     )
     assert response.status_code == 200
     assert "text/event-stream" in response.headers.get("content-type", "")
@@ -201,6 +203,7 @@ def test_create_a2a_workflow_run_streaming(client: httpx.Client, test_user_id: s
             "session_id": session_id,
             "user_id": test_user_id,
         },
+        timeout=STREAMING_TIMEOUT,
     )
     assert response.status_code == 200
     assert "text/event-stream" in response.headers.get("content-type", "")

@@ -9,6 +9,7 @@ from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
 
@@ -48,10 +49,11 @@ class DoclingReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         output_format: str = "markdown",
         converter: Optional[DocumentConverter] = None,
         format_options: Optional[Dict[Any, Any]] = None,
+        allowed_hosts: Optional[List[str]] = None,
         **kwargs,
     ):
         """Initialize the DoclingReader.
@@ -69,8 +71,14 @@ class DoclingReader(Reader):
                 - "html_split_page": HTML with page splitting
             converter: Optional pre-configured DocumentConverter instance.
             format_options: Optional format options dictionary for DocumentConverter.
+            allowed_hosts: Optional hostname allowlist for URL inputs. When set, only URLs
+                whose hostname is in the list are converted; others are refused. When None
+                (default), all hosts are allowed (backwards compatible).
             **kwargs: Additional arguments passed to the Reader class
         """
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = DocumentChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
         self.output_format = OUTPUT_FORMAT_MAP.get(output_format.lower())
@@ -85,6 +93,8 @@ class DoclingReader(Reader):
             self.converter = DocumentConverter(format_options=format_options)
         else:
             self.converter = DocumentConverter()
+
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -188,6 +198,9 @@ class DoclingReader(Reader):
                 source = file
             elif isinstance(file, str) and file.startswith(("http://", "https://")):
                 # Handle URLs - Docling can process them directly
+                if not is_host_allowed(file, self.allowed_hosts):
+                    log_debug(f"Host not in allowed_hosts, refusing to read: {file}")
+                    return []
                 url_path = file.split("?")[0]
                 doc_name = name or Path(url_path).stem
                 log_debug(f"Reading from URL: {file}")
@@ -247,7 +260,7 @@ class DoclingReader(Reader):
             raise
 
         except Exception as e:
-            log_error(f"Error converting document: {file}: {e}")
+            log_error(f"Error converting document: {file}: {str(e)}")
             return []
 
     async def async_read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -257,5 +270,5 @@ class DoclingReader(Reader):
         except (FileNotFoundError, ValueError):
             raise
         except Exception as e:
-            log_error(f"Error reading file asynchronously: {e}")
+            log_error(f"Error reading file asynchronously: {str(e)}")
             return []
