@@ -686,7 +686,8 @@ class Model(ABC):
             _log_messages(messages)
             model_response = ModelResponse()
 
-            function_call_count = 0
+            # Count existing tool-call results so function_call_count survives HITL resume
+            function_call_count = sum(1 for m in messages if m.role == "tool")
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
@@ -914,7 +915,8 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            # Count existing tool-call results so function_call_count survives HITL resume
+            function_call_count = sum(1 for m in messages if m.role == "tool")
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1403,7 +1405,8 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            # Count existing tool-call results so function_call_count survives HITL resume
+            function_call_count = sum(1 for m in messages if m.role == "tool")
 
             while True:
                 # Compress existing tool results BEFORE invoke
@@ -1682,7 +1685,8 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            # Count existing tool-call results so function_call_count survives HITL resume
+            function_call_count = sum(1 for m in messages if m.role == "tool")
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
