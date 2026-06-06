@@ -238,6 +238,54 @@ class TestApiKeyPath:
             model._get_client_params()
 
 
+class TestStructuredOutputSupport:
+    """Verify that the Bedrock Claude class (inheriting from Anthropic Claude)
+    correctly reports native structured output support."""
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "us.anthropic.claude-sonnet-4-6-v1:0",
+            "us.anthropic.claude-opus-4-6-20251201-v1:0",
+            "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+        ],
+    )
+    def test_bedrock_claude_supports_native_structured_outputs(self, model_id):
+        """The AWS Bedrock Claude class should inherit _supports_structured_outputs
+        and flag supports_native_structured_outputs=True after __post_init__."""
+        model = Claude(
+            id=model_id,
+            aws_access_key="AKIA_TEST",
+            aws_secret_key="test-secret",
+            aws_region="us-east-1",
+        )
+        assert model.supports_native_structured_outputs is True, (
+            f"Bedrock model '{model_id}' should have supports_native_structured_outputs=True"
+        )
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "us.anthropic.claude-3-sonnet-20240229-v1:0",
+            "us.anthropic.claude-3-haiku-20240307-v1:0",
+            "us.anthropic.claude-sonnet-4-20250514-v1:0",
+        ],
+    )
+    def test_bedrock_claude_unsupported_models_no_native_structured_outputs(self, model_id):
+        """Legacy/unsupported Bedrock Claude models should have
+        supports_native_structured_outputs=False."""
+        model = Claude(
+            id=model_id,
+            aws_access_key="AKIA_TEST",
+            aws_secret_key="test-secret",
+            aws_region="us-east-1",
+        )
+        assert model.supports_native_structured_outputs is False, (
+            f"Bedrock model '{model_id}' should have supports_native_structured_outputs=False"
+        )
+
+
 class TestSessionNullCredentials:
     def test_raises_on_null_credentials(self):
         mock_session = MagicMock(spec=Session)
