@@ -3,9 +3,11 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
@@ -616,6 +618,8 @@ class Condition:
                     current_step_input, step_output, condition_step_outputs
                 )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} failed")
@@ -781,6 +785,8 @@ class Condition:
         condition_step_outputs: Dict[str, StepOutput] = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                raise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_outputs_for_step: List[StepOutput] = []
 
@@ -857,6 +863,8 @@ class Condition:
                             current_step_input, step_outputs_for_step, condition_step_outputs
                         )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} streaming failed")
@@ -1043,6 +1051,8 @@ class Condition:
                     current_step_input, step_output, condition_step_outputs
                 )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} async failed")
@@ -1209,6 +1219,8 @@ class Condition:
         condition_step_outputs: Dict[str, StepOutput] = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                await araise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_outputs_for_step: List[StepOutput] = []
 
@@ -1285,6 +1297,8 @@ class Condition:
                             current_step_input, step_outputs_for_step, condition_step_outputs
                         )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} async streaming failed")

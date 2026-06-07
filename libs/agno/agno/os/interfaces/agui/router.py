@@ -1,5 +1,6 @@
 """Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
 
+import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
 
@@ -12,6 +13,7 @@ try:
         RunAgentInput,
         RunErrorEvent,
         RunStartedEvent,
+        StateSnapshotEvent,
     )
     from ag_ui.encoder import EventEncoder
 except ImportError as e:
@@ -21,6 +23,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.agui.media import extract_agui_media
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
     extract_agui_user_input,
@@ -38,6 +41,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — agent manages history via session DB.
         user_input = extract_agui_user_input(run_input.messages or [])
+        images, audio, videos, files = extract_agui_media(run_input.messages or [])
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -49,6 +53,11 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(run_input.state, run_input.thread_id)
 
+        # Emit initial state snapshot if state is provided
+        if session_state is not None:
+            # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+
         # Request streaming response from agent
         response_stream = agent.arun(  # type: ignore
             input=user_input,
@@ -56,6 +65,10 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
             stream=True,
             stream_events=True,
             user_id=user_id,
+            images=images or None,
+            audio=audio or None,
+            videos=videos or None,
+            files=files or None,
             session_state=session_state,
             run_id=run_id,
         )
@@ -65,6 +78,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
             response_stream=response_stream,  # type: ignore
             thread_id=run_input.thread_id,
             run_id=run_id,
+            run_state=session_state,
         ):
             yield event
 
@@ -81,6 +95,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — team manages history via session DB.
         user_input = extract_agui_user_input(input.messages or [])
+        images, audio, videos, files = extract_agui_media(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Look for user_id in input.forwarded_props
@@ -91,6 +106,11 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(input.state, input.thread_id)
 
+        # Emit initial state snapshot if state is provided
+        if session_state is not None:
+            # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
+            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+
         # Request streaming response from team
         response_stream = team.arun(  # type: ignore
             input=user_input,
@@ -98,13 +118,17 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             stream=True,
             stream_events=True,
             user_id=user_id,
+            images=images or None,
+            audio=audio or None,
+            videos=videos or None,
+            files=files or None,
             session_state=session_state,
             run_id=run_id,
         )
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
+            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id, run_state=session_state
         ):
             yield event
 
