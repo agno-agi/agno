@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error
@@ -119,6 +119,31 @@ class ParallelTools(Toolkit):
 
         super().__init__(name="parallel_tools", tools=tools, **kwargs)
 
+    @staticmethod
+    def _v1_search_mode(mode: str) -> str:
+        mode_mapping = {
+            "fast": "basic",
+            "one-shot": "basic",
+            "agentic": "advanced",
+        }
+        return mode_mapping.get(mode, mode)
+
+    def _call_parallel_search(self, v1_params: Dict[str, Any], beta_params: Dict[str, Any]) -> Any:
+        search = getattr(self.parallel_client, "search", None)
+        if callable(search):
+            return search(**v1_params)
+
+        beta_client = cast(Any, self.parallel_client.beta)
+        return beta_client.search(**beta_params)
+
+    def _call_parallel_extract(self, v1_params: Dict[str, Any], beta_params: Dict[str, Any]) -> Any:
+        extract = getattr(self.parallel_client, "extract", None)
+        if callable(extract):
+            return extract(**v1_params)
+
+        beta_client = cast(Any, self.parallel_client.beta)
+        return beta_client.extract(**beta_params)
+
     def parallel_search(
         self,
         objective: Optional[str] = None,
@@ -145,21 +170,29 @@ class ParallelTools(Toolkit):
             # Use instance defaults if not provided
             final_max_results = max_results if max_results is not None else self.max_results
 
-            search_params: Dict[str, Any] = {
+            beta_search_params: Dict[str, Any] = {
                 "max_results": final_max_results,
             }
+            v1_search_params: Dict[str, Any] = {}
 
             # Add objective if provided
             if objective:
-                search_params["objective"] = objective
+                beta_search_params["objective"] = objective
+                v1_search_params["objective"] = objective
 
-            # Add search_queries if provided
-            if search_queries:
-                search_params["search_queries"] = search_queries
+            final_search_queries = search_queries or ([objective] if objective else None)
+            if final_search_queries:
+                beta_search_params["search_queries"] = final_search_queries
+                v1_search_params["search_queries"] = final_search_queries
 
             # Add mode from constructor default
             if self.mode:
-                search_params["mode"] = self.mode
+                beta_search_params["mode"] = self.mode
+            v1_search_params["mode"] = self._v1_search_mode(self.mode or "one-shot")
+
+            advanced_settings: Dict[str, Any] = {
+                "max_results": final_max_results,
+            }
 
             # Add excerpts configuration
             excerpts_config: Dict[str, Any] = {}
@@ -168,7 +201,8 @@ class ParallelTools(Toolkit):
                 excerpts_config["max_chars_per_result"] = final_max_chars
 
             if excerpts_config:
-                search_params["excerpts"] = excerpts_config
+                beta_search_params["excerpts"] = excerpts_config
+                advanced_settings["excerpt_settings"] = excerpts_config
 
             # Add source_policy from constructor defaults
             source_policy: Dict[str, Any] = {}
@@ -178,7 +212,8 @@ class ParallelTools(Toolkit):
                 source_policy["exclude_domains"] = self.exclude_domains
 
             if source_policy:
-                search_params["source_policy"] = source_policy
+                beta_search_params["source_policy"] = source_policy
+                advanced_settings["source_policy"] = source_policy
 
             # Add fetch_policy from constructor defaults
             fetch_policy: Dict[str, Any] = {}
@@ -188,9 +223,12 @@ class ParallelTools(Toolkit):
                 fetch_policy["disable_cache_fallback"] = self.disable_cache_fallback
 
             if fetch_policy:
-                search_params["fetch_policy"] = fetch_policy
+                beta_search_params["fetch_policy"] = fetch_policy
+                advanced_settings["fetch_policy"] = fetch_policy
 
-            search_result = self.parallel_client.beta.search(**search_params)
+            v1_search_params["advanced_settings"] = advanced_settings
+
+            search_result = self._call_parallel_search(v1_search_params, beta_search_params)
 
             # Use model_dump() if available, otherwise convert to dict
             try:
@@ -257,29 +295,42 @@ class ParallelTools(Toolkit):
             if not urls:
                 return json.dumps({"error": "Please provide at least one URL to extract"}, indent=2)
 
-            extract_params: Dict[str, Any] = {
+            beta_extract_params: Dict[str, Any] = {
+                "urls": urls,
+            }
+            v1_extract_params: Dict[str, Any] = {
                 "urls": urls,
             }
 
             # Add objective if provided
             if objective:
-                extract_params["objective"] = objective
+                beta_extract_params["objective"] = objective
+                v1_extract_params["objective"] = objective
 
             # Add search_queries if provided
             if search_queries:
-                extract_params["search_queries"] = search_queries
+                beta_extract_params["search_queries"] = search_queries
+                v1_extract_params["search_queries"] = search_queries
+
+            advanced_settings: Dict[str, Any] = {}
 
             # Add excerpts configuration
             if excerpts and max_chars_per_excerpt is not None:
-                extract_params["excerpts"] = {"max_chars_per_result": max_chars_per_excerpt}
+                excerpt_settings = {"max_chars_per_result": max_chars_per_excerpt}
+                beta_extract_params["excerpts"] = excerpt_settings
+                advanced_settings["excerpt_settings"] = excerpt_settings
             else:
-                extract_params["excerpts"] = excerpts
+                beta_extract_params["excerpts"] = excerpts
 
             # Add full_content configuration
             if full_content and max_chars_for_full_content is not None:
-                extract_params["full_content"] = {"max_chars_per_result": max_chars_for_full_content}
+                full_content_settings = {"max_chars_per_result": max_chars_for_full_content}
+                beta_extract_params["full_content"] = full_content_settings
+                advanced_settings["full_content"] = full_content_settings
             else:
-                extract_params["full_content"] = full_content
+                beta_extract_params["full_content"] = full_content
+                if full_content:
+                    advanced_settings["full_content"] = True
 
             # Add fetch_policy from constructor defaults
             fetch_policy: Dict[str, Any] = {}
@@ -289,9 +340,13 @@ class ParallelTools(Toolkit):
                 fetch_policy["disable_cache_fallback"] = self.disable_cache_fallback
 
             if fetch_policy:
-                extract_params["fetch_policy"] = fetch_policy
+                beta_extract_params["fetch_policy"] = fetch_policy
+                advanced_settings["fetch_policy"] = fetch_policy
 
-            extract_result = self.parallel_client.beta.extract(**extract_params)
+            if advanced_settings:
+                v1_extract_params["advanced_settings"] = advanced_settings
+
+            extract_result = self._call_parallel_extract(v1_extract_params, beta_extract_params)
 
             # Use model_dump() if available, otherwise convert to dict
             try:

@@ -40,7 +40,7 @@ def test_parallel_search(parallel_tools):
         }
     )
 
-    parallel_tools.parallel_client.beta.search = Mock(return_value=mock_result)
+    parallel_tools.parallel_client.search = Mock(return_value=mock_result)
 
     # Execute test
     result = parallel_tools.parallel_search(objective="Test objective")
@@ -57,18 +57,49 @@ def test_parallel_search_with_queries(parallel_tools):
     mock_result = Mock()
     mock_result.model_dump = Mock(return_value={"search_id": "test-id", "results": []})
 
-    parallel_tools.parallel_client.beta.search = Mock(return_value=mock_result)
+    parallel_tools.parallel_client.search = Mock(return_value=mock_result)
 
     parallel_tools.parallel_search(objective="Test", search_queries=["query1", "query2"])
 
     # Verify search_queries was passed
-    call_args = parallel_tools.parallel_client.beta.search.call_args
+    call_args = parallel_tools.parallel_client.search.call_args
     assert call_args[1]["search_queries"] == ["query1", "query2"]
+    assert call_args[1]["mode"] == "basic"
+    assert call_args[1]["advanced_settings"]["max_results"] == parallel_tools.max_results
+
+
+def test_parallel_search_uses_objective_as_v1_query(parallel_tools):
+    """Test parallel_search supplies V1-required search_queries when only objective is provided."""
+    mock_result = Mock()
+    mock_result.model_dump = Mock(return_value={"search_id": "test-id", "results": []})
+
+    parallel_tools.parallel_client.search = Mock(return_value=mock_result)
+
+    parallel_tools.parallel_search(objective="Find current AI news")
+
+    call_args = parallel_tools.parallel_client.search.call_args
+    assert call_args[1]["objective"] == "Find current AI news"
+    assert call_args[1]["search_queries"] == ["Find current AI news"]
+
+
+def test_parallel_search_falls_back_to_beta_client(parallel_tools):
+    """Test parallel_search still supports older clients without V1 search."""
+    mock_result = Mock()
+    mock_result.model_dump = Mock(return_value={"search_id": "test-id", "results": []})
+
+    parallel_tools.parallel_client.search = None
+    parallel_tools.parallel_client.beta.search = Mock(return_value=mock_result)
+
+    parallel_tools.parallel_search(objective="Test objective")
+
+    call_args = parallel_tools.parallel_client.beta.search.call_args
+    assert call_args[1]["objective"] == "Test objective"
+    assert call_args[1]["max_results"] == parallel_tools.max_results
 
 
 def test_parallel_search_error(parallel_tools):
     """Test parallel_search error handling."""
-    parallel_tools.parallel_client.beta.search = Mock(side_effect=Exception("API Error"))
+    parallel_tools.parallel_client.search = Mock(side_effect=Exception("API Error"))
 
     result = parallel_tools.parallel_search(objective="Test")
     result_dict = json.loads(result)
@@ -95,7 +126,7 @@ def test_parallel_extract(parallel_tools):
         }
     )
 
-    parallel_tools.parallel_client.beta.extract = Mock(return_value=mock_result)
+    parallel_tools.parallel_client.extract = Mock(return_value=mock_result)
 
     # Execute test
     result = parallel_tools.parallel_extract(urls=["https://example.com"])
@@ -112,19 +143,58 @@ def test_parallel_extract_with_full_content(parallel_tools):
     mock_result = Mock()
     mock_result.model_dump = Mock(return_value={"extract_id": "test-id", "results": [], "errors": []})
 
-    parallel_tools.parallel_client.beta.extract = Mock(return_value=mock_result)
+    parallel_tools.parallel_client.extract = Mock(return_value=mock_result)
 
     parallel_tools.parallel_extract(urls=["https://example.com"], excerpts=False, full_content=True)
 
     # Verify parameters
+    call_args = parallel_tools.parallel_client.extract.call_args
+    assert "excerpts" not in call_args[1]
+    assert call_args[1]["advanced_settings"]["full_content"] is True
+
+
+def test_parallel_extract_uses_v1_advanced_settings(parallel_tools):
+    """Test parallel_extract nests V1 settings under advanced_settings."""
+    mock_result = Mock()
+    mock_result.model_dump = Mock(return_value={"extract_id": "test-id", "results": [], "errors": []})
+
+    parallel_tools.parallel_client.extract = Mock(return_value=mock_result)
+    parallel_tools.max_age_seconds = 600
+    parallel_tools.disable_cache_fallback = True
+
+    parallel_tools.parallel_extract(
+        urls=["https://example.com"],
+        max_chars_per_excerpt=1234,
+        full_content=True,
+        max_chars_for_full_content=5678,
+    )
+
+    call_args = parallel_tools.parallel_client.extract.call_args
+    assert call_args[1]["advanced_settings"] == {
+        "excerpt_settings": {"max_chars_per_result": 1234},
+        "full_content": {"max_chars_per_result": 5678},
+        "fetch_policy": {"max_age_seconds": 600, "disable_cache_fallback": True},
+    }
+
+
+def test_parallel_extract_falls_back_to_beta_client(parallel_tools):
+    """Test parallel_extract still supports older clients without V1 extract."""
+    mock_result = Mock()
+    mock_result.model_dump = Mock(return_value={"extract_id": "test-id", "results": [], "errors": []})
+
+    parallel_tools.parallel_client.extract = None
+    parallel_tools.parallel_client.beta.extract = Mock(return_value=mock_result)
+
+    parallel_tools.parallel_extract(urls=["https://example.com"], excerpts=False)
+
     call_args = parallel_tools.parallel_client.beta.extract.call_args
+    assert call_args[1]["urls"] == ["https://example.com"]
     assert call_args[1]["excerpts"] is False
-    assert call_args[1]["full_content"] is True
 
 
 def test_parallel_extract_error(parallel_tools):
     """Test parallel_extract error handling."""
-    parallel_tools.parallel_client.beta.extract = Mock(side_effect=Exception("API Error"))
+    parallel_tools.parallel_client.extract = Mock(side_effect=Exception("API Error"))
 
     result = parallel_tools.parallel_extract(urls=["https://example.com"])
     result_dict = json.loads(result)
