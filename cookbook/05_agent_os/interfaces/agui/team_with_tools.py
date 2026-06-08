@@ -27,6 +27,7 @@ Run with:
 from typing import List
 
 from agno.agent.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
 from agno.os.interfaces.agui.agui import AGUI
@@ -39,21 +40,31 @@ from agno.tools import tool
 
 
 @tool(external_execution=True, external_execution_silent=True)
-def generate_haiku(english: List[str], japanese: List[str], image_name: str, gradient: str) -> str:
+def generate_haiku(
+    english: List[str], japanese: List[str], image_name: str, gradient: str
+) -> str:
     """Generate a haiku in Japanese and English and display it in the frontend.
 
-    Schema matches the AG-UI dojo's ``tool_based_generative_ui`` page so
-    the frontend's React render handler can pick up every field:
-      * ``english``   - 3 English lines of the haiku.
-      * ``japanese``  - 3 Japanese (kanji) lines of the haiku.
-      * ``image_name`` - One filename string from the dojo's curated set
-        of Japanese landscape images (e.g.
-        ``Takachiho_Gorge_Waterfall_River_Lush_Greenery_Japan.jpg``).
-      * ``gradient``  - A CSS gradient string used as the card background.
+    Args:
+        english: 3 lines of the haiku translated to English.
+        japanese: 3 lines of the haiku in Japanese kanji.
+        image_name: One relevant image name from:
+            Osaka_Castle_Turret_Stone_Wall_Pine_Trees_Daytime.jpg,
+            Tokyo_Skyline_Night_Tokyo_Tower_Mount_Fuji_View.jpg,
+            Itsukushima_Shrine_Miyajima_Floating_Torii_Gate_Sunset_Long_Exposure.jpg,
+            Takachiho_Gorge_Waterfall_River_Lush_Greenery_Japan.jpg,
+            Bonsai_Tree_Potted_Japanese_Art_Green_Foliage.jpeg,
+            Shirakawa-go_Gassho-zukuri_Thatched_Roof_Village_Aerial_View.jpg,
+            Ginkaku-ji_Silver_Pavilion_Kyoto_Japanese_Garden_Pond_Reflection.jpg,
+            Senso-ji_Temple_Asakusa_Cherry_Blossoms_Kimono_Umbrella.jpg,
+            Cherry_Blossoms_Sakura_Night_View_City_Lights_Japan.jpg,
+            Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg.
+        gradient: CSS gradient color string for the card background.
 
-    Marked ``external_execution_silent=True`` so the AG-UI client does not
-    see a "Team run paused. The following require input:" status message
-    while the tool is executing. The frontend handler does the work.
+    Schema matches the AG-UI dojo's ``tool_based_generative_ui`` page so the
+    frontend's React render handler can pick up every field. The
+    ``external_execution_silent=True`` flag suppresses the "Team run paused"
+    status message while the frontend executes the tool.
     """
     return "Haiku generated and displayed in frontend"
 
@@ -72,45 +83,46 @@ team = Team(
     name="haiku_team",
     mode="coordinate",
     members=[greeter],
+    # In-memory session store so add_history_to_context=True actually has
+    # somewhere to persist prior turns. The AG-UI router strips client-sent
+    # history (utils.extract_agui_user_input keeps only the last user
+    # message), so without a db the team starts fresh on every turn -- the
+    # model has no signal it picked image_name='X' before and repeats the
+    # same image. InMemoryDb lives for the AgentOS process lifetime;
+    # mirrors cookbook/06_storage/in_memory/ and
+    # cookbook/03_teams/07_session/share_session_with_agent.py.
+    db=InMemoryDb(),
+    # gpt-5.4 is the project-standard cookbook model (per CLAUDE.md).
+    # As a reasoning model, its explicit reasoning step makes the "do not
+    # repeat image_name" rule actually stick -- gpt-4.1-mini and gpt-5.1
+    # treated it as a soft suggestion and kept defaulting to the strongest
+    # theme association (Takachiho for nature). Reasoning models read the
+    # rule, look at the prior turn's tool call in history, and pick a
+    # different image. Trade-off: slightly slower responses (reasoning
+    # takes time) and temperature is silently ignored.
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[generate_haiku],
     description="A team that generates haikus on request using a frontend tool.",
-    instructions="""
-    When the user asks for a haiku, you MUST call the generate_haiku tool
-    directly with all four arguments:
-      * english        - exactly 3 English lines.
-      * japanese       - exactly 3 Japanese (kanji) lines.
-      * image_name     - ONE filename chosen from the list below. Match
-        the haiku's THEME to the image. Do NOT default to the same image
-        every call.
-      * gradient       - a CSS linear-gradient string whose colours
-        complement the chosen image and theme (sunsets warm, oceans cool,
-        spring pastel, night dark, etc.).
-
-    Valid image_name values and the theme each one fits best:
-      * "Osaka_Castle_Turret_Stone_Wall_Pine_Trees_Daytime.jpg"
-        -> castle, history, stone, daytime, pine
-      * "Tokyo_Skyline_Night_Tokyo_Tower_Mount_Fuji_View.jpg"
-        -> city, urban, night, lights, modern
-      * "Itsukushima_Shrine_Miyajima_Floating_Torii_Gate_Sunset_Long_Exposure.jpg"
-        -> ocean, sea, water, sunset, torii, shrine
-      * "Takachiho_Gorge_Waterfall_River_Lush_Greenery_Japan.jpg"
-        -> forest, waterfall, river, green, nature
-      * "Bonsai_Tree_Potted_Japanese_Art_Green_Foliage.jpeg"
-        -> bonsai, art, miniature, foliage, zen
-      * "Shirakawa-go_Gassho-zukuri_Thatched_Roof_Village_Aerial_View.jpg"
-        -> rural, village, traditional, snow, winter
-      * "Ginkaku-ji_Silver_Pavilion_Kyoto_Japanese_Garden_Pond_Reflection.jpg"
-        -> garden, zen, pond, reflection, kyoto
-      * "Senso-ji_Temple_Asakusa_Cherry_Blossoms_Kimono_Umbrella.jpg"
-        -> temple, kimono, cherry blossoms, cultural
-      * "Cherry_Blossoms_Sakura_Night_View_City_Lights_Japan.jpg"
-        -> sakura, spring, night, city, lights
-      * "Mount_Fuji_Lake_Reflection_Cherry_Blossoms_Sakura_Spring.jpg"
-        -> mount fuji, mountain, lake, spring, sakura
-
-    Do not write the haiku as plain text. Do not delegate to members.
-    """,
+    # Lightweight prompt: theme hint + readability constraint + soft
+    # anti-repeat. Earlier aggressive "CRITICAL diversity rules" with
+    # numbered MUST/NEVER directives caused gpt-5.4 to over-think and
+    # collapse to the same shade per theme. This shorter prompt lets the
+    # reasoning model vary more naturally while still keeping the
+    # light-gradient readability requirement.
+    instructions=(
+        "Help the user write Haikus. When the user asks for a haiku, "
+        "call the generate_haiku tool with all four arguments. "
+        "Match image_name to the haiku's theme (ocean -> torii or "
+        "Mount Fuji Lake; nature -> waterfall, bonsai, or garden; "
+        "spring -> cherry blossoms). "
+        "Always use LIGHT or MEDIUM-tone gradient colors (pastels like "
+        "peach, mint, lavender, soft blue, sunset pink, light yellow) "
+        "so the dark haiku text stays clearly readable. Never pick dark "
+        "or oversaturated colors. "
+        "Vary your choices across consecutive calls -- different "
+        "image_name and different gradient hue each time. "
+        "Do not delegate to members."
+    ),
     add_history_to_context=True,
 )
 
