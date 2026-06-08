@@ -36,25 +36,53 @@ from agno.models.message import Message
 from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
-from agno.run.agent import RunContentEvent, RunEvent, RunOutput
+from agno.run.agent import (
+    RunCancelledEvent as AgentRunCancelledEvent,
+)
+from agno.run.agent import (
+    RunCompletedEvent as AgentRunCompletedEvent,
+)
+from agno.run.agent import (
+    RunContentEvent,
+    RunEvent,
+    RunOutput,
+)
+from agno.run.agent import (
+    RunErrorEvent as AgentRunErrorEvent,
+)
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_member_runs,
     acleanup_run,
+    aget_member_run_ids,
     araise_if_cancelled,
     aregister_run,
+    cleanup_member_runs,
     cleanup_run,
+    get_member_run_ids,
     raise_if_cancelled,
     register_run,
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
+from agno.run.team import (
+    RunCancelledEvent as TeamRunCancelledEvent,
+)
+from agno.run.team import (
+    RunCompletedEvent as TeamRunCompletedEvent,
+)
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import (
+    RunErrorEvent as TeamRunErrorEvent,
+)
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
+    StepContinuedEvent,
     StepErrorEvent,
+    StepExecutorContinuedEvent,
     StepOutputEvent,
     StepOutputReviewEvent,
     WorkflowCancelledEvent,
@@ -70,6 +98,7 @@ from agno.utils.agent import validate_input
 from agno.utils.log import (
     log_debug,
     log_error,
+    log_info,
     log_warning,
     logger,
     set_log_level_to_debug,
@@ -102,17 +131,24 @@ from agno.workflow.types import (
 from agno.workflow.utils import (
     ContinueExecutionState,
     StepPauseResult,
+    apply_executor_pause,
     apply_pause_state,
     apply_post_execution_pause_state,
     asave_paused_session,
     check_output_review_status,
     check_timeout,
+    create_executor_paused_event,
     create_router_paused_event,
     create_step_paused_event,
     finalize_workflow_completion,
+    is_executor_pause,
+    resolve_executor_pause,
     save_paused_session,
     step_pause_status,
 )
+
+# Set to prevent background tasks from being garbage-collected
+_workflow_background_tasks: set[asyncio.Task[None]] = set()
 
 STEP_TYPE_MAPPING = {
     Step: StepType.STEP,
@@ -122,6 +158,139 @@ STEP_TYPE_MAPPING = {
     Condition: StepType.CONDITION,
     Router: StepType.ROUTER,
 }
+
+# Cancel raises immediately on every event. Only terminal events bypass so the
+# executor's own cancel handler can yield them to the stream. RunError is
+# included so an error that lands on the same tick as cancel isn't dropped.
+_EXECUTOR_CANCEL_BYPASS_EVENT_TYPES = (
+    AgentRunCancelledEvent,
+    AgentRunCompletedEvent,
+    AgentRunErrorEvent,
+    TeamRunCancelledEvent,
+    TeamRunCompletedEvent,
+    TeamRunErrorEvent,
+)
+
+
+# Any step-like component that can appear in a workflow (top-level or nested).
+# Matches what callers iterate over in ``Workflow.steps`` (see ``WorkflowSteps``
+# below): Step + composite step types + nested Workflow + callable step.
+WorkflowStep = Union[
+    Step,
+    Steps,
+    Loop,
+    Parallel,
+    Condition,
+    Router,
+    "Workflow",
+    Callable[
+        [StepInput],
+        Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]],
+    ],
+]
+
+
+def _normalize_workflow_cancellation_reason(
+    workflow_run_response: WorkflowRunOutput,
+    error: Union[RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit],
+) -> str:
+    """Return a non-empty, human-readable reason for a cancelled workflow run."""
+    if isinstance(error, RunCancelledException):
+        return str(error) or f"Workflow run {workflow_run_response.run_id} was cancelled"
+    return "Operation cancelled by user"
+
+
+def _find_inner_step_by_executor(
+    step: WorkflowStep,
+    executor_id: Optional[str] = None,
+    executor_name: Optional[str] = None,
+) -> Optional[Step]:
+    """Find an inner Step within a composite step (Condition, Loop, etc.) by executor identity.
+
+    Used to locate the actual Step with the agent/team when the workflow's top-level
+    step is a composite type. Searches recursively through inner steps.
+
+    If no executor_id or executor_name is provided, returns the first
+    inner Step that has an agent or team executor.
+    """
+    # Base case: if this is a Step with an agent/team, return it
+    if isinstance(step, Step):
+        executor = getattr(step, "agent", None) or getattr(step, "team", None)
+        if executor is not None:
+            return step
+        return None
+
+    # Collect all inner steps from composite step types
+    # Check steps, else_steps (Condition), and choices (Router)
+    inner_steps: list = []
+    for attr in ("steps", "else_steps", "choices"):
+        inner_steps.extend(getattr(step, attr, None) or [])
+
+    has_filter = bool(executor_id or executor_name)
+
+    for inner in inner_steps:
+        if isinstance(inner, Step):
+            executor = getattr(inner, "agent", None) or getattr(inner, "team", None)
+            if executor is not None:
+                if not has_filter:
+                    # No filter — return first inner step with an agent/team executor
+                    return inner
+                eid = getattr(executor, "id", None) or getattr(executor, "agent_id", None)
+                ename = getattr(executor, "name", None)
+                if (executor_id and eid == executor_id) or (executor_name and ename == executor_name):
+                    return inner
+        else:
+            # Recurse into nested composite steps (not plain Steps without executors)
+            found = _find_inner_step_by_executor(inner, executor_id, executor_name)
+            if found is not None:
+                return found
+
+    return None
+
+
+def _find_paused_executor_run(
+    workflow_run_response: "WorkflowRunOutput",
+    executor_run_id: Optional[str],
+) -> Any:
+    """Find the paused executor run from step_executor_runs by run_id.
+
+    The executor's paused RunOutput is stored in workflow_run_response.step_executor_runs
+    during the initial execute via _store_executor_response. This retrieves it so we can
+    pass it directly to executor.continue_run(run_response=...).
+    """
+    if not workflow_run_response.step_executor_runs or not executor_run_id:
+        raise ValueError(
+            f"No stored executor runs found for run ID {executor_run_id}. "
+            "step_executor_runs may not have been persisted."
+        )
+
+    for run in workflow_run_response.step_executor_runs:
+        if getattr(run, "run_id", None) == executor_run_id:
+            return run
+
+    raise ValueError(
+        f"Could not find executor run {executor_run_id} in step_executor_runs. "
+        f"Available run IDs: {[getattr(r, 'run_id', None) for r in workflow_run_response.step_executor_runs]}"
+    )
+
+
+def _apply_requirements_to_run_response(run_response: Any, requirements: list) -> None:
+    """Apply resolved requirements to a paused run_response before continuing.
+
+    This mirrors the logic in agent/_run.py continue_run (run_id branch):
+    sets requirements on the run_response and updates tool states so the
+    agent knows which tools are confirmed/answered.
+    """
+    if not requirements:
+        return
+
+    run_response.requirements = requirements
+    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
+    if updated_tools and run_response.tools:
+        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
+        run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+    elif updated_tools:
+        run_response.tools = updated_tools
 
 
 def _create_skipped_step_output(
@@ -1001,7 +1170,9 @@ class Workflow:
 
         return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
-    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
+    async def aget_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
         if self._workflow_session is not None:
             run_response = self._workflow_session.get_run(run_id=run_id)
@@ -1011,7 +1182,7 @@ class Workflow:
                 log_warning(f"RunOutput {run_id} not found in AgentSession {self._workflow_session.session_id}")
                 return None
         else:
-            workflow_session = await self.aget_session(session_id=session_id)  # type: ignore
+            workflow_session = await self.aget_session(session_id=session_id, user_id=user_id)  # type: ignore
             if workflow_session is not None:
                 run_response = workflow_session.get_run(run_id=run_id)
                 if run_response is not None:
@@ -1020,7 +1191,9 @@ class Workflow:
                     log_warning(f"RunOutput {run_id} not found in AgentSession {session_id}")
         return None
 
-    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
         if self._workflow_session is not None:
             run_response = self._workflow_session.get_run(run_id=run_id)
@@ -1030,7 +1203,7 @@ class Workflow:
                 log_warning(f"RunOutput {run_id} not found in AgentSession {self._workflow_session.session_id}")
                 return None
         else:
-            workflow_session = self.get_session(session_id=session_id)
+            workflow_session = self.get_session(session_id=session_id, user_id=user_id)
             if workflow_session is not None:
                 run_response = workflow_session.get_run(run_id=run_id)
                 if run_response is not None:
@@ -1225,7 +1398,9 @@ class Workflow:
         return None
 
     async def asave_session(self, session: WorkflowSession) -> None:
-        """Save the WorkflowSession to storage, using an async database.
+        """Save the WorkflowSession to storage, using an async database if available.
+
+        Falls back to sync save_session when the database is not async.
 
         Returns:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
@@ -1240,7 +1415,11 @@ class Workflow:
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
 
-            result = await self._aupsert_session(session=session)  # type: ignore
+            if self._has_async_db():
+                result = await self._aupsert_session(session=session)  # type: ignore
+            else:
+                # Offload the sync DB call so it doesn't block the event loop.
+                result = await asyncio.to_thread(self._upsert_session, session=session)
             if result is None:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:
@@ -1267,6 +1446,34 @@ class Workflow:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:
                 log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
+
+    def _persist_cancelled_run_in_background(
+        self, workflow_run_response: WorkflowRunOutput, session: WorkflowSession
+    ) -> None:
+        """Persist a cancelled workflow run on a detached background task.
+
+        On a client disconnect the request runs inside an anyio cancel scope; awaiting the
+        session write inline lets it be re-cancelled mid-flight, losing the run. Scheduling
+        it on _workflow_background_tasks runs the write to completion outside that scope.
+        """
+
+        async def _persist() -> None:
+            try:
+                self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                session.upsert_run(run=workflow_run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=session)
+                else:
+                    self.save_session(session=session)
+                if workflow_run_response.run_id:
+                    await acleanup_run(workflow_run_response.run_id)
+                    await acleanup_member_runs(workflow_run_response.run_id)
+            except Exception as store_err:
+                log_warning(f"Failed to persist cancelled run: {store_err}")
+
+        task = asyncio.create_task(_persist())
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
 
     def get_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
@@ -1613,7 +1820,9 @@ class Workflow:
                 if event.step_index is None:
                     event.step_index = step_index
         else:
-            if hasattr(event, "parent_step_id") and step_id:
+            # Only set parent_step_id if not already set — the innermost enclosing
+            # workflow is the true host step; outer layers must not overwrite it.
+            if hasattr(event, "parent_step_id") and step_id and event.parent_step_id is None:
                 event.parent_step_id = step_id
 
         return event
@@ -1827,24 +2036,40 @@ class Workflow:
         workflow_run_response.status = RunStatus.running
 
         if callable(self.steps):
-            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
-                raise ValueError("Cannot use async function with synchronous execution")
-            elif isgeneratorfunction(self.steps):
-                content = ""
-                for chunk in self.steps(self, execution_input, **kwargs):
-                    # Check for cancellation while consuming generator
+            try:
+                if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
+                    raise ValueError("Cannot use async function with synchronous execution")
+                elif isgeneratorfunction(self.steps):
+                    content = ""
+                    for chunk in self.steps(self, execution_input, **kwargs):
+                        # Check for cancellation while consuming generator
+                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                else:
+                    # Execute the workflow with the custom executor
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            else:
-                # Execute the workflow with the custom executor
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)  # type: ignore[arg-type]
+                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)  # type: ignore[arg-type]
 
-            workflow_run_response.status = RunStatus.completed
+                workflow_run_response.status = RunStatus.completed
+            except RunCancelledException as e:
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            finally:
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+                try:
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist workflow run: {store_err}")
+                cleanup_run(workflow_run_response.run_id)  # type: ignore
+                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
         else:
             try:
                 # Track outputs from each step for enhanced data flow
@@ -1860,9 +2085,16 @@ class Workflow:
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
+                # Track current step so the cancel handler can record a placeholder
+                # for the in-flight step (mirrors _execute_stream's behaviour).
+                current_step_name = ""
+                current_step = None
+
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
+                    current_step_name = step_name
+                    current_step = step
                     log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
                     # Create enhanced StepInput
@@ -1908,15 +2140,21 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         )
+                    except RunCancelledException:
+                        raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -1940,6 +2178,17 @@ class Workflow:
                         else:
                             # Default behavior: re-raise the exception
                             raise
+
+                    # Check if executor (agent/team) is paused for tool-level HITL
+                    if is_executor_pause(step_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response)
+                        if resolved:
+                            _inner, _executor_run = resolved
+                            apply_executor_pause(
+                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
 
                     # Check for cancellation after step execution
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -2048,7 +2297,40 @@ class Workflow:
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = str(e)
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+
+                # If cancel fired inside a step, append a placeholder so the
+                # in-flight step is visible in step_results (mirrors the streaming
+                # variant; non-streaming has no partial content to record).
+                if current_step is not None and not any(
+                    getattr(so, "step_name", None) == current_step_name for so in collected_step_outputs
+                ):
+                    collected_step_outputs.append(
+                        StepOutput(
+                            step_name=current_step_name,
+                            step_id=getattr(current_step, "step_id", None),
+                            step_type=StepType.STEP,
+                            executor_type=getattr(current_step, "executor_type", None),
+                            executor_name=getattr(current_step, "executor_name", None),
+                            content=None,
+                            success=False,
+                            error="Cancelled during execution",
+                        )
+                    )
+
+                # Preserve any completed step outputs before cancellation
+                if collected_step_outputs:
+                    workflow_run_response.step_results = collected_step_outputs
+                    # Stop the timer here so duration is captured before _aggregate_workflow_metrics
+                    # creates a fresh WorkflowMetrics; the finally below is a no-op once the new
+                    # metrics has timer=None (so this is not a double-call).
+                    if workflow_run_response.metrics:
+                        workflow_run_response.metrics.stop_timer()
+
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                        collected_step_outputs,
+                        workflow_run_response.metrics,  # type: ignore[arg-type]
+                    )
             except Exception as e:
                 import traceback
 
@@ -2060,15 +2342,18 @@ class Workflow:
                 raise e
 
             finally:
-                # Stop timer on error
                 if workflow_run_response.metrics:
                     workflow_run_response.metrics.stop_timer()
 
-                self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-                session.upsert_run(run=workflow_run_response)
-                self.save_session(session=session)
+                try:
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist workflow run: {store_err}")
                 # Always clean up the run tracking
                 cleanup_run(workflow_run_response.run_id)  # type: ignore
+                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2102,23 +2387,63 @@ class Workflow:
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if callable(self.steps):
-            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
-                raise ValueError("Cannot use async function with synchronous execution")
-            elif isgeneratorfunction(self.steps):
-                content = ""
-                for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
+            try:
+                if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
+                    raise ValueError("Cannot use async function with synchronous execution")
+                elif isgeneratorfunction(self.steps):
+                    content = ""
+                    for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
+                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        # Update the run_response with the content from the result
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                            yield chunk
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                else:
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    # Update the run_response with the content from the result
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                        yield chunk
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            else:
-                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
-            workflow_run_response.status = RunStatus.completed
+                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
+                workflow_run_response.status = RunStatus.completed
+            except RunCancelledException as e:
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+                try:
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                cleanup_run(workflow_run_response.run_id)  # type: ignore
+                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+
+                cancelled_event = WorkflowCancelledEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    reason=str(e),
+                    content=str(e),
+                )
+                yield self._handle_event(cancelled_event, workflow_run_response)
+
+                workflow_completed_event = WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    metadata=workflow_run_response.metadata,
+                    run_output=workflow_run_response,
+                )
+                yield self._handle_event(workflow_completed_event, workflow_run_response)
+
+                if self.telemetry:
+                    self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+                return
 
         else:
             try:
@@ -2141,6 +2466,7 @@ class Workflow:
                 current_step_name = ""
                 current_step = None
                 partial_step_content = ""
+                cancelled_step_output: Optional[StepOutput] = None
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -2152,6 +2478,7 @@ class Workflow:
                     current_step = step
                     # Reset partial data for this step
                     partial_step_content = ""
+                    cancelled_step_output = None
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -2211,7 +2538,10 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         ):
-                            raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            if isinstance(event, StepOutput):
+                                cancelled_step_output = event
+                            if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                             # Accumulate partial data from streaming events
                             partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
@@ -2219,6 +2549,26 @@ class Workflow:
                             # Handle events
                             if isinstance(event, StepOutput):
                                 step_output = event
+
+                                # Check if executor is paused for tool-level HITL
+                                if is_executor_pause(step_output):
+                                    resolved = resolve_executor_pause(step, workflow_run_response)
+                                    if resolved:
+                                        _inner, _executor_run = resolved
+                                        step_req = apply_executor_pause(
+                                            _inner,
+                                            i,
+                                            step_name,
+                                            _executor_run,
+                                            workflow_run_response,
+                                            collected_step_outputs,
+                                        )
+                                        yield create_executor_paused_event(
+                                            step_req, _inner, i, step_name, workflow_run_response
+                                        )
+                                        save_paused_session(self, session, workflow_run_response)
+                                        return
+
                                 collected_step_outputs.append(step_output)
 
                                 # Update the workflow-level previous_step_outputs dictionary
@@ -2275,21 +2625,29 @@ class Workflow:
                                 enriched_event = self._enrich_event_with_workflow_context(
                                     event, workflow_run_response, step_index=i, step=step
                                 )
-                                if self.stream_executor_events:
+                                if self.stream_executor_events or isinstance(
+                                    event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
+                                ):
                                     yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                    except RunCancelledException:
+                        raise
                     except Exception as step_error:
                         step_error_occurred = True
                         step_error_exception = step_error
 
                     # Handle step execution error based on on_error policy
                     if step_error_occurred and step_error_exception is not None:
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error_exception
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -2458,12 +2816,16 @@ class Workflow:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = str(e)
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
                 # Capture partial progress from the step that was cancelled mid-stream
-                if partial_step_content:
+                if cancelled_step_output is not None:
+                    cancelled_step_output.success = False
+                    cancelled_step_output.error = "Cancelled during execution"
+                    collected_step_outputs.append(cancelled_step_output)
+                elif partial_step_content:
                     logger.info(
-                        f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output."
+                        f"Step with name '{current_step_name}' was cancelled. Setting its partial progress as step output."
                     )
                     partial_step_output = StepOutput(
                         step_name=current_step_name,
@@ -2477,17 +2839,26 @@ class Workflow:
                     )
                     collected_step_outputs.append(partial_step_output)
 
+                # Stop the timer for the Run duration before aggregation preserves it
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
                 # Preserve all progress (completed steps + partial step) before cancellation
                 if collected_step_outputs:
                     workflow_run_response.step_results = collected_step_outputs
-                    # Stop the timer for the Run duration
-                    if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()
-
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
                         workflow_run_response.metrics,  # type: ignore[arg-type]
                     )
+
+                try:
+                    self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                    session.upsert_run(run=workflow_run_response)
+                    self.save_session(session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                cleanup_run(workflow_run_response.run_id)  # type: ignore
+                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
                 cancelled_event = WorkflowCancelledEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -2495,8 +2866,38 @@ class Workflow:
                     workflow_name=self.name,
                     session_id=session.session_id,
                     reason=str(e),
+                    content=str(e),
                 )
                 yield self._handle_event(cancelled_event, workflow_run_response)
+
+                # Emit terminal completed event so clients have a single stream-end sentinel
+                # (mirrors agent/team _build_cancel_terminal_events pattern).
+                workflow_completed_event = WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
+                    metadata=workflow_run_response.metadata,
+                    run_output=workflow_run_response,  # Include full run output for nested workflows
+                )
+                yield self._handle_event(workflow_completed_event, workflow_run_response)
+
+                # Mark run as cancelled in event buffer so /resume and GC see the terminal state
+                try:
+                    from agno.os.managers import event_buffer
+
+                    event_buffer.set_run_completed(
+                        workflow_run_response.run_id,  # type: ignore
+                        workflow_run_response.status or RunStatus.cancelled,
+                    )
+                except Exception as e:
+                    log_debug(f"Failed to mark run as completed in buffer: {e}")
+
+                if self.telemetry:
+                    self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+                return
             except Exception as e:
                 logger.exception("Workflow execution failed")
 
@@ -2552,6 +2953,7 @@ class Workflow:
 
         # Always clean up the run tracking
         cleanup_run(workflow_run_response.run_id)  # type: ignore
+        cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2656,28 +3058,43 @@ class Workflow:
             # Execute the workflow with the custom executor
             content = ""
 
-            if iscoroutinefunction(self.steps):  # type: ignore
-                workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-            elif isgeneratorfunction(self.steps):
-                for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            elif isasyncgenfunction(self.steps):  # type: ignore
-                async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-                async for chunk in async_gen:
+            try:
+                if iscoroutinefunction(self.steps):  # type: ignore
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            else:
-                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
-            workflow_run_response.status = RunStatus.completed
+                    workflow_run_response.content = await self._acall_custom_function(
+                        self.steps, execution_input, **kwargs
+                    )
+                elif isgeneratorfunction(self.steps):
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                elif isasyncgenfunction(self.steps):  # type: ignore
+                    async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                    async for chunk in async_gen:
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                else:
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
+                workflow_run_response.status = RunStatus.completed
+            except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
+                # Persistence happens below after the if/else; just mark cancelled and fall through
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                # Client disconnect: persist on a detached task, then re-raise.
+                # cancel_run() and Ctrl-C fall through to the inline persist below.
+                if isinstance(e, asyncio.CancelledError):
+                    self._persist_cancelled_run_in_background(workflow_run_response, workflow_session)
+                    raise
 
         else:
             try:
@@ -2694,9 +3111,16 @@ class Workflow:
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
+                # Track current step so the cancel handler can record a placeholder
+                # for the in-flight step (mirrors _aexecute_stream's behaviour).
+                current_step_name = ""
+                current_step = None
+
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
+                    current_step_name = step_name
+                    current_step = step
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
                     # Create enhanced StepInput
@@ -2742,15 +3166,21 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         )
+                    except RunCancelledException:
+                        raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -2779,6 +3209,17 @@ class Workflow:
                         else:
                             # Default behavior: re-raise the exception
                             raise
+
+                    # Check if executor (agent/team) is paused for tool-level HITL
+                    if is_executor_pause(step_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response)
+                        if resolved:
+                            _inner, _executor_run = resolved
+                            apply_executor_pause(
+                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                            )
+                            await asave_paused_session(self, workflow_session, workflow_run_response)
+                            return workflow_run_response
 
                     # Check for cancellation after step execution
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -2882,10 +3323,47 @@ class Workflow:
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
 
                 raise e
-            except RunCancelledException as e:
+            except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = str(e)
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+
+                # If cancel fired inside a step, append a placeholder so the
+                # in-flight step is visible in step_results (mirrors the streaming
+                # variant; non-streaming has no partial content to record).
+                if current_step is not None and not any(
+                    getattr(so, "step_name", None) == current_step_name for so in collected_step_outputs
+                ):
+                    collected_step_outputs.append(
+                        StepOutput(
+                            step_name=current_step_name,
+                            step_id=getattr(current_step, "step_id", None),
+                            step_type=StepType.STEP,
+                            executor_type=getattr(current_step, "executor_type", None),
+                            executor_name=getattr(current_step, "executor_name", None),
+                            content=None,
+                            success=False,
+                            error="Cancelled during execution",
+                        )
+                    )
+
+                # Preserve any completed step outputs before cancellation
+                if collected_step_outputs:
+                    workflow_run_response.step_results = collected_step_outputs
+                    # Stop the timer for the Run duration
+                    if workflow_run_response.metrics:
+                        workflow_run_response.metrics.stop_timer()
+
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                        collected_step_outputs,
+                        workflow_run_response.metrics,  # type: ignore[arg-type]
+                    )
+
+                # Client disconnect: persist on a detached task, then re-raise.
+                # cancel_run() and Ctrl-C fall through to the inline persist below.
+                if isinstance(e, asyncio.CancelledError):
+                    self._persist_cancelled_run_in_background(workflow_run_response, workflow_session)
+                    raise
             except Exception as e:
                 logger.exception("Workflow execution failed")
                 workflow_run_response.status = RunStatus.error
@@ -2904,6 +3382,7 @@ class Workflow:
             self.save_session(session=workflow_session)
         # Always clean up the run tracking
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2946,31 +3425,83 @@ class Workflow:
         yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
 
         if callable(self.steps):
-            if iscoroutinefunction(self.steps):  # type: ignore
-                workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-            elif isgeneratorfunction(self.steps):
-                content = ""
-                for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                        yield chunk
-                    else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            elif isasyncgenfunction(self.steps):  # type: ignore
-                content = ""
-                async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-                async for chunk in async_gen:
+            try:
+                if iscoroutinefunction(self.steps):  # type: ignore
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                        content += chunk.content
-                        yield chunk
+                    workflow_run_response.content = await self._acall_custom_function(
+                        self.steps, execution_input, **kwargs
+                    )
+                elif isgeneratorfunction(self.steps):
+                    content = ""
+                    for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                            yield chunk
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                elif isasyncgenfunction(self.steps):  # type: ignore
+                    content = ""
+                    async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                    async for chunk in async_gen:
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
+                            content += chunk.content
+                            yield chunk
+                        else:
+                            content += str(chunk)
+                    workflow_run_response.content = content
+                else:
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    workflow_run_response.content = self.steps(self, execution_input, **kwargs)
+                workflow_run_response.status = RunStatus.completed
+            except RunCancelledException as e:
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+                try:
+                    self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+                    workflow_session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
                     else:
-                        content += str(chunk)
-                workflow_run_response.content = content
-            else:
-                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
-            workflow_run_response.status = RunStatus.completed
+                        self.save_session(session=workflow_session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                await acleanup_run(workflow_run_response.run_id)  # type: ignore
+                await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
+
+                cancelled_event = WorkflowCancelledEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=workflow_session.session_id,
+                    reason=str(e),
+                    content=str(e),
+                )
+                yield self._handle_event(cancelled_event, workflow_run_response, websocket_handler=websocket_handler)
+
+                workflow_completed_event = WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    metadata=workflow_run_response.metadata,
+                    run_output=workflow_run_response,
+                )
+                yield self._handle_event(
+                    workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler
+                )
+
+                if self.telemetry:
+                    await self._alog_workflow_telemetry(
+                        session_id=workflow_session.session_id, run_id=workflow_run_response.run_id
+                    )
+                return
 
         else:
             try:
@@ -2993,6 +3524,7 @@ class Workflow:
                 current_step_name = ""
                 current_step = None
                 partial_step_content = ""
+                cancelled_step_output: Optional[StepOutput] = None
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     if workflow_run_response.run_id:
@@ -3004,6 +3536,7 @@ class Workflow:
                     current_step = step
                     # Reset partial data for this step
                     partial_step_content = ""
+                    cancelled_step_output = None
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -3045,6 +3578,7 @@ class Workflow:
                     step_error_occurred = False
                     step_output = None
                     step_error_exception = None
+                    draining_after_cancel = False
                     try:
                         async for event in step.aexecute_stream(  # type: ignore[union-attr]
                             step_input,
@@ -3065,14 +3599,48 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         ):
-                            if workflow_run_response.run_id:
-                                await araise_if_cancelled(workflow_run_response.run_id)
+                            is_bypass = isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES)
+                            if workflow_run_response.run_id and not draining_after_cancel and not is_bypass:
+                                try:
+                                    await araise_if_cancelled(workflow_run_response.run_id)
+                                except RunCancelledException:
+                                    # Drain the executor generator so its own RunCancelled/RunCompleted
+                                    # terminal events (which are in the bypass tuple) can still surface
+                                    # in the stream. Cancellation is re-raised after the loop exits.
+                                    draining_after_cancel = True
+                                    if isinstance(event, StepOutput):
+                                        cancelled_step_output = event
+                                    continue
+                            if draining_after_cancel and not is_bypass:
+                                if isinstance(event, StepOutput):
+                                    cancelled_step_output = event
+                                continue
 
                             # Accumulate partial data from streaming events
                             partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
 
                             if isinstance(event, StepOutput):
                                 step_output = event
+
+                                # Check if executor is paused for tool-level HITL
+                                if is_executor_pause(step_output):
+                                    resolved = resolve_executor_pause(step, workflow_run_response)
+                                    if resolved:
+                                        _inner, _executor_run = resolved
+                                        step_req = apply_executor_pause(
+                                            _inner,
+                                            i,
+                                            step_name,
+                                            _executor_run,
+                                            workflow_run_response,
+                                            collected_step_outputs,
+                                        )
+                                        yield create_executor_paused_event(
+                                            step_req, _inner, i, step_name, workflow_run_response
+                                        )
+                                        await asave_paused_session(self, workflow_session, workflow_run_response)
+                                        return
+
                                 collected_step_outputs.append(step_output)
 
                                 # Update the workflow-level previous_step_outputs dictionary
@@ -3130,23 +3698,34 @@ class Workflow:
                                 enriched_event = self._enrich_event_with_workflow_context(
                                     event, workflow_run_response, step_index=i, step=step
                                 )
-                                if self.stream_executor_events:
+                                if self.stream_executor_events or isinstance(
+                                    event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
+                                ):
                                     yield self._handle_event(
                                         enriched_event, workflow_run_response, websocket_handler=websocket_handler
                                     )  # type: ignore
+
+                        if draining_after_cancel:
+                            raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
+                    except RunCancelledException:
+                        raise
                     except Exception as step_error:
                         step_error_occurred = True
                         step_error_exception = step_error
 
                     # Handle step execution error based on on_error policy
                     if step_error_occurred and step_error_exception is not None:
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error_exception
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -3322,16 +3901,20 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
-            except RunCancelledException as e:
+            except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
                 workflow_run_response.status = RunStatus.cancelled
-                workflow_run_response.content = str(e)
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
 
                 # Capture partial progress from the step that was cancelled mid-stream
-                if partial_step_content:
+                if cancelled_step_output is not None:
+                    cancelled_step_output.success = False
+                    cancelled_step_output.error = "Cancelled during execution"
+                    collected_step_outputs.append(cancelled_step_output)
+                elif partial_step_content:
                     logger.info(
-                        f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output."
+                        f"Step with name '{current_step_name}' was cancelled. Setting its partial progress as step output."
                     )
                     partial_step_output = StepOutput(
                         step_name=current_step_name,
@@ -3345,17 +3928,36 @@ class Workflow:
                     )
                     collected_step_outputs.append(partial_step_output)
 
+                # Stop the timer for the Run duration before aggregation preserves it
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
                 # Preserve all progress (completed steps + partial step) before cancellation
                 if collected_step_outputs:
                     workflow_run_response.step_results = collected_step_outputs
-                    # Stop the timer for the Run duration
-                    if workflow_run_response.metrics:
-                        workflow_run_response.metrics.stop_timer()
-
                     workflow_run_response.metrics = self._aggregate_workflow_metrics(
                         collected_step_outputs,
                         workflow_run_response.metrics,  # type: ignore[arg-type]
                     )
+
+                # Client disconnect: persist on a detached task, then re-raise.
+                # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
+                # cancel_run() and Ctrl-C fall through to the inline persist below.
+                if isinstance(e, (asyncio.CancelledError, GeneratorExit)):
+                    self._persist_cancelled_run_in_background(workflow_run_response, workflow_session)
+                    raise
+
+                try:
+                    self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+                    workflow_session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
+                    else:
+                        self.save_session(session=workflow_session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
+                await acleanup_run(workflow_run_response.run_id)  # type: ignore
+                await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
                 cancelled_event = WorkflowCancelledEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -3363,12 +3965,46 @@ class Workflow:
                     workflow_name=self.name,
                     session_id=session_id,
                     reason=str(e),
+                    content=str(e),
                 )
                 yield self._handle_event(
                     cancelled_event,
                     workflow_run_response,
                     websocket_handler=websocket_handler,
                 )
+
+                # Emit terminal completed event so clients have a single stream-end sentinel
+                # (mirrors agent/team _build_cancel_terminal_events pattern).
+                workflow_completed_event = WorkflowCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    content=workflow_run_response.content,
+                    workflow_name=workflow_run_response.workflow_name,
+                    workflow_id=workflow_run_response.workflow_id,
+                    session_id=workflow_run_response.session_id,
+                    step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
+                    metadata=workflow_run_response.metadata,
+                    run_output=workflow_run_response,  # Include full run output for nested workflows
+                )
+                yield self._handle_event(
+                    workflow_completed_event,
+                    workflow_run_response,
+                    websocket_handler=websocket_handler,
+                )
+
+                # Mark run as cancelled in event buffer so /resume and GC see the terminal state
+                try:
+                    from agno.os.managers import event_buffer
+
+                    event_buffer.set_run_completed(
+                        workflow_run_response.run_id,  # type: ignore
+                        workflow_run_response.status or RunStatus.cancelled,
+                    )
+                except Exception as e:
+                    log_debug(f"Failed to mark run as completed in buffer: {e}")
+
+                if self.telemetry:
+                    await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
+                return
             except Exception as e:
                 logger.exception("Workflow execution failed")
 
@@ -3431,6 +4067,7 @@ class Workflow:
 
         # Always clean up the run tracking
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,
@@ -3480,6 +4117,9 @@ class Workflow:
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
         )
+
+        # Register the run for cancellation tracking before spawning the detached task
+        await aregister_run(run_context.run_id)
 
         self._prepare_steps()
 
@@ -3567,7 +4207,7 @@ class Workflow:
         # Return SAME object that will be updated by background execution
         return workflow_run_response
 
-    async def _arun_background_stream(
+    async def _arun_background_stream_ws(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
         additional_data: Optional[Dict[str, Any]] = None,
@@ -3586,7 +4226,7 @@ class Workflow:
         add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
-        """Execute workflow in background with streaming and WebSocket broadcasting"""
+        """Execute workflow in background with streaming and WebSocket broadcasting (opt-in)"""
 
         run_id = str(uuid4())
 
@@ -3617,6 +4257,9 @@ class Workflow:
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
         )
+
+        # Register the run for cancellation tracking before spawning the detached task
+        await aregister_run(run_context.run_id)
 
         self._prepare_steps()
 
@@ -3712,6 +4355,226 @@ class Workflow:
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
+
+    async def _arun_background_stream(
+        self,
+        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        audio: Optional[List[Audio]] = None,
+        images: Optional[List[Image]] = None,
+        videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
+        stream_events: bool = False,
+        dependencies: Optional[Dict[str, Any]] = None,
+        background_tasks: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[str]:
+        """Background streaming workflow run that survives client disconnections.
+
+        1. Persists RUNNING status in DB
+        2. Spawns a detached asyncio.Task that runs _aexecute_stream
+        3. Buffers events (via event_buffer) and publishes to SSE subscribers
+        4. Yields SSE-formatted strings via an asyncio.Queue
+
+        The detached task keeps running even if the client disconnects.
+        The caller (router) just yields the SSE strings to the client.
+        """
+        from agno.run.workflow import WorkflowRunOutput as WfRunOutput
+
+        run_id = run_id or str(uuid4())
+
+        if not self.db:
+            raise ValueError("Background execution requires a database to be configured on the workflow")
+
+        self.initialize_workflow()
+        session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
+
+        # Read existing session from database
+        workflow_session, session_state = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
+
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=session_id,
+            user_id=user_id,
+            session_state=session_state,
+            dependencies=dependencies,
+        )
+
+        # Register the run for cancellation tracking before spawning the detached task
+        await aregister_run(run_context.run_id)
+
+        self._prepare_steps()
+
+        # Create workflow run response with RUNNING status
+        workflow_run_response = WfRunOutput(
+            run_id=run_id,
+            input=input,
+            session_id=session_id,
+            user_id=user_id,
+            workflow_id=self.id,
+            workflow_name=self.name,
+            created_at=int(datetime.now().timestamp()),
+            status=RunStatus.running,
+        )
+
+        # Start the run metrics timer
+        workflow_run_response.metrics = WorkflowMetrics(steps={})
+        workflow_run_response.metrics.start_timer()
+
+        # Persist RUNNING status so the run is visible in the DB immediately
+        workflow_session.upsert_run(run=workflow_run_response)
+        if self._has_async_db():
+            await self.asave_session(session=workflow_session)
+        else:
+            self.save_session(session=workflow_session)
+
+        log_info(f"Background stream workflow run {run_id} persisted with RUNNING status")
+
+        # Prepare execution input
+        inputs = WorkflowExecutionInput(
+            input=input,
+            additional_data=additional_data,
+            audio=audio,  # type: ignore
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+            files=files,  # type: ignore
+        )
+
+        self.update_agents_and_teams_session_info()
+
+        # Create queue for forwarding SSE strings to the caller
+        sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+        # Spawn detached background task
+        async def _background_producer() -> None:
+            from agno.os.managers import event_buffer, sse_subscriber_manager
+            from agno.os.utils import format_sse_event_with_index
+
+            # _handle_event (called inside _aexecute_stream) already adds events to
+            # event_buffer.  We must NOT add them again here to avoid duplication.
+            # Instead, we read the current buffer count to derive the event_index
+            # that _handle_event just assigned.
+
+            try:
+                if self.agent is not None:
+                    result = self._aexecute_workflow_agent(
+                        user_input=input,  # type: ignore
+                        run_context=run_context,
+                        execution_input=inputs,
+                        stream=True,
+                        **kwargs,
+                    )
+                    async for event in result:  # type: ignore
+                        if isinstance(event, WfRunOutput):
+                            continue
+
+                        # Get the monotonic index that _handle_event already assigned
+                        event_index = event_buffer.get_last_index(run_id)
+
+                        # Format as SSE
+                        sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                        # Push to primary queue (original client)
+                        try:
+                            await sse_queue.put(sse_data)
+                        except Exception:
+                            log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
+
+                        # Publish to SSE subscribers (resumed clients)
+                        try:
+                            await sse_subscriber_manager.publish(
+                                run_id, event_index if event_index is not None else -1, sse_data
+                            )
+                        except Exception:
+                            log_warning(f"Failed to publish SSE data to subscribers for workflow run {run_id}")
+                else:
+                    async for event in self._aexecute_stream(
+                        session_id=session_id,
+                        user_id=user_id,
+                        execution_input=inputs,
+                        workflow_run_response=workflow_run_response,
+                        stream_events=stream_events,
+                        run_context=run_context,
+                        background_tasks=background_tasks,
+                        **kwargs,
+                    ):
+                        if isinstance(event, WfRunOutput):
+                            continue
+
+                        # Get the monotonic index that _handle_event already assigned
+                        event_index = event_buffer.get_last_index(run_id)
+
+                        # Format as SSE
+                        sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                        # Push to primary queue (original client)
+                        try:
+                            await sse_queue.put(sse_data)
+                        except Exception:
+                            log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
+
+                        # Publish to SSE subscribers (resumed clients)
+                        try:
+                            await sse_subscriber_manager.publish(
+                                run_id, event_index if event_index is not None else -1, sse_data
+                            )
+                        except Exception:
+                            log_warning(f"Failed to publish SSE data to subscribers for workflow run {run_id}")
+
+                log_debug(
+                    f"Background stream workflow run {run_id} completed with status: {workflow_run_response.status}"
+                )
+
+            except Exception:
+                log_error(f"Background stream workflow run {run_id} failed", exc_info=True)
+                # Persist ERROR status
+                try:
+                    workflow_run_response.status = RunStatus.error
+                    workflow_session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=workflow_session)
+                    else:
+                        self.save_session(session=workflow_session)
+                except Exception:
+                    log_error(
+                        f"Failed to persist error state for background stream workflow run {run_id}", exc_info=True
+                    )
+
+            finally:
+                # Signal primary queue FIRST — unblocks the original client
+                try:
+                    await sse_queue.put(None)
+                except Exception:
+                    log_warning(f"Failed to signal primary queue for workflow run {run_id} completion")
+
+                # Mark run completed in event buffer
+                try:
+                    event_buffer.set_run_completed(run_id, workflow_run_response.status or RunStatus.completed)
+                except Exception:
+                    log_warning(f"Failed to mark workflow run {run_id} as completed in event buffer")
+
+                # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+                try:
+                    await asyncio.shield(sse_subscriber_manager.complete(run_id))
+                except (Exception, asyncio.CancelledError):
+                    log_warning(f"Failed to signal SSE subscribers for workflow run {run_id} completion")
+
+        task = asyncio.create_task(_background_producer())
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
+
+        # Yield SSE strings from the queue
+        while True:
+            sse_data = await sse_queue.get()
+            if sse_data is None:
+                break
+            yield sse_data
 
     async def aget_run(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the status and details of a background workflow run - SIMPLIFIED"""
@@ -4551,24 +5414,38 @@ class Workflow:
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a running workflow execution.
 
+        Also stops any agent or team currently running as part of this workflow.
+
         Args:
             run_id (str): The run_id to cancel.
 
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        return cancel_run_global(run_id)
+        from agno.team._run import cancel_run as team_cancel_run
+
+        result = cancel_run_global(run_id)
+        for executor_run_id in get_member_run_ids(run_id):
+            team_cancel_run(executor_run_id)
+        return result
 
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a running workflow execution (async version).
 
+        Also stops any agent or team currently running as part of this workflow.
+
         Args:
             run_id (str): The run_id to cancel.
 
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        return await acancel_run_global(run_id)
+        from agno.team._run import acancel_run as team_acancel_run
+
+        result = await acancel_run_global(run_id)
+        for executor_run_id in await aget_member_run_ids(run_id):
+            await team_acancel_run(executor_run_id)
+        return result
 
     @overload
     def continue_run(
@@ -4668,9 +5545,20 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Check for timeout on all step requirements (must run before validation
-        # so timed-out requirements are auto-resolved before we check for unresolved ones)
-        for step_req in run_response.step_requirements or []:
+        # The active requirement is the last one in the list (earlier entries are
+        # resolved history from previous pause/continue cycles).
+        _all_reqs = run_response.step_requirements or []
+        _active_reqs = _all_reqs[-1:] if _all_reqs else []
+
+        # Check for executor HITL requirements (these bypass normal resolution checks)
+        executor_step_req = None
+        for step_req in _active_reqs:
+            if step_req.requires_executor_input:
+                executor_step_req = step_req
+                break
+
+        # Check for timeout on active requirements
+        for step_req in _active_reqs:
             timeout_action = check_timeout(step_req)
             if timeout_action is not None:
                 log_debug(f"Step '{step_req.step_name}' timed out - applying action: {timeout_action}")
@@ -4683,9 +5571,10 @@ class Workflow:
                     step_req.confirmed = False
                     step_req.on_reject = "cancel"
 
-        # Validate that all step requirements are resolved (after timeout auto-resolution)
-        if run_response.active_step_requirements:
-            unresolved = [req.step_name for req in run_response.active_step_requirements]
+        # Validate that active step requirements are resolved (skip for executor HITL)
+        active_unresolved = [req for req in _active_reqs if not req.is_resolved]
+        if not executor_step_req and active_unresolved:
+            unresolved = [req.step_name for req in active_unresolved]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
 
         # Validate that all error requirements are resolved
@@ -4693,24 +5582,16 @@ class Workflow:
             unresolved = [req.step_name for req in run_response.active_error_requirements]
             raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
 
-        # Detect post-execution review (step already ran)
-        is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
+        # Detect post-execution review (step already ran) — only on active requirement
+        is_post_execution_review = any(req.is_post_execution for req in _active_reqs)
         # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
-        is_loop_iteration_review = any(
-            req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
-        )
+        is_loop_iteration_review = any(req.is_post_execution and req.step_type == "Loop" for req in _active_reqs)
         # Detect router output review (reject = re-route to a different branch)
-        is_router_output_review = any(
-            req.is_post_execution and req.step_type == "Router" for req in (run_response.step_requirements or [])
-        )
+        is_router_output_review = any(req.is_post_execution and req.step_type == "Router" for req in _active_reqs)
         retry_step = False
 
-        # Check if any step was rejected
-        rejected_steps = [
-            req
-            for req in (run_response.step_requirements or [])
-            if req.requires_confirmation and req.confirmed is False
-        ]
+        # Check if active step was rejected
+        rejected_steps = [req for req in _active_reqs if req.requires_confirmation and req.confirmed is False]
 
         # Handle rejected steps based on on_reject policy
         skip_rejected_step = False
@@ -4744,6 +5625,7 @@ class Workflow:
                                 workflow_name=self.name,
                                 session_id=run_response.session_id,
                                 reason=str(run_response.content) if run_response.content else None,
+                                content=str(run_response.content) if run_response.content else None,
                             )
 
                         return max_retry_generator()
@@ -4797,6 +5679,7 @@ class Workflow:
                             workflow_name=self.name,
                             session_id=run_response.session_id,
                             reason=str(run_response.content) if run_response.content else None,
+                            content=str(run_response.content) if run_response.content else None,
                         )
 
                     return cancelled_generator()
@@ -4813,22 +5696,16 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Extract user input from step requirements to pass to the step
+        # Extract user input and router selection from active (last) requirement only.
+        # With accumulated requirements, old resolved ones must NOT be picked up.
         user_input_data: Optional[Dict[str, Any]] = None
-        if step_requirements or run_response.step_requirements:
-            step_reqs = step_requirements or run_response.step_requirements or []
-            for step_req in step_reqs:
-                if step_req.user_input:
-                    user_input_data = step_req.user_input
-                    break
-
-        # Extract router selection to pass to the router (from step_requirements with requires_route_selection)
         router_selection: Optional[List[str]] = None
-        if run_response.step_requirements:
-            for step_req in run_response.step_requirements:
-                if step_req.requires_route_selection and step_req.selected_choices:
-                    router_selection = step_req.selected_choices
-                    break
+        for _ar in _active_reqs:
+            if _ar.user_input:
+                user_input_data = _ar.user_input
+            if _ar.requires_route_selection and _ar.selected_choices:
+                router_selection = _ar.selected_choices
+            break
 
         # Handle error requirements (retry or skip)
         error_should_skip = False
@@ -4848,6 +5725,10 @@ class Workflow:
         # mutate the workflow definition and affect future runs
         kwargs["hitl_resolved_for_step"] = paused_step_index
 
+        # Pass executor requirement through for routing back to the paused agent/team
+        if executor_step_req:
+            kwargs["executor_step_requirement"] = executor_step_req
+
         # Resume execution
         session_id = run_response.session_id or self.session_id
         if session_id is None:
@@ -4865,7 +5746,6 @@ class Workflow:
 
         # Update run status to running
         run_response.status = RunStatus.running
-        run_response.step_requirements = None
         run_response.error_requirements = None
 
         # Create run context
@@ -5029,6 +5909,83 @@ class Workflow:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
 
+                # Handle executor HITL - route requirements back to paused agent/team
+                executor_step_req = kwargs.get("executor_step_requirement")
+                if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    # Store StepExecutorContinuedEvent before routing back
+                    self._handle_event(
+                        StepExecutorContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            executor_name=executor_step_req.executor_name,
+                            executor_type=executor_step_req.executor_type,
+                        ),
+                        workflow_run_response,
+                    )
+                    step_output = self._route_executor_requirements(
+                        step=step,
+                        step_req=executor_step_req,
+                        workflow_run_response=workflow_run_response,
+                    )
+
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                    if is_executor_pause(step_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response)
+                        if resolved:
+                            _inner, _executor_run = resolved
+                            # Executor still paused (chained HITL) - re-pause workflow
+                            apply_executor_pause(
+                                _inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
+                    # Executor completed - continue with result
+                    if workflow_run_response is not None and hasattr(step, "_store_executor_response"):
+                        self._store_continue_executor_response(workflow_run_response, step_output)
+
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+                    if step_output.stop:
+                        break
+
+                    # Post-execution output review after executor HITL completes
+                    if isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
+                    kwargs["executor_step_requirement"] = None
+                    continue
+
                 # Inject rejection feedback and previous output for retry
                 if i == start_step_index and rejection_feedback:
                     if step_input.additional_data is None:
@@ -5151,6 +6108,22 @@ class Workflow:
                             # Restore original selector even if execution fails
                             step.selector = original_selector
 
+                    # Check if executor (agent/team) inside router is paused for tool-level HITL
+                    if is_executor_pause(step_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response, force_find_inner=True)
+                        if resolved:
+                            _router_inner, _executor_run = resolved
+                            apply_executor_pause(
+                                _router_inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
@@ -5195,6 +6168,19 @@ class Workflow:
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
                 # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
+                    # Step-level HITL was just resolved — store StepContinuedEvent
+                    self._handle_event(
+                        StepContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                        ),
+                        workflow_run_response,
+                    )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
@@ -5231,6 +6217,8 @@ class Workflow:
                         background_tasks=background_tasks,
                         **extra_kwargs,
                     )
+                except RunCancelledException:
+                    raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
                     step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
@@ -5263,6 +6251,22 @@ class Workflow:
                     else:
                         # Default behavior: re-raise the exception
                         raise
+
+                # Check if executor (agent/team) is paused for tool-level HITL
+                if is_executor_pause(step_output):
+                    resolved = resolve_executor_pause(step, workflow_run_response)
+                    if resolved:
+                        _inner, _executor_run = resolved
+                        apply_executor_pause(
+                            _inner,
+                            i,
+                            step_name,
+                            _executor_run,
+                            workflow_run_response,
+                            collected_step_outputs,
+                        )
+                        save_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
 
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -5333,7 +6337,18 @@ class Workflow:
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
-            workflow_run_response.content = str(e)
+            workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            # Preserve any completed step outputs before cancellation
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
@@ -5347,11 +6362,276 @@ class Workflow:
             session.upsert_run(run=workflow_run_response)
             self.save_session(session=session)
             cleanup_run(workflow_run_response.run_id)  # type: ignore
+            cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
+
+    def _route_executor_requirements(
+        self,
+        step: Any,
+        step_req: Any,
+        workflow_run_response: WorkflowRunOutput,
+    ) -> "StepOutput":
+        """Route resolved requirements back to a paused executor (agent/team) within a step.
+
+        Finds the paused executor run from step_executor_runs (stored on the workflow run output)
+        and passes it as run_response to the executor's continue_run.
+        """
+        from agno.run.requirement import RunRequirement
+
+        # Resolve to the inner Step that owns the executor (handles composite steps like Condition, Loop, etc.)
+        inner_step = (
+            step
+            if isinstance(step, Step)
+            else _find_inner_step_by_executor(
+                step,
+                executor_id=step_req.executor_id,
+                executor_name=step_req.executor_name,
+            )
+        )
+        if inner_step is None:
+            inner_step = step
+
+        executor = getattr(inner_step, "agent", None) or getattr(inner_step, "team", None)
+        if executor is None:
+            raise ValueError(f"Step '{getattr(inner_step, 'name', 'unknown')}' has no agent or team executor")
+
+        # Find the paused executor run from step_executor_runs
+        paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
+
+        # Deserialize resolved requirements and apply to run_response
+        requirements: list = []
+        if step_req.executor_requirements:
+            for req_data in step_req.executor_requirements:
+                if isinstance(req_data, dict):
+                    requirements.append(RunRequirement.from_dict(req_data))
+                else:
+                    requirements.append(req_data)
+
+        # Apply resolved requirements to the paused run_response (update tool states)
+        _apply_requirements_to_run_response(paused_run_response, requirements)
+
+        # Call executor's continue_run with the stored run_response
+        continued_response = executor.continue_run(
+            run_response=paused_run_response,
+        )
+
+        # Store executor response for potential chained HITL
+        inner_step._store_executor_response(workflow_run_response, continued_response)
+
+        # Process into StepOutput
+        step_output = inner_step._process_step_output(continued_response)
+
+        if hasattr(continued_response, "is_paused") and continued_response.is_paused:
+            step_output.is_paused = True
+
+        return step_output
+
+    def _route_executor_requirements_stream(
+        self,
+        step: Any,
+        step_req: Any,
+        workflow_run_response: WorkflowRunOutput,
+        stream_executor_events: bool = True,
+        step_index: Optional[int] = None,
+    ) -> Iterator[Union["WorkflowRunOutputEvent", "StepOutput"]]:
+        """Streaming variant: Route resolved requirements back to a paused executor."""
+        from agno.run.agent import RunOutput
+        from agno.run.requirement import RunRequirement
+        from agno.run.team import TeamRunOutput
+
+        # Resolve to the inner Step that owns the executor
+        inner_step = (
+            step
+            if isinstance(step, Step)
+            else _find_inner_step_by_executor(
+                step,
+                executor_id=step_req.executor_id,
+                executor_name=step_req.executor_name,
+            )
+        )
+        if inner_step is None:
+            inner_step = step
+
+        executor = getattr(inner_step, "agent", None) or getattr(inner_step, "team", None)
+        if executor is None:
+            raise ValueError(f"Step '{getattr(inner_step, 'name', 'unknown')}' has no agent or team executor")
+
+        # Deserialize resolved requirements
+        requirements: list = []
+        if step_req.executor_requirements:
+            for req_data in step_req.executor_requirements:
+                if isinstance(req_data, dict):
+                    requirements.append(RunRequirement.from_dict(req_data))
+                else:
+                    requirements.append(req_data)
+
+        # Find the paused executor run and apply resolved requirements
+        paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
+        _apply_requirements_to_run_response(paused_run_response, requirements)
+
+        # Call executor's continue_run with the stored run_response (streaming)
+        response_stream = executor.continue_run(
+            run_response=paused_run_response,
+            stream=True,
+            yield_run_output=True,
+        )
+
+        # Iterate over stream events, yielding them for the user to see
+        active_executor_run_response = None
+        for event in response_stream:
+            if isinstance(event, (RunOutput, TeamRunOutput)):
+                active_executor_run_response = event
+                continue
+            if stream_executor_events:
+                enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
+                yield enriched_event
+
+        # Process the final response into a StepOutput
+        if active_executor_run_response is None:
+            step_output = StepOutput(content="")
+        else:
+            # Store executor response for potential chained HITL
+            inner_step._store_executor_response(workflow_run_response, active_executor_run_response)
+            step_output = inner_step._process_step_output(active_executor_run_response)
+            if hasattr(active_executor_run_response, "is_paused") and active_executor_run_response.is_paused:
+                step_output.is_paused = True
+
+        yield step_output
+
+    async def _aroute_executor_requirements_stream(
+        self,
+        step: Any,
+        step_req: Any,
+        workflow_run_response: WorkflowRunOutput,
+        stream_executor_events: bool = True,
+        step_index: Optional[int] = None,
+    ) -> AsyncIterator[Union["WorkflowRunOutputEvent", "StepOutput"]]:
+        """Async streaming variant: Route resolved requirements back to a paused executor."""
+        from agno.run.agent import RunOutput
+        from agno.run.requirement import RunRequirement
+        from agno.run.team import TeamRunOutput
+
+        # Resolve to the inner Step that owns the executor
+        inner_step = (
+            step
+            if isinstance(step, Step)
+            else _find_inner_step_by_executor(
+                step,
+                executor_id=step_req.executor_id,
+                executor_name=step_req.executor_name,
+            )
+        )
+        if inner_step is None:
+            inner_step = step
+
+        executor = getattr(inner_step, "agent", None) or getattr(inner_step, "team", None)
+        if executor is None:
+            raise ValueError(f"Step '{getattr(inner_step, 'name', 'unknown')}' has no agent or team executor")
+
+        # Deserialize resolved requirements
+        requirements: list = []
+        if step_req.executor_requirements:
+            for req_data in step_req.executor_requirements:
+                if isinstance(req_data, dict):
+                    requirements.append(RunRequirement.from_dict(req_data))
+                else:
+                    requirements.append(req_data)
+
+        # Find the paused executor run and apply resolved requirements
+        paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
+        _apply_requirements_to_run_response(paused_run_response, requirements)
+
+        # Call executor's acontinue_run with the stored run_response (streaming)
+        response_stream = executor.acontinue_run(
+            run_response=paused_run_response,
+            stream=True,
+            yield_run_output=True,
+        )
+
+        active_executor_run_response = None
+        async for event in response_stream:
+            if isinstance(event, (RunOutput, TeamRunOutput)):
+                active_executor_run_response = event
+                continue
+            if stream_executor_events:
+                enriched_event = inner_step._enrich_event_with_context(event, workflow_run_response, step_index)
+                yield enriched_event
+
+        if active_executor_run_response is None:
+            step_output = StepOutput(content="")
+        else:
+            # Store executor response for potential chained HITL
+            inner_step._store_executor_response(workflow_run_response, active_executor_run_response)
+            step_output = inner_step._process_step_output(active_executor_run_response)
+            if hasattr(active_executor_run_response, "is_paused") and active_executor_run_response.is_paused:
+                step_output.is_paused = True
+
+        yield step_output
+
+    async def _aroute_executor_requirements(
+        self,
+        step: Any,
+        step_req: Any,
+        workflow_run_response: WorkflowRunOutput,
+    ) -> "StepOutput":
+        """Async variant: Route resolved requirements back to a paused executor."""
+        from agno.run.requirement import RunRequirement
+
+        # Resolve to the inner Step that owns the executor
+        inner_step = (
+            step
+            if isinstance(step, Step)
+            else _find_inner_step_by_executor(
+                step,
+                executor_id=step_req.executor_id,
+                executor_name=step_req.executor_name,
+            )
+        )
+        if inner_step is None:
+            inner_step = step
+
+        executor = getattr(inner_step, "agent", None) or getattr(inner_step, "team", None)
+        if executor is None:
+            raise ValueError(f"Step '{getattr(inner_step, 'name', 'unknown')}' has no agent or team executor")
+
+        # Deserialize resolved requirements
+        requirements: list = []
+        if step_req.executor_requirements:
+            for req_data in step_req.executor_requirements:
+                if isinstance(req_data, dict):
+                    requirements.append(RunRequirement.from_dict(req_data))
+                else:
+                    requirements.append(req_data)
+
+        # Find the paused executor run and apply resolved requirements
+        paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
+        _apply_requirements_to_run_response(paused_run_response, requirements)
+
+        # Call executor's acontinue_run with the stored run_response
+        continued_response = await executor.acontinue_run(
+            run_response=paused_run_response,
+        )
+
+        # Store executor response for potential chained HITL
+        inner_step._store_executor_response(workflow_run_response, continued_response)
+
+        # Process into StepOutput
+        step_output = inner_step._process_step_output(continued_response)
+
+        if hasattr(continued_response, "is_paused") and continued_response.is_paused:
+            step_output.is_paused = True
+
+        return step_output
+
+    def _store_continue_executor_response(
+        self, workflow_run_response: WorkflowRunOutput, step_output: "StepOutput"
+    ) -> None:
+        """Store executor response from continue_run in workflow run response."""
+        pass  # step_executor_runs is already populated by the initial run
 
     def _continue_execute_stream(
         self,
@@ -5424,6 +6704,109 @@ class Workflow:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
 
+                # Handle executor HITL - route requirements back to paused agent/team (streaming)
+                executor_step_req = kwargs.get("executor_step_requirement")
+                if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    # Emit StepExecutorContinuedEvent before routing back
+                    yield self._handle_event(
+                        StepExecutorContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            executor_name=executor_step_req.executor_name,
+                            executor_type=executor_step_req.executor_type,
+                        ),
+                        workflow_run_response,
+                    )
+                    step_output = None
+                    for event in self._route_executor_requirements_stream(
+                        step=step,
+                        step_req=executor_step_req,
+                        workflow_run_response=workflow_run_response,
+                        stream_executor_events=self.stream_executor_events,
+                        step_index=i,
+                    ):
+                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if isinstance(event, StepOutput):
+                            step_output = event
+                        else:
+                            # Forward streaming events (token chunks) to the caller
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                    if step_output is None:
+                        step_output = StepOutput(content="")
+
+                    if is_executor_pause(step_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response)
+                        if resolved:
+                            _inner, _executor_run = resolved
+                            new_req = apply_executor_pause(
+                                _inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                            )
+                            yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+                    if step_output.stop:
+                        break
+
+                    # Post-execution output review after executor HITL completes (streaming)
+                    if isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                step_id=getattr(step, "step_id", None),
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
+                            )
+                            yield self._handle_event(review_event, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
+                    kwargs["executor_step_requirement"] = None
+                    continue
+
                 # Inject rejection feedback and previous output for retry
                 if i == start_step_index and rejection_feedback:
                     if step_input.additional_data is None:
@@ -5475,6 +6858,8 @@ class Workflow:
                         background_tasks=background_tasks,
                         force_else_branch=True,
                     ):
+                        if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         if isinstance(event, StepOutput):
                             condition_step_output = event
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
@@ -5486,7 +6871,7 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            if self.stream_executor_events:
+                            if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     if condition_step_output is None:
@@ -5576,6 +6961,8 @@ class Workflow:
                                 num_history_runs=self.num_history_runs,
                                 background_tasks=background_tasks,
                             ):
+                                if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                                 if isinstance(event, StepOutput):
                                     router_step_output = event
                                 elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
@@ -5587,7 +6974,9 @@ class Workflow:
                                     enriched_event = self._enrich_event_with_workflow_context(
                                         event, workflow_run_response, step_index=i, step=step
                                     )
-                                    if self.stream_executor_events:
+                                    if self.stream_executor_events or isinstance(
+                                        event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
+                                    ):
                                         yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                         finally:
                             # Restore original selector even if execution fails
@@ -5605,6 +6994,26 @@ class Workflow:
                     # Update tracking - router_step_output is guaranteed non-None at this point
                     # Both branches above ensure router_step_output is assigned a StepOutput
                     final_router_output: StepOutput = router_step_output  # type: ignore[assignment]
+
+                    # Check if executor (agent/team) inside router is paused for tool-level HITL
+                    if is_executor_pause(final_router_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response, force_find_inner=True)
+                        if resolved:
+                            _router_inner, _executor_run = resolved
+                            new_req = apply_executor_pause(
+                                _router_inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                            )
+                            yield create_executor_paused_event(
+                                new_req, _router_inner, i, step_name, workflow_run_response
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
                     previous_step_outputs[step_name] = final_router_output
                     collected_step_outputs.append(final_router_output)
 
@@ -5654,6 +7063,19 @@ class Workflow:
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
                 # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
+                    # Step-level HITL was just resolved — emit StepContinuedEvent
+                    yield self._handle_event(
+                        StepContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                        ),
+                        workflow_run_response,
+                    )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
@@ -5681,6 +7103,7 @@ class Workflow:
                 step_error_occurred = False
                 step_error_exception = None
                 step_output = None
+                draining_after_cancel = False
                 try:
                     for event in step.execute_stream(  # type: ignore[union-attr]
                         step_input,
@@ -5699,10 +7122,41 @@ class Workflow:
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
                     ):
-                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        is_bypass = isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES)
+                        if not draining_after_cancel and not is_bypass:
+                            try:
+                                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            except RunCancelledException:
+                                # Drain the executor generator so its own RunCancelled/RunCompleted
+                                # terminal events (which are in the bypass tuple) can still surface
+                                # in the stream. Cancellation is re-raised after the loop exits.
+                                draining_after_cancel = True
+                                continue
+                        if draining_after_cancel and not is_bypass:
+                            continue
 
                         if isinstance(event, StepOutput):
                             step_output = event
+
+                            # Check if executor is paused for tool-level HITL
+                            if is_executor_pause(step_output):
+                                resolved = resolve_executor_pause(step, workflow_run_response)
+                                if resolved:
+                                    _inner, _executor_run = resolved
+                                    step_req = apply_executor_pause(
+                                        _inner,
+                                        i,
+                                        step_name,
+                                        _executor_run,
+                                        workflow_run_response,
+                                        collected_step_outputs,
+                                    )
+                                    yield create_executor_paused_event(
+                                        step_req, _inner, i, step_name, workflow_run_response
+                                    )
+                                    save_paused_session(self, session, workflow_run_response)
+                                    return
+
                             collected_step_outputs.append(step_output)
                             previous_step_outputs[step_name] = step_output
 
@@ -5749,8 +7203,13 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            if self.stream_executor_events:
+                            if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    if draining_after_cancel:
+                        raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
+                except RunCancelledException:
+                    raise
                 except Exception as step_error:
                     step_error_occurred = True
                     step_error_exception = step_error
@@ -5880,7 +7339,18 @@ class Workflow:
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
-            workflow_run_response.content = str(e)
+            workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            # Preserve any completed step outputs before cancellation
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
 
             cancelled_event = WorkflowCancelledEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -5888,6 +7358,7 @@ class Workflow:
                 workflow_name=self.name,
                 session_id=session.session_id,
                 reason=str(e),
+                content=str(e),
             )
             yield self._handle_event(cancelled_event, workflow_run_response)
         except Exception as e:
@@ -5895,6 +7366,9 @@ class Workflow:
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
+        finally:
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
+            cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
@@ -5914,7 +7388,6 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
@@ -6014,9 +7487,20 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Check for timeout on all step requirements (must run before validation
-        # so timed-out requirements are auto-resolved before we check for unresolved ones)
-        for step_req in run_response.step_requirements or []:
+        # The active requirement is the last one in the list (earlier entries are
+        # resolved history from previous pause/continue cycles).
+        _all_reqs = run_response.step_requirements or []
+        _active_reqs = _all_reqs[-1:] if _all_reqs else []
+
+        # Check for executor HITL requirements (these bypass normal resolution checks)
+        executor_step_req = None
+        for step_req in _active_reqs:
+            if step_req.requires_executor_input:
+                executor_step_req = step_req
+                break
+
+        # Check for timeout on active requirements
+        for step_req in _active_reqs:
             timeout_action = check_timeout(step_req)
             if timeout_action is not None:
                 log_debug(f"Step '{step_req.step_name}' timed out - applying action: {timeout_action}")
@@ -6029,9 +7513,10 @@ class Workflow:
                     step_req.confirmed = False
                     step_req.on_reject = "cancel"
 
-        # Validate that all step requirements are resolved (after timeout auto-resolution)
-        if run_response.active_step_requirements:
-            unresolved = [req.step_name for req in run_response.active_step_requirements]
+        # Validate that active step requirements are resolved (skip for executor HITL)
+        active_unresolved = [req for req in _active_reqs if not req.is_resolved]
+        if not executor_step_req and active_unresolved:
+            unresolved = [req.step_name for req in active_unresolved]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
 
         # Validate that all error requirements are resolved
@@ -6039,24 +7524,16 @@ class Workflow:
             unresolved = [req.step_name for req in run_response.active_error_requirements]
             raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
 
-        # Detect post-execution review (step already ran)
-        is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
+        # Detect post-execution review (step already ran) — only on active requirement
+        is_post_execution_review = any(req.is_post_execution for req in _active_reqs)
         # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
-        is_loop_iteration_review = any(
-            req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
-        )
+        is_loop_iteration_review = any(req.is_post_execution and req.step_type == "Loop" for req in _active_reqs)
         # Detect router output review (reject = re-route to a different branch)
-        is_router_output_review = any(
-            req.is_post_execution and req.step_type == "Router" for req in (run_response.step_requirements or [])
-        )
+        is_router_output_review = any(req.is_post_execution and req.step_type == "Router" for req in _active_reqs)
         retry_step = False
 
-        # Check if any step was rejected
-        rejected_steps = [
-            req
-            for req in (run_response.step_requirements or [])
-            if req.requires_confirmation and req.confirmed is False
-        ]
+        # Check if active step was rejected
+        rejected_steps = [req for req in _active_reqs if req.requires_confirmation and req.confirmed is False]
 
         # Handle rejected steps based on on_reject policy
         skip_rejected_step = False
@@ -6089,6 +7566,7 @@ class Workflow:
                                 workflow_name=self.name,
                                 session_id=run_response.session_id,
                                 reason=str(run_response.content) if run_response.content else None,
+                                content=str(run_response.content) if run_response.content else None,
                             )
 
                         return max_retry_generator()
@@ -6140,6 +7618,7 @@ class Workflow:
                             workflow_name=self.name,
                             session_id=run_response.session_id,
                             reason=str(run_response.content) if run_response.content else None,
+                            content=str(run_response.content) if run_response.content else None,
                         )
 
                     return cancelled_generator()
@@ -6156,22 +7635,16 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Extract user input from step requirements to pass to the step
+        # Extract user input and router selection from active (last) requirement only.
+        # With accumulated requirements, old resolved ones must NOT be picked up.
         user_input_data: Optional[Dict[str, Any]] = None
-        if step_requirements or run_response.step_requirements:
-            step_reqs = step_requirements or run_response.step_requirements or []
-            for step_req in step_reqs:
-                if step_req.user_input:
-                    user_input_data = step_req.user_input
-                    break
-
-        # Extract router selection to pass to the router (from step_requirements with requires_route_selection)
         router_selection: Optional[List[str]] = None
-        if run_response.step_requirements:
-            for step_req in run_response.step_requirements:
-                if step_req.requires_route_selection and step_req.selected_choices:
-                    router_selection = step_req.selected_choices
-                    break
+        for _ar in _active_reqs:
+            if _ar.user_input:
+                user_input_data = _ar.user_input
+            if _ar.requires_route_selection and _ar.selected_choices:
+                router_selection = _ar.selected_choices
+            break
 
         # Handle error requirements (retry or skip)
         error_should_skip = False
@@ -6191,6 +7664,10 @@ class Workflow:
         # mutate the workflow definition and affect future runs
         kwargs["hitl_resolved_for_step"] = paused_step_index
 
+        # Pass executor requirement through for routing back to the paused agent/team
+        if executor_step_req:
+            kwargs["executor_step_requirement"] = executor_step_req
+
         # Resume execution
         session_id = run_response.session_id or self.session_id
         if session_id is None:
@@ -6208,7 +7685,6 @@ class Workflow:
 
         # Update run status to running
         run_response.status = RunStatus.running
-        run_response.step_requirements = None
         run_response.error_requirements = None
 
         # Create run context
@@ -6307,6 +7783,7 @@ class Workflow:
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Continue executing a workflow from a specific step index (async version)."""
+        _system_cancelled = False
         try:
             # Initialize execution state (restores step outputs and media from previous execution)
             state = ContinueExecutionState(workflow_run_response, execution_input)
@@ -6363,6 +7840,78 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Handle executor HITL - route requirements back to paused agent/team (async)
+                executor_step_req = kwargs.get("executor_step_requirement")
+                if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    # Store StepExecutorContinuedEvent before routing back (async)
+                    self._handle_event(
+                        StepExecutorContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            executor_name=executor_step_req.executor_name,
+                            executor_type=executor_step_req.executor_type,
+                        ),
+                        workflow_run_response,
+                    )
+                    step_output = await self._aroute_executor_requirements(
+                        step=step,
+                        step_req=executor_step_req,
+                        workflow_run_response=workflow_run_response,
+                    )
+
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                    if is_executor_pause(step_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response)
+                        if resolved:
+                            _inner, _executor_run = resolved
+                            apply_executor_pause(
+                                _inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                            )
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+                    if step_output.stop:
+                        break
+
+                    # Post-execution output review after executor HITL completes (async)
+                    if isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
+                    kwargs["executor_step_requirement"] = None
+                    continue
 
                 # Inject rejection feedback and previous output for retry
                 if i == start_step_index and rejection_feedback:
@@ -6486,6 +8035,22 @@ class Workflow:
                             # Restore original selector even if execution fails
                             step.selector = original_selector
 
+                    # Check if executor (agent/team) inside router is paused for tool-level HITL (async)
+                    if is_executor_pause(step_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response, force_find_inner=True)
+                        if resolved:
+                            _router_inner, _executor_run = resolved
+                            apply_executor_pause(
+                                _router_inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                            )
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
@@ -6522,6 +8087,19 @@ class Workflow:
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
                 # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
+                    # Step-level HITL was just resolved — store StepContinuedEvent
+                    self._handle_event(
+                        StepContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                        ),
+                        workflow_run_response,
+                    )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
@@ -6558,6 +8136,8 @@ class Workflow:
                         background_tasks=background_tasks,
                         **extra_kwargs,
                     )
+                except RunCancelledException:
+                    raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
                     step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
@@ -6585,6 +8165,22 @@ class Workflow:
                         )
                     else:
                         raise
+
+                # Check if executor (agent/team) is paused for tool-level HITL
+                if is_executor_pause(step_output):
+                    resolved = resolve_executor_pause(step, workflow_run_response)
+                    if resolved:
+                        _inner, _executor_run = resolved
+                        apply_executor_pause(
+                            _inner,
+                            i,
+                            step_name,
+                            _executor_run,
+                            workflow_run_response,
+                            collected_step_outputs,
+                        )
+                        await asave_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -6655,20 +8251,48 @@ class Workflow:
         except RunCancelledException as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
-            workflow_run_response.content = str(e)
+            workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            # Preserve any completed step outputs before cancellation
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
+        except (asyncio.CancelledError, KeyboardInterrupt) as e:
+            workflow_run_response.status = RunStatus.cancelled
+            if not workflow_run_response.content:
+                workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
+            # Client disconnect: let the finally persist on a detached task, then re-raise.
+            # Ctrl-C returns the partial, persisted inline by the finally.
+            if isinstance(e, asyncio.CancelledError):
+                _system_cancelled = True
+                raise
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
         finally:
-            if workflow_run_response.metrics:
-                workflow_run_response.metrics.stop_timer()
+            # On a disconnect an inline await here would be re-cancelled, so persist on a
+            # detached task; normal completion / explicit cancel persist inline.
+            if _system_cancelled:
+                self._persist_cancelled_run_in_background(workflow_run_response, session)
+            else:
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
 
-            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
-            session.upsert_run(run=workflow_run_response)
-            await self.asave_session(session=session)
-            cleanup_run(workflow_run_response.run_id)  # type: ignore
+                self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+                session.upsert_run(run=workflow_run_response)
+                await self.asave_session(session=session)
+                await acleanup_run(workflow_run_response.run_id)  # type: ignore
+                await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
@@ -6746,6 +8370,108 @@ class Workflow:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
 
+                # Handle executor HITL - route requirements back to paused agent/team (async streaming)
+                executor_step_req = kwargs.get("executor_step_requirement")
+                if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    # Emit StepExecutorContinuedEvent before routing back
+                    yield self._handle_event(
+                        StepExecutorContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            executor_name=executor_step_req.executor_name,
+                            executor_type=executor_step_req.executor_type,
+                        ),
+                        workflow_run_response,
+                    )
+                    step_output = None
+                    async for event in self._aroute_executor_requirements_stream(
+                        step=step,
+                        step_req=executor_step_req,
+                        workflow_run_response=workflow_run_response,
+                        stream_executor_events=self.stream_executor_events,
+                        step_index=i,
+                    ):
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        if isinstance(event, StepOutput):
+                            step_output = event
+                        else:
+                            enriched_event = self._enrich_event_with_workflow_context(
+                                event, workflow_run_response, step_index=i, step=step
+                            )
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
+                    if step_output is None:
+                        step_output = StepOutput(content="")
+
+                    if is_executor_pause(step_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response)
+                        if resolved:
+                            _inner, _executor_run = resolved
+                            new_req = apply_executor_pause(
+                                _inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                            )
+                            yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return
+
+                    previous_step_outputs[step_name] = step_output
+                    collected_step_outputs.append(step_output)
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
+                    if step_output.stop:
+                        break
+
+                    # Post-execution output review after executor HITL completes (async streaming)
+                    if isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                step_id=getattr(step, "step_id", None),
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
+                            )
+                            yield self._handle_event(review_event, workflow_run_response)
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return
+
+                    kwargs["executor_step_requirement"] = None
+                    continue
+
                 # Inject rejection feedback and previous output for retry
                 if i == start_step_index and rejection_feedback:
                     if step_input.additional_data is None:
@@ -6779,7 +8505,7 @@ class Workflow:
                     )
 
                     condition_step_output: Optional[StepOutput] = None
-                    async for event in step.aexecute_stream(
+                    async for event in step.aexecute_stream(  # type: ignore[assignment]
                         step_input,
                         session_id=session.session_id,
                         user_id=self.user_id,
@@ -6797,6 +8523,8 @@ class Workflow:
                         background_tasks=background_tasks,
                         force_else_branch=True,
                     ):
+                        if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         if isinstance(event, StepOutput):
                             condition_step_output = event
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
@@ -6808,7 +8536,7 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            if self.stream_executor_events:
+                            if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     if condition_step_output is None:
@@ -6882,7 +8610,7 @@ class Workflow:
 
                         try:
                             router_step_output = None
-                            async for event in step.aexecute_stream(
+                            async for event in step.aexecute_stream(  # type: ignore[assignment]
                                 step_input,
                                 session_id=session.session_id,
                                 user_id=self.user_id,
@@ -6899,6 +8627,8 @@ class Workflow:
                                 num_history_runs=self.num_history_runs,
                                 background_tasks=background_tasks,
                             ):
+                                if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                                 if isinstance(event, StepOutput):
                                     router_step_output = event
                                 elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
@@ -6910,7 +8640,9 @@ class Workflow:
                                     enriched_event = self._enrich_event_with_workflow_context(
                                         event, workflow_run_response, step_index=i, step=step
                                     )
-                                    if self.stream_executor_events:
+                                    if self.stream_executor_events or isinstance(
+                                        event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
+                                    ):
                                         yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                         finally:
                             # Restore original selector even if execution fails
@@ -6928,6 +8660,26 @@ class Workflow:
                     # Update tracking - router_step_output is guaranteed non-None at this point
                     # Both branches above ensure router_step_output is assigned a StepOutput
                     final_router_output: StepOutput = router_step_output  # type: ignore[assignment]
+
+                    # Check if executor (agent/team) inside router is paused for tool-level HITL
+                    if is_executor_pause(final_router_output):
+                        resolved = resolve_executor_pause(step, workflow_run_response, force_find_inner=True)
+                        if resolved:
+                            _router_inner, _executor_run = resolved
+                            new_req = apply_executor_pause(
+                                _router_inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                            )
+                            yield create_executor_paused_event(
+                                new_req, _router_inner, i, step_name, workflow_run_response
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
                     previous_step_outputs[step_name] = final_router_output
                     collected_step_outputs.append(final_router_output)
 
@@ -6977,6 +8729,19 @@ class Workflow:
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
                 # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
+                    # Step-level HITL was just resolved — emit StepContinuedEvent
+                    yield self._handle_event(
+                        StepContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                        ),
+                        workflow_run_response,
+                    )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
@@ -7004,6 +8769,7 @@ class Workflow:
                 step_error_occurred = False
                 step_error_exception = None
                 step_output = None
+                draining_after_cancel = False
                 try:
                     async for event in step.aexecute_stream(  # type: ignore[union-attr]
                         step_input,
@@ -7022,10 +8788,41 @@ class Workflow:
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
                     ):
-                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        is_bypass = isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES)
+                        if not draining_after_cancel and not is_bypass:
+                            try:
+                                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            except RunCancelledException:
+                                # Drain the executor generator so its own RunCancelled/RunCompleted
+                                # terminal events (which are in the bypass tuple) can still surface
+                                # in the stream. Cancellation is re-raised after the loop exits.
+                                draining_after_cancel = True
+                                continue
+                        if draining_after_cancel and not is_bypass:
+                            continue
 
                         if isinstance(event, StepOutput):
                             step_output = event
+
+                            # Check if executor is paused for tool-level HITL
+                            if is_executor_pause(step_output):
+                                resolved = resolve_executor_pause(step, workflow_run_response)
+                                if resolved:
+                                    _inner, _executor_run = resolved
+                                    step_req = apply_executor_pause(
+                                        _inner,
+                                        i,
+                                        step_name,
+                                        _executor_run,
+                                        workflow_run_response,
+                                        collected_step_outputs,
+                                    )
+                                    yield create_executor_paused_event(
+                                        step_req, _inner, i, step_name, workflow_run_response
+                                    )
+                                    await asave_paused_session(self, session, workflow_run_response)
+                                    return
+
                             collected_step_outputs.append(step_output)
                             previous_step_outputs[step_name] = step_output
 
@@ -7072,8 +8869,13 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            if self.stream_executor_events:
+                            if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    if draining_after_cancel:
+                        raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
+                except RunCancelledException:
+                    raise
                 except Exception as step_error:
                     step_error_occurred = True
                     step_error_exception = step_error
@@ -7200,10 +9002,28 @@ class Workflow:
             )
             finalize_workflow_completion(workflow_run_response, state)
 
-        except RunCancelledException as e:
+        except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
-            workflow_run_response.content = str(e)
+            workflow_run_response.content = _normalize_workflow_cancellation_reason(workflow_run_response, e)
+            # Preserve any completed step outputs before cancellation
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
+
+            # Client disconnect: persist on a detached task, then re-raise.
+            # GeneratorExit is raised when the SSE StreamingResponse closes the generator on disconnect.
+            # cancel_run() and Ctrl-C fall through to the inline persist below.
+            if isinstance(e, (asyncio.CancelledError, GeneratorExit)):
+                self._persist_cancelled_run_in_background(workflow_run_response, session)
+                raise
 
             cancelled_event = WorkflowCancelledEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -7211,6 +9031,7 @@ class Workflow:
                 workflow_name=self.name,
                 session_id=session.session_id,
                 reason=str(e),
+                content=str(e),
             )
             yield self._handle_event(cancelled_event, workflow_run_response)
         except Exception as e:
@@ -7237,7 +9058,8 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         await self.asave_session(session=session)
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
@@ -7467,6 +9289,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -7491,6 +9314,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -7514,6 +9338,7 @@ class Workflow:
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
         websocket: Optional[WebSocket] = None,
+        enable_websocket: bool = False,
         background_tasks: Optional[Any] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -7521,7 +9346,12 @@ class Workflow:
         add_session_state_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
-        """Execute the workflow synchronously with optional streaming"""
+        """Execute the workflow with optional streaming.
+
+        Args:
+            enable_websocket: When True and background+stream are also True, uses WebSocket
+                transport instead of the default SSE transport. Requires ``websocket`` param.
+        """
 
         if input is None and self.input_schema is not None:
             raise ValueError("Input is required when input_schema is provided")
@@ -7534,11 +9364,17 @@ class Workflow:
 
             websocket_handler = WebSocketHandler(websocket=websocket)
 
+        # Backward compat: if websocket is passed, treat as enable_websocket=True
+        if websocket and not enable_websocket:
+            enable_websocket = True
+
         if background:
-            if stream and websocket:
+            if stream and enable_websocket:
+                if not websocket:
+                    raise ValueError("enable_websocket=True requires a websocket parameter")
                 stream_events = stream_events or False
-                # Background + Streaming + WebSocket = Real-time events
-                return self._arun_background_stream(  # type: ignore
+                # Background + Streaming + WebSocket = Real-time events (opt-in)
+                return self._arun_background_stream_ws(  # type: ignore
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -7556,9 +9392,25 @@ class Workflow:
                     add_session_state_to_context=add_session_state_to_context,
                     **kwargs,
                 )
-            elif stream and not websocket:
-                # Background + Streaming but no WebSocket = Not supported
-                raise ValueError("Background streaming execution requires a WebSocket for real-time events")
+            elif stream:
+                stream_events = stream_events or False
+                # Background + Streaming via SSE (default)
+                return self._arun_background_stream(  # type: ignore[return-value]
+                    input=input,
+                    additional_data=additional_data,
+                    user_id=user_id,
+                    run_id=run_id,
+                    session_id=session_id,
+                    session_state=session_state,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    stream_events=stream_events,
+                    dependencies=dependencies,
+                    background_tasks=background_tasks,
+                    **kwargs,
+                )
             else:
                 # Background + Non-streaming = Polling (existing)
                 return self._arun_background(  # type: ignore
@@ -7918,6 +9770,20 @@ class Workflow:
                 }
                 return step_dict
 
+            # Handle Workflow passed directly as a step (auto-wrap shorthand)
+            if isinstance(step, Workflow):
+                nested_steps_list = []
+                if step.steps is not None and not callable(step.steps):
+                    nested_iter = step.steps.steps if isinstance(step.steps, Steps) else step.steps
+                    nested_steps_list = [serialize_step(s) for s in nested_iter]
+                return {
+                    "name": step.name or "unnamed_workflow",
+                    "description": step.description or "Nested workflow step",
+                    "type": StepType.WORKFLOW.value,
+                    "workflow_id": step.id,
+                    "steps": nested_steps_list,
+                }
+
             step_dict = {
                 "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                 "description": step.description if hasattr(step, "description") else "User-defined callable step",
@@ -7934,6 +9800,19 @@ class Workflow:
             if hasattr(step, "team"):
                 step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
 
+            # Handle Step wrapping a nested Workflow (Step(workflow=...))
+            nested_workflow = getattr(step, "workflow", None)
+            if isinstance(nested_workflow, Workflow):
+                step_dict["type"] = StepType.WORKFLOW.value
+                step_dict["workflow_id"] = nested_workflow.id
+                if nested_workflow.steps is not None and not callable(nested_workflow.steps):
+                    nested_iter = (
+                        nested_workflow.steps.steps
+                        if isinstance(nested_workflow.steps, Steps)
+                        else nested_workflow.steps
+                    )
+                    step_dict["steps"] = [serialize_step(s) for s in nested_iter]
+
             # Handle nested steps for Router/Loop
             if isinstance(step, Router):
                 step_dict["steps"] = (
@@ -7941,7 +9820,10 @@ class Workflow:
                 )
 
             elif isinstance(step, (Loop, Condition, Steps, Parallel)):
-                step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
+                # Condition may also have else_steps
+                step_dict["steps"] = [serialize_step(s) for s in step.steps] if hasattr(step, "steps") else None
+                if isinstance(step, Condition) and getattr(step, "else_steps", None):
+                    step_dict["else_steps"] = [serialize_step(s) for s in step.else_steps]  # type: ignore
 
             return step_dict
 
@@ -8422,7 +10304,9 @@ class Workflow:
             if step.team:
                 step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
             if step.workflow:
-                step_kwargs["workflow"] = step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
+                step_kwargs["workflow"] = (
+                    step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
+                )
             # Copy Step configuration attributes
             for attr in [
                 "max_retries",
@@ -8431,6 +10315,16 @@ class Workflow:
                 "strict_input_validation",
                 "add_workflow_history",
                 "num_history_runs",
+                "requires_confirmation",
+                "confirmation_message",
+                "on_reject",
+                "requires_user_input",
+                "user_input_message",
+                "user_input_schema",
+                "on_error",
+                "requires_output_review",
+                "output_review_message",
+                "human_review",
             ]:
                 if hasattr(step, attr):
                     value = getattr(step, attr)
@@ -8459,13 +10353,19 @@ class Workflow:
         # Handle Loop steps
         if isinstance(step, Loop):
             copied_loop_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
-            return Loop(
+            loop_kwargs: Dict[str, Any] = dict(
                 steps=copied_loop_steps,
                 name=step.name,
                 description=step.description,
                 max_iterations=step.max_iterations,
                 end_condition=step.end_condition,
+                requires_confirmation=step.requires_confirmation,
+                confirmation_message=step.confirmation_message,
+                on_reject=step.on_reject,
             )
+            if getattr(step, "human_review", None) is not None:
+                loop_kwargs["human_review"] = step.human_review
+            return Loop(**loop_kwargs)
 
         # Handle Condition steps
         if isinstance(step, Condition):
@@ -8477,17 +10377,41 @@ class Workflow:
                 name=step.name,
                 description=step.description,
                 else_steps=copied_else_steps,
+                requires_confirmation=step.requires_confirmation,
+                confirmation_message=step.confirmation_message,
+                on_reject=step.on_reject,
             )
 
         # Handle Router steps
         if isinstance(step, Router):
             copied_choices = [self._deep_copy_single_step(s) for s in step.choices] if step.choices else []
-            return Router(choices=copied_choices, name=step.name, description=step.description, selector=step.selector)
+            return Router(
+                choices=copied_choices,
+                name=step.name,
+                description=step.description,
+                selector=step.selector,
+                requires_confirmation=step.requires_confirmation,
+                confirmation_message=step.confirmation_message,
+                on_reject=step.on_reject,
+                requires_user_input=step.requires_user_input,
+                user_input_message=step.user_input_message,
+                allow_multiple_selections=step.allow_multiple_selections,
+                requires_output_review=step.requires_output_review,
+                output_review_message=step.output_review_message,
+                hitl_max_retries=step.hitl_max_retries,
+            )
 
         # Handle Steps container
         if isinstance(step, Steps):
             copied_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
-            return Steps(name=step.name, description=step.description, steps=copied_steps)
+            return Steps(
+                name=step.name,
+                description=step.description,
+                steps=copied_steps,
+                requires_confirmation=step.requires_confirmation,
+                confirmation_message=step.confirmation_message,
+                on_reject=step.on_reject,
+            )
 
         # For other types, attempt deep copy
         try:

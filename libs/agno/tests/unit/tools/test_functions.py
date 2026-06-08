@@ -206,9 +206,7 @@ def test_function_process_entrypoint_with_user_input_excludes_run_context():
         """
         return f"{param1}-{param2}"
 
-    func = Function(
-        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"]
-    )
+    func = Function(name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"])
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
@@ -232,9 +230,7 @@ def test_function_process_entrypoint_with_user_input_excludes_all_framework_para
         """
         return param1
 
-    func = Function(
-        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=[]
-    )
+    func = Function(name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=[])
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
@@ -255,9 +251,7 @@ def test_function_process_entrypoint_with_user_input_excludes_by_type():
         """
         return param1
 
-    func = Function(
-        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"]
-    )
+    func = Function(name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"])
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
@@ -644,6 +638,65 @@ async def test_function_call_async_with_tool_hooks():
     assert hook_calls[0][1] == "test_func"
     assert hook_calls[1][0] == "after"
     assert hook_calls[1][2] == "processed-value1"
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_with_empty_tool_hooks():
+    """Async coroutine entrypoint with tool_hooks=[] executes correctly.
+
+    Sanity check for the no-hooks branch of _build_nested_execution_chain_async.
+    Note: a regular async coroutine returned through the (pre-fix) sync
+    fallback was still awaited at the outer call site in aexecute, so this
+    case did not break on main — it is kept as a symmetry check alongside the
+    async-generator regression test below.
+    """
+
+    async def async_func(param1: str) -> str:
+        return f"async-{param1}"
+
+    func = Function(name="async_func", entrypoint=async_func, tool_hooks=[])
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+
+    result = await call.aexecute()
+    assert result.status == "success"
+    assert result.result == "async-value1"
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_generator_with_empty_tool_hooks():
+    """Async generator entrypoint with tool_hooks=[] must not crash.
+
+    Regression test for the actual failure surfaced by the fix for #7716:
+    on main, `_build_nested_execution_chain_async` returned the sync
+    `execute_entrypoint` when `tool_hooks=[]`. For an async generator, that
+    returned the generator object, which the outer ``await execution_chain(...)``
+    in ``aexecute`` then tried to await — raising::
+
+        TypeError: object async_generator can't be used in 'await' expression
+
+    With the fix (returning `execute_entrypoint_async`), the async generator
+    is preserved without being awaited, and the caller can iterate it.
+    """
+
+    async def async_gen(param1: str):
+        yield f"chunk-1-{param1}"
+        yield f"chunk-2-{param1}"
+
+    func = Function(name="async_gen", entrypoint=async_gen, tool_hooks=[])
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+
+    result = await call.aexecute()
+    assert result.status == "success", f"unexpected failure: {result.error}"
+    assert result.error is None
+
+    # The result must be a live async generator the caller can iterate.
+    chunks = [chunk async for chunk in result.result]
+    assert chunks == ["chunk-1-value1", "chunk-2-value1"]
 
 
 def test_tool_decorator_basic():
