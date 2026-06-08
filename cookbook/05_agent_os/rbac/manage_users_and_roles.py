@@ -3,9 +3,11 @@ Run an AgentOS that serves the user + role management API (for a frontend)
 
 (New to this? Read managed_roles.py first, then managed_users.py.)
 
-This is the no-login-service "admin backend": it starts a real AgentOS server and
-leaves it running, exposing the /authz management API so a frontend (or your own
-admin UI) can create roles, add users, assign roles, and disable people - live.
+This is the "admin backend": it starts a real AgentOS server and leaves it
+running, exposing the /authz management API so a frontend (or your own admin UI)
+can create roles, add users, assign roles, and disable people - live. It works
+both with a control plane / login service (operators authorized by their token
+scopes) and on its own (end users managed in the OS-local store) - both at once.
 
 What it serves (all admin-only):
     GET    /authz/roles                 list roles
@@ -27,23 +29,29 @@ Run it:
 Then point your frontend at http://localhost:7777 (CORS is open to the usual dev
 ports). The server keeps running until you Ctrl-C.
 
-Two authz planes run in parallel here (CompositeAuthorizationProvider below):
-  - operators: a token that already carries scopes (e.g. an agno-cloud / frontend
-    token) is authorized straight from those scopes.
-  - end users: everyone else is authorized against the OS-local role store you
-    manage at runtime.
+Two authz planes run in parallel here, by default - we pass a LIST of providers
+(``authorization_provider=[ScopeAuthorizationProvider(), roles.provider]``) and a
+request is allowed if either grants:
+  - control plane / operators: a token that already carries scopes (e.g. an
+    agno-cloud / frontend token) is authorized straight from those scopes.
+  - managed store / end users: everyone else is authorized against the OS-local
+    role store you manage at runtime.
 So a scope-bearing frontend token can connect and operate, while the store still
 governs your managed users.
 
-Auth, two modes:
-  - Dev (default): HS256 with a shared secret. On startup it prints a ready-made
+Verifying tokens - pick whichever fits; auto-selected by env, no code change:
+  - Dev (default): a built-in HS256 secret. On startup it prints a ready-made
     admin bearer token you can paste into the frontend / curl to try the API.
-  - Real login service / agno cloud: set JWT_VERIFICATION_KEY to the OS public key
-    (RS256 is detected automatically) and OS_ID to the token audience.
+  - Control plane / IdP: set ONE of
+        JWT_JWKS_URL          a JWKS the control plane / IdP publishes (RS256)
+        JWT_VERIFICATION_KEY  your OS public key (RS256) or an HS256 secret
+    plus OS_ID (the token audience / your os_id) and, optionally,
+        JWT_ISSUER           pin the issuer, e.g. "agent-os-api"
 
 To MANAGE roles/users over /authz you must be an admin. That comes from either an
-``agent_os:admin`` scope on your token, OR being seeded in the store - so set
+``agent_os:admin`` scope on the token, OR being seeded in the store - so set
 ADMIN_SUBJECT to the `sub` of your token (decode it: the `sub` claim). e.g.
+    OS_ID="<your-os-id>" JWT_VERIFICATION_KEY="<os public key>" \\
     ADMIN_SUBJECT="you@company.com" python manage_users_and_roles.py
 """
 
