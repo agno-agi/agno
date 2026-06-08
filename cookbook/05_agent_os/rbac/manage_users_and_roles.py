@@ -36,9 +36,7 @@ Auth, two modes:
 """
 
 import os
-from datetime import UTC, datetime, timedelta
 
-import jwt
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -48,6 +46,7 @@ from agno.os.authz.role_router import get_roles_router
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig
+from agno.os.middleware import JWTIssuer  # mint tokens your AgentOS accepts
 
 # --- config (env-overridable so the same file works for a real frontend) ------
 OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience
@@ -122,11 +121,11 @@ if __name__ == "__main__":
     print(f"  CORS open to: {', '.join(CORS_ORIGINS)}")
 
     # In dev (HS256) mint a ready-to-use admin token so you can try it immediately.
+    # JWTIssuer is the mint-side helper: same claim names AgentOS verifies, and it
+    # stamps exp/iat/jti for you. (RS256 mode can't mint here - that key is public.)
     if ALGORITHM == "HS256":
-        admin_token = jwt.encode(
-            {"sub": ADMIN_SUBJECT, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(days=7)},
-            VERIFICATION_KEY, algorithm="HS256",
-        )
+        issuer = JWTIssuer(VERIFICATION_KEY, audience=OS_ID)
+        admin_token = issuer.create_token(ADMIN_SUBJECT, expires_in=7 * 24 * 3600)
         print("\n  admin bearer token (paste into your frontend / curl):")
         print(f"    {admin_token}")
         print("\n  e.g.:  curl -H 'Authorization: Bearer <token>' http://localhost:7777/authz/users")

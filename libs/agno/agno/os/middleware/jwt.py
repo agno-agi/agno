@@ -426,6 +426,123 @@ class JWTValidator:
         }
 
 
+class JWTIssuer:
+    """Mint JWTs that an AgentOS / :class:`JWTValidator` will accept.
+
+    The counterpart to :class:`JWTValidator`. Configure it once with your signing
+    key and the audience/issuer, then call :meth:`create_token` per user. It uses
+    the same claim names the validator expects, always stamps ``iat`` + ``exp``
+    (AgentOS requires an expiry by default) and a unique ``jti`` (so the access
+    audit can reference the token), and signs with HS256 or an asymmetric algorithm.
+
+    This is the "your app mints the token" half of the no-IdP / app-asserts-identity
+    setup — your application authenticates the user however it likes, then mints a
+    token here; AgentOS verifies it. (For dev/tests it's also just the easy way to
+    get a valid token.)
+
+    Example::
+
+        issuer = JWTIssuer(secret, audience="my-os")          # HS256 from a secret
+        token = issuer.create_token("bob", scopes=["agents:*:read"])
+
+        issuer = JWTIssuer(private_pem, algorithm="RS256",     # RS256 from a key
+                           audience="my-os", issuer="https://my-app")
+        token = issuer.create_token("alice", roles=["admin"], expires_in=3600)
+    """
+
+    def __init__(
+        self,
+        signing_key: str,
+        algorithm: Optional[str] = None,
+        *,
+        audience: Optional[str] = None,
+        issuer: Optional[str] = None,
+        scopes_claim: str = "scopes",
+        user_id_claim: str = "sub",
+        default_expiry_seconds: int = 3600,
+    ):
+        """
+        Args:
+            signing_key: HS256 shared secret, or an RS256/ES256 PRIVATE key (PEM).
+            algorithm: signing algorithm. If omitted, inferred: ``RS256`` when the
+                key looks like a PEM, otherwise ``HS256``.
+            audience: value for the ``aud`` claim (should match the AgentOS id /
+                the validator's expected audience). Per-token override available.
+            issuer: value for the ``iss`` claim (match the validator's ``issuer``
+                if it pins one).
+            scopes_claim: claim name for scopes (default ``scopes``, matches the
+                validator).
+            user_id_claim: claim name for the subject (default ``sub``).
+            default_expiry_seconds: token lifetime when ``expires_in`` isn't given.
+        """
+        self.signing_key = signing_key
+        self.algorithm = algorithm or ("RS256" if "BEGIN" in signing_key else "HS256")
+        self.audience = audience
+        self.issuer = issuer
+        self.scopes_claim = scopes_claim
+        self.user_id_claim = user_id_claim
+        self.default_expiry_seconds = default_expiry_seconds
+
+    def create_token(
+        self,
+        subject: str,
+        *,
+        scopes: Optional[List[str]] = None,
+        roles: Optional[Union[str, List[str]]] = None,
+        roles_claim: str = "roles",
+        audience: Optional[str] = None,
+        expires_in: Optional[int] = None,
+        not_before: Optional[int] = None,
+        jti: bool = True,
+        extra_claims: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Mint a signed JWT for ``subject``.
+
+        Args:
+            subject: the user id (becomes the ``sub`` claim / principal).
+            scopes: scope strings for the ``scopes`` claim (default-provider RBAC).
+            roles: role name(s) for the ``roles`` claim (external-IdP style). Pass a
+                string or list; goes under ``roles_claim``.
+            roles_claim: claim name to carry ``roles`` under (default ``roles``).
+            audience: override the configured ``aud`` for this token.
+            expires_in: lifetime in seconds (default ``default_expiry_seconds``).
+            not_before: optional ``nbf`` offset in seconds from now.
+            jti: include a unique ``jti`` (default True) for audit/revocation.
+            extra_claims: any additional claims (tenant, email, name, ...).
+
+        Returns:
+            The encoded JWT string.
+        """
+        import time
+        import uuid
+
+        now = int(time.time())
+        claims: Dict[str, Any] = {
+            self.user_id_claim: subject,
+            "iat": now,
+            "exp": now + (expires_in if expires_in is not None else self.default_expiry_seconds),
+        }
+        aud = audience if audience is not None else self.audience
+        if aud is not None:
+            claims["aud"] = aud
+        if self.issuer is not None:
+            claims["iss"] = self.issuer
+        if scopes is not None:
+            claims[self.scopes_claim] = scopes
+        if roles is not None:
+            claims[roles_claim] = roles
+        if not_before is not None:
+            claims["nbf"] = now + not_before
+        if jti:
+            claims["jti"] = uuid.uuid4().hex
+        if extra_claims:
+            claims.update(extra_claims)
+
+        import jwt
+
+        return jwt.encode(claims, self.signing_key, algorithm=self.algorithm)
+
+
 class JWTMiddleware(BaseHTTPMiddleware):
     """
     JWT Authentication Middleware with optional RBAC (Role-Based Access Control).
