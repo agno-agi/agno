@@ -21,6 +21,7 @@ from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
+    INTERNAL_SERVICE_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_resource_access,
@@ -1150,13 +1151,21 @@ def get_workflow_router(
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
+        # Internal-service caller (scheduler executor): see the matching
+        # comment in ``agents/router.py``. Trust the form-field user_id so
+        # scheduler-fired runs are attributed to the schedule owner.
         scoped_user_id = get_scoped_user_id(request)
+        state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id and user_id != request.state.user_id:
+        elif state_user_id == INTERNAL_SERVICE_USER_ID and user_id:
+            # Scheduler executor caller — trust the form-field owner. See
+            # the matching comment in ``agents/router.py``.
+            pass
+        elif state_user_id is not None:
+            if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
-            user_id = request.state.user_id
+            user_id = state_user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")

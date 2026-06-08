@@ -12,7 +12,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.auth import INTERNAL_SERVICE_SCOPES, INTERNAL_SERVICE_USER_ID, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
     get_accessible_resource_ids,
@@ -719,11 +719,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
             error_msg = self._get_missing_token_error_message()
             return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
 
-        # Check for internal service token (used by scheduler executor)
+        # Check for internal service token (used by scheduler executor).
+        # See the matching block in ``agno.os.auth`` for the rationale on the
+        # ``INTERNAL_SERVICE_USER_ID`` sentinel.
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
-            request.state.user_id = "__scheduler__"
+            request.state.user_id = INTERNAL_SERVICE_USER_ID
             request.state.session_id = None
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes

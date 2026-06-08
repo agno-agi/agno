@@ -14,6 +14,14 @@ security = HTTPBearer(auto_error=False)
 
 # Scopes granted to the internal service token (used by the scheduler executor).
 # Shared constant so auth.py and jwt.py stay in sync.
+# Sentinel ``user_id`` stamped on ``request.state.user_id`` when the caller
+# authenticates with the internal service token (used by the scheduler
+# executor for loopback HTTP calls to its own AgentOS server). Routes that
+# need to distinguish "the framework is calling itself" from "a real user is
+# calling" compare against this constant and, when matched, source the actual
+# work owner from a form-field ``user_id`` passed by the caller.
+INTERNAL_SERVICE_USER_ID: str = "__scheduler__"
+
 INTERNAL_SERVICE_SCOPES: List[str] = [
     "agents:read",
     "agents:run",
@@ -98,11 +106,17 @@ def get_authentication_dependency(settings: AgnoAPISettings):
 
         token = credentials.credentials
 
-        # Check internal service token (used by scheduler executor)
+        # Check internal service token (used by scheduler executor).
+        # The sentinel ``INTERNAL_SERVICE_USER_ID`` identifies the *caller*
+        # (the framework's own scheduler), not the *owner* of any work. Routes
+        # that fire downstream writes (sessions, traces, metrics) compare
+        # against this constant and prefer a form-field ``user_id`` set by the
+        # executor (which carries ``sched.user_id``) so the work is attributed
+        # to the schedule owner.
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
-            request.state.user_id = "__scheduler__"
+            request.state.user_id = INTERNAL_SERVICE_USER_ID
             request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
             return True
 

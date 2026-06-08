@@ -25,6 +25,7 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
+    INTERNAL_SERVICE_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_approval_resolved,
@@ -585,13 +586,26 @@ def get_agent_router(
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
+        # Special case for the scheduler: when the internal service token fires
+        # a scheduled run, the JWT sub is the ``__scheduler__`` sentinel — that
+        # identifies the *caller* (the executor) but not the *owner* of the
+        # work being done. If the executor passes a form-field ``user_id``, we
+        # use it so the resulting session / traces / metrics are attributed to
+        # the schedule owner, not to the scheduler service.
         scoped_user_id = get_scoped_user_id(request)
+        state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id and user_id != request.state.user_id:
+        elif state_user_id == INTERNAL_SERVICE_USER_ID and user_id:
+            # Internal service caller (scheduler executor): the form-field
+            # ``user_id`` was set by the executor to the schedule owner. Use
+            # it so the run, session, traces, and metrics are attributed to
+            # the owner, not to the service identity.
+            pass
+        elif state_user_id is not None:
+            if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
-            user_id = request.state.user_id
+            user_id = state_user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
