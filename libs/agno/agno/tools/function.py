@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from functools import partial
 from importlib.metadata import version
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, Union, get_type_hints
 
 from docstring_parser import parse
 from packaging.version import Version
@@ -167,8 +167,13 @@ class Function(BaseModel):
     # A list of hooks to run around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
-    # If True, the function will require confirmation before execution
-    requires_confirmation: Optional[bool] = None
+    # The function will require user confirmation before execution.
+    # Accepts:
+    #   - True: always confirm
+    #   - False / None: never confirm
+    #   - Callable[[FunctionCall], bool]: conditional confirmation based on tool
+    #     arguments / runtime context. A raising callable defaults to True (fail-safe).
+    requires_confirmation: Optional[Union[bool, Callable[..., bool]]] = None
 
     # If True, the function will require user input before execution
     requires_user_input: Optional[bool] = None
@@ -1347,6 +1352,41 @@ class FunctionCall(BaseModel):
             raise exception_to_raise
 
         return execution_result
+
+
+def resolve_requires_confirmation(fc: "FunctionCall") -> bool:
+    """Resolve `Function.requires_confirmation` to a concrete bool for a given call.
+
+    Supports the new callable form for conditional HITL:
+
+      - None / False         → False (no confirmation)
+      - True                 → True (always confirm)
+      - Callable             → invoke with the FunctionCall; coerce return to bool.
+                               A raising callable defaults to True (fail-safe).
+      - any other value      → False (with a warning)
+
+    This indirection lets ``@tool(requires_confirmation=lambda fc: ...)`` work
+    without scattering callable-vs-bool branching across the codebase.
+    """
+    rc = fc.function.requires_confirmation
+    if rc is None or rc is False:
+        return False
+    if rc is True:
+        return True
+    if callable(rc):
+        try:
+            return bool(rc(fc))
+        except Exception as e:
+            log_warning(
+                f"requires_confirmation callable for {fc.function.name!r} "
+                f"raised {type(e).__name__}: {e}; defaulting to True (fail-safe)"
+            )
+            return True
+    log_warning(
+        f"requires_confirmation for {fc.function.name!r} has unexpected type "
+        f"{type(rc).__name__}; expected bool or Callable. Defaulting to False."
+    )
+    return False
 
 
 class ToolResult(BaseModel):

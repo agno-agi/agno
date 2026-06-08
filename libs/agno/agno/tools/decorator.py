@@ -67,7 +67,7 @@ def tool(
     add_instructions: bool = True,
     show_result: Optional[bool] = None,
     stop_after_tool_call: Optional[bool] = None,
-    requires_confirmation: Optional[bool] = None,
+    requires_confirmation: Optional[Union[bool, Callable[..., bool]]] = None,
     requires_user_input: Optional[bool] = None,
     user_input_fields: Optional[List[str]] = None,
     external_execution: Optional[bool] = None,
@@ -96,7 +96,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         add_instructions: bool - If True, add instructions to the system message
         show_result: Optional[bool] - If True, shows the result after function call
         stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
-        requires_confirmation: Optional[bool] - If True, the function will require user confirmation before execution
+        requires_confirmation: Optional[Union[bool, Callable]] - If True, always require confirmation. If a Callable[[FunctionCall], bool], confirmation is required only when the callable returns True (conditional HITL based on tool arguments).
         requires_user_input: Optional[bool] - If True, the function will require user input before execution
         user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
         external_execution: Optional[bool] - If True, the function will be executed outside of the agent's context

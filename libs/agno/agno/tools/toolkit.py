@@ -267,7 +267,15 @@ class Toolkit:
         # decorator settings take precedence, then toolkit settings
         stop_after = function.stop_after_tool_call or tool_name in self.stop_after_tool_call_tools
         show_result = function.show_result or tool_name in self.show_result_tools or stop_after
-        requires_confirmation = function.requires_confirmation or tool_name in self.requires_confirmation_tools
+        # If the function's requires_confirmation is a callable, preserve it so
+        # runtime resolution still works. Toolkit-level lists only contribute a
+        # static True (more specific intent on the function takes precedence).
+        if callable(function.requires_confirmation):
+            requires_confirmation = function.requires_confirmation
+        elif function.requires_confirmation or tool_name in self.requires_confirmation_tools:
+            requires_confirmation = True
+        else:
+            requires_confirmation = function.requires_confirmation  # preserve None / False
         external_execution = function.external_execution or tool_name in self.external_execution_required_tools
 
         # Create new Function with bound method, preserving decorator settings
