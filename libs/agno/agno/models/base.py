@@ -17,6 +17,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -645,6 +646,36 @@ class Model(ABC):
     ) -> int:
         return self.count_tokens(messages, tools, output_schema=output_schema)
 
+    @staticmethod
+    def _initial_function_call_count(run_response: Optional[Union[RunOutput, TeamRunOutput]]) -> int:
+        """Seed value for the model loop's ``function_call_count``.
+
+        The model loop counter is local to a single ``response`` / ``aresponse`` /
+        ``response_stream`` / ``aresponse_stream`` invocation. When a run pauses
+        for HITL and is resumed via ``continue_run``, a fresh model loop is
+        invoked. Starting the counter at 0 would forget the tool call(s) already
+        issued before the pause, so ``tool_call_limit`` would be enforced per
+        invocation instead of cumulatively for the run (see issue #7962).
+
+        ``run_response.tools`` holds the ``ToolExecution`` records for every tool
+        call the model has already issued in this run; it is persisted to the
+        session and restored/merged on resume, so its size is the correct
+        cumulative count to resume from. Distinct ``tool_call_id`` values are
+        counted to avoid double-counting any entry that was updated in place.
+        """
+        if run_response is None or not run_response.tools:
+            return 0
+        seen_ids: Set[str] = set()
+        count = 0
+        for tool_execution in run_response.tools:
+            tool_call_id = getattr(tool_execution, "tool_call_id", None)
+            if tool_call_id is None:
+                count += 1
+            elif tool_call_id not in seen_ids:
+                seen_ids.add(tool_call_id)
+                count += 1
+        return count
+
     def response(
         self,
         messages: List[Message],
@@ -686,13 +717,19 @@ class Model(ABC):
             _log_messages(messages)
             model_response = ModelResponse()
 
-            function_call_count = 0
-
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
+
+            # Seed from prior tool calls so tool_call_limit is enforced
+            # cumulatively across HITL pause/resume, not per loop invocation.
+            # run_response.tools holds only PRIOR executions at this point; the
+            # current invocation's are appended by the agent after this loop
+            # returns - so this read is the cumulative pre-invocation count, not
+            # double-counted.
+            function_call_count = self._initial_function_call_count(run_response)
 
             while True:
                 # Compress tool results if compression is enabled and threshold is met
@@ -914,7 +951,13 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            # Seed from prior tool calls so tool_call_limit is enforced
+            # cumulatively across HITL pause/resume, not per loop invocation.
+            # run_response.tools holds only PRIOR executions at this point; the
+            # current invocation's are appended by the agent after this loop
+            # returns - so this read is the cumulative pre-invocation count, not
+            # double-counted.
+            function_call_count = self._initial_function_call_count(run_response)
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1403,7 +1446,13 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            # Seed from prior tool calls so tool_call_limit is enforced
+            # cumulatively across HITL pause/resume, not per loop invocation.
+            # run_response.tools holds only PRIOR executions at this point; the
+            # current invocation's are appended by the agent after this loop
+            # returns - so this read is the cumulative pre-invocation count, not
+            # double-counted.
+            function_call_count = self._initial_function_call_count(run_response)
 
             while True:
                 # Compress existing tool results BEFORE invoke
@@ -1682,7 +1731,13 @@ class Model(ABC):
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
-            function_call_count = 0
+            # Seed from prior tool calls so tool_call_limit is enforced
+            # cumulatively across HITL pause/resume, not per loop invocation.
+            # run_response.tools holds only PRIOR executions at this point; the
+            # current invocation's are appended by the agent after this loop
+            # returns - so this read is the cumulative pre-invocation count, not
+            # double-counted.
+            function_call_count = self._initial_function_call_count(run_response)
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
