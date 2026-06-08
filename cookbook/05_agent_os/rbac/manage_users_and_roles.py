@@ -1,35 +1,38 @@
 """
-Managing users AND roles over HTTP - the full admin flow (no login service)
+Run an AgentOS that serves the user + role management API (for a frontend)
 
 (New to this? Read managed_roles.py first, then managed_users.py.)
 
-This is the one-stop "admin console" cookbook for the no-login-service case. It
-drives EVERYTHING an admin would do, entirely over the HTTP API that ships with
-AgentOS (the /authz endpoints):
+This is the no-login-service "admin backend": it starts a real AgentOS server and
+leaves it running, exposing the /authz management API so a frontend (or your own
+admin UI) can create roles, add users, assign roles, and disable people - live.
 
-  - define what a role can do          PUT    /authz/roles/{role}
-  - add a user to the directory        POST   /authz/users
-  - give a user a role                 POST   /authz/users/{id}/roles
-  - list users (with their roles)      GET    /authz/users
-  - disable / re-enable a user         POST   /authz/users/{id}/disable | /enable
-  - read the audit trail               GET    /authz/audit
+What it serves (all admin-only):
+    GET    /authz/roles                 list roles
+    PUT    /authz/roles/{role}          set what a role can do
+    GET    /authz/scopes                the permission catalog (for a UI grid)
+    GET    /authz/users                 list users (with their roles)
+    POST   /authz/users                 add a user
+    POST   /authz/users/{id}/roles      give a user a role
+    POST   /authz/users/{id}/disable    revoke a user (blocked on next request)
+    GET    /authz/audit                 the change trail
+    GET    /authz/decisions             the access trail
 
-Every one of those endpoints is admin-only. We seed a single bootstrap admin in
-code (someone has to be able to log in first); everything after that is done over
-HTTP, exactly as your own admin UI or scripts would.
-
-What you'll see, in order:
-  1. only an admin can touch the management API (a normal user is bounced)
-  2. an admin builds roles + users + assignments live
-  3. those permissions actually take effect (bob can read, carol can run)
-  4. the disable kill-switch: a disabled user is blocked on their next request
-     even though their token is still valid
-  5. the audit trail of every change, who made it, before -> after
+It seeds a couple of roles and users so the frontend has something to show, and
+makes ONE bootstrap admin (so someone can call the admin API).
 
 Run it:
     pip install "agno[roles]"
     python manage_users_and_roles.py
-(no OpenAI key needed - we only check who is allowed, we don't actually chat.)
+Then point your frontend at http://localhost:7777 (CORS is open to the usual dev
+ports). The server keeps running until you Ctrl-C.
+
+Auth, two modes:
+  - Dev (default): HS256 with a shared secret. On startup it prints a ready-made
+    admin bearer token you can paste into the frontend / curl to try the API.
+  - Real login service / agno cloud: set JWT_VERIFICATION_KEY to the OS public key
+    (RS256 is detected automatically), OS_ID to the token audience, and
+    ADMIN_SUBJECT to the `sub` of whoever should be admin. No code change.
 """
 
 import os
@@ -46,42 +49,59 @@ from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig
 
-JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
-OS_ID = "admin-console-os"
+# --- config (env-overridable so the same file works for a real frontend) ------
+OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience
+ADMIN_SUBJECT = os.getenv("ADMIN_SUBJECT", "admin")  # whose `sub` is the bootstrap admin
+# The verification key. A shared secret (HS256) by default; if you paste a public
+# key (PEM) we switch to RS256 automatically - that's the agno-cloud / IdP case.
+VERIFICATION_KEY = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long").replace("\\n", "\n")
+ALGORITHM = "RS256" if "BEGIN" in VERIFICATION_KEY else "HS256"
+
+# Frontends run in the browser, so the server must allow their origin.
+CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+]
 
 os.makedirs("tmp", exist_ok=True)
-for _f in ("roles.db", "users.db", "audit.db", "agentos.db"):
-    p = f"tmp/console_{_f}"
-    if os.path.exists(p):
-        os.remove(p)
 
-# One audit sink shared by both stores so the trail covers role AND user changes.
+# --- the stores: roles + a credential-less user directory, sharing an audit sink
 audit = DbAuditSink(db_url="sqlite:///tmp/console_audit.db")
 roles = ManagedRoleStore(db_url="sqlite:///tmp/console_roles.db", audit=audit)
 users = ManagedUserStore(db_url="sqlite:///tmp/console_users.db", audit=audit)
 
-# Bootstrap: one admin who can use the management API. Everything else is done
-# over HTTP below. (In production you'd seed this once at deploy time.)
+# Seed roles + a couple of users so a freshly-connected frontend isn't empty.
 roles.set_role_scopes("admin", ["agent_os:admin"])
-roles.assign("alice", "admin")
-users.upsert("alice", email="alice@co", name="Alice (admin)")
+roles.set_role_scopes("viewer", ["agents:*:read"])
+roles.set_role_scopes("runner", ["agents:*:read", "agents:*:run"])
+
+# The bootstrap admin (so the admin API is usable at all), plus two demo users.
+if not roles.roles_of(ADMIN_SUBJECT):
+    roles.assign(ADMIN_SUBJECT, "admin")
+users.upsert(ADMIN_SUBJECT, name="Bootstrap admin")
+users.upsert("bob", email="bob@co", name="Bob")
+roles.assign("bob", "viewer")
+users.upsert("carol", email="carol@co", name="Carol")
+roles.assign("carol", "runner")
 
 db = SqliteDb(db_file="tmp/console_agentos.db")
 research_agent = Agent(id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db)
 
 agent_os = AgentOS(
     id=OS_ID,
-    description="Admin console AgentOS (manage users + roles over HTTP)",
+    description="User + role management AgentOS",
     agents=[research_agent],
+    cors_allowed_origins=CORS_ORIGINS,
     authorization=True,
     authorization_config=AuthorizationConfig(
-        verification_keys=[JWT_SECRET],
-        algorithm="HS256",
+        verification_keys=[VERIFICATION_KEY],
+        algorithm=ALGORITHM,
         verify_audience=True,
         audience=OS_ID,
         authorization_provider=roles.provider,
         user_store=users,
-        audit=audit,
+        audit=audit,  # record every access decision too
     ),
 )
 app = agent_os.get_app()
@@ -89,68 +109,26 @@ app.include_router(get_roles_router(roles, user_store=users))
 
 
 if __name__ == "__main__":
-    import logging
+    print("\n" + "=" * 78)
+    print("USER + ROLE MANAGEMENT AGENTOS - serving for a frontend")
+    print("=" * 78)
+    print("  endpoint:   http://localhost:7777")
+    print("  manage at:  http://localhost:7777/authz/...   (admin-only)")
+    print(f"  auth:       {ALGORITHM}   audience={OS_ID}   admin sub={ADMIN_SUBJECT!r}")
+    print(f"  CORS open to: {', '.join(CORS_ORIGINS)}")
 
-    from fastapi.testclient import TestClient
-
-    logging.disable(logging.CRITICAL)
-    client = TestClient(app)
-
-    def auth(sub: str) -> dict:
-        tok = jwt.encode(
-            {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=8)},
-            JWT_SECRET, algorithm="HS256",
+    # In dev (HS256) mint a ready-to-use admin token so you can try it immediately.
+    if ALGORITHM == "HS256":
+        admin_token = jwt.encode(
+            {"sub": ADMIN_SUBJECT, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(days=7)},
+            VERIFICATION_KEY, algorithm="HS256",
         )
-        return {"Authorization": f"Bearer {tok}"}
+        print("\n  admin bearer token (paste into your frontend / curl):")
+        print(f"    {admin_token}")
+        print("\n  e.g.:  curl -H 'Authorization: Bearer <token>' http://localhost:7777/authz/users")
+    else:
+        print("\n  RS256 mode: the frontend should send a token signed by your IdP/cloud,")
+        print(f"  with aud={OS_ID!r} and sub={ADMIN_SUBJECT!r} for admin access.")
+    print("=" * 78 + "\n")
 
-    def show(label, r, note=""):
-        verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
-        print(f"  {label:50s} -> {verdict:7s} ({r.status_code})  {note}")
-
-    A = auth("alice")  # the bootstrap admin
-
-    print("\n" + "=" * 84)
-    print("ADMIN CONSOLE - managing users + roles entirely over HTTP")
-    print("=" * 84)
-
-    print("\n1) only an admin can use the management API:")
-    show("alice (admin) lists users", client.get("/authz/users", headers=A), "admins can")
-    show("bob (not even created yet) lists users", client.get("/authz/users", headers=auth("bob")), "non-admin -> bounced")
-    show("anonymous lists users", client.get("/authz/users"), "not logged in -> bounced harder")
-
-    print("\n2) alice builds roles, users, and assignments - all over HTTP:")
-    client.put("/authz/roles/viewer", headers=A, json={"scopes": ["agents:*:read"]})
-    client.put("/authz/roles/runner", headers=A, json={"scopes": ["agents:*:read", "agents:*:run"]})
-    print("   created roles: viewer (read), runner (read+run)")
-    client.post("/authz/users", headers=A, json={"id": "bob", "email": "bob@co", "name": "Bob"})
-    client.post("/authz/users", headers=A, json={"id": "carol", "email": "carol@co", "name": "Carol"})
-    client.post("/authz/users/bob/roles", headers=A, json={"role": "viewer"})
-    client.post("/authz/users/carol/roles", headers=A, json={"role": "runner"})
-    print("   added users bob (viewer) and carol (runner)\n")
-
-    for u in client.get("/authz/users", headers=A).json()["users"]:
-        print(f"     - {u['id']:8s} {str(u['email'] or ''):12s} roles={u['roles']}  disabled={u['disabled']}")
-
-    print("\n3) the permissions actually take effect:")
-    show("bob (viewer) LOOK at agent", client.get("/agents/research-agent", headers=auth("bob")), "viewers can look")
-    show("bob (viewer) RUN agent", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "viewers can't run -> bounced")
-    show("carol (runner) RUN agent", client.post("/agents/research-agent/runs", headers=auth("carol"), data={"message": "hi"}), "runners can run")
-
-    print("\n4) the disable kill-switch (bob leaves the company):")
-    client.post("/authz/users/bob/disable", headers=A)
-    show("bob LOOK at agent (now disabled)", client.get("/agents/research-agent", headers=auth("bob")), "blocked on his next request, same token")
-    client.post("/authz/users/bob/enable", headers=A)
-    show("bob LOOK at agent (re-enabled)", client.get("/agents/research-agent", headers=auth("bob")), "allowed again, instantly")
-
-    print("\n5) the audit trail - every change, who did it, before -> after:")
-    for e in reversed(client.get("/authz/audit", headers=A).json()["events"]):
-        before = e.get("before")
-        after = e.get("after")
-        diff = f"{before} -> {after}" if (before is not None or after is not None) else ""
-        print(f"     {str(e['actor'] or 'system'):7s} {e['action']:18s} {e['target']:8s} {diff}")
-
-    print("=" * 84)
-    print("the point: one admin bootstrapped in code; everything else - roles, users,")
-    print("assignments, disabling - done over the same /authz HTTP API your console would")
-    print("use, admin-only, with a full audit trail. no login service, no passwords stored.")
-    print("=" * 84)
+    agent_os.serve(app, host="0.0.0.0", port=7777)

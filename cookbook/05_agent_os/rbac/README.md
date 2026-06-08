@@ -372,8 +372,9 @@ New to authorization? Read them in this order:
 3. `managed_roles_api.py` — manage roles over HTTP (admin-only) with an audit log.
 4. `managed_users.py` — the user directory: list users, give roles, and disable
    someone instantly (blocked on their next request, even with a valid token).
-5. `manage_users_and_roles.py` — the full admin console: build roles, add users,
-   assign, disable, and read the audit trail, all over the `/authz` HTTP API.
+5. `manage_users_and_roles.py` — runs a real AgentOS server (not a transcript)
+   that serves the `/authz` user + role management API for a frontend/admin UI,
+   with CORS and a seeded admin + users. Prints a ready-to-use admin token.
 6. `idp_workos_auth0.py` — they already have a login service (WorkOS/Auth0): roles
    ride the token, you only enforce, via a ~30-line custom `AuthorizationProvider`.
 
