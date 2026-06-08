@@ -24,7 +24,7 @@ Hundreds of examples. Copy, paste, run.
 [04_workflows](./04_workflows) — Chain agents, teams, and functions into automated pipelines.
 
 ### I want to deploy and manage agents
-[05_agent_os](./05_agent_os) — Deploy to web APIs, Slack, WhatsApp, and more. The control plane for your agent systems.
+[05_agent_os](./05_agent_os) — Deploy to web APIs, Slack, WhatsApp, and more. The control plane for your agent platform.
 
 ---
 
