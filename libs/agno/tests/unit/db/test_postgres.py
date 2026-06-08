@@ -1,3 +1,5 @@
+import threading
+import time
 from unittest.mock import Mock, patch
 
 import pytest
@@ -256,6 +258,43 @@ def test_get_table_sessions(postgres_db):
 
     assert table == mock_table
     assert hasattr(postgres_db, "session_table")
+
+
+def test_get_table_uses_cached_table_for_concurrent_first_access(postgres_db):
+    """Concurrent first access should materialize a table only once."""
+    table = Mock(spec=Table)
+    start = threading.Barrier(3)
+    errors = []
+    results = []
+
+    def slow_get_or_create(*args, **kwargs):
+        time.sleep(0.05)
+        return table
+
+    def get_table():
+        try:
+            start.wait(timeout=1)
+            results.append(postgres_db._get_table("evals", create_table_if_not_found=True))
+        except Exception as exc:
+            errors.append(exc)
+
+    with patch.object(postgres_db, "_get_or_create_table", side_effect=slow_get_or_create) as mock_get_or_create:
+        threads = [threading.Thread(target=get_table) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+
+        start.wait(timeout=1)
+
+        for thread in threads:
+            thread.join(timeout=1)
+
+    assert errors == []
+    assert results == [table, table]
+    mock_get_or_create.assert_called_once_with(
+        table_name=postgres_db.eval_table_name,
+        table_type="evals",
+        create_table_if_not_found=True,
+    )
 
 
 def test_get_table_memories(postgres_db):
