@@ -1,5 +1,74 @@
 from dataclasses import asdict
-from typing import Any, List, Optional, Set, Type, Union, get_type_hints
+from typing import Any, Dict, List, Optional, Set, Type, Union, get_type_hints
+
+# Single source of truth for MIME-to-extension mapping used by media classes and AgentOS routers.
+# Covers exactly the types previously hardcoded across routers, plus SVG and common Office formats.
+# One canonical MIME per format — no aliases for the same type.
+MIME_TO_EXTENSION: Dict[str, str] = {
+    # Images
+    "image/avif": "avif",
+    "image/bmp": "bmp",
+    "image/gif": "gif",
+    "image/heic": "heic",
+    "image/heif": "heif",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/svg+xml": "svg",
+    "image/tif": "tif",
+    "image/tiff": "tiff",
+    "image/webp": "webp",
+    # Audio
+    "audio/aac": "aac",
+    "audio/flac": "flac",
+    "audio/m4a": "m4a",
+    "audio/mp4": "m4a",
+    "audio/mp3": "mp3",
+    "audio/mpeg": "mp3",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "audio/wave": "wav",
+    # Video
+    "video/x-flv": "flv",
+    "video/quicktime": "mov",
+    "video/mp4": "mp4",
+    "video/mpeg": "mpeg",
+    "video/mpegs": "mpeg",
+    "video/mpgs": "mpeg",
+    "video/mpg": "mpeg",
+    "video/webm": "webm",
+    "video/wmv": "wmv",
+    "video/3gpp": "3gp",
+    # Documents & Files
+    "application/json": "json",
+    "application/x-javascript": "js",
+    "text/javascript": "js",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/vnd.ms-outlook": "msg",
+    "application/pdf": "pdf",
+    "application/x-python": "py",
+    "application/zip": "zip",
+    "text/css": "css",
+    "text/csv": "csv",
+    "text/html": "html",
+    "text/markdown": "md",
+    "text/plain": "txt",
+    "text/rtf": "rtf",
+    "text/x-python": "py",
+    "text/xml": "xml",
+}
+
+# Pre-computed frozensets for O(1) membership tests — never rebuilt at runtime.
+IMAGE_MIME_TYPES: frozenset[str] = frozenset(m for m in MIME_TO_EXTENSION if m.startswith("image/"))
+AUDIO_MIME_TYPES: frozenset[str] = frozenset(m for m in MIME_TO_EXTENSION if m.startswith("audio/"))
+VIDEO_MIME_TYPES: frozenset[str] = frozenset(m for m in MIME_TO_EXTENSION if m.startswith("video/"))
+FILE_MIME_TYPES: frozenset[str] = frozenset(
+    m for m in MIME_TO_EXTENSION if not m.startswith(("image/", "audio/", "video/"))
+)
 
 
 def isinstanceany(obj: Any, class_list: List[Type]) -> bool:
