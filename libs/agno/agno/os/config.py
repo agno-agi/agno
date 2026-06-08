@@ -32,7 +32,11 @@ class AuthorizationConfig(BaseModel):
     # Pluggable authorization strategy. When None, AgentOS uses the built-in
     # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency).
     # Supply an AuthorizationProvider instance to swap in a different model
-    # (ReBAC/ABAC/Casbin/OpenFGA/Cerbos) without changing the request pipeline.
+    # (ReBAC/ABAC/managed roles/external) without changing the request pipeline.
+    # Or pass a LIST of providers to run several authz planes at once — a request
+    # is allowed if any of them allows it (e.g. [ScopeAuthorizationProvider(),
+    # roles.provider] for operators authorized by token scopes + end users
+    # authorized by a managed role store).
     authorization_provider: Optional[Any] = None
     # Optional ManagedUserStore — the credential-less user directory for the
     # no-IdP case. When set, AgentOS denies a disabled user at the enforcement

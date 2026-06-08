@@ -1044,10 +1044,22 @@ class AgentOS:
         # Resolve the authorization provider. Defaults to the built-in
         # scope-based RBAC; a custom AuthorizationProvider can be supplied via
         # AuthorizationConfig to swap the decision engine (ReBAC/ABAC/external)
-        # without touching the request pipeline.
+        # without touching the request pipeline. You can also pass a LIST of
+        # providers to run several authz planes at once (e.g. token scopes for
+        # operators + a managed role store for end users) — a request is allowed
+        # if any of them allows it.
         from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
-        fastapi_app.state.authorization_provider = authorization_provider or ScopeAuthorizationProvider()
+        if isinstance(authorization_provider, str):
+            raise ValueError(
+                "authorization_provider must be an AuthorizationProvider (or a list of them), not a string."
+            )
+        if isinstance(authorization_provider, (list, tuple)):
+            from agno.os.authz._composite import CompositeAuthorizationProvider
+
+            fastapi_app.state.authorization_provider = CompositeAuthorizationProvider(list(authorization_provider))
+        else:
+            fastapi_app.state.authorization_provider = authorization_provider or ScopeAuthorizationProvider()
         # Optional decision-audit sink (records allow/deny at the route gate).
         fastapi_app.state.authz_audit = authz_audit
         # Optional user directory (no-IdP). When present, the middleware denies

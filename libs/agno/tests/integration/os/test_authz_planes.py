@@ -11,7 +11,7 @@ pytest.importorskip("casbin")
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.authz.composite_provider import CompositeAuthorizationProvider  # noqa: E402
+from agno.os.authz._composite import CompositeAuthorizationProvider  # noqa: E402 (internal mechanism)
 from agno.os.authz.provider import AuthorizationContext  # noqa: E402
 from agno.os.authz.role_router import get_roles_router  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
@@ -91,9 +91,8 @@ def test_both_planes_enforce_on_one_os_end_to_end():
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            authorization_provider=CompositeAuthorizationProvider(
-                [ScopeAuthorizationProvider(), store.provider]
-            ),
+            # public API: a LIST of providers -> allowed if any grants
+            authorization_provider=[ScopeAuthorizationProvider(), store.provider],
         ),
     )
     client = TestClient(agent_os.get_app())
@@ -121,9 +120,7 @@ def test_admin_gate_accepts_admin_from_token_scope():
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            authorization_provider=CompositeAuthorizationProvider(
-                [ScopeAuthorizationProvider(), store.provider]
-            ),
+            authorization_provider=[ScopeAuthorizationProvider(), store.provider],
         ),
     )
     app = agent_os.get_app()
@@ -134,3 +131,20 @@ def test_admin_gate_accepts_admin_from_token_scope():
     assert client.get("/authz/roles", headers={"Authorization": f"Bearer {_token('op', ['agent_os:admin'])}"}).status_code == 200
     # no admin scope and not in store -> denied
     assert client.get("/authz/roles", headers={"Authorization": f"Bearer {_token('joe', ['agents:read'])}"}).status_code == 403
+
+
+def test_authorization_provider_rejects_a_string():
+    """A list of providers is supported; a string is a mistake and must error
+    (not be treated as an iterable of characters)."""
+    agent = Agent(id="research-agent", name="R", db=InMemoryDb())
+    with pytest.raises(ValueError, match="not a string"):
+        AgentOS(
+            id=OS_ID,
+            agents=[agent],
+            authorization=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=[SECRET],
+                algorithm="HS256",
+                authorization_provider="ScopeAuthorizationProvider",  # oops, a string
+            ),
+        ).get_app()

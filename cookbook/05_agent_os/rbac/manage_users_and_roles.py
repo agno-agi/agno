@@ -54,7 +54,6 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.authz.audit import DbAuditSink
-from agno.os.authz.composite_provider import CompositeAuthorizationProvider
 from agno.os.authz.role_router import get_roles_router
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
@@ -116,15 +115,14 @@ agent_os = AgentOS(
         algorithm=ALGORITHM,
         verify_audience=True,
         audience=OS_ID,
-        # Two authz planes on one OS, in parallel:
+        # Two authz planes on one OS, in parallel - pass a LIST, allowed if any
+        # grants:
         #  - ScopeAuthorizationProvider: operators whose token already carries
         #    scopes (e.g. an agno-cloud / frontend token) are authorized from it.
         #  - roles.provider: end users managed in the OS-local store.
-        # Allowed if EITHER grants. (Without the scope plane, a scope-bearing
-        # frontend token gets 403 because the store ignores token scopes.)
-        authorization_provider=CompositeAuthorizationProvider(
-            [ScopeAuthorizationProvider(), roles.provider]
-        ),
+        # (Without the scope plane, a scope-bearing frontend token gets 403
+        # because the store ignores token scopes.)
+        authorization_provider=[ScopeAuthorizationProvider(), roles.provider],
         user_store=users,
         audit=audit,  # record every access decision too
     ),

@@ -10,21 +10,19 @@ Real deployments often have two populations hitting the same OS:
   carries identity; the store decides.
 
 A single provider can't be both "trust the token's scopes" and "ignore the token,
-ask the store." :class:`CompositeAuthorizationProvider` composes them: a request
-is allowed if **any** wrapped provider allows it. So both planes enforce on the
-same OS at the same time:
+ask the store." The public way to run several planes is to pass a **list** of
+providers to ``AuthorizationConfig`` / ``AgentOS`` — a request is allowed if any
+of them allows it::
 
-    from agno.os.authz.composite_provider import CompositeAuthorizationProvider
-    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
-
-    provider = CompositeAuthorizationProvider([
+    AuthorizationConfig(authorization_provider=[
         ScopeAuthorizationProvider(),   # operators: scopes from the token
         roles.provider,                 # end users: the OS-local managed store
     ])
-    AuthorizationConfig(authorization_provider=provider, ...)
 
-Order doesn't affect the allow/deny outcome (it's an OR), only the order providers
-are consulted. ``accessible_resource_ids`` returns the union (``{"*"}`` wins).
+AgentOS composes that list with the internal class below. It's an OR, so order
+only affects which provider is consulted first, not the outcome;
+``accessible_resource_ids`` returns the union (``{"*"}`` wins). This class is an
+implementation detail — prefer the list form above.
 """
 
 from typing import List, Set
