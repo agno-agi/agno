@@ -295,21 +295,37 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
+    # --- Knowledge ---
+    # ``user_id`` semantics:
+    # - ``None``: no scoping. Single-user / admin / RBAC-off behaviour — sees
+    #   every row including those owned by other users.
+    # - non-empty string: scope to "rows owned by this user OR shared rows
+    #   (user_id IS NULL)". This is what non-admin authenticated routes pass.
+    #
+    # The "shared bucket" semantics (NULL = visible to all) lets admins
+    # publish org-wide knowledge by leaving the owner unset, while per-user
+    # uploads stay private. Owner on writes is carried inside ``knowledge_row``.
+
     @abstractmethod
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only delete if the row is owned
+                by this user (or is shared / NULL-owned, which a non-admin
+                cannot delete — the route layer decides whether to allow
+                that). When None, no ownership check.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -324,6 +340,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -333,6 +350,7 @@ class BaseDb(ABC):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -348,6 +366,8 @@ class BaseDb(ABC):
 
         Args:
             knowledge_row (KnowledgeRow): The knowledge row to upsert.
+                ``knowledge_row.user_id`` carries the owner (``None`` for
+                shared / system uploads).
 
         Returns:
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
@@ -1311,25 +1331,15 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
+    # See ``BaseDb`` knowledge methods for the ``user_id`` semantics.
     @abstractmethod
-    async def delete_knowledge_content(self, id: str):
-        """Delete a knowledge row from the database.
-
-        Args:
-            id (str): The ID of the knowledge row to delete.
-        """
+    async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
+        """Delete a knowledge row from the database."""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            id (str): The ID of the knowledge row to get.
-
-        Returns:
-            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
-        """
+    async def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database."""
         raise NotImplementedError
 
     @abstractmethod
@@ -1340,34 +1350,14 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge contents from the database.
-
-        Args:
-            limit (Optional[int]): The maximum number of knowledge contents to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-
-        Returns:
-            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
+        """Get all knowledge contents from the database."""
         raise NotImplementedError
 
     @abstractmethod
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the database.
-
-        Args:
-            knowledge_row (KnowledgeRow): The knowledge row to upsert.
-
-        Returns:
-            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
-        """
+        """Upsert knowledge content in the database."""
         raise NotImplementedError
 
     # --- Evals ---

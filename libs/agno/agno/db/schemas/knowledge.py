@@ -18,6 +18,12 @@ class KnowledgeRow(BaseModel):
     access_count: Optional[int] = None
     status: Optional[str] = None
     status_message: Optional[str] = None
+    # Uploader of this knowledge row. ``None`` means "shared / visible to all"
+    # (legacy data, admin-uploaded org-wide content, system ingestion).
+    # Routes scope reads/writes by this column when ``user_isolation`` is on.
+    # Note: this slice only isolates the metadata DB. RAG retrieval at the
+    # vector DB layer is a follow-up (see KNOWLEDGE_ISOLATION_DESIGN.md).
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     external_id: Optional[str] = None

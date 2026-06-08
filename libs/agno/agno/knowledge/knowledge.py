@@ -600,6 +600,7 @@ class Knowledge(RemoteKnowledge):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Content], int]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
@@ -607,9 +608,16 @@ class Knowledge(RemoteKnowledge):
         if isinstance(self.contents_db, AsyncBaseDb):
             raise ValueError("get_content() is not supported for async databases. Please use aget_content() instead.")
 
-        # Filter by linked_to when knowledge has a name for isolation
+        # Filter by linked_to (instance scope) and user_id (owner scope).
+        # The DB applies "(user_id = :uid OR user_id IS NULL)" when user_id
+        # is set, returning the caller's rows plus shared/legacy rows.
         contents, count = self.contents_db.get_knowledge_contents(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
+            limit=limit,
+            page=page,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            linked_to=self.name,
+            user_id=user_id,
         )
         return [self._content_row_to_content(row) for row in contents], count
 
@@ -619,22 +627,33 @@ class Knowledge(RemoteKnowledge):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Content], int]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
-        # Filter by linked_to when knowledge has a name for isolation
+        # Filter by linked_to + user_id (see ``get_content`` for semantics).
         if isinstance(self.contents_db, AsyncBaseDb):
             contents, count = await self.contents_db.get_knowledge_contents(
-                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                linked_to=self.name,
+                user_id=user_id,
             )
         else:
             contents, count = self.contents_db.get_knowledge_contents(
-                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, linked_to=self.name
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                linked_to=self.name,
+                user_id=user_id,
             )
         return [self._content_row_to_content(row) for row in contents], count
 
-    def get_content_by_id(self, content_id: str) -> Optional[Content]:
+    def get_content_by_id(self, content_id: str, user_id: Optional[str] = None) -> Optional[Content]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
@@ -643,25 +662,27 @@ class Knowledge(RemoteKnowledge):
                 "get_content_by_id() is not supported for async databases. Please use aget_content_by_id() instead."
             )
 
-        content_row = self.contents_db.get_knowledge_content(content_id)
+        content_row = self.contents_db.get_knowledge_content(content_id, user_id=user_id)
         if content_row is None:
             return None
         return self._content_row_to_content(content_row)
 
-    async def aget_content_by_id(self, content_id: str) -> Optional[Content]:
+    async def aget_content_by_id(self, content_id: str, user_id: Optional[str] = None) -> Optional[Content]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
         if isinstance(self.contents_db, AsyncBaseDb):
-            content_row = await self.contents_db.get_knowledge_content(content_id)
+            content_row = await self.contents_db.get_knowledge_content(content_id, user_id=user_id)
         else:
-            content_row = self.contents_db.get_knowledge_content(content_id)
+            content_row = self.contents_db.get_knowledge_content(content_id, user_id=user_id)
 
         if content_row is None:
             return None
         return self._content_row_to_content(content_row)
 
-    def get_content_status(self, content_id: str) -> Tuple[Optional[ContentStatus], Optional[str]]:
+    def get_content_status(
+        self, content_id: str, user_id: Optional[str] = None
+    ) -> Tuple[Optional[ContentStatus], Optional[str]]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
@@ -670,20 +691,22 @@ class Knowledge(RemoteKnowledge):
                 "get_content_status() is not supported for async databases. Please use aget_content_status() instead."
             )
 
-        content_row = self.contents_db.get_knowledge_content(content_id)
+        content_row = self.contents_db.get_knowledge_content(content_id, user_id=user_id)
         if content_row is None:
             return None, "Content not found"
 
         return self._parse_content_status(content_row.status), content_row.status_message
 
-    async def aget_content_status(self, content_id: str) -> Tuple[Optional[ContentStatus], Optional[str]]:
+    async def aget_content_status(
+        self, content_id: str, user_id: Optional[str] = None
+    ) -> Tuple[Optional[ContentStatus], Optional[str]]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
         if isinstance(self.contents_db, AsyncBaseDb):
-            content_row = await self.contents_db.get_knowledge_content(content_id)
+            content_row = await self.contents_db.get_knowledge_content(content_id, user_id=user_id)
         else:
-            content_row = self.contents_db.get_knowledge_content(content_id)
+            content_row = self.contents_db.get_knowledge_content(content_id, user_id=user_id)
 
         if content_row is None:
             return None, "Content not found"
@@ -696,53 +719,60 @@ class Knowledge(RemoteKnowledge):
     async def apatch_content(self, content: Content) -> Optional[Dict[str, Any]]:
         return await self._aupdate_content(content)
 
-    def remove_content_by_id(self, content_id: str):
+    def remove_content_by_id(self, content_id: str, user_id: Optional[str] = None):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
                 # For LightRAG, get the content first to find the external_id
-                content = self.get_content_by_id(content_id)
+                content = self.get_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
                     self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
+                # NOTE (K2 follow-up): vector_db.delete_by_content_id does not
+                # currently take user_id. If user_isolation is on and the
+                # caller is not the owner of this content_id, the contents-db
+                # delete below will short-circuit (rowcount=0) and the vector
+                # rows stay orphaned. Live with this until K2 wires user_id
+                # into vector backends.
                 self.vector_db.delete_by_content_id(content_id)
 
         if self.contents_db is not None:
-            self.contents_db.delete_knowledge_content(content_id)
+            self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
 
-    async def aremove_content_by_id(self, content_id: str):
+    async def aremove_content_by_id(self, content_id: str, user_id: Optional[str] = None):
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
                 # For LightRAG, get the content first to find the external_id
-                content = await self.aget_content_by_id(content_id)
+                content = await self.aget_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
                     self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
+                # See K2 follow-up note in ``remove_content_by_id``.
                 self.vector_db.delete_by_content_id(content_id)
 
         if self.contents_db is not None:
             if isinstance(self.contents_db, AsyncBaseDb):
-                await self.contents_db.delete_knowledge_content(content_id)
+                await self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
             else:
-                self.contents_db.delete_knowledge_content(content_id)
+                self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
 
-    def remove_all_content(self):
-        contents, _ = self.get_content()
+    def remove_all_content(self, user_id: Optional[str] = None):
+        contents, _ = self.get_content(user_id=user_id)
         for content in contents:
             if content.id is not None:
-                self.remove_content_by_id(content.id)
+                self.remove_content_by_id(content.id, user_id=user_id)
 
-    async def aremove_all_content(self):
-        contents, _ = await self.aget_content()
+    async def aremove_all_content(self, user_id: Optional[str] = None):
+        contents, _ = await self.aget_content(user_id=user_id)
         for content in contents:
             if content.id is not None:
-                await self.aremove_content_by_id(content.id)
+                await self.aremove_content_by_id(content.id, user_id=user_id)
 
     def remove_vector_by_id(self, id: str) -> bool:
         from agno.vectordb import VectorDb
@@ -2365,6 +2395,7 @@ class Knowledge(RemoteKnowledge):
             created_at=content_row.created_at,
             updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
             external_id=content_row.external_id,
+            user_id=content_row.user_id,
         )
 
     def _build_knowledge_row(self, content: Content) -> KnowledgeRow:
@@ -2393,6 +2424,9 @@ class Knowledge(RemoteKnowledge):
             access_count=0,
             status=content.status if content.status else ContentStatus.PROCESSING,
             status_message=self._ensure_string_field(content.status_message, "content.status_message", default=""),
+            # Carry the uploader from Content into the persisted row. ``None``
+            # means shared / org-wide (see KnowledgeRow.user_id docstring).
+            user_id=content.user_id,
             created_at=created_at,
             updated_at=updated_at,
         )
