@@ -169,7 +169,7 @@ class CSVReader(Reader):
 
             if total_rows <= 10:
                 # Small files: single document
-                csv_content = " ".join(", ".join(stringify_cell_value(cell) for cell in row) for row in rows)
+                csv_content = "\n".join(", ".join(stringify_cell_value(cell) for cell in row) for row in rows)
                 documents = [
                     Document(
                         name=csv_name,
@@ -186,7 +186,7 @@ class CSVReader(Reader):
                 async def _process_page(page_number: int, page_rows: List[List[str]]) -> Document:
                     """Process a page of rows into a document."""
                     start_row = (page_number - 1) * page_size + 1
-                    page_content = " ".join(", ".join(stringify_cell_value(cell) for cell in row) for row in page_rows)
+                    page_content = "\n".join(", ".join(stringify_cell_value(cell) for cell in row) for row in page_rows)
 
                     return Document(
                         name=csv_name,
