@@ -32,6 +32,7 @@ Example::
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from agno.os.authz._db import engine_from_db as _engine_from_db
 from agno.os.authz.casbin_provider import scope_to_obj_act
 
 if TYPE_CHECKING:
@@ -75,23 +76,29 @@ class ManagedRoleStore:
         roles_claim: Optional[str] = None,
         audit: Optional["AuditSink"] = None,
         decision_log: bool = False,
+        db: Optional[Any] = None,
     ):
         """
         Args:
             db_url: SQLAlchemy URL for the DB that holds the policy (e.g.
                 ``postgresql+psycopg://...`` or ``sqlite:///roles.db``). Use your
-                own database. If omitted, the store is in-memory (not persisted) —
-                fine for tests, not for production.
+                own database. If omitted (and no ``db``), the store is in-memory
+                (not persisted) — fine for tests, not for production.
             roles_claim: JWT claim carrying a caller's roles (the external-IdP
                 case). When absent, roles come from this store's own assignments
                 (the no-IdP case). Both are served by the same store.
             audit: optional :class:`~agno.os.authz.audit.AuditSink`. When set,
                 every role/assignment change emits an append-only AuditEvent with
-                the acting principal and the before/after (the change audit Casbin
-                can't give you, since it never sees the actor).
+                the acting principal and the before/after (the change audit the
+                policy engine can't give you, since it never sees the actor).
             decision_log: when True, bump the ``casbin.enforcer`` logger to INFO so
                 *allow* decisions are logged too (denies are already at WARNING).
                 Off by default so we don't touch global logging behind your back.
+            db: an agno database (the same object you pass to ``AgentOS(db=...)``,
+                e.g. ``SqliteDb``/``PostgresDb``). Its SQLAlchemy engine is reused,
+                so roles live in the same database as your agent data with one
+                connection pool — no second ``db_url`` to keep in sync. Takes
+                precedence over ``db_url``.
         """
         try:
             import casbin  # noqa: F401
@@ -105,10 +112,11 @@ class ManagedRoleStore:
 
         model = casbin.Model()
         model.load_model_from_text(_MODEL_TEXT)
-        if db_url:
+        adapter_target = _engine_from_db(db) if db is not None else db_url
+        if adapter_target is not None:
             from casbin_sqlalchemy_adapter import Adapter
 
-            self._enforcer = casbin.Enforcer(model, Adapter(db_url))
+            self._enforcer = casbin.Enforcer(model, Adapter(adapter_target))
         else:
             self._enforcer = casbin.Enforcer(model)
         self._enforcer.enable_auto_save(True)  # mutations persist immediately

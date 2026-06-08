@@ -121,11 +121,16 @@ class DbAuditSink(AuditSink):
         table_name: str = "authz_audit",
         decision_table_name: str = "authz_decisions",
         create_table: bool = True,
+        db: Optional[Any] = None,
     ):
         import sqlalchemy as sa
 
+        if db is not None and engine is None:
+            from agno.os.authz._db import engine_from_db
+
+            engine = engine_from_db(db)
         if engine is None and db_url is None:
-            raise ValueError("DbAuditSink needs either db_url or engine")
+            raise ValueError("DbAuditSink needs one of: db (an agno Db), engine, or db_url")
         self._engine = engine if engine is not None else sa.create_engine(db_url)
         metadata = sa.MetaData()
         # change trail: role/assignment mutations with before/after

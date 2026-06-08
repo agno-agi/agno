@@ -51,23 +51,33 @@ class ManagedUserStore:
         table_name: str = "authz_users",
         create_table: bool = True,
         audit: Optional["AuditSink"] = None,
+        db: Optional[Any] = None,
     ):
         """
         Args:
             db_url: SQLAlchemy URL for the DB that holds the directory (e.g.
-                ``postgresql+psycopg://...`` or ``sqlite:///users.db``). If both
-                ``db_url`` and ``engine`` are omitted, the store is in-memory.
+                ``postgresql+psycopg://...`` or ``sqlite:///users.db``). If
+                ``db_url``, ``engine`` and ``db`` are all omitted, the store is
+                in-memory.
             engine: an existing SQLAlchemy engine (takes precedence over db_url).
             table_name: directory table name (default ``authz_users``).
             create_table: create the table if missing (default True).
             audit: optional :class:`~agno.os.authz.audit.AuditSink`. When set,
                 every directory change emits an append-only AuditEvent with the
                 acting principal and the before/after (same trail as role changes).
+            db: an agno database (the same object you pass to ``AgentOS(db=...)``).
+                Its SQLAlchemy engine is reused, so the directory lives in the same
+                database as your agent data. Takes precedence over ``db_url``.
         """
         self._audit = audit
         self._mem: Optional[Dict[str, dict]] = None
         self._engine = None
         self._table = None
+
+        if db is not None and engine is None:
+            from agno.os.authz._db import engine_from_db
+
+            engine = engine_from_db(db)
 
         if engine is not None or db_url is not None:
             import sqlalchemy as sa

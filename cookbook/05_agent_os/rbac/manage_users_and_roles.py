@@ -66,10 +66,14 @@ CORS_ORIGINS = [
 
 os.makedirs("tmp", exist_ok=True)
 
-# --- the stores: roles + a credential-less user directory, sharing an audit sink
-audit = DbAuditSink(db_url="sqlite:///tmp/console_audit.db")
-roles = ManagedRoleStore(db_url="sqlite:///tmp/console_roles.db", audit=audit)
-users = ManagedUserStore(db_url="sqlite:///tmp/console_users.db", audit=audit)
+# ONE database for everything. Pass the same `db` to AgentOS and to each store
+# (db=) and they reuse its connection - agent data, roles, users, and the audit
+# trail all live in the same database, no second db_url to keep in sync. (Each
+# store still uses its own tables: casbin_rule, authz_users, authz_audit, ...)
+db = SqliteDb(db_file="tmp/console.db")
+audit = DbAuditSink(db=db)
+roles = ManagedRoleStore(db=db, audit=audit)
+users = ManagedUserStore(db=db, audit=audit)
 
 # Seed roles + a couple of users so a freshly-connected frontend isn't empty.
 roles.set_role_scopes("admin", ["agent_os:admin"])
@@ -85,12 +89,12 @@ roles.assign("bob", "viewer")
 users.upsert("carol", email="carol@co", name="Carol")
 roles.assign("carol", "runner")
 
-db = SqliteDb(db_file="tmp/console_agentos.db")
 research_agent = Agent(id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db)
 
 agent_os = AgentOS(
     id=OS_ID,
     description="User + role management AgentOS",
+    db=db,  # same database the stores use
     agents=[research_agent],
     cors_allowed_origins=CORS_ORIGINS,
     authorization=True,

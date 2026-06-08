@@ -12,7 +12,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-from agno.os.authz.audit import AuditEvent, AuditSink  # noqa: E402
+from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink  # noqa: E402
 from agno.os.authz.user_store import ManagedUserStore  # noqa: E402
 
 SECRET = "managed-users-secret-at-least-256-bits-long-padding-xxxxxx"
@@ -219,3 +219,33 @@ def test_auto_provision_from_claims_at_the_gate():
     assert r.status_code == 200
     provisioned = users.get("carol")
     assert provisioned is not None and provisioned["email"] == "carol@co" and provisioned["name"] == "Carol"
+
+
+def test_stores_share_one_agno_db(tmp_path):
+    """Passing the same agno db to the role/user/audit stores reuses its engine,
+    so everything lives in one database (no second db_url to keep in sync)."""
+    import sqlalchemy as sa
+
+    from agno.db.sqlite import SqliteDb
+
+    shared = SqliteDb(db_file=str(tmp_path / "shared.db"))
+    r = ManagedRoleStore(db=shared)
+    u = ManagedUserStore(db=shared)
+    a = DbAuditSink(db=shared)  # noqa: F841 (constructed for table creation)
+
+    r.set_role_scopes("viewer", ["agents:*:read"])
+    r.assign("bob", "viewer")
+    u.upsert("bob", email="bob@co")
+
+    # all authz tables + casbin's policy table live in the single shared engine
+    tables = set(sa.inspect(shared.db_engine).get_table_names())
+    assert {"casbin_rule", "authz_users", "authz_audit", "authz_decisions"} <= tables
+    assert r.roles_of("bob") == ["viewer"]
+    assert u.get("bob")["email"] == "bob@co"
+
+
+def test_db_takes_precedence_and_bad_db_errors():
+    from agno.os.authz._db import engine_from_db
+
+    with pytest.raises(ValueError, match="db_engine"):
+        engine_from_db(object())  # not an agno db
