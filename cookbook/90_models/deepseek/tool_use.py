@@ -11,12 +11,11 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 """
-The current version of the deepseek-chat model's Function Calling capabilitity is unstable, which may result in looped calls or empty responses.
-Their development team is actively working on a fix, and it is expected to be resolved in the next version.
+DeepSeek V4 models support tool calls in both thinking and non-thinking modes.
 """
 
 agent = Agent(
-    model=DeepSeek(id="deepseek-chat"),
+    model=DeepSeek(id="deepseek-v4-flash"),
     tools=[WebSearchTools()],
     markdown=True,
 )

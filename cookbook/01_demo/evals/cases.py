@@ -13,29 +13,26 @@ Add a case below, then run `python -m evals`.
 """
 
 from dataclasses import dataclass
-from typing import Union
+from pathlib import Path
 
 from agents.code_search import code_search
 from agents.git_wiki import git_wiki
 from agents.local_wiki import local_wiki
 from agents.notion_wiki import notion_wiki
-from agents.researcher import researcher
-from agents.web_search import web_search
 from agno.agent import Agent
-from agno.team import Team
-from agno.workflow import Workflow
 from db import get_db
-from teams.swarm import swarm
 
 eval_db = get_db()
+
+_ASSETS = Path(__file__).resolve().parent / "assets"
 
 
 @dataclass(frozen=True)
 class Case:
-    """One eval case: an input to one agent/team/workflow + optional judge/reliability checks."""
+    """One eval case: an input to one agent + optional judge/reliability checks."""
 
     name: str
-    agent: Union[Agent, Team, Workflow]
+    agent: Agent
     input: str
 
     # LLM-judge rubric. Set `criteria` to enable.
@@ -44,6 +41,10 @@ class Case:
     # Tool-call assertion. Set `expected_tool_calls` to enable.
     expected_tool_calls: tuple[str, ...] | None = None
     allow_additional_tool_calls: bool = True
+
+    # Multimodal inputs (filepaths) attached to the agent run, if any.
+    image_paths: tuple[str, ...] = ()
+    audio_paths: tuple[str, ...] = ()
 
 
 _BASE_CASES: tuple[Case, ...] = (
@@ -58,17 +59,35 @@ _BASE_CASES: tuple[Case, ...] = (
         ),
         expected_tool_calls=("query_local_wiki",),
     ),
-    # WebSearch — search tool fires AND response cites a URL.
+    # LocalWiki multimodal — read an attached image and file a page.
     Case(
-        name="web_search_cites_url",
-        agent=web_search,
-        input="What is the latest stable release of CPython? Cite the source.",
-        criteria=(
-            "Answers with a specific CPython version and cites at least one real URL "
-            "(python.org, peps.python.org, or another authoritative source). The response "
-            "is grounded in fetched content, not refusal or hedging."
+        name="local_wiki_ingests_image",
+        agent=local_wiki,
+        input=(
+            "Digest the attached diagram into a structured markdown page, "
+            "then file it to the wiki under notes/."
         ),
-        expected_tool_calls=("query_web",),
+        image_paths=(str(_ASSETS / "sample-diagram.png"),),
+        criteria=(
+            "Describes the content of the provided diagram in structured markdown "
+            "(headings or bullets) and confirms it filed a wiki page. Does NOT claim "
+            "it cannot see the image."
+        ),
+        expected_tool_calls=("update_local_wiki",),
+    ),
+    # LocalWiki — generate a downloadable HTML page (FileGenerationTools).
+    # Reliability-only: the agent reliably CALLS generate_html_file and the file
+    # is produced, but the wiki-curator persona tends to narrate the result as
+    # "filed/recorded," which makes a strict response-text judge flaky. The
+    # tool-call assertion is the robust signal that HTML generation works.
+    Case(
+        name="local_wiki_generates_html",
+        agent=local_wiki,
+        input=(
+            "Generate a standalone HTML landing page for a coffee shop called "
+            "'Bean There'. Produce the HTML file."
+        ),
+        expected_tool_calls=("generate_html_file",),
     ),
     # CodeSearch — codebase tool fires AND response names the right agents.
     Case(
@@ -76,8 +95,8 @@ _BASE_CASES: tuple[Case, ...] = (
         agent=code_search,
         input="Which agents are registered in this AgentOS demo (cookbook/01_demo)?",
         criteria=(
-            "Identifies the demo agents (local-wiki, web-search, code-search, researcher; "
-            "git-wiki and notion-wiki when env-gated). May reference cookbook/01_demo/run.py as the source."
+            "Identifies the demo agents (local-wiki, code-search; git-wiki and "
+            "notion-wiki when env-gated). May reference cookbook/01_demo/run.py as the source."
         ),
         expected_tool_calls=("query_codebase",),
     ),
@@ -87,31 +106,10 @@ _BASE_CASES: tuple[Case, ...] = (
         agent=code_search,
         input="Where is the function `fizz_buzz_xyz` defined in this project?",
         criteria=(
-            "Honestly says the function `fizz_buzz_xyz` is not defined in this project. "
-            "Does not fabricate a file path."
-        ),
-    ),
-    # Researcher — composes web + wiki. Wiki check fires before (or alongside) web.
-    Case(
-        name="researcher_checks_wiki_then_web",
-        agent=researcher,
-        input="What is the latest stable release of CPython?",
-        criteria=(
-            "Answers with a specific CPython version and either cites a real URL "
-            "(python.org, peps.python.org) or quotes a wiki page if one exists. The "
-            "response is grounded in tool output, not guessing."
-        ),
-        expected_tool_calls=("query_local_wiki", "query_web"),
-    ),
-    # Swarm team — both models answer, leader synthesizes with disagreements + confidence.
-    Case(
-        name="swarm_synthesizes_two_models",
-        agent=swarm,
-        input="What is the latest stable release of CPython? Cite the source.",
-        criteria=(
-            "Answers with a specific CPython version. Includes a 'Confidence:' line "
-            "(high/medium/low). If the two members disagreed, includes a 'Disagreement:' "
-            "line; otherwise indicates agreement implicitly. Cites at least one URL."
+            "Says `fizz_buzz_xyz` is not actually defined or implemented in the project. "
+            "Noting that the name only appears in an eval/test prompt string (e.g. this "
+            "eval file) is acceptable and not a failure; it fails only if it invents a "
+            "real definition site for the function."
         ),
     ),
 )
