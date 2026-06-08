@@ -5,19 +5,83 @@ AgentOS Chart Responses
 Demonstrates an AgentOS agent that returns chart specs Agno OS can render inline.
 """
 
+from enum import Enum
 from textwrap import dedent
+from typing import Dict, List, Union
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import AgentOSConfig, ChatConfig
+from typing_extensions import NotRequired, TypedDict
 
 # ---------------------------------------------------------------------------
 # Create Example
 # ---------------------------------------------------------------------------
 
 db = SqliteDb(db_file="tmp/agentos_chart_responses.db")
+
+ChartDataValue = Union[str, int, float]
+ChartDataRow = Dict[str, ChartDataValue]
+
+
+class ChartType(str, Enum):
+    """Supported Agno OS inline chart renderers."""
+
+    BAR = "bar"
+    LINE = "line"
+    AREA = "area"
+    PIE = "pie"
+    BAR_HORIZONTAL = "bar-horizontal"
+    BAR_STACKED = "bar-stacked"
+    AREA_STACKED = "area-stacked"
+
+
+class ChartSeriesConfig(TypedDict):
+    """Display metadata for a chart series."""
+
+    # Human-readable label shown in legends and tooltips.
+    label: str
+
+
+class ChartSpec(TypedDict):
+    """Chart payload shape for a future SDK chart tool."""
+
+    # Selects the frontend renderer, for example line, bar, area, or pie.
+    type: ChartType
+
+    # Flat chart rows. Labels/dates should be strings; measured values should be numbers.
+    data: List[ChartDataRow]
+
+    # Series metadata keyed by data field, for example {"revenue": {"label": "Revenue"}}.
+    config: Dict[str, ChartSeriesConfig]
+
+    # Optional chart heading shown above the visualization.
+    title: NotRequired[str]
+
+    # Optional supporting copy shown with the chart.
+    description: NotRequired[str]
+
+    # Cartesian chart category/date key, for example "month" or "date".
+    xKey: NotRequired[str]
+
+    # Explicit cartesian series order. If absent, frontend can infer from config keys.
+    yKeys: NotRequired[List[str]]
+
+    # Pie chart label key, for example "provider" or "model".
+    nameKey: NotRequired[str]
+
+    # Pie chart numeric value key, for example "runs" or "tokens".
+    valueKey: NotRequired[str]
+
+
+class ChartMessagePayload(TypedDict):
+    """Future structured payload for SDK tools that emit one or more charts."""
+
+    # One or more chart specs emitted by a future SDK chart tool.
+    charts: List[ChartSpec]
+
 
 CHART_RESPONSE_INSTRUCTIONS = dedent("""\
     You are a data analyst for Agno OS. When a user asks for trends, comparisons,
