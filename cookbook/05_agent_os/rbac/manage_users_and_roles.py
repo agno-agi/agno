@@ -61,13 +61,29 @@ from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig
 from agno.os.middleware import JWTIssuer  # mint tokens your AgentOS accepts
 
-# --- config (env-overridable so the same file works for a real frontend) ------
-OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience
+# --- config: supports BOTH planes by default ---------------------------------
+# Plane 1 - control plane / operators: tokens minted by the agno control plane
+#   (or any IdP) are verified against the OS's public key or a JWKS URL; their
+#   scopes authorize them (the ScopeAuthorizationProvider below).
+# Plane 2 - managed store / end users: roles you manage at runtime in the store.
+# Both are wired by default; you just point verification at your control plane.
+OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience (your os_id)
 ADMIN_SUBJECT = os.getenv("ADMIN_SUBJECT", "admin")  # whose `sub` is the bootstrap admin
-# The verification key. A shared secret (HS256) by default; if you paste a public
-# key (PEM) we switch to RS256 automatically - that's the agno-cloud / IdP case.
-VERIFICATION_KEY = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long").replace("\\n", "\n")
-ALGORITHM = "RS256" if "BEGIN" in VERIFICATION_KEY else "HS256"
+ISSUER = os.getenv("JWT_ISSUER") or None  # optionally pin the issuer (e.g. agent-os-api)
+
+# Verification source, in priority order:
+#   1. JWT_JWKS_URL         - a JWKS the control plane / IdP publishes (RS256)
+#   2. JWT_VERIFICATION_KEY  - the OS public key (RS256) or an HS256 secret
+#   3. dev fallback          - a built-in HS256 secret (prints an admin token)
+JWKS_URL = os.getenv("JWT_JWKS_URL") or None
+VERIFICATION_KEY = (os.getenv("JWT_VERIFICATION_KEY") or "").replace("\\n", "\n") or None
+DEV_SECRET = "your-secret-key-at-least-256-bits-long"
+if JWKS_URL:
+    ALGORITHM, KEYS = "RS256", None
+elif VERIFICATION_KEY:
+    ALGORITHM, KEYS = ("RS256" if "BEGIN" in VERIFICATION_KEY else "HS256"), [VERIFICATION_KEY]
+else:
+    ALGORITHM, KEYS = "HS256", [DEV_SECRET]
 
 # Frontends run in the browser, so the server must allow their origin.
 CORS_ORIGINS = [
@@ -111,10 +127,12 @@ agent_os = AgentOS(
     cors_allowed_origins=CORS_ORIGINS,
     authorization=True,
     authorization_config=AuthorizationConfig(
-        verification_keys=[VERIFICATION_KEY],
+        verification_keys=KEYS,
+        jwks_url=JWKS_URL,
         algorithm=ALGORITHM,
         verify_audience=True,
         audience=OS_ID,
+        issuer=ISSUER,
         # Two authz planes on one OS, in parallel - pass a LIST, allowed if any
         # grants:
         #  - ScopeAuthorizationProvider: operators whose token already carries
@@ -135,23 +153,28 @@ if __name__ == "__main__":
     print("\n" + "=" * 78)
     print("USER + ROLE MANAGEMENT AGENTOS - serving for a frontend")
     print("=" * 78)
+    src = "JWKS_URL" if JWKS_URL else ("JWT_VERIFICATION_KEY" if VERIFICATION_KEY else "dev secret")
     print("  endpoint:   http://localhost:7777")
     print("  manage at:  http://localhost:7777/authz/...   (admin-only)")
-    print(f"  auth:       {ALGORITHM}   audience={OS_ID}   admin sub={ADMIN_SUBJECT!r}")
+    print("  planes:     control plane (token scopes) + managed role store, in parallel")
+    print(f"  verify:     {ALGORITHM} via {src}   audience={OS_ID}   admin sub={ADMIN_SUBJECT!r}")
     print(f"  CORS open to: {', '.join(CORS_ORIGINS)}")
 
-    # In dev (HS256) mint a ready-to-use admin token so you can try it immediately.
-    # JWTIssuer is the mint-side helper: same claim names AgentOS verifies, and it
-    # stamps exp/iat/jti for you. (RS256 mode can't mint here - that key is public.)
-    if ALGORITHM == "HS256":
-        issuer = JWTIssuer(VERIFICATION_KEY, audience=OS_ID)
-        admin_token = issuer.create_token(ADMIN_SUBJECT, expires_in=7 * 24 * 3600)
-        print("\n  admin bearer token (paste into your frontend / curl):")
+    # Dev only (built-in HS256 secret): mint a ready-to-use admin token so you can
+    # try it immediately. JWTIssuer is the mint-side helper - same claims AgentOS
+    # verifies, with exp/iat/jti stamped. (Control-plane RS256 tokens are minted by
+    # the control plane, not here - that key is public.)
+    is_dev = ALGORITHM == "HS256" and not VERIFICATION_KEY and not JWKS_URL
+    if is_dev:
+        admin_token = JWTIssuer(DEV_SECRET, audience=OS_ID).create_token(ADMIN_SUBJECT, expires_in=7 * 24 * 3600)
+        print("\n  dev mode - admin bearer token (paste into your frontend / curl):")
         print(f"    {admin_token}")
         print("\n  e.g.:  curl -H 'Authorization: Bearer <token>' http://localhost:7777/authz/users")
     else:
-        print("\n  RS256 mode: the frontend should send a token signed by your IdP/cloud,")
-        print(f"  with aud={OS_ID!r} and sub={ADMIN_SUBJECT!r} for admin access.")
+        print("\n  control-plane mode: the frontend sends a token signed by your control")
+        print(f"  plane / IdP (aud={OS_ID!r}). Operators are authorized by the token's scopes;")
+        print("  end users by the role store. To manage roles, the caller needs agent_os:admin")
+        print(f"  on the token OR be seeded here (ADMIN_SUBJECT={ADMIN_SUBJECT!r}).")
     print("=" * 78 + "\n")
 
     agent_os.serve(app, host="0.0.0.0", port=7777)
