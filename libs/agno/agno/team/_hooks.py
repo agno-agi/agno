@@ -85,6 +85,19 @@ def _member_approval_already_exists(run_response: TeamRunOutput) -> bool:
     )
 
 
+def _drop_resolved_requirements(run_response: TeamRunOutput) -> None:
+    """Strip resolved requirements before re-emitting a pause to clients.
+
+    On chained HITL flows (e.g. team-level tool resolved, then a member tool
+    pauses), the resolved requirements would otherwise still appear in the
+    re-paused output and cause clients to re-render an already-handled prompt.
+    Their resolved state remains visible in ``run_response.tools``.
+    """
+    if not run_response.requirements:
+        return
+    run_response.requirements = [req for req in run_response.requirements if not req.is_resolved()]
+
+
 def handle_team_run_paused(
     team: "Team",
     run_response: TeamRunOutput,
@@ -95,6 +108,9 @@ def handle_team_run_paused(
     from agno.team._run import _cleanup_and_store
 
     run_response.status = RunStatus.paused
+    # Strip any already-resolved requirements so clients don't re-render old prompts
+    # when this is a chained pause (e.g. team-level resolved, member tool now paused).
+    _drop_resolved_requirements(run_response)
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
@@ -132,6 +148,9 @@ def handle_team_run_paused_stream(
     from agno.team._run import _cleanup_and_store
 
     run_response.status = RunStatus.paused
+    # Strip any already-resolved requirements so clients don't re-render old prompts
+    # when this is a chained pause (e.g. team-level resolved, member tool now paused).
+    _drop_resolved_requirements(run_response)
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
@@ -169,6 +188,9 @@ async def ahandle_team_run_paused(
     from agno.team._run import _acleanup_and_store
 
     run_response.status = RunStatus.paused
+    # Strip any already-resolved requirements so clients don't re-render old prompts
+    # when this is a chained pause (e.g. team-level resolved, member tool now paused).
+    _drop_resolved_requirements(run_response)
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
@@ -204,6 +226,9 @@ async def ahandle_team_run_paused_stream(
     from agno.team._run import _acleanup_and_store
 
     run_response.status = RunStatus.paused
+    # Strip any already-resolved requirements so clients don't re-render old prompts
+    # when this is a chained pause (e.g. team-level resolved, member tool now paused).
+    _drop_resolved_requirements(run_response)
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
