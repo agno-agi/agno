@@ -927,6 +927,7 @@ class TestContinueRunApprovalResolution:
                 patch("agno.team._init._disconnect_connectable_tools"),
                 patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
                 patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._aget_learning_tools", new=AsyncMock(return_value=[])),
                 patch("agno.team._tools._determine_tools_for_model", return_value=[]),
                 patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])),
                 patch("agno.team._run._ahandle_team_tool_call_updates", new=AsyncMock()),
@@ -1005,3 +1006,267 @@ class TestContinueRunApprovalResolution:
             mock_apply.assert_called_once_with(team.db, "run-1", run_response)
 
         asyncio.run(_exercise())
+
+
+# ===========================================================================
+# 17. Forwarding team run_context state to member.continue_run
+# ===========================================================================
+
+
+class TestMemberContinueKwargsFromRunContext:
+    """Verify the helper that builds kwargs forwarded to member continue_run calls."""
+
+    def test_none_run_context_returns_empty(self):
+        from agno.team._run import _member_continue_kwargs_from_run_context
+
+        assert _member_continue_kwargs_from_run_context(None) == {}
+
+    def test_forwards_dependencies_metadata_filters(self):
+        from agno.run import RunContext
+        from agno.team._run import _member_continue_kwargs_from_run_context
+
+        rc = RunContext(
+            run_id="r",
+            session_id="s",
+            user_id="u",
+            session_state={"unused": True},
+            dependencies={"user_token": "Bearer xyz"},
+            metadata={"trace": 1},
+            knowledge_filters={"tag": "v"},
+        )
+
+        kwargs = _member_continue_kwargs_from_run_context(rc)
+        assert kwargs["dependencies"] == {"user_token": "Bearer xyz"}
+        assert kwargs["metadata"] == {"trace": 1}
+        assert kwargs["knowledge_filters"] == {"tag": "v"}
+        # Agent.acontinue_run does not accept session_state — must not be forwarded
+        # or it would be silently swallowed by **kwargs and confuse callers.
+        assert "session_state" not in kwargs
+
+    def test_only_forwards_set_fields(self):
+        from agno.run import RunContext
+        from agno.team._run import _member_continue_kwargs_from_run_context
+
+        rc = RunContext(
+            run_id="r",
+            session_id="s",
+            user_id="u",
+            session_state=None,
+            dependencies=None,
+            metadata=None,
+            knowledge_filters=None,
+        )
+        assert _member_continue_kwargs_from_run_context(rc) == {}
+
+
+class TestRoutingForwardsRunContextToMembers:
+    """Routing functions must forward team dependencies to member.continue_run.
+
+    Forward team run_context state to member.continue_run.
+    """
+
+    def _make_run_response_with_member_req(self):
+        run_response = MagicMock()
+        run_response.run_id = "team-run-1"
+        run_response.member_responses = []
+
+        member_run_output = MagicMock()
+        member_run_output.run_id = "member-run-1"
+        member_run_output.tools = None
+        member_run_output.is_paused = False
+        member_run_output.content = "done"
+
+        req = _make_requirement(requires_confirmation=True)
+        req.member_agent_id = "member-id-1"
+        req.member_run_id = "member-run-1"
+        req._member_run_response = member_run_output
+
+        run_response.requirements = [req]
+
+        session = MagicMock()
+        session.session_id = "session-1"
+
+        return run_response, session, member_run_output
+
+    def _make_run_context(self):
+        from agno.run import RunContext
+
+        return RunContext(
+            run_id="team-run-1",
+            session_id="session-1",
+            user_id="user-1",
+            session_state={"local": "state"},
+            dependencies={"user_token": "Bearer abc"},
+            metadata={"trace": "id"},
+            knowledge_filters={"tag": "v"},
+        )
+
+    def test_sync_routing_forwards_dependencies(self):
+        from agno.team._run import _route_requirements_to_members
+
+        run_response, session, _member_run_output = self._make_run_response_with_member_req()
+        run_context = self._make_run_context()
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member_response = MagicMock(is_paused=False, content="ok")
+        member.continue_run = MagicMock(return_value=member_response)
+
+        team = MagicMock()
+
+        with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+            _route_requirements_to_members(team, run_response=run_response, session=session, run_context=run_context)
+
+        member.continue_run.assert_called_once()
+        kwargs = member.continue_run.call_args.kwargs
+        assert kwargs["dependencies"] == {"user_token": "Bearer abc"}
+        assert kwargs["metadata"] == {"trace": "id"}
+        assert kwargs["knowledge_filters"] == {"tag": "v"}
+
+    def test_sync_routing_run_id_fallback_forwards_dependencies(self):
+        from agno.team._run import _route_requirements_to_members
+
+        run_response, session, _ = self._make_run_response_with_member_req()
+        # Force the run_id fallback path (no cached member RunOutput)
+        run_response.requirements[0]._member_run_response = None
+        run_response.member_responses = []
+        run_context = self._make_run_context()
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member.continue_run = MagicMock(return_value=MagicMock(is_paused=False, content="ok"))
+
+        team = MagicMock()
+
+        with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+            _route_requirements_to_members(team, run_response=run_response, session=session, run_context=run_context)
+
+        kwargs = member.continue_run.call_args.kwargs
+        assert kwargs["dependencies"] == {"user_token": "Bearer abc"}
+
+    def test_async_routing_forwards_dependencies(self):
+        from agno.team._run import _aroute_requirements_to_members
+
+        run_response, session, _ = self._make_run_response_with_member_req()
+        run_context = self._make_run_context()
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member_response = MagicMock(is_paused=False, content="ok")
+        member.acontinue_run = AsyncMock(return_value=member_response)
+
+        team = MagicMock()
+
+        async def _exercise():
+            with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+                await _aroute_requirements_to_members(
+                    team, run_response=run_response, session=session, run_context=run_context
+                )
+
+        asyncio.run(_exercise())
+
+        member.acontinue_run.assert_awaited_once()
+        kwargs = member.acontinue_run.call_args.kwargs
+        assert kwargs["dependencies"] == {"user_token": "Bearer abc"}
+        assert kwargs["metadata"] == {"trace": "id"}
+        assert kwargs["knowledge_filters"] == {"tag": "v"}
+
+    def test_async_streaming_routing_forwards_dependencies(self):
+        from agno.team._run import _aroute_requirements_to_members_stream
+
+        run_response, session, _ = self._make_run_response_with_member_req()
+        run_context = self._make_run_context()
+
+        member_response = MagicMock(is_paused=False, content="ok")
+
+        async def _member_stream(*args, **kwargs):
+            yield member_response
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member.acontinue_run = MagicMock(side_effect=lambda *a, **kw: _member_stream())
+
+        team = MagicMock()
+        team.stream_member_events = False
+        team.events_to_skip = []
+        team.store_events = False
+
+        async def _exercise():
+            with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+                member_results = []
+                async for _ in _aroute_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=session,
+                    member_results=member_results,
+                    run_context=run_context,
+                    stream_events=False,
+                ):
+                    pass
+
+        asyncio.run(_exercise())
+
+        member.acontinue_run.assert_called_once()
+        kwargs = member.acontinue_run.call_args.kwargs
+        assert kwargs["dependencies"] == {"user_token": "Bearer abc"}
+        assert kwargs["metadata"] == {"trace": "id"}
+        assert kwargs["knowledge_filters"] == {"tag": "v"}
+
+    def test_sync_streaming_routing_forwards_dependencies(self):
+        from agno.team._run import _route_requirements_to_members_stream
+
+        run_response, session, _ = self._make_run_response_with_member_req()
+        run_context = self._make_run_context()
+
+        member_response = MagicMock(is_paused=False, content="ok")
+
+        def _member_stream(*args, **kwargs):
+            yield member_response
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member.continue_run = MagicMock(side_effect=lambda *a, **kw: _member_stream())
+
+        team = MagicMock()
+        team.stream_member_events = False
+        team.events_to_skip = []
+        team.store_events = False
+
+        with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+            member_results = []
+            list(
+                _route_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=session,
+                    member_results=member_results,
+                    run_context=run_context,
+                    stream_events=False,
+                )
+            )
+
+        member.continue_run.assert_called_once()
+        kwargs = member.continue_run.call_args.kwargs
+        assert kwargs["dependencies"] == {"user_token": "Bearer abc"}
+        assert kwargs["metadata"] == {"trace": "id"}
+        assert kwargs["knowledge_filters"] == {"tag": "v"}
+
+    def test_routing_with_none_run_context_does_not_inject_kwargs(self):
+        """When the team has no run_context (defensive), no forwarding kwargs are added."""
+        from agno.team._run import _route_requirements_to_members
+
+        run_response, session, _ = self._make_run_response_with_member_req()
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member.continue_run = MagicMock(return_value=MagicMock(is_paused=False, content="ok"))
+
+        team = MagicMock()
+
+        with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+            _route_requirements_to_members(team, run_response=run_response, session=session, run_context=None)
+
+        kwargs = member.continue_run.call_args.kwargs
+        assert "dependencies" not in kwargs
+        assert "metadata" not in kwargs
+        assert "knowledge_filters" not in kwargs

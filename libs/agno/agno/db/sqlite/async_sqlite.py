@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -1179,8 +1180,11 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
-    async def get_all_memory_topics(self) -> List[str]:
+    async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of memory topics.
@@ -1191,11 +1195,24 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return []
 
             async with self.async_session_factory() as sess, sess.begin():
-                # Select topics from all results
-                stmt = select(table.c.topics)
-                result = (await sess.execute(stmt)).fetchall()
+                stmt = select(table.c.topics).where(table.c.topics.is_not(None))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                rows = (await sess.execute(stmt)).fetchall()
 
-                return list(set([record[0] for record in result]))
+                topics_set: set = set()
+                for row in rows:
+                    raw = row[0]
+                    if not raw:
+                        continue
+                    if isinstance(raw, str):
+                        try:
+                            raw = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                    if isinstance(raw, list):
+                        topics_set.update(raw)
+                return list(topics_set)
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
@@ -2618,13 +2635,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                             (new_level > existing_level, insert_stmt.excluded.name),
                             else_=table.c.name,
                         ),
-                        # Preserve existing non-null context values using COALESCE
-                        "run_id": func.coalesce(insert_stmt.excluded.run_id, table.c.run_id),
-                        "session_id": func.coalesce(insert_stmt.excluded.session_id, table.c.session_id),
-                        "user_id": func.coalesce(insert_stmt.excluded.user_id, table.c.user_id),
-                        "agent_id": func.coalesce(insert_stmt.excluded.agent_id, table.c.agent_id),
-                        "team_id": func.coalesce(insert_stmt.excluded.team_id, table.c.team_id),
-                        "workflow_id": func.coalesce(insert_stmt.excluded.workflow_id, table.c.workflow_id),
+                        # Preserve existing non-null context values: COALESCE returns
+                        # the first non-null arg, so put the existing column first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": func.coalesce(table.c.run_id, insert_stmt.excluded.run_id),
+                        "session_id": func.coalesce(table.c.session_id, insert_stmt.excluded.session_id),
+                        "user_id": func.coalesce(table.c.user_id, insert_stmt.excluded.user_id),
+                        "agent_id": func.coalesce(table.c.agent_id, insert_stmt.excluded.agent_id),
+                        "team_id": func.coalesce(table.c.team_id, insert_stmt.excluded.team_id),
+                        "workflow_id": func.coalesce(table.c.workflow_id, insert_stmt.excluded.workflow_id),
                     },
                 )
                 await sess.execute(upsert_stmt)

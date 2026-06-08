@@ -2454,13 +2454,17 @@ class AsyncPostgresDb(AsyncBaseDb):
                             (new_level > existing_level, insert_stmt.excluded.name),
                             else_=table.c.name,
                         ),
-                        # Preserve existing non-null context values using COALESCE
-                        "run_id": func.coalesce(insert_stmt.excluded.run_id, table.c.run_id),
-                        "session_id": func.coalesce(insert_stmt.excluded.session_id, table.c.session_id),
-                        "user_id": func.coalesce(insert_stmt.excluded.user_id, table.c.user_id),
-                        "agent_id": func.coalesce(insert_stmt.excluded.agent_id, table.c.agent_id),
-                        "team_id": func.coalesce(insert_stmt.excluded.team_id, table.c.team_id),
-                        "workflow_id": func.coalesce(insert_stmt.excluded.workflow_id, table.c.workflow_id),
+                        # Preserve existing non-null context values: COALESCE returns
+                        # the first non-null arg, so put the existing column first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": func.coalesce(table.c.run_id, insert_stmt.excluded.run_id),
+                        "session_id": func.coalesce(table.c.session_id, insert_stmt.excluded.session_id),
+                        "user_id": func.coalesce(table.c.user_id, insert_stmt.excluded.user_id),
+                        "agent_id": func.coalesce(table.c.agent_id, insert_stmt.excluded.agent_id),
+                        "team_id": func.coalesce(table.c.team_id, insert_stmt.excluded.team_id),
+                        "workflow_id": func.coalesce(table.c.workflow_id, insert_stmt.excluded.workflow_id),
                     },
                 )
                 await sess.execute(upsert_stmt)
