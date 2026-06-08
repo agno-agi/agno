@@ -49,3 +49,13 @@ class LearningUpdate(BaseModel):
 
     content: Optional[Dict[str, Any]] = Field(None, description="Replacement content payload")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Replacement metadata")
+
+
+class LearningUserStats(BaseModel):
+    """Per-user learning statistics, used to list the users that own learnings."""
+
+    user_id: str = Field(..., description="The user ID")
+    total_learnings: int = Field(..., description="Number of learning records owned by this user", ge=0)
+    last_learning_updated_at: Optional[int] = Field(
+        None, description="Most recent learning update for this user (Unix epoch seconds)"
+    )

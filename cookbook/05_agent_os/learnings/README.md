@@ -31,6 +31,7 @@ In another, run the REST client:
 |--------|------|-------------|
 | `GET` | `/learnings` | Paginated list with filters |
 | `POST` | `/learnings` | Create a new learning record |
+| `GET` | `/learnings/users` | List the users that own learnings, with per-user counts |
 | `GET` | `/learnings/{learning_id}` | Fetch a single record |
 | `PATCH` | `/learnings/{learning_id}` | Update `content` and/or `metadata` (full replace) |
 | `DELETE` | `/learnings/{learning_id}` | Delete a record |
@@ -43,6 +44,8 @@ When an authenticated request carries a JWT:
   (`user_id IS NULL`) — this covers global, agent, team, session, and
   entity-scoped learnings. An explicit `user_id` query that doesn't match the
   JWT subject is rejected with `403`.
+- **List users**: results are scoped to the JWT subject. An explicit `user_id`
+  query that doesn't match the JWT subject is rejected with `403`.
 - **Create**: the body's `user_id` must either be omitted/null (creates a
   global / non-user-scoped record) or match the JWT subject. A mismatch is
   rejected with `403`.

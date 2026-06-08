@@ -9,7 +9,7 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
-from agno.os.routers.learnings.schema import LearningCreate, LearningResponse, LearningUpdate
+from agno.os.routers.learnings.schema import LearningCreate, LearningResponse, LearningUpdate, LearningUserStats
 from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
@@ -195,6 +195,69 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         if created is None:
             raise HTTPException(status_code=500, detail="Failed to create learning")
         return LearningResponse.model_validate(created)
+
+    @router.get(
+        "/learnings/users",
+        response_model=PaginatedResponse[LearningUserStats],
+        operation_id="list_learning_users",
+        summary="List Learning Users",
+        description=(
+            "List the users that own learning records, with a per-user count and last-updated "
+            "timestamp. Intended as the entry point for a per-user view: list users here, then "
+            "drill into a single user's learnings via `GET /learnings?user_id=...`. Records with "
+            "no owner (`user_id IS NULL`) are excluded. Pass `learning_type` to restrict the "
+            "grouping to a single store (e.g. `user_profile` or `user_memory`). When the request "
+            "is authenticated with a JWT, results are scoped to the JWT subject; passing a "
+            "`user_id` that differs from the subject is rejected with 403."
+        ),
+    )
+    async def list_learning_users(
+        request: Request,
+        learning_type: Optional[str] = Query(None, description="Restrict the grouping to a single learning type"),
+        user_id: Optional[str] = Query(None, description="Restrict the result to a single user"),
+        limit: int = Query(20, ge=1, le=1000, description="Page size"),
+        page: int = Query(1, ge=1, description="1-indexed page number"),
+        db_id: Optional[str] = Query(None, description="Database ID to query"),
+    ) -> PaginatedResponse[LearningUserStats]:
+        jwt_user_id = getattr(request.state, "user_id", None)
+        if jwt_user_id is not None:
+            if user_id is not None and user_id != jwt_user_id:
+                raise HTTPException(status_code=403, detail="Cannot list learning users for another user")
+            user_id = jwt_user_id
+
+        db = await get_db(dbs, db_id)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                records, total_count = await db.get_learning_user_stats(
+                    learning_type=learning_type,
+                    user_id=user_id,
+                    limit=limit,
+                    page=page,
+                )
+            else:
+                records, total_count = cast(BaseDb, db).get_learning_user_stats(
+                    learning_type=learning_type,
+                    user_id=user_id,
+                    limit=limit,
+                    page=page,
+                )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+
+        total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+        return PaginatedResponse(
+            data=[LearningUserStats.model_validate(r) for r in records],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
 
     @router.get(
         "/learnings/{learning_id}",

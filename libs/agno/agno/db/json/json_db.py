@@ -1866,3 +1866,12 @@ class JsonDb(BaseDb):
         page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Learning methods not yet implemented for JsonDb")
+
+    def get_learning_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError("Learning methods not yet implemented for JsonDb")

@@ -4511,6 +4511,54 @@ class SqliteDb(BaseDb):
             log_debug(f"Error listing learnings: {e}")
             return [], 0
 
+    def get_learning_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            with self.Session() as sess:
+                stmt = select(
+                    table.c.user_id,
+                    func.count(table.c.learning_id).label("total_learnings"),
+                    func.max(table.c.updated_at).label("last_learning_updated_at"),
+                )
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id).order_by(func.max(table.c.updated_at).desc())
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [
+                    {
+                        "user_id": row.user_id,
+                        "total_learnings": row.total_learnings,
+                        "last_learning_updated_at": row.last_learning_updated_at,
+                    }
+                    for row in results
+                ], int(total_count)
+
+        except Exception as e:
+            log_debug(f"Error getting learning user stats: {e}")
+            return [], 0
+
     # -- Schedule methods --
     def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
         try:

@@ -1015,6 +1015,32 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def get_learning_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "total_learnings": int, "last_learning_updated_at": int}``.
+        """
+        raise NotImplementedError
+
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
 
@@ -1768,6 +1794,32 @@ class AsyncBaseDb(ABC):
 
         Returns:
             Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    async def get_learning_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "total_learnings": int, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 

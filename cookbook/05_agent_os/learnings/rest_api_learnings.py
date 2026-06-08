@@ -3,6 +3,7 @@
 This example demonstrates:
 - Creating a learning record via POST /learnings
 - Listing learnings via GET /learnings
+- Listing the users that own learnings via GET /learnings/users
 - Fetching a single learning via GET /learnings/{id}
 - Updating content/metadata via PATCH /learnings/{id}
 - Deleting via DELETE /learnings/{id}
@@ -68,7 +69,22 @@ def main():
         print(f"  {r['learning_id']} -> {r['learning_type']} (user={r['user_id']})")
 
     # =========================================================================
-    # 3. Fetch a single learning
+    # 3. List the users that own learnings
+    # =========================================================================
+    # Entry point for a per-user view: list users first, then drill into a
+    # single user's learnings via GET /learnings?user_id=...
+    print("\n=== List Learning Users ===\n")
+    resp = client.get("/learnings/users", params={"learning_type": "user_profile"})
+    resp.raise_for_status()
+    for u in resp.json()["data"]:
+        print(
+            "  user={} learnings={} last_updated={}".format(
+                u["user_id"], u["total_learnings"], u["last_learning_updated_at"]
+            )
+        )
+
+    # =========================================================================
+    # 4. Fetch a single learning
     # =========================================================================
     print("\n=== Get Learning ===\n")
     resp = client.get(f"/learnings/{learning_id}")
@@ -79,7 +95,7 @@ def main():
     print(f"  Content keys: {list((detail.get('content') or {}).keys())}")
 
     # =========================================================================
-    # 4. Update content + metadata (full replace)
+    # 5. Update content + metadata (full replace)
     # =========================================================================
     print("\n=== Update Learning ===\n")
     resp = client.patch(
@@ -102,7 +118,7 @@ def main():
     print(f"  Updated metadata: {updated['metadata']}")
 
     # =========================================================================
-    # 5. Delete the learning
+    # 6. Delete the learning
     # =========================================================================
     print("\n=== Delete Learning ===\n")
     resp = client.delete(f"/learnings/{learning_id}")

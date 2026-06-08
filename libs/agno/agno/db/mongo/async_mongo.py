@@ -3360,3 +3360,59 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error listing learnings: {e}")
             return [], 0
+
+    async def get_learning_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return [], 0
+
+            match_stage: Dict[str, Any] = {"user_id": {"$ne": None}}
+            if learning_type is not None:
+                match_stage["learning_type"] = learning_type
+            if user_id is not None:
+                match_stage["user_id"] = user_id
+
+            pipeline: List[Dict[str, Any]] = [
+                {"$match": match_stage},
+                {
+                    "$group": {
+                        "_id": "$user_id",
+                        "total_learnings": {"$sum": 1},
+                        "last_learning_updated_at": {"$max": "$updated_at"},
+                    }
+                },
+                {"$sort": {"last_learning_updated_at": -1}},
+            ]
+
+            count_pipeline = pipeline + [{"$count": "total"}]
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
+            total_count = count_result[0]["total"] if count_result else 0
+
+            if limit is not None:
+                if page is not None:
+                    pipeline.append({"$skip": (page - 1) * limit})
+                pipeline.append({"$limit": limit})
+
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
+
+            formatted_results = [
+                {
+                    "user_id": result["_id"],
+                    "total_learnings": result["total_learnings"],
+                    "last_learning_updated_at": result["last_learning_updated_at"],
+                }
+                for result in results
+            ]
+
+            return formatted_results, int(total_count)
+
+        except Exception as e:
+            log_debug(f"Error getting learning user stats: {e}")
+            return [], 0

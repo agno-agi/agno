@@ -14,8 +14,8 @@
 
 **Status:** PASS
 
-**Description:** Exercises the full CRUD cycle against the running AgentOS: POST creates a `user_profile` learning, GET lists it, GET by id fetches it, PATCH replaces content + metadata, DELETE removes it, and a follow-up GET returns 404.
+**Description:** Exercises the full CRUD cycle against the running AgentOS: POST creates a `user_profile` learning, GET lists it, GET /learnings/users lists the owning users with per-user counts, GET by id fetches it, PATCH replaces content + metadata, DELETE removes it, and a follow-up GET returns 404.
 
-**Result:** All five verbs returned the expected status codes and payloads. Pagination metadata populated correctly. PATCH performed a full replace of `content` and `metadata` while preserving identity fields.
+**Result:** All verbs returned the expected status codes and payloads. The `/learnings/users` listing grouped records by `user_id` with correct counts and last-updated timestamps. Pagination metadata populated correctly. PATCH performed a full replace of `content` and `metadata` while preserving identity fields.
 
 ---
