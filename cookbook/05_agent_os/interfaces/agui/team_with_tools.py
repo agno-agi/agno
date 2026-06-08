@@ -1,23 +1,29 @@
-"""
-Team With Tools
-===============
+"""Team With Tools
+================
 
-Demonstrates a coordinate-mode Team exposing an external-execution
-frontend tool via the AG-UI interface. The team-level tool is registered
-with ``external_execution=True`` so the AG-UI client (CopilotKit, the
-AG-UI dojo, etc.) is asked to execute it on the user's machine.
+Coordinate-mode Team exposing an ``external_execution=True`` frontend tool
+through the AG-UI interface. The team-level ``generate_haiku`` tool is
+registered server-side and the AG-UI router pauses the run so the AG-UI
+client (CopilotKit, the AG-UI dojo) executes the tool on the user's
+machine and posts the result back to resume the run.
 
-This example exercises the Team variants of the AG-UI fixes shipped in
-PR #7819:
-  * Frontend tool merge (#7801) into the team's tool list via
-    ``RunContext.tools``.
-  * TeamRunPausedEvent isinstance handling in
-    ``_create_completion_events`` so the SSE stream emits
-    ``TOOL_CALL_START / ARGS / END`` for the team's external tool.
-  * Silent-tool filter in ``_get_team_paused_content`` so AG-UI clients
-    don't see a "Team run paused..." text leak.
-  * Resume-on-tool-result via ``acontinue_run`` with
-    ``RunRequirement(external_execution_result=...)`` correctly set.
+``add_history_to_context=True`` with ``db=InMemoryDb()`` so the team
+remembers prior turns and varies ``image_name`` / ``gradient`` choices
+across consecutive same-theme prompts. The AG-UI router strips client-sent
+history, so without a db the team would start fresh on every turn.
+
+Tool schema (``english``, ``japanese``, ``image_name``, ``gradient``)
+matches the AG-UI dojo's ``tool_based_generative_ui`` page so the
+frontend's React render handler can pick up every field.
+``external_execution_silent=True`` suppresses the "Team run paused"
+status message while the frontend executes the tool.
+
+Prerequisite: Team-mode external-execution over AG-UI requires the
+``TeamRunPausedEvent`` handling, ``set_external_execution_result()``
+resume path, and team-side silent-tool filter added in PR #7819. On
+framework versions before that change reaches ``main``, the team's
+external tool call is not emitted as AG-UI ``TOOL_CALL_START / ARGS /
+END`` events and the dojo will not render haiku cards.
 
 Run with:
 
@@ -39,6 +45,13 @@ from agno.tools import tool
 # ---------------------------------------------------------------------------
 
 
+# This server-side stub is what causes the team to pause for external
+# execution -- the AG-UI client (dojo / CopilotKit) actually runs the
+# tool. The dojo registers a frontend tool with the same name; the AG-UI
+# router's _build_merged_tools drops the frontend definition on name
+# collision (server-side wins). Do NOT remove this stub thinking it is
+# redundant: without it the team has no pause source and the dojo will
+# never receive TOOL_CALL_* events.
 @tool(external_execution=True, external_execution_silent=True)
 def generate_haiku(
     english: List[str], japanese: List[str], image_name: str, gradient: str
