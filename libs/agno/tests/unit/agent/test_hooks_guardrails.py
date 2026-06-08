@@ -538,3 +538,20 @@ class TestPIIGuardrailTypeSafety:
         run_input = RunInput(input_content="Contact user@example.com")
         with pytest.raises(InputCheckError, match="Potential PII detected"):
             guardrail.check(run_input)
+
+    def test_custom_pii_patterns_accept_raw_regex_strings(self):
+        from agno.guardrails.pii import PIIDetectionGuardrail
+
+        guardrail = PIIDetectionGuardrail(
+            enable_ssn_check=False,
+            enable_credit_card_check=False,
+            enable_email_check=False,
+            enable_phone_check=False,
+            custom_patterns={"Bank Account": r"\b\d{10}\b"},
+        )
+        run_input = RunInput(input_content="Bank account 1234567890")
+
+        with pytest.raises(InputCheckError) as exc_info:
+            guardrail.check(run_input)
+
+        assert exc_info.value.additional_data == {"detected_pii": ["Bank Account"]}

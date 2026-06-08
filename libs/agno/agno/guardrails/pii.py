@@ -26,7 +26,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
         enable_credit_card_check: bool = True,
         enable_email_check: bool = True,
         enable_phone_check: bool = True,
-        custom_patterns: Optional[Dict[str, Pattern[str]]] = None,
+        custom_patterns: Optional[Dict[str, Union[Pattern[str], str]]] = None,
     ):
         import re
 
@@ -43,7 +43,12 @@ class PIIDetectionGuardrail(BaseGuardrail):
             self.pii_patterns["Phone"] = re.compile(r"\b\d{3}[\s.-]?\d{3}[\s.-]?\d{4}\b")
 
         if custom_patterns:
-            self.pii_patterns.update(custom_patterns)
+            self.pii_patterns.update(
+                {
+                    pii_type: re.compile(pattern) if isinstance(pattern, str) else pattern
+                    for pii_type, pattern in custom_patterns.items()
+                }
+            )
 
     def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Check for PII patterns in the input."""
