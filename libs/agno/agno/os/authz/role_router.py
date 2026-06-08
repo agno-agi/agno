@@ -69,14 +69,22 @@ def get_roles_router(
     """
 
     def require_admin(request: Request) -> str:
-        """Gate: caller must be authenticated and an admin of the store."""
+        """Gate: caller must be authenticated and an admin.
+
+        Admin can come from two planes (so both run in parallel on one OS):
+          - the OS-local store (``store.can_manage`` — the end-user/managed plane), or
+          - the token's own scopes carrying the admin scope (the operator plane,
+            e.g. an agno-cloud-minted token for someone who administers this OS).
+        """
         if not getattr(request.state, "authenticated", False):
             raise HTTPException(status_code=401, detail="Not authenticated")
         principal_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}
-        if not store.can_manage(principal_id, claims):
-            raise HTTPException(status_code=403, detail="Admin privileges required to manage roles")
-        return principal_id or ""
+        token_scopes = getattr(request.state, "scopes", []) or []
+        admin_scope = getattr(request.state, "admin_scope", None) or "agent_os:admin"
+        if admin_scope in token_scopes or store.can_manage(principal_id, claims):
+            return principal_id or ""
+        raise HTTPException(status_code=403, detail="Admin privileges required to manage roles")
 
     router = APIRouter(prefix=prefix, tags=tags, dependencies=[Depends(require_admin)])
 

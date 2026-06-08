@@ -27,12 +27,24 @@ Run it:
 Then point your frontend at http://localhost:7777 (CORS is open to the usual dev
 ports). The server keeps running until you Ctrl-C.
 
+Two authz planes run in parallel here (CompositeAuthorizationProvider below):
+  - operators: a token that already carries scopes (e.g. an agno-cloud / frontend
+    token) is authorized straight from those scopes.
+  - end users: everyone else is authorized against the OS-local role store you
+    manage at runtime.
+So a scope-bearing frontend token can connect and operate, while the store still
+governs your managed users.
+
 Auth, two modes:
   - Dev (default): HS256 with a shared secret. On startup it prints a ready-made
     admin bearer token you can paste into the frontend / curl to try the API.
   - Real login service / agno cloud: set JWT_VERIFICATION_KEY to the OS public key
-    (RS256 is detected automatically), OS_ID to the token audience, and
-    ADMIN_SUBJECT to the `sub` of whoever should be admin. No code change.
+    (RS256 is detected automatically) and OS_ID to the token audience.
+
+To MANAGE roles/users over /authz you must be an admin. That comes from either an
+``agent_os:admin`` scope on your token, OR being seeded in the store - so set
+ADMIN_SUBJECT to the `sub` of your token (decode it: the `sub` claim). e.g.
+    ADMIN_SUBJECT="you@company.com" python manage_users_and_roles.py
 """
 
 import os
@@ -42,8 +54,10 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.authz.audit import DbAuditSink
+from agno.os.authz.composite_provider import CompositeAuthorizationProvider
 from agno.os.authz.role_router import get_roles_router
 from agno.os.authz.role_store import ManagedRoleStore
+from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig
 from agno.os.middleware import JWTIssuer  # mint tokens your AgentOS accepts
@@ -102,7 +116,15 @@ agent_os = AgentOS(
         algorithm=ALGORITHM,
         verify_audience=True,
         audience=OS_ID,
-        authorization_provider=roles.provider,
+        # Two authz planes on one OS, in parallel:
+        #  - ScopeAuthorizationProvider: operators whose token already carries
+        #    scopes (e.g. an agno-cloud / frontend token) are authorized from it.
+        #  - roles.provider: end users managed in the OS-local store.
+        # Allowed if EITHER grants. (Without the scope plane, a scope-bearing
+        # frontend token gets 403 because the store ignores token scopes.)
+        authorization_provider=CompositeAuthorizationProvider(
+            [ScopeAuthorizationProvider(), roles.provider]
+        ),
         user_store=users,
         audit=audit,  # record every access decision too
     ),
