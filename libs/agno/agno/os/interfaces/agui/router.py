@@ -530,16 +530,23 @@ async def run_agent(
                 )
                 return
 
-            requirements = [
-                RunRequirement(
+            # B2 hardening: use the canonical set_external_execution_result()
+            # method instead of constructing requirements without
+            # external_execution_result set. is_resolved() checks
+            # external_execution_result (not tool_execution.result) — the method
+            # writes to both fields atomically, matching the Slack interface
+            # precedent at agno/os/interfaces/slack/interactions.py:281.
+            requirements = []
+            for msg in tool_messages:
+                req = RunRequirement(
                     tool_execution=ToolExecution(
                         tool_call_id=msg.tool_call_id,
                         external_execution_required=True,
                         result=msg.content or "",
                     )
                 )
-                for msg in tool_messages
-            ]
+                req.set_external_execution_result(msg.content or "")
+                requirements.append(req)
 
             state_dict = session_state or {}
             resume_from_state = _AGNO_RESUME_KEY in state_dict and not getattr(agent, "db", None)
@@ -756,6 +763,10 @@ async def run_team(
                 )
                 return
 
+            # B2 hardening (team path): mirror the agent-block pattern and use
+            # set_external_execution_result() rather than direct field
+            # assignment. Matches Slack precedent at
+            # agno/os/interfaces/slack/interactions.py:281.
             requirements = []
             for msg in tool_messages:
                 req = RunRequirement(
@@ -765,7 +776,7 @@ async def run_team(
                         result=msg.content or "",
                     )
                 )
-                req.external_execution_result = msg.content or ""
+                req.set_external_execution_result(msg.content or "")
                 requirements.append(req)
 
             state_dict = session_state or {}

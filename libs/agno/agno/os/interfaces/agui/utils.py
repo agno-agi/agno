@@ -5,7 +5,7 @@ import json
 import re
 import uuid
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tuple, Union
 
 try:
@@ -18,7 +18,9 @@ try:
         ReasoningMessageEndEvent,
         ReasoningMessageStartEvent,
         ReasoningStartEvent,
+        RawEvent,
         RunFinishedEvent,
+        StateDeltaEvent,
         StateSnapshotEvent,
         TextMessageContentEvent,
         TextMessageEndEvent,
@@ -630,30 +632,42 @@ def _create_completion_events(
     elif isinstance(chunk, TeamRunPausedEvent):
         external_tools = [t for t in (chunk.tools or []) if getattr(t, "external_execution_required", False)]
     if external_tools:
-        # First, emit an assistant message for external tool calls
-        assistant_message_id = str(uuid.uuid4())
-        assistant_start_event = TextMessageStartEvent(
-            type=EventType.TEXT_MESSAGE_START,
-            message_id=assistant_message_id,
-            role="assistant",
-        )
-        events_to_emit.append(assistant_start_event)
-
-        # Add any text content if present for the assistant message
-        if chunk.content:
-            content_event = TextMessageContentEvent(
-                type=EventType.TEXT_MESSAGE_CONTENT,
+        # B4 hardening: when text was already streamed before the pause, reuse
+        # the existing streamed message as the parent for the tool calls instead
+        # of emitting a fresh TextMessageStart/Content/End wrapper. The
+        # streaming path has already emitted ``chunk.content`` as deltas; opening
+        # a second message with the same full text duplicates it in the UI.
+        if not message_started:
+            # No text was streamed — open a wrapper assistant message to host
+            # the tool calls and any synthesized paused-content text.
+            assistant_message_id = str(uuid.uuid4())
+            assistant_start_event = TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
                 message_id=assistant_message_id,
-                delta=str(chunk.content),
+                role="assistant",
             )
-            events_to_emit.append(content_event)
+            events_to_emit.append(assistant_start_event)
 
-        # End the assistant message
-        assistant_end_event = TextMessageEndEvent(
-            type=EventType.TEXT_MESSAGE_END,
-            message_id=assistant_message_id,
-        )
-        events_to_emit.append(assistant_end_event)
+            # Add any text content if present for the assistant message
+            if chunk.content:
+                content_event = TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT,
+                    message_id=assistant_message_id,
+                    delta=str(chunk.content),
+                )
+                events_to_emit.append(content_event)
+
+            # End the assistant message
+            assistant_end_event = TextMessageEndEvent(
+                type=EventType.TEXT_MESSAGE_END,
+                message_id=assistant_message_id,
+            )
+            events_to_emit.append(assistant_end_event)
+        else:
+            # Text was already streamed; reuse the just-closed message id as
+            # the parent for the tool call events. Do NOT re-emit chunk.content
+            # — the client already received it as streaming deltas.
+            assistant_message_id = message_id
 
         # Emit tool call events for external execution
         for tool in external_tools:
@@ -785,6 +799,7 @@ async def async_stream_agno_response_as_agui_events(
     run_id: str,
     on_paused: Optional[Callable[[str, List[str]], None]] = None,
     get_pause_snapshot: Optional[Callable[[Any], Optional[Dict[str, Any]]]] = None,
+    run_state: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints.
 

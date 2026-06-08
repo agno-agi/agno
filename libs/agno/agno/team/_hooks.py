@@ -71,6 +71,16 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
         return ""
     parts: list[str] = []
     for req in active:
+        # B3 hardening (mixed-tool case): individually skip silent external
+        # execution requirements so a single non-silent requirement doesn't
+        # surface text for the silent ones in the same pause. Mirrors the
+        # agent-side per-tool filter at agno/utils/response.py:133.
+        if (
+            req.needs_external_execution
+            and req.tool_execution
+            and getattr(req.tool_execution, "external_execution_silent", False)
+        ):
+            continue
         member = req.member_agent_name or "team"
         tool_name = req.tool_execution.tool_name if req.tool_execution else "unknown"
         if req.needs_confirmation:
@@ -79,6 +89,11 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
             parts.append(f"- {member}: {tool_name} requires user input")
         elif req.needs_external_execution:
             parts.append(f"- {member}: {tool_name} requires external execution")
+    if not parts:
+        # Every active requirement was filtered out (silent external execution).
+        # Return empty so the AG-UI client doesn't see a stray "Team run paused"
+        # header with no body.
+        return ""
     return "Team run paused. The following require input:\n" + "\n".join(parts)
 
 
