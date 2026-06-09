@@ -1,6 +1,6 @@
 """Tests for the Memories schema's framework-owned per-memory timestamps."""
 
-from agno.learn.schemas import Memories
+from agno.learn.schemas import Memories, UserProfile
 
 
 class TestAddMemory:
@@ -53,3 +53,31 @@ class TestUpdateMemory:
     def test_returns_false_when_not_found(self):
         m = Memories(user_id="u1")
         assert m.update_memory("missing", "y") is False
+
+
+class TestToDictExcludesInternalFields:
+    """Internal audit/identity fields mirror the agno_learnings row columns, so they must
+    not be duplicated (as nulls) inside the persisted content. user_id is kept for round-trip."""
+
+    def test_profile_drops_internal_fields(self):
+        content = UserProfile(user_id="u1", name="lm", preferred_name="neha").to_dict()
+        assert set(content.keys()) == {"user_id", "name", "preferred_name"}
+        for f in ("agent_id", "team_id", "created_at", "updated_at"):
+            assert f not in content
+
+    def test_memories_drops_parent_internal_but_keeps_entry_timestamps(self):
+        m = Memories(user_id="u1")
+        m.add_memory("likes Python")
+        content = m.to_dict()
+        # Parent-level internal fields are gone...
+        assert set(content.keys()) == {"user_id", "memories"}
+        # ...but the per-memory timestamps inside the entries survive.
+        entry = content["memories"][0]
+        assert "created_at" in entry and "updated_at" in entry
+
+    def test_profile_round_trips_without_internal_fields(self):
+        content = UserProfile(user_id="u1", name="lm").to_dict()
+        back = UserProfile.from_dict(content)
+        assert back is not None
+        assert back.user_id == "u1"
+        assert back.name == "lm"

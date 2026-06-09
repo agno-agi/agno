@@ -49,6 +49,18 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _to_dict_excluding_internal(obj: Any) -> Dict[str, Any]:
+    """Serialize a schema dataclass, dropping fields marked ``internal``.
+
+    The internal audit/identity fields (agent_id, team_id, created_at, updated_at) mirror the
+    ``agno_learnings`` row columns. The store routes the real values to those columns, so the
+    in-content copies are always null -- duplicated noise. We persist only the meaningful
+    content; the required ``user_id`` is not marked internal and is retained for round-trip.
+    """
+    internal = {f.name for f in fields(obj) if f.metadata.get("internal")}
+    return {k: v for k, v in asdict(obj).items() if k not in internal}
+
+
 # =============================================================================
 # Helper for debug logging
 # =============================================================================
@@ -145,9 +157,9 @@ class UserProfile:
             return None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict. Works with subclasses."""
+        """Convert to dict, excluding internal fields that duplicate the row columns."""
         try:
-            return asdict(self)
+            return _to_dict_excluding_internal(self)
         except Exception as e:
             log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
@@ -237,9 +249,9 @@ class Memories:
             return None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict. Works with subclasses."""
+        """Convert to dict, excluding internal fields that duplicate the row columns."""
         try:
-            return asdict(self)
+            return _to_dict_excluding_internal(self)
         except Exception as e:
             log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
