@@ -15,7 +15,7 @@ Available Stores:
 - SessionContextStore: Current session state
 - LearnedKnowledgeStore: Reusable knowledge/insights
 - EntityMemoryStore: Third-party entity facts
-- DecisionLogStore: Agent decision logging (Phase 2)
+- DecisionLogStore: Agent decision logging
 """
 
 from agno.learn.stores.decision_log import DecisionLogStore
