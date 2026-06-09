@@ -110,7 +110,7 @@ if __name__ == "__main__":
 
     # The admin can list everyone in the directory, with their roles merged in.
     print("\n  the directory (asked for by alice, an admin):")
-    listing = client.get("/authz/users", headers=auth("alice")).json()["users"]
+    listing = client.get("/authz/users", headers=auth("alice")).json()["data"]  # paginated {data, meta}
     for u in listing:
         print(f"    - {u['id']:8s} {str(u['email'] or ''):12s} roles={u['roles']}  disabled={u['disabled']}")
 

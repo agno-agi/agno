@@ -1,8 +1,7 @@
 """HTTP management API for :class:`ManagedRoleStore` — the governance product surface.
 
-This is the productisation of the managed-roles tier: a small, admin-only REST
-API to create roles, set their permissions (in agno scope terms), and grant or
-revoke them at runtime. Mount it on your AgentOS app:
+Admin-only REST API to create roles, set their permissions (in agno scope terms,
+with allow/deny), and grant or revoke them at runtime. Mount it on your AgentOS:
 
     from agno.os.authz.role_store import ManagedRoleStore
     from agno.os.authz.role_router import get_roles_router
@@ -11,26 +10,32 @@ revoke them at runtime. Mount it on your AgentOS app:
     app = agent_os.get_app()
     app.include_router(get_roles_router(roles))
 
-Every route requires the caller to be an admin (satisfies ``agent_os:admin``,
-whether that comes from a token scope or an admin role in the store). The JWT
-middleware still runs first, so an unauthenticated request is rejected (401)
-before these handlers; a valid-but-non-admin caller gets 403.
+Response shapes mirror the agno cloud RBAC API so a frontend can reuse its
+integration: roles are objects (slug/name/description/is_default/created_at/
+updated_at + parsed scopes), scopes are ``{raw, namespace, sub_namespace,
+permission, value}``, and list endpoints use the SDK ``PaginatedResponse``
+({data, meta}). Single-OS: scopes are a flat list (no org/os split).
+
+Every route is admin-only — admin comes from an ``agent_os:admin`` token scope OR
+an admin role in the store. Unauthenticated requests are rejected (401) by the JWT
+middleware before these handlers; a valid-but-non-admin caller gets 403.
 
 Endpoints (default prefix ``/authz``):
-    GET    /authz/roles                          list roles
-    GET    /authz/roles/{role}                   a role's scopes
-    PUT    /authz/roles/{role}                   set a role's scopes  {"scopes": [...]}
-    DELETE /authz/roles/{role}                   delete a role
+    GET    /authz/roles                          list roles (paginated)
+    GET    /authz/roles/{slug}                   a role with its scopes
+    PUT    /authz/roles/{slug}                   set scopes/metadata  {"scopes":[...]}
+    DELETE /authz/roles/{slug}                   delete a role
     GET    /authz/users/{subject}/roles          a subject's roles
     POST   /authz/users/{subject}/roles          assign a role        {"role": "..."}
     DELETE /authz/users/{subject}/roles/{role}   revoke a role
 """
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from agno.os.schema import PaginatedResponse, PaginationInfo
 from agno.os.scopes import AgentOSScope
 
 if TYPE_CHECKING:
@@ -38,8 +43,100 @@ if TYPE_CHECKING:
     from agno.os.authz.user_store import ManagedUserStore
 
 
+# --------------------------------------------------------------------- schemas
+def _parse_scope(raw: str) -> tuple:
+    """Split a scope string into (namespace, sub_namespace, permission).
+
+    ``agents:read`` -> ("agents", None, "read")
+    ``agents:*:run`` -> ("agents", "*", "run")
+    ``agent_os:admin`` -> ("agent_os", None, "admin")
+    """
+    parts = raw.split(":")
+    if len(parts) == 2:
+        return parts[0], None, parts[1]
+    if len(parts) >= 3:
+        return parts[0], ":".join(parts[1:-1]), parts[-1]
+    return (parts[0] if parts else "unknown"), None, "unknown"
+
+
+class RoleScopeSchema(BaseModel):
+    """A single permission on a role, parsed and with its allow/deny effect."""
+
+    id: Optional[str] = Field(None, description="Scope id (null — scopes aren't individually addressable here)")
+    raw: str = Field(description="Original scope string, e.g. 'agents:*:read'")
+    namespace: str = Field(description="Resource namespace, e.g. 'agents'")
+    sub_namespace: Optional[str] = Field(None, description="Specific resource id or wildcard '*'")
+    permission: str = Field(description="Action, e.g. 'read' / 'run' / 'write'")
+    value: str = Field(description="'allow' or 'deny'")
+
+    @classmethod
+    def from_entry(cls, entry: dict) -> "RoleScopeSchema":
+        ns, sub, perm = _parse_scope(entry["scope"])
+        return cls(raw=entry["scope"], namespace=ns, sub_namespace=sub, permission=perm, value=entry.get("effect", "allow"))
+
+
+class RoleSchema(BaseModel):
+    """A role with its scopes — mirrors the cloud RoleWithScopes shape (flattened)."""
+
+    slug: str = Field(description="Unique role id")
+    name: str = Field(description="Human-readable display name")
+    description: Optional[str] = Field(None, description="Role description")
+    is_default: bool = Field(False, description="Whether this is a built-in default role")
+    created_at: Optional[int] = Field(None, description="Created (epoch seconds)")
+    updated_at: Optional[int] = Field(None, description="Last updated (epoch seconds)")
+    scopes: List[RoleScopeSchema] = Field(default_factory=list, description="Permissions on this role")
+
+    @classmethod
+    def from_record(cls, rec: dict) -> "RoleSchema":
+        return cls(
+            slug=rec["slug"],
+            name=rec.get("name") or rec["slug"],
+            description=rec.get("description"),
+            is_default=bool(rec.get("is_default", False)),
+            created_at=rec.get("created_at") or None,
+            updated_at=rec.get("updated_at") or None,
+            scopes=[RoleScopeSchema.from_entry(e) for e in rec.get("scopes", [])],
+        )
+
+
+class AuthzUserSchema(BaseModel):
+    """A directory user with roles merged in."""
+
+    id: str = Field(description="User id (the JWT 'sub')")
+    email: Optional[str] = None
+    name: Optional[str] = None
+    status: str = Field(description="'active' or 'disabled'")
+    disabled: bool = False
+    roles: List[str] = Field(default_factory=list, description="Roles assigned to this user")
+    created_at: Optional[int] = None
+    updated_at: Optional[int] = None
+
+    @classmethod
+    def from_user(cls, user: dict, roles: List[str]) -> "AuthzUserSchema":
+        return cls(
+            id=user["id"],
+            email=user.get("email"),
+            name=user.get("name"),
+            status="disabled" if user.get("disabled") else "active",
+            disabled=bool(user.get("disabled")),
+            roles=roles,
+            created_at=user.get("created_at"),
+            updated_at=user.get("updated_at"),
+        )
+
+
+class ScopeItem(BaseModel):
+    scope: str = Field(description="Scope string, e.g. 'agents:*:read'")
+    effect: str = Field("allow", description="'allow' or 'deny'")
+
+
 class SetRoleScopesRequest(BaseModel):
-    scopes: List[str] = Field(..., description="Permissions in agno scope terms, e.g. ['agents:*:read']")
+    scopes: List[Union[str, ScopeItem]] = Field(
+        ..., description="Permissions: strings (allow) or {scope, effect} objects"
+    )
+    name: Optional[str] = Field(None, description="Display name")
+    description: Optional[str] = Field(None, description="Role description")
+    is_default: Optional[bool] = Field(None, description="Mark as a default role")
 
 
 class AssignRoleRequest(BaseModel):
@@ -55,6 +152,21 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     email: Optional[str] = Field(None, description="New email")
     name: Optional[str] = Field(None, description="New display name")
+
+
+def _page(items: list, page: int, limit: int) -> PaginatedResponse:
+    """Wrap a fully-materialised list in the SDK's PaginatedResponse ({data, meta})."""
+    total = len(items)
+    start = max(page - 1, 0) * limit
+    return PaginatedResponse(
+        data=items[start : start + limit],
+        meta=PaginationInfo(
+            page=page,
+            limit=limit,
+            total_count=total,
+            total_pages=(total + limit - 1) // limit if limit > 0 else 0,
+        ),
+    )
 
 
 def get_roles_router(
@@ -90,27 +202,40 @@ def get_roles_router(
 
     router = APIRouter(prefix=prefix, tags=tags, dependencies=[Depends(require_admin)])
 
+    def _role_or_404(slug: str) -> dict:
+        rec = store.get_role(slug)
+        if rec is None:
+            raise HTTPException(status_code=404, detail=f"Role {slug!r} not found")
+        return rec
+
     # ---- roles ----------------------------------------------------------
-    @router.get("/roles")
-    def list_roles() -> dict:
-        return {"roles": store.list_roles()}
+    @router.get("/roles", response_model=PaginatedResponse[RoleSchema])
+    def list_roles(
+        limit: int = Query(default=20, ge=1, description="Items per page"),
+        page: int = Query(default=1, ge=0, description="Page number"),
+    ):
+        roles = [RoleSchema.from_record(r) for r in store.list_roles_detailed()]
+        return _page(roles, page, limit)
 
-    @router.get("/roles/{role}")
-    def get_role(role: str) -> dict:
-        return {"role": role, "scopes": store.get_role_scopes(role)}
+    @router.get("/roles/{slug}", response_model=RoleSchema)
+    def get_role(slug: str):
+        return RoleSchema.from_record(_role_or_404(slug))
 
-    @router.put("/roles/{role}")
-    def set_role(role: str, body: SetRoleScopesRequest, actor: str = Depends(require_admin)) -> dict:
+    @router.put("/roles/{slug}", response_model=RoleSchema)
+    def set_role(slug: str, body: SetRoleScopesRequest, actor: str = Depends(require_admin)):
+        scopes = [s if isinstance(s, str) else {"scope": s.scope, "effect": s.effect} for s in body.scopes]
         try:
-            store.set_role_scopes(role, body.scopes, actor=actor)
+            store.set_role_scopes(
+                slug, scopes, actor=actor, name=body.name, description=body.description, is_default=body.is_default
+            )
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
-        return {"role": role, "scopes": store.get_role_scopes(role)}
+        return RoleSchema.from_record(_role_or_404(slug))
 
-    @router.delete("/roles/{role}")
-    def delete_role(role: str, actor: str = Depends(require_admin)) -> dict:
-        store.remove_role(role, actor=actor)
-        return {"role": role, "deleted": True}
+    @router.delete("/roles/{slug}")
+    def delete_role(slug: str, actor: str = Depends(require_admin)) -> dict:
+        store.remove_role(slug, actor=actor)
+        return {"slug": slug, "deleted": True}
 
     # ---- scope catalog --------------------------------------------------
     @router.get("/scopes")
@@ -173,44 +298,46 @@ def get_roles_router(
     # the app's JWT; this is a directory + revocation switch, never credentials.
     if user_store is not None:
 
-        def _with_roles(user: dict) -> dict:
-            return {**user, "roles": store.roles_of(user["id"])}
+        def _user(user: dict) -> AuthzUserSchema:
+            return AuthzUserSchema.from_user(user, store.roles_of(user["id"]))
 
-        @router.get("/users")
-        def list_users(include_disabled: bool = True, limit: int = 1000) -> dict:
-            """All users in the directory (newest first), each with their roles."""
-            return {"users": [_with_roles(u) for u in user_store.list(limit=limit, include_disabled=include_disabled)]}
+        @router.get("/users", response_model=PaginatedResponse[AuthzUserSchema])
+        def list_users(
+            include_disabled: bool = True,
+            limit: int = Query(default=20, ge=1, description="Items per page"),
+            page: int = Query(default=1, ge=0, description="Page number"),
+        ):
+            users = [_user(u) for u in user_store.list(limit=100000, include_disabled=include_disabled)]
+            return _page(users, page, limit)
 
-        @router.post("/users")
-        def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)) -> dict:
-            user = user_store.upsert(body.id, email=body.email, name=body.name, actor=actor)
-            return _with_roles(user)
+        @router.post("/users", response_model=AuthzUserSchema)
+        def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
+            return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
 
-        @router.get("/users/{user_id}")
-        def get_user(user_id: str) -> dict:
+        @router.get("/users/{user_id}", response_model=AuthzUserSchema)
+        def get_user(user_id: str):
             user = user_store.get(user_id)
             if user is None:
                 raise HTTPException(status_code=404, detail=f"User {user_id!r} not found")
-            return _with_roles(user)
+            return _user(user)
 
-        @router.patch("/users/{user_id}")
-        def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)) -> dict:
-            user = user_store.upsert(user_id, email=body.email, name=body.name, actor=actor)
-            return _with_roles(user)
+        @router.patch("/users/{user_id}", response_model=AuthzUserSchema)
+        def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
+            return _user(user_store.upsert(user_id, email=body.email, name=body.name, actor=actor))
 
         @router.delete("/users/{user_id}")
         def delete_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
             deleted = user_store.remove(user_id, actor=actor)
             return {"id": user_id, "deleted": deleted}
 
-        @router.post("/users/{user_id}/disable")
-        def disable_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
+        @router.post("/users/{user_id}/disable", response_model=AuthzUserSchema)
+        def disable_user(user_id: str, actor: str = Depends(require_admin)):
             """Revoke a user: they are denied at the enforcement point on their next
             request, even with a still-valid token."""
-            return _with_roles(user_store.set_disabled(user_id, True, actor=actor))
+            return _user(user_store.set_disabled(user_id, True, actor=actor))
 
-        @router.post("/users/{user_id}/enable")
-        def enable_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
-            return _with_roles(user_store.set_disabled(user_id, False, actor=actor))
+        @router.post("/users/{user_id}/enable", response_model=AuthzUserSchema)
+        def enable_user(user_id: str, actor: str = Depends(require_admin)):
+            return _user(user_store.set_disabled(user_id, False, actor=actor))
 
     return router

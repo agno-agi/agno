@@ -187,3 +187,48 @@ def test_management_helpers():
     assert set(store.roles_of("bob")) == {"a", "b"}
     store.unassign("bob", "a")
     assert store.roles_of("bob") == ["b"]
+
+
+# --------------------------------------------------------- metadata + effects
+def test_role_metadata_is_tracked():
+    store = ManagedRoleStore()
+    store.set_role_scopes("viewer", ["agents:*:read"], name="Viewer", description="read-only")
+
+    rec = store.get_role("viewer")
+    assert rec["slug"] == "viewer"
+    assert rec["name"] == "Viewer"
+    assert rec["description"] == "read-only"
+    assert rec["is_default"] is False
+    assert rec["created_at"] > 0 and rec["updated_at"] >= rec["created_at"]
+    assert rec["scopes"] == [{"scope": "agents:read", "effect": "allow"}]
+
+    # list_roles_detailed returns full records
+    slugs = {r["slug"] for r in store.list_roles_detailed()}
+    assert "viewer" in slugs
+
+    # get_role for an unknown role is None
+    assert store.get_role("ghost") is None
+
+
+def test_allow_deny_effect_overrides():
+    """A deny scope overrides an allow for the same action (deny-overrides)."""
+    store = ManagedRoleStore()
+    # member can read any agent, but is explicitly denied reading the secret one
+    store.set_role_scopes(
+        "member",
+        ["agents:*:read", {"scope": "agents:secret-agent:read", "effect": "deny"}],
+    )
+    store.assign("bob", "member")
+    prov = store.provider
+
+    from agno.os.authz.provider import AuthorizationContext
+
+    ok = AuthorizationContext(principal_id="bob", resource_type="agents", resource_id="public-agent", action="read")
+    denied = AuthorizationContext(principal_id="bob", resource_type="agents", resource_id="secret-agent", action="read")
+    assert prov.check(ok) is True
+    assert prov.check(denied) is False  # deny wins
+
+    # the deny is reflected in the read-back entries, and excluded from accessible ids
+    entries = {(e["scope"], e["effect"]) for e in store.get_role_scope_entries("member")}
+    assert ("agents:read", "allow") in entries
+    assert ("agents:secret-agent:read", "deny") in entries

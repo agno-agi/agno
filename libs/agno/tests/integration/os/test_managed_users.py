@@ -148,15 +148,15 @@ def test_users_api_crud_and_role_merge():
     # create a user
     r = client.post("/authz/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
     assert r.status_code == 200, r.text
-    assert r.json()["id"] == "bob" and r.json()["roles"] == []
+    assert r.json()["id"] == "bob" and r.json()["roles"] == [] and r.json()["status"] == "active"
 
     # give bob a role; the user view merges it in
     roles.assign("bob", "viewer")
     got = client.get("/authz/users/bob", headers=_auth("alice")).json()
     assert got["email"] == "bob@co" and got["roles"] == ["viewer"]
 
-    # list includes bob with roles
-    listed = client.get("/authz/users", headers=_auth("alice")).json()["users"]
+    # list is paginated ({data, meta}) and includes bob with roles
+    listed = client.get("/authz/users", headers=_auth("alice")).json()["data"]
     assert any(u["id"] == "bob" and u["roles"] == ["viewer"] for u in listed)
 
     # update + delete

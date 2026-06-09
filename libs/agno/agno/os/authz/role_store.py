@@ -30,7 +30,8 @@ Example::
     store.unassign("bob", "member")
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import time
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.os.authz._db import engine_from_db as _engine_from_db
 from agno.os.authz.casbin_provider import scope_to_obj_act
@@ -38,18 +39,42 @@ from agno.os.authz.casbin_provider import scope_to_obj_act
 if TYPE_CHECKING:
     from agno.os.authz.audit import AuditSink
 
+# Policies carry an effect (``eft``) so a role can explicitly DENY a scope, not
+# just grant it. Deny overrides allow (``some(allow) && !some(deny)``), matching
+# the cloud RBAC semantics where a scope's ``value`` is allow|deny.
 _MODEL_TEXT = """
 [request_definition]
 r = sub, obj, act
 [policy_definition]
-p = sub, obj, act
+p = sub, obj, act, eft
 [role_definition]
 g = _, _
 [policy_effect]
-e = some(where (p.eft == allow))
+e = some(where (p.eft == allow)) && !some(where (p.eft == deny))
 [matchers]
 m = g(r.sub, p.sub) && (p.obj == "*" || keyMatch2(r.obj, p.obj)) && (p.act == "*" || r.act == p.act)
 """
+
+# A scope plus its effect. Inputs accept a bare string (= allow), a (scope, effect)
+# tuple, or a {"scope": ..., "effect"|"value": ...} dict.
+ScopeInput = Union[str, Tuple[str, str], Dict[str, str]]
+
+
+def _normalize_scope(entry: ScopeInput) -> Tuple[str, str]:
+    """Coerce a scope input into ``(scope, effect)`` with effect in {allow, deny}."""
+    if isinstance(entry, str):
+        scope, effect = entry, "allow"
+    elif isinstance(entry, dict):
+        scope = entry.get("scope") or entry.get("raw")  # type: ignore[assignment]
+        effect = entry.get("effect") or entry.get("value") or "allow"
+    else:  # tuple/list
+        scope, effect = entry[0], (entry[1] if len(entry) > 1 else "allow")
+    if not scope:
+        raise ValueError(f"Unrecognised scope entry: {entry!r}")
+    effect = str(effect).lower()
+    if effect not in ("allow", "deny"):
+        raise ValueError(f"scope effect must be 'allow' or 'deny', got {effect!r}")
+    return scope, effect
 
 
 def _obj_act_to_scope(obj: str, act: str) -> str:
@@ -123,6 +148,21 @@ class ManagedRoleStore:
         self._roles_claim = roles_claim
         self._audit = audit
 
+        # Role metadata (display name / description / is_default / timestamps).
+        # Casbin only stores policies, so metadata needs its own table; reuse the
+        # same DB when one is configured, else keep it in memory.
+        self._meta_mem: Optional[Dict[str, dict]] = None
+        self._meta_engine = None
+        self._meta_table = None
+        if db is not None:
+            self._init_meta_table(_engine_from_db(db))
+        elif db_url is not None:
+            import sqlalchemy as sa
+
+            self._init_meta_table(sa.create_engine(db_url))
+        else:
+            self._meta_mem = {}
+
         if decision_log:
             import logging
 
@@ -154,30 +194,164 @@ class ManagedRoleStore:
             )
         )
 
+    # --------------------------------------------------------- role metadata
+    def _init_meta_table(self, engine: Any) -> None:
+        import sqlalchemy as sa
+
+        self._meta_engine = engine
+        metadata = sa.MetaData()
+        self._meta_table = sa.Table(
+            "authz_roles",
+            metadata,
+            sa.Column("slug", sa.String(255), primary_key=True),  # = the role id/name
+            sa.Column("name", sa.String(255)),  # human-readable display name
+            sa.Column("description", sa.Text),
+            sa.Column("is_default", sa.Boolean, nullable=False, default=False),
+            sa.Column("created_at", sa.Integer, nullable=False),
+            sa.Column("updated_at", sa.Integer, nullable=False),
+        )
+        metadata.create_all(self._meta_engine)
+
+    def _meta_get(self, slug: str) -> Optional[dict]:
+        if self._meta_mem is not None:
+            row = self._meta_mem.get(slug)
+            return dict(row) if row else None
+        import sqlalchemy as sa
+
+        with self._meta_engine.connect() as conn:  # type: ignore[union-attr]
+            r = conn.execute(sa.select(self._meta_table).where(self._meta_table.c.slug == slug)).mappings().first()  # type: ignore[union-attr]
+        return dict(r) if r else None
+
+    def _meta_upsert(
+        self,
+        slug: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+    ) -> dict:
+        existing = self._meta_get(slug)
+        now = int(time.time())
+        if existing is None:
+            row = {
+                "slug": slug,
+                "name": name or slug,
+                "description": description,
+                "is_default": bool(is_default) if is_default is not None else False,
+                "created_at": now,
+                "updated_at": now,
+            }
+        else:
+            row = dict(existing)
+            if name is not None:
+                row["name"] = name
+            if description is not None:
+                row["description"] = description
+            if is_default is not None:
+                row["is_default"] = bool(is_default)
+            row["updated_at"] = now
+        self._meta_write(row, insert=existing is None)
+        return row
+
+    def _meta_write(self, row: dict, insert: bool) -> None:
+        if self._meta_mem is not None:
+            self._meta_mem[row["slug"]] = dict(row)
+            return
+        import sqlalchemy as sa
+
+        with self._meta_engine.begin() as conn:  # type: ignore[union-attr]
+            if insert:
+                conn.execute(sa.insert(self._meta_table).values(**row))  # type: ignore[union-attr]
+            else:
+                conn.execute(sa.update(self._meta_table).where(self._meta_table.c.slug == row["slug"]).values(**row))  # type: ignore[union-attr]
+
+    def _meta_delete(self, slug: str) -> None:
+        if self._meta_mem is not None:
+            self._meta_mem.pop(slug, None)
+            return
+        import sqlalchemy as sa
+
+        with self._meta_engine.begin() as conn:  # type: ignore[union-attr]
+            conn.execute(sa.delete(self._meta_table).where(self._meta_table.c.slug == slug))  # type: ignore[union-attr]
+
+    def _meta_or_default(self, slug: str) -> dict:
+        """Metadata for a role, synthesising defaults for rows defined before
+        metadata existed (or via the raw enforcer)."""
+        meta = self._meta_get(slug)
+        if meta is not None:
+            return meta
+        return {"slug": slug, "name": slug, "description": None, "is_default": False, "created_at": 0, "updated_at": 0}
+
     # ------------------------------------------------------------------ roles
-    def set_role_scopes(self, role: str, scopes: List[str], actor: Optional[str] = None) -> None:
-        """Define (or replace) what a role can do, in agno scope terms."""
+    def set_role_scopes(
+        self,
+        role: str,
+        scopes: List[ScopeInput],
+        actor: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+    ) -> None:
+        """Define (or replace) what a role can do, in agno scope terms.
+
+        ``scopes`` items may be plain strings (granted/allow), ``(scope, effect)``
+        tuples, or ``{"scope": ..., "effect": "allow"|"deny"}`` dicts. Also creates
+        / updates the role's metadata (display ``name`` / ``description`` /
+        ``is_default``)."""
         before = self.get_role_scopes(role) if self._audit else None
         self._enforcer.remove_filtered_policy(0, role)
-        for scope in scopes:
+        for entry in scopes:
+            scope, effect = _normalize_scope(entry)
             obj, act = scope_to_obj_act(scope)
-            self._enforcer.add_policy(role, obj, act)
+            self._enforcer.add_policy(role, obj, act, effect)
+        self._meta_upsert(role, name=name, description=description, is_default=is_default)
         self._emit("role.set_scopes", role, before, self.get_role_scopes(role) if self._audit else None, actor)
 
     def get_role_scopes(self, role: str) -> List[str]:
-        """Return a role's scopes in agno terms (best-effort read-back)."""
+        """Return a role's scope strings (allow + deny), for display/read-back."""
         return sorted(
             _obj_act_to_scope(p[1], p[2]) for p in self._enforcer.get_filtered_policy(0, role) if len(p) >= 3
         )
+
+    def get_role_scope_entries(self, role: str) -> List[dict]:
+        """Return a role's scopes with effects: ``[{"scope": ..., "effect": ...}]``."""
+        entries = []
+        for p in self._enforcer.get_filtered_policy(0, role):
+            if len(p) >= 3:
+                effect = p[3] if len(p) >= 4 else "allow"
+                entries.append({"scope": _obj_act_to_scope(p[1], p[2]), "effect": effect})
+        return sorted(entries, key=lambda e: (e["scope"], e["effect"]))
+
+    def get_role(self, role: str) -> Optional[dict]:
+        """Full role record: metadata + scope entries, or None if the role has
+        neither policies nor metadata."""
+        scopes = self.get_role_scope_entries(role)
+        meta = self._meta_get(role)
+        if meta is None and not scopes:
+            return None
+        return {**self._meta_or_default(role), "scopes": scopes}
 
     def remove_role(self, role: str, actor: Optional[str] = None) -> None:
         before = self.get_role_scopes(role) if self._audit else None
         self._enforcer.remove_filtered_policy(0, role)
         self._enforcer.remove_filtered_grouping_policy(1, role)
+        self._meta_delete(role)
         self._emit("role.removed", role, before, None, actor)
 
     def list_roles(self) -> List[str]:
-        return sorted({p[0] for p in self._enforcer.get_policy()})
+        """All role slugs (those with policies and/or metadata)."""
+        slugs = {p[0] for p in self._enforcer.get_policy()}
+        if self._meta_mem is not None:
+            slugs |= set(self._meta_mem.keys())
+        elif self._meta_engine is not None:
+            import sqlalchemy as sa
+
+            with self._meta_engine.connect() as conn:
+                slugs |= {r[0] for r in conn.execute(sa.select(self._meta_table.c.slug))}  # type: ignore[union-attr]
+        return sorted(slugs)
+
+    def list_roles_detailed(self) -> List[dict]:
+        """Every role as a full record (metadata + scope entries)."""
+        return [self.get_role(slug) for slug in self.list_roles()]  # type: ignore[misc]
 
     # ------------------------------------------------------------- assignments
     def assign(self, subject: str, role: str, actor: Optional[str] = None) -> None:

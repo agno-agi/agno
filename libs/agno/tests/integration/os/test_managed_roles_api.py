@@ -79,11 +79,25 @@ def test_admin_can_list_and_read_roles(client_and_store):
     client, _ = client_and_store
     r = client.get("/authz/roles", headers=_auth("alice"))
     assert r.status_code == 200
-    assert set(r.json()["roles"]) == {"viewer", "admin"}
+    body = r.json()  # paginated {data, meta}
+    assert {role["slug"] for role in body["data"]} == {"viewer", "admin"}
+    assert body["meta"]["total_count"] == 2
 
     r = client.get("/authz/roles/viewer", headers=_auth("alice"))
     assert r.status_code == 200
-    assert r.json()["scopes"] == ["agents:read"]  # global read-back form
+    role = r.json()
+    assert role["slug"] == "viewer" and role["name"] == "viewer"
+    # scopes are parsed objects now: {raw, namespace, sub_namespace, permission, value}
+    assert role["scopes"] == [
+        {
+            "id": None,
+            "raw": "agents:read",
+            "namespace": "agents",
+            "sub_namespace": None,
+            "permission": "read",
+            "value": "allow",
+        }
+    ]
 
 
 def test_admin_crud_role(client_and_store):
