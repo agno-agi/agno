@@ -461,6 +461,67 @@ async def test_async_upsert(mock_pgvector):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enable_batch", [False, True])
+async def test_async_upsert_429_no_write(mock_pgvector, enable_batch):
+    """On 429 during embedding, async upsert should raise and write nothing (batch and non-batch)."""
+
+    docs = [
+        Document(id="doc_0", content="rate limited doc 0", name="d0"),
+        Document(id="doc_1", content="rate limited doc 1", name="d1"),
+    ]
+
+    async def _raise_429(*args, **kwargs):
+        raise Exception("Error code: 429")
+
+    if enable_batch:
+
+        class RateLimitedEmbedder:
+            enable_batch = True
+
+            async def async_get_embeddings_batch_and_usage(self, texts):
+                raise Exception("Error code: 429")
+
+        mock_pgvector.embedder = RateLimitedEmbedder()
+        embedder_patcher = None
+    else:
+
+        class RateLimitedEmbedder:
+            enable_batch = False
+
+        mock_pgvector.embedder = RateLimitedEmbedder()
+        embedder_patcher = patch("agno.knowledge.document.Document.async_embed", new=_raise_429)
+
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert:
+        if embedder_patcher is not None:
+            with embedder_patcher:
+                with pytest.raises(Exception, match="429"):
+                    await mock_pgvector._async_upsert(
+                        content_hash="h",
+                        documents=docs,
+                        filters=None,
+                        batch_size=100,
+                    )
+        else:
+            with pytest.raises(Exception, match="429"):
+                await mock_pgvector._async_upsert(
+                    content_hash="h",
+                    documents=docs,
+                    filters=None,
+                    batch_size=100,
+                )
+
+        assert not mock_insert.called
+        assert not sess.execute.called
+        assert not sess.commit.called
+        assert sess.rollback.called
+
+
+@pytest.mark.asyncio
 async def test_async_search(mock_pgvector):
     """Test async_search method."""
     expected_results = [Document(id="test", content="Test document")]
@@ -1130,7 +1191,7 @@ def test_keyword_search_returns_empty_on_no_usable_tokens(mock_engine, mock_embe
         db.Session.assert_not_called()
 
 
-def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mock_embedder):
+def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine):
     """When prefix_match strips all tokens, hybrid_search falls back to ``''::tsquery``.
 
     Verified by compiling the SELECT statement that hybrid_search hands to the
@@ -1140,6 +1201,10 @@ def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mo
     from pgvector.sqlalchemy import Vector as RealVector
     from sqlalchemy import Column, MetaData, String, Table
     from sqlalchemy.dialects import postgresql
+
+    # Create a local embedder mock to avoid mutating the session-scoped fixture
+    local_embedder = MagicMock()
+    local_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
 
     # Build a real Table so SQLAlchemy can compile the SELECT hybrid_search produces.
     metadata = MetaData()
@@ -1162,11 +1227,9 @@ def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mo
         db = PgVector(
             table_name="test_hybrid_empty",
             db_engine=mock_engine,
-            embedder=mock_embedder,
+            embedder=local_embedder,
             prefix_match=True,
         )
-
-        mock_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
 
         captured = {}
 
@@ -1192,3 +1255,65 @@ def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mo
     sql = captured.get("sql", "")
     assert "''::tsquery" in sql, f"expected empty tsquery literal in SQL, got: {sql}"
     assert "to_tsquery(" not in sql, f"fallback should not call to_tsquery, got: {sql}"
+
+
+def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine):
+    """hybrid_search still computes embeddings when prefix_match strips all tokens.
+
+    Unlike keyword_search which returns [] immediately, hybrid_search proceeds
+    because the vector similarity branch can return results even without text matches.
+    This test verifies the embedder is called (vector path runs) even when the
+    text search component has no usable tokens.
+    """
+    from pgvector.sqlalchemy import Vector as RealVector
+    from sqlalchemy import Column, MetaData, String, Table
+
+    # Create a local embedder mock to avoid mutating the session-scoped fixture
+    local_embedder = MagicMock()
+    local_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
+
+    metadata = MetaData()
+    real_table = Table(
+        "test_hybrid_vector_fallback",
+        metadata,
+        Column("id", String, primary_key=True),
+        Column("name", String),
+        Column("meta_data", String),
+        Column("content", String),
+        Column("embedding", RealVector(3)),
+        Column("usage", String),
+    )
+
+    with (
+        patch("agno.vectordb.pgvector.pgvector.inspect"),
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch.object(PgVector, "get_table", return_value=real_table),
+    ):
+        db = PgVector(
+            table_name="test_hybrid_vector_fallback",
+            db_engine=mock_engine,
+            embedder=local_embedder,
+            prefix_match=True,
+        )
+
+        class _SessionCtx:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def begin(self_inner):
+                return self_inner
+
+            def execute(self_inner, stmt):
+                result = MagicMock()
+                result.fetchall.return_value = []
+                return result
+
+        db.Session = MagicMock(return_value=_SessionCtx())
+        results = db.hybrid_search("!@#$")
+
+        # Embedder was called — vector search still runs even with no text tokens
+        local_embedder.get_embedding.assert_called_once_with("!@#$")
+        assert results == []
