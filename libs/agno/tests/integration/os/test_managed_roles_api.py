@@ -160,10 +160,13 @@ def test_scope_catalog_endpoint(client_and_store):
     client, _ = client_and_store
     r = client.get("/authz/scopes", headers=_auth("alice"))
     assert r.status_code == 200
-    body = r.json()
-    assert "agents" in body["grouped"] and "read" in body["grouped"]["agents"]
-    assert "agents:run" in body["scopes"]
-    assert body["admin_scope"] == "agent_os:admin"
+    body = r.json()  # cloud shape: {org_scopes, os_scopes} of {raw, namespace, sub_namespace?, permission}
+    assert body["org_scopes"] == []  # single OS: no org/platform layer
+    by_raw = {s["raw"]: s for s in body["os_scopes"]}
+    assert by_raw["agents:run"] == {"raw": "agents:run", "namespace": "agents", "permission": "run"}
+    assert "agent_os:admin" in by_raw  # the super-scope is included
+    # exclude_none: sub_namespace omitted when absent
+    assert "sub_namespace" not in by_raw["agents:read"]
     # non-admin is blocked
     assert client.get("/authz/scopes", headers=_auth("bob")).status_code == 403
 

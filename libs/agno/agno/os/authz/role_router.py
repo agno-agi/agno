@@ -125,6 +125,31 @@ class AuthzUserSchema(BaseModel):
         )
 
 
+class AvailableScopeItem(BaseModel):
+    """One scope the OS understands (catalog entry — no effect/id, just the shape)."""
+
+    raw: str = Field(description="Scope string, e.g. 'agents:read'")
+    namespace: str = Field(description="Resource namespace, e.g. 'agents'")
+    sub_namespace: Optional[str] = Field(None, description="Sub-namespace if present")
+    permission: str = Field(description="Action/permission, e.g. 'read'")
+
+    @classmethod
+    def from_raw(cls, raw: str) -> "AvailableScopeItem":
+        ns, sub, perm = _parse_scope(raw)
+        return cls(raw=raw, namespace=ns, sub_namespace=sub, permission=perm)
+
+
+class AvailableScopesResponse(BaseModel):
+    """Available scopes grouped by org and OS level (mirrors the cloud API).
+
+    A self-hosted OS has no org/platform layer, so ``org_scopes`` is empty and
+    everything the OS enforces lives in ``os_scopes``.
+    """
+
+    org_scopes: List[AvailableScopeItem] = Field(default_factory=list, description="Organization-level scopes")
+    os_scopes: List[AvailableScopeItem] = Field(default_factory=list, description="OS-level scopes")
+
+
 class ScopeItem(BaseModel):
     scope: str = Field(description="Scope string, e.g. 'agents:*:read'")
     effect: str = Field("allow", description="'allow' or 'deny'")
@@ -238,26 +263,22 @@ def get_roles_router(
         return {"slug": slug, "deleted": True}
 
     # ---- scope catalog --------------------------------------------------
-    @router.get("/scopes")
-    def list_scopes() -> dict:
-        """The catalog of scopes this AgentOS understands, grouped by resource.
+    @router.get("/scopes", response_model=AvailableScopesResponse, response_model_exclude_none=True)
+    def list_scopes() -> AvailableScopesResponse:
+        """All scopes this AgentOS understands, in the cloud's available-scopes shape.
 
-        Derived from the OS's own route→scope map, so it always matches what the
-        OS actually enforces. A UI renders this as a resource×action grid; a role
-        is then just a set of the resulting ``resource:action`` strings (plus the
-        ``agent_os:admin`` super-scope).
+        Derived from the OS's own route→scope map (so it always matches what the OS
+        actually enforces) plus the ``agent_os:admin`` super-scope. A self-hosted OS
+        has no org/platform layer, so ``org_scopes`` is empty and everything is an
+        ``os_scope``. Each item is parsed into ``{raw, namespace, sub_namespace,
+        permission}`` for a UI to render a resource×action grid.
         """
         from agno.os.scopes import get_default_scope_mappings
 
-        grouped: dict = {}
-        for required in get_default_scope_mappings().values():
-            for scope in required:
-                parts = scope.split(":")
-                if len(parts) == 2:
-                    grouped.setdefault(parts[0], set()).add(parts[1])
-        grouped_sorted = {r: sorted(a) for r, a in sorted(grouped.items())}
-        flat = sorted(f"{r}:{a}" for r, acts in grouped_sorted.items() for a in acts)
-        return {"grouped": grouped_sorted, "scopes": flat, "admin_scope": "agent_os:admin"}
+        raws = {scope for required in get_default_scope_mappings().values() for scope in required}
+        raws.add("agent_os:admin")
+        os_scopes = [AvailableScopeItem.from_raw(r) for r in sorted(raws)]
+        return AvailableScopesResponse(org_scopes=[], os_scopes=os_scopes)
 
     # ---- audit ----------------------------------------------------------
     @router.get("/audit")
