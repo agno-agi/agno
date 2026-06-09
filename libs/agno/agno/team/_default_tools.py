@@ -529,7 +529,15 @@ def _get_delegate_task_function(
             session.upsert_run(member_agent_run_response)
 
         # Update team session state
+        # Preserve the leader's reasoning steps for its current run before merging the
+        # member's session state back. merge_dictionaries overwrites list values with
+        # the member's snapshot, which can lose steps the leader accumulated after the
+        # snapshot was taken (fixes #5514).
+        _rs = run_context.session_state.get("reasoning_steps") if run_context.session_state else None
+        _saved_leader_steps = _rs.get(run_context.run_id) if isinstance(_rs, dict) else None
         merge_dictionaries(run_context.session_state, member_session_state_copy)  # type: ignore
+        if _saved_leader_steps is not None:
+            run_context.session_state.setdefault("reasoning_steps", {})[run_context.run_id] = _saved_leader_steps
 
         # Update the team media
         if member_agent_run_response is not None:
