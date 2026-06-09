@@ -33,10 +33,21 @@ Schemas:
 """
 
 from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from agno.learn.utils import _parse_json, _safe_get
 from agno.utils.log import log_debug
+
+# Per-memory timestamp fields are owned by the framework and stamped at write time.
+# They are never accepted from the model / caller, so they cannot be spoofed via kwargs.
+_RESERVED_MEMORY_FIELDS = {"id", "created_at", "updated_at"}
+
+
+def _utc_now_iso() -> str:
+    """UTC timestamp in ISO-8601 with a trailing Z (matches the rest of the learn module)."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 # =============================================================================
 # Helper for debug logging
@@ -236,9 +247,14 @@ class Memories:
     def add_memory(self, content: str, **kwargs) -> str:
         """Add a new memory.
 
+        ``created_at`` and ``updated_at`` are stamped by the framework here and cannot be
+        supplied by the caller (any such kwargs are ignored) -- the model decides what to
+        remember, we decide when it was recorded.
+
         Args:
             content: The memory text to add.
-            **kwargs: Additional fields (source, timestamp, etc.)
+            **kwargs: Additional fields (e.g. source, added_by_agent). Reserved fields
+                (id, created_at, updated_at) are ignored.
 
         Returns:
             The generated memory ID.
@@ -248,7 +264,11 @@ class Memories:
         memory_id = str(uuid.uuid4())[:8]
 
         if content and content.strip():
-            self.memories.append({"id": memory_id, "content": content.strip(), **kwargs})
+            now = _utc_now_iso()
+            extra = {k: v for k, v in kwargs.items() if k not in _RESERVED_MEMORY_FIELDS}
+            self.memories.append(
+                {"id": memory_id, "content": content.strip(), "created_at": now, "updated_at": now, **extra}
+            )
 
         return memory_id
 
@@ -262,13 +282,17 @@ class Memories:
     def update_memory(self, memory_id: str, content: str, **kwargs) -> bool:
         """Update an existing memory.
 
+        Bumps ``updated_at`` (framework-owned) and preserves the original ``created_at``.
+        Reserved fields (id, created_at, updated_at) in kwargs are ignored.
+
         Returns:
             True if memory was found and updated, False otherwise.
         """
         for mem in self.memories:
             if isinstance(mem, dict) and mem.get("id") == memory_id:
                 mem["content"] = content.strip()
-                mem.update(kwargs)
+                mem.update({k: v for k, v in kwargs.items() if k not in _RESERVED_MEMORY_FIELDS})
+                mem["updated_at"] = _utc_now_iso()
                 return True
         return False
 
