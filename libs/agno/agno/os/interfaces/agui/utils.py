@@ -426,11 +426,12 @@ def _create_events_from_chunk(
                 # Emit state delta after tool call completion (state may have been mutated by the tool)
                 events_to_emit.extend(_create_state_delta_events(run_state, event_buffer))
 
-    # Handle reasoning — isinstance() dispatch for Agent and Team event types.
-    # Two producers: native model reasoning (o4-mini, Claude extended thinking)
-    # emits ReasoningContentDeltaEvent with true streaming deltas, while
-    # ReasoningTools (think/analyze) emits ReasoningStepEvent with a ReasoningStep object.
+    # Handle reasoning events
     elif isinstance(chunk, (AgentReasoningStartedEvent, TeamReasoningStartedEvent)):
+        if message_started:
+            events_to_emit.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
+            message_started = False
+            message_id = str(uuid.uuid4())
         reasoning_id = event_buffer.start_reasoning()
         events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
         events_to_emit.append(
@@ -440,7 +441,10 @@ def _create_events_from_chunk(
         )
 
     elif isinstance(chunk, (AgentReasoningContentDeltaEvent, TeamReasoningContentDeltaEvent)):
-        # Native model reasoning — chunk.reasoning_content is a true streaming delta
+        if message_started:
+            events_to_emit.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
+            message_started = False
+            message_id = str(uuid.uuid4())
         reasoning_id, is_new = event_buffer.ensure_reasoning_started()
         if is_new:
             events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
@@ -457,8 +461,10 @@ def _create_events_from_chunk(
             )
 
     elif isinstance(chunk, (AgentReasoningStepEvent, TeamReasoningStepEvent)):
-        # ReasoningTools — chunk.reasoning_content is accumulated (all steps so far),
-        # so we format chunk.content (the single ReasoningStep) as the delta instead
+        if message_started:
+            events_to_emit.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
+            message_started = False
+            message_id = str(uuid.uuid4())
         reasoning_id, is_new = event_buffer.ensure_reasoning_started()
         if is_new:
             events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))

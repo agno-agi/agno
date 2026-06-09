@@ -27,7 +27,7 @@ Schemas:
 - SessionContext: Current session state
 - LearnedKnowledge: Reusable knowledge/insights
 - EntityMemory: Third-party entity facts
-- Decision: Decision logs (Phase 2)
+- DecisionLog: Decision logs
 - Feedback: Behavioral feedback (Phase 2)
 - InstructionUpdate: Self-improvement (Phase 3)
 """
@@ -888,7 +888,7 @@ class SessionPlanningExtractionResponse:
 
 
 # =============================================================================
-# Phase 2 Schemas (Placeholders)
+# Decision Log Schema
 # =============================================================================
 
 
@@ -1011,6 +1011,11 @@ class DecisionLog:
 
 # Backwards compatibility alias
 Decision = DecisionLog
+
+
+# =============================================================================
+# Placeholder Schemas (Not yet implemented)
+# =============================================================================
 
 
 @dataclass
