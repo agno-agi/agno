@@ -51,14 +51,14 @@ __all__ = [
     "EntityMemoryConfig",
     "SessionContextConfig",
     "LearnedKnowledgeConfig",
-    "DecisionLogConfig",  # Phase 2
+    "DecisionLogConfig",
     # Schemas
     "UserProfile",
     "Memories",
     "EntityMemory",
     "SessionContext",
     "LearnedKnowledge",
-    "DecisionLog",  # Phase 2
+    "DecisionLog",
     # Stores
     "LearningStore",
     "UserProfileStore",
@@ -67,5 +67,5 @@ __all__ = [
     "SessionContextStore",
     "LearnedKnowledgeStore",
     "EntityMemoryStore",
-    "DecisionLogStore",  # Phase 2
+    "DecisionLogStore",
 ]
