@@ -26,7 +26,7 @@ masked_team = Team(
     name="Privacy-Protected Team",
     members=[],
     model=OpenAIResponses(id="gpt-5.2"),
-    pre_hooks=[PIIDetectionGuardrail(mask_pii=True)],
+    pre_hooks=[PIIDetectionGuardrail(strategy="mask")],
     description="A team that helps with customer service while protecting privacy.",
     instructions="You are a helpful customer service assistant. Always protect user privacy and handle sensitive information appropriately.",
 )

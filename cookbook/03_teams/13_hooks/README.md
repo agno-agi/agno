@@ -1,6 +1,6 @@
 # hooks
 
-Examples for team workflows in hooks.
+Examples for team workflows with hooks.
 
 ## Prerequisites
 
@@ -10,6 +10,7 @@ Examples for team workflows in hooks.
 
 ## Files
 
-- post_hook_output.py - Demonstrates post hook output.
-- pre_hook_input.py - Demonstrates pre hook input.
-- stream_hook.py - Demonstrates stream hook.
+- pre_hook_input.py - Demonstrates input validation and transformation pre-hooks.
+- model_hook.py - Demonstrates function-based model hooks for context inspection and validation.
+- post_hook_output.py - Demonstrates post hook output validation and transformation.
+- stream_hook.py - Demonstrates post-hook notifications after streaming responses.

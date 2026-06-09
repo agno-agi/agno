@@ -99,6 +99,7 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.hooks import (
+    normalize_model_hooks,
     normalize_post_hooks,
     normalize_pre_hooks,
 )
@@ -366,7 +367,7 @@ def _run(
     15. Create session summary
     16. Cleanup and store the run response and session
     """
-    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
+    from agno.agent._hooks import execute_model_hooks, execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
@@ -520,8 +521,47 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # 5.5. Execute model hooks (after context built, before model call)
+                if agent.model_hooks is not None:
+                    deque(
+                        execute_model_hooks(
+                            agent,
+                            hooks=agent.model_hooks,  # type: ignore
+                            run_messages=run_messages,
+                            tools=_tools,
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=False,
+                        ),
+                        maxlen=0,
+                    )
+
                 # 6. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
+
+                # Create callback so model hooks re-execute on tool-call iterations
+                _pre_call_hook = None
+                if agent.model_hooks is not None:
+
+                    def _pre_call_hook(messages: list) -> None:
+                        deque(
+                            execute_model_hooks(
+                                agent,
+                                hooks=agent.model_hooks,  # type: ignore
+                                run_messages=run_messages,
+                                tools=_tools,
+                                run_response=run_response,
+                                run_context=run_context,
+                                session=agent_session,
+                                user_id=user_id,
+                                debug_mode=debug_mode,
+                                stream_events=False,
+                            ),
+                            maxlen=0,
+                        )
 
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
@@ -534,6 +574,7 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    pre_call_hook=_pre_call_hook,
                 )
 
                 # Check for cancellation after model call
@@ -769,7 +810,7 @@ def _run_stream(
     12. Create session summary
     13. Cleanup and store the run response and session
     """
-    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
+    from agno.agent._hooks import execute_model_hooks, execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
@@ -936,6 +977,42 @@ def _run_stream(
                 # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # 5.5. Execute model hooks
+                if agent.model_hooks is not None:
+                    yield from execute_model_hooks(
+                        agent,
+                        hooks=agent.model_hooks,  # type: ignore
+                        run_messages=run_messages,
+                        tools=_tools,
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=stream_events,
+                    )
+
+                # Create callback so model hooks re-execute on tool-call iterations
+                _stream_pre_call_hook = None
+                if agent.model_hooks is not None:
+
+                    def _stream_pre_call_hook(messages: list) -> None:
+                        deque(
+                            execute_model_hooks(
+                                agent,
+                                hooks=agent.model_hooks,  # type: ignore
+                                run_messages=run_messages,
+                                tools=_tools,
+                                run_response=run_response,
+                                run_context=run_context,
+                                session=agent_session,
+                                user_id=user_id,
+                                debug_mode=debug_mode,
+                                stream_events=False,
+                            ),
+                            maxlen=0,
+                        )
+
                 # 6. Process model response
                 if agent.output_model is None:
                     for event in handle_model_response_stream(
@@ -948,6 +1025,7 @@ def _run_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        pre_call_hook=_stream_pre_call_hook,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -968,6 +1046,7 @@ def _run_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        pre_call_hook=_stream_pre_call_hook,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1323,13 +1402,22 @@ def run_dispatch(
     # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Normalise hook & guardails
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
+    # Normalise hooks & guardrails (re-normalize if mode changed between sync/async)
+    if not agent._hooks_normalised or agent._hooks_normalised_mode != "sync":
+        if agent._original_pre_hooks is None and agent.pre_hooks:
+            agent._original_pre_hooks = list(agent.pre_hooks)
+        if agent._original_model_hooks is None and agent.model_hooks:
+            agent._original_model_hooks = list(agent.model_hooks)
+        if agent._original_post_hooks is None and agent.post_hooks:
+            agent._original_post_hooks = list(agent.post_hooks)
+        if agent._original_pre_hooks:
+            agent.pre_hooks = normalize_pre_hooks(list(agent._original_pre_hooks))  # type: ignore
+        if agent._original_model_hooks:
+            agent.model_hooks = normalize_model_hooks(list(agent._original_model_hooks))  # type: ignore
+        if agent._original_post_hooks:
+            agent.post_hooks = normalize_post_hooks(list(agent._original_post_hooks))  # type: ignore
         agent._hooks_normalised = True
+        agent._hooks_normalised_mode = "sync"
 
     # Initialize session
     session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
@@ -1488,7 +1576,7 @@ async def _arun(
     15. Create session summary
     16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
-    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
+    from agno.agent._hooks import aexecute_model_hooks, aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
@@ -1650,7 +1738,42 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # 8.5. Execute model hooks (after context built, before model call)
+                if agent.model_hooks is not None:
+                    async for _ in aexecute_model_hooks(
+                        agent,
+                        hooks=agent.model_hooks,  # type: ignore
+                        run_messages=run_messages,
+                        tools=_tools,
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=False,
+                    ):
+                        pass
+
                 # 9. Generate a response from the Model (includes running function calls)
+                # Create async callback so model hooks re-execute on tool-call iterations
+                _async_pre_call_hook = None
+                if agent.model_hooks is not None:
+
+                    async def _async_pre_call_hook(messages: list) -> None:
+                        async for _ in aexecute_model_hooks(
+                            agent,
+                            hooks=agent.model_hooks,  # type: ignore
+                            run_messages=run_messages,
+                            tools=_tools,
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=False,
+                        ):
+                            pass
+
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
@@ -1662,6 +1785,7 @@ async def _arun(
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    async_pre_call_hook=_async_pre_call_hook,
                 )
 
                 # Check for cancellation after model call
@@ -2153,7 +2277,7 @@ async def _arun_stream(
     12. Create session summary
     13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
-    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
+    from agno.agent._hooks import aexecute_model_hooks, aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
@@ -2326,6 +2450,41 @@ async def _arun_stream(
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # 8.5. Execute model hooks
+                if agent.model_hooks is not None:
+                    async for event in aexecute_model_hooks(
+                        agent,
+                        hooks=agent.model_hooks,  # type: ignore
+                        run_messages=run_messages,
+                        tools=_tools,
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=agent_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=stream_events,
+                    ):
+                        yield event
+
+                # Create async callback so model hooks re-execute on tool-call iterations
+                _astream_pre_call_hook = None
+                if agent.model_hooks is not None:
+
+                    async def _astream_pre_call_hook(messages: list) -> None:
+                        async for _ in aexecute_model_hooks(
+                            agent,
+                            hooks=agent.model_hooks,  # type: ignore
+                            run_messages=run_messages,
+                            tools=_tools,
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=False,
+                        ):
+                            pass
+
                 # 9. Generate a response from the Model
                 if agent.output_model is None:
                     async for event in ahandle_model_response_stream(
@@ -2338,6 +2497,7 @@ async def _arun_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        async_pre_call_hook=_astream_pre_call_hook,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2358,6 +2518,7 @@ async def _arun_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        async_pre_call_hook=_astream_pre_call_hook,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2756,13 +2917,22 @@ def arun_dispatch(  # type: ignore
     # 2. Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Normalise hooks & guardails
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=True)  # type: ignore
+    # Normalise hooks & guardrails (re-normalize if mode changed between sync/async)
+    if not agent._hooks_normalised or agent._hooks_normalised_mode != "async":
+        if agent._original_pre_hooks is None and agent.pre_hooks:
+            agent._original_pre_hooks = list(agent.pre_hooks)
+        if agent._original_model_hooks is None and agent.model_hooks:
+            agent._original_model_hooks = list(agent.model_hooks)
+        if agent._original_post_hooks is None and agent.post_hooks:
+            agent._original_post_hooks = list(agent.post_hooks)
+        if agent._original_pre_hooks:
+            agent.pre_hooks = normalize_pre_hooks(list(agent._original_pre_hooks), async_mode=True)  # type: ignore
+        if agent._original_model_hooks:
+            agent.model_hooks = normalize_model_hooks(list(agent._original_model_hooks), async_mode=True)  # type: ignore
+        if agent._original_post_hooks:
+            agent.post_hooks = normalize_post_hooks(list(agent._original_post_hooks), async_mode=True)  # type: ignore
         agent._hooks_normalised = True
+        agent._hooks_normalised_mode = "async"
 
     # Initialize session
     session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
@@ -3231,6 +3401,29 @@ def _continue_run(
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
+
+                # Create callback so model hooks re-execute on tool-call iterations
+                _pre_call_hook = None
+                if agent.model_hooks is not None:
+                    from agno.agent._hooks import execute_model_hooks as _exec_model_hooks
+
+                    def _pre_call_hook(messages: list) -> None:
+                        deque(
+                            _exec_model_hooks(
+                                agent,
+                                hooks=agent.model_hooks,  # type: ignore
+                                run_messages=run_messages,
+                                tools=tools,
+                                run_response=run_response,
+                                run_context=run_context,
+                                session=session,
+                                user_id=user_id,
+                                debug_mode=debug_mode,
+                                stream_events=False,
+                            ),
+                            maxlen=0,
+                        )
+
                 model_response: ModelResponse = call_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
@@ -3242,6 +3435,7 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    pre_call_hook=_pre_call_hook,
                 )
 
                 # Check for cancellation after model processing
@@ -3457,6 +3651,28 @@ def _continue_run_stream(
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
+                # Create callback so model hooks re-execute on tool-call iterations
+                _continue_pre_call_hook = None
+                if agent.model_hooks is not None:
+                    from agno.agent._hooks import execute_model_hooks as _exec_mh
+
+                    def _continue_pre_call_hook(messages: list) -> None:
+                        deque(
+                            _exec_mh(
+                                agent,
+                                hooks=agent.model_hooks,  # type: ignore
+                                run_messages=run_messages,
+                                tools=tools,
+                                run_response=run_response,
+                                run_context=run_context,
+                                session=session,
+                                user_id=user_id,
+                                debug_mode=debug_mode,
+                                stream_events=False,
+                            ),
+                            maxlen=0,
+                        )
+
                 # 3. Process model response
                 for event in handle_model_response_stream(
                     agent,
@@ -3468,6 +3684,7 @@ def _continue_run_stream(
                     stream_events=stream_events,
                     session_state=run_context.session_state,
                     run_context=run_context,
+                    pre_call_hook=_continue_pre_call_hook,
                 ):
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4191,6 +4408,26 @@ async def _acontinue_run(
                 )
 
                 # 8. Get model response
+                # Create async callback so model hooks re-execute on tool-call iterations
+                _async_pre_call_hook = None
+                if agent.model_hooks is not None:
+                    from agno.agent._hooks import aexecute_model_hooks as _aexec_model_hooks
+
+                    async def _async_pre_call_hook(messages: list) -> None:
+                        async for _ in _aexec_model_hooks(
+                            agent,
+                            hooks=agent.model_hooks,  # type: ignore
+                            run_messages=run_messages,
+                            tools=_tools,
+                            run_response=run_response,  # type: ignore[arg-type]
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=False,
+                        ):
+                            pass
+
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
@@ -4202,6 +4439,7 @@ async def _acontinue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    async_pre_call_hook=_async_pre_call_hook,
                 )
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4607,6 +4845,26 @@ async def _acontinue_run_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
+                # Create async callback so model hooks re-execute on tool-call iterations
+                _acontinue_hook = None
+                if agent.model_hooks is not None:
+                    from agno.agent._hooks import aexecute_model_hooks as _aexec_mh
+
+                    async def _acontinue_hook(messages: list) -> None:
+                        async for _ in _aexec_mh(
+                            agent,
+                            hooks=agent.model_hooks,  # type: ignore
+                            run_messages=run_messages,
+                            tools=_tools,
+                            run_response=run_response,  # type: ignore[arg-type]
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=False,
+                        ):
+                            pass
+
                 # 8. Process model response
                 if agent.output_model is None:
                     async for event in ahandle_model_response_stream(
@@ -4618,6 +4876,7 @@ async def _acontinue_run_stream(
                         response_format=response_format,
                         stream_events=stream_events,
                         run_context=run_context,
+                        async_pre_call_hook=_acontinue_hook,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4637,6 +4896,7 @@ async def _acontinue_run_stream(
                         response_format=response_format,
                         stream_events=stream_events,
                         run_context=run_context,
+                        async_pre_call_hook=_acontinue_hook,
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore

@@ -104,6 +104,7 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.hooks import (
+    normalize_model_hooks,
     normalize_post_hooks,
     normalize_pre_hooks,
 )
@@ -1193,8 +1194,51 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # 5.5. Execute model hooks (after context built, before model call)
+                if team.model_hooks is not None:
+                    from agno.team._hooks import _execute_model_hooks
+
+                    deque(
+                        _execute_model_hooks(
+                            team,
+                            hooks=team.model_hooks,  # type: ignore
+                            run_messages=run_messages,
+                            tools=_tools,
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=False,
+                        ),
+                        maxlen=0,
+                    )
+
                 # 6. Get the model response for the team leader
                 team.model = cast(Model, team.model)
+
+                # Create callback so model hooks re-execute on tool-call iterations
+                _pre_call_hook = None
+                if team.model_hooks is not None:
+                    from agno.team._hooks import _execute_model_hooks as _exec_team_mh
+
+                    def _pre_call_hook(messages: list) -> None:
+                        deque(
+                            _exec_team_mh(
+                                team,
+                                hooks=team.model_hooks,  # type: ignore
+                                run_messages=run_messages,
+                                tools=_tools,
+                                run_response=run_response,
+                                run_context=run_context,
+                                session=session,
+                                user_id=user_id,
+                                debug_mode=debug_mode,
+                                stream_events=False,
+                            ),
+                            maxlen=0,
+                        )
+
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
                     team.fallback_config,
@@ -1206,6 +1250,7 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    pre_call_hook=_pre_call_hook,
                 )
 
                 # Check for cancellation after model call
@@ -1892,13 +1937,22 @@ def run_dispatch(
         # Register run for cancellation tracking (after validation succeeds)
         register_run(run_id)  # type: ignore
 
-        # Normalise hook & guardails
-        if not team._hooks_normalised:
-            if team.pre_hooks:
-                team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
-            if team.post_hooks:
-                team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
+        # Normalise hooks & guardrails (re-normalize if mode changed between sync/async)
+        if not team._hooks_normalised or team._hooks_normalised_mode != "sync":
+            if team._original_pre_hooks is None and team.pre_hooks:
+                team._original_pre_hooks = list(team.pre_hooks)
+            if team._original_model_hooks is None and team.model_hooks:
+                team._original_model_hooks = list(team.model_hooks)
+            if team._original_post_hooks is None and team.post_hooks:
+                team._original_post_hooks = list(team.post_hooks)
+            if team._original_pre_hooks:
+                team.pre_hooks = normalize_pre_hooks(list(team._original_pre_hooks))  # type: ignore
+            if team._original_model_hooks:
+                team.model_hooks = normalize_model_hooks(list(team._original_model_hooks))  # type: ignore
+            if team._original_post_hooks:
+                team.post_hooks = normalize_post_hooks(list(team._original_post_hooks))  # type: ignore
             team._hooks_normalised = True
+            team._hooks_normalised_mode = "sync"
 
         session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 
@@ -3121,7 +3175,45 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # 5.5. Execute model hooks (after context built, before model call)
+                if team.model_hooks is not None:
+                    from agno.team._hooks import _aexecute_model_hooks
+
+                    async for _ in _aexecute_model_hooks(
+                        team,
+                        hooks=team.model_hooks,  # type: ignore
+                        run_messages=run_messages,
+                        tools=_tools,
+                        run_response=run_response,
+                        run_context=run_context,
+                        session=team_session,
+                        user_id=user_id,
+                        debug_mode=debug_mode,
+                        stream_events=False,
+                    ):
+                        pass
+
                 # 6. Get the model response for the team leader
+                # Create async callback so model hooks re-execute on tool-call iterations
+                _async_pre_call_hook = None
+                if team.model_hooks is not None:
+                    from agno.team._hooks import _aexecute_model_hooks as _aexec_team_mh
+
+                    async def _async_pre_call_hook(messages: list) -> None:
+                        async for _ in _aexec_team_mh(
+                            team,
+                            hooks=team.model_hooks,  # type: ignore
+                            run_messages=run_messages,
+                            tools=_tools,
+                            run_response=run_response,
+                            run_context=run_context,
+                            session=team_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=False,
+                        ):
+                            pass
+
                 model_response = await acall_model_with_fallback(
                     team.model,
                     team.fallback_config,
@@ -3133,6 +3225,7 @@ async def _arun(
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    async_pre_call_hook=_async_pre_call_hook,
                 )  # type: ignore
 
                 # Check for cancellation after model call
@@ -4124,13 +4217,22 @@ def arun_dispatch(  # type: ignore
     # Validate input against input_schema if provided
     validated_input = validate_input(input, team.input_schema)
 
-    # Normalise hook & guardails
-    if not team._hooks_normalised:
-        if team.pre_hooks:
-            team.pre_hooks = normalize_pre_hooks(team.pre_hooks, async_mode=True)  # type: ignore
-        if team.post_hooks:
-            team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
+    # Normalise hooks & guardrails (re-normalize if mode changed between sync/async)
+    if not team._hooks_normalised or team._hooks_normalised_mode != "async":
+        if team._original_pre_hooks is None and team.pre_hooks:
+            team._original_pre_hooks = list(team.pre_hooks)
+        if team._original_model_hooks is None and team.model_hooks:
+            team._original_model_hooks = list(team.model_hooks)
+        if team._original_post_hooks is None and team.post_hooks:
+            team._original_post_hooks = list(team.post_hooks)
+        if team._original_pre_hooks:
+            team.pre_hooks = normalize_pre_hooks(list(team._original_pre_hooks), async_mode=True)  # type: ignore
+        if team._original_model_hooks:
+            team.model_hooks = normalize_model_hooks(list(team._original_model_hooks), async_mode=True)  # type: ignore
+        if team._original_post_hooks:
+            team.post_hooks = normalize_post_hooks(list(team._original_post_hooks), async_mode=True)  # type: ignore
         team._hooks_normalised = True
+        team._hooks_normalised_mode = "async"
 
     session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 
