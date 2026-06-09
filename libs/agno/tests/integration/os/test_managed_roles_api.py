@@ -206,3 +206,57 @@ def test_admin_via_token_claim_can_manage():
 
     assert client.get("/authz/roles", headers=admin_h).status_code == 200
     assert client.get("/authz/roles", headers=viewer_h).status_code == 403
+
+
+def test_patch_role_metadata_only(client_and_store):
+    """PATCH /roles/{slug} updates name/description without touching scopes."""
+    client, store = client_and_store
+    client.put("/authz/roles/editor", headers=_auth("alice"), json={"scopes": ["agents:*:read"], "name": "Editor"})
+
+    r = client.patch("/authz/roles/editor", headers=_auth("alice"), json={"description": "can edit things"})
+    assert r.status_code == 200, r.text
+    role = r.json()
+    assert role["name"] == "Editor" and role["description"] == "can edit things"
+    # scopes untouched by the metadata patch
+    assert [s["raw"] for s in role["scopes"]] == ["agents:read"]
+
+    # patching a non-existent role -> 404
+    assert client.patch("/authz/roles/ghost", headers=_auth("alice"), json={"name": "x"}).status_code == 404
+
+
+def test_put_scopes_subresource_replaces(client_and_store):
+    """PUT /roles/{slug}/scopes replaces scopes, preserves metadata, returns scopes."""
+    client, store = client_and_store
+    client.put("/authz/roles/editor", headers=_auth("alice"), json={"scopes": ["agents:*:read"], "name": "Editor"})
+
+    r = client.put(
+        "/authz/roles/editor/scopes",
+        headers=_auth("alice"),
+        json={"scopes": ["agents:*:run", {"scope": "agents:secret:run", "effect": "deny"}]},
+    )
+    assert r.status_code == 200, r.text
+    scopes = r.json()  # returns the scope list
+    by_raw = {s["raw"]: s for s in scopes}
+    assert by_raw["agents:run"]["value"] == "allow"
+    assert by_raw["agents:secret:run"]["value"] == "deny"
+    # metadata (name) preserved through a scopes-only replace
+    assert client.get("/authz/roles/editor", headers=_auth("alice")).json()["name"] == "Editor"
+
+
+def test_patch_scopes_subresource_diffs(client_and_store):
+    """PATCH /roles/{slug}/scopes adds/flips upsert and drops remove, keeping the rest."""
+    client, store = client_and_store
+    client.put(
+        "/authz/roles/editor",
+        headers=_auth("alice"),
+        json={"scopes": ["agents:*:read", "teams:*:read"]},
+    )
+
+    r = client.patch(
+        "/authz/roles/editor/scopes",
+        headers=_auth("alice"),
+        json={"upsert": [{"scope": "agents:*:run", "effect": "allow"}], "remove": ["teams:read"]},
+    )
+    assert r.status_code == 200, r.text
+    raws = {s["raw"] for s in r.json()["scopes"]}
+    assert raws == {"agents:read", "agents:run"}  # teams:read removed, agents:run added, agents:read kept

@@ -321,6 +321,54 @@ class ManagedRoleStore:
                 entries.append({"scope": _obj_act_to_scope(p[1], p[2]), "effect": effect})
         return sorted(entries, key=lambda e: (e["scope"], e["effect"]))
 
+    def set_role_meta(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Update ONLY a role's metadata (display name / description / is_default),
+        leaving its scopes untouched. Raises KeyError if the role doesn't exist."""
+        if self.get_role(role) is None:
+            raise KeyError(role)
+        before = self._meta_or_default(role)
+        rec = self._meta_upsert(role, name=name, description=description, is_default=is_default)
+        self._emit("role.updated", role, [self._meta_summary(before)], [self._meta_summary(rec)], actor)
+        return rec
+
+    def patch_role_scopes(
+        self,
+        role: str,
+        upsert: Optional[List[ScopeInput]] = None,
+        remove: Optional[List[ScopeInput]] = None,
+        actor: Optional[str] = None,
+    ) -> None:
+        """Apply a scope diff: add/flip the ``upsert`` scopes and drop the ``remove``
+        scopes, leaving every other scope (and the metadata) intact."""
+        before = self.get_role_scopes(role) if self._audit else None
+        for entry in upsert or []:
+            scope, effect = _normalize_scope(entry)
+            obj, act = scope_to_obj_act(scope)
+            self._enforcer.remove_filtered_policy(0, role, obj, act)  # drop any prior effect
+            self._enforcer.add_policy(role, obj, act, effect)
+        for entry in remove or []:
+            scope, _ = _normalize_scope(entry)
+            obj, act = scope_to_obj_act(scope)
+            self._enforcer.remove_filtered_policy(0, role, obj, act)
+        self._meta_upsert(role)  # touch updated_at / ensure metadata row exists
+        self._emit("role.set_scopes", role, before, self.get_role_scopes(role) if self._audit else None, actor)
+
+    @staticmethod
+    def _meta_summary(rec: dict) -> str:
+        bits = [rec.get("name") or rec["slug"]]
+        if rec.get("description"):
+            bits.append(str(rec["description"]))
+        if rec.get("is_default"):
+            bits.append("default")
+        return " · ".join(bits)
+
     def get_role(self, role: str) -> Optional[dict]:
         """Full role record: metadata + scope entries, or None if the role has
         neither policies nor metadata."""

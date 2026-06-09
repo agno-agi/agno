@@ -153,6 +153,29 @@ class SetRoleScopesRequest(BaseModel):
     is_default: Optional[bool] = Field(None, description="Mark as a default role")
 
 
+class UpdateRoleRequest(BaseModel):
+    """Metadata-only update (PATCH) — does not touch scopes."""
+
+    name: Optional[str] = Field(None, description="Display name")
+    description: Optional[str] = Field(None, description="Role description")
+    is_default: Optional[bool] = Field(None, description="Mark as a default role")
+
+
+class ReplaceScopesRequest(BaseModel):
+    """Full replace of a role's scopes (PUT /roles/{slug}/scopes)."""
+
+    scopes: List[Union[str, ScopeItem]] = Field(
+        ..., description="Permissions: strings (allow) or {scope, effect} objects"
+    )
+
+
+class PatchScopesRequest(BaseModel):
+    """Scope diff (PATCH /roles/{slug}/scopes): add/flip ``upsert``, drop ``remove``."""
+
+    upsert: List[Union[str, ScopeItem]] = Field(default_factory=list, description="Scopes to add or flip")
+    remove: List[Union[str, ScopeItem]] = Field(default_factory=list, description="Scopes to remove (effect ignored)")
+
+
 class AssignRoleRequest(BaseModel):
     role: str = Field(..., description="Role to grant the subject")
 
@@ -246,10 +269,50 @@ def get_roles_router(
             raise HTTPException(status_code=422, detail=str(e))
         return RoleSchema.from_record(_role_or_404(slug))
 
+    @router.patch("/roles/{slug}", response_model=RoleSchema)
+    def update_role(slug: str, body: UpdateRoleRequest, actor: str = Depends(require_admin)):
+        """Update a role's metadata only (name/description/is_default) — scopes
+        untouched. Mirrors the cloud PATCH /roles/{slug}."""
+        try:
+            store.set_role_meta(
+                slug, name=body.name, description=body.description, is_default=body.is_default, actor=actor
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"Role {slug!r} not found")
+        return RoleSchema.from_record(_role_or_404(slug))
+
     @router.delete("/roles/{slug}")
     def delete_role(slug: str, actor: str = Depends(require_admin)) -> dict:
         store.remove_role(slug, actor=actor)
         return {"slug": slug, "deleted": True}
+
+    # ---- role scopes (subresource) -------------------------------------
+    def _to_store_scopes(items):
+        return [s if isinstance(s, str) else {"scope": s.scope, "effect": s.effect} for s in items]
+
+    @router.put("/roles/{slug}/scopes", response_model=List[RoleScopeSchema])
+    def replace_role_scopes(slug: str, body: ReplaceScopesRequest, actor: str = Depends(require_admin)):
+        """Replace ALL of a role's scopes (metadata preserved). Mirrors the cloud
+        PUT /roles/{slug}/scopes; returns the resulting scope list."""
+        _role_or_404(slug)
+        try:
+            store.set_role_scopes(slug, _to_store_scopes(body.scopes), actor=actor)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return [RoleScopeSchema.from_entry(e) for e in store.get_role_scope_entries(slug)]
+
+    @router.patch("/roles/{slug}/scopes", response_model=RoleSchema)
+    def patch_role_scopes(slug: str, body: PatchScopesRequest, actor: str = Depends(require_admin)):
+        """Apply a scope diff: add/flip ``upsert``, drop ``remove`` (everything else
+        kept). Mirrors the cloud PATCH /roles/{slug}/scopes; returns the full role."""
+        _role_or_404(slug)
+        try:
+            store.patch_role_scopes(
+                slug, upsert=_to_store_scopes(body.upsert), remove=_to_store_scopes(body.remove), actor=actor
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        return RoleSchema.from_record(_role_or_404(slug))
 
     # ---- scope catalog --------------------------------------------------
     @router.get("/scopes", response_model=List[AvailableScopeItem], response_model_exclude_none=True)
