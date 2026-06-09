@@ -1040,13 +1040,12 @@ class BaseDb(ABC):
             limit: Page size.
             page: 1-indexed page number.
             user_id: Restrict the result to a single user.
-            sort_by: Field to sort by -- one of ``user_id``, ``total_learnings``, or
-                ``last_learning_updated_at`` (the default).
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
             sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
 
         Returns:
             Tuple of (user_stats, total_count) where each entry has the shape
-            ``{"user_id": str, "total_learnings": int, "last_learning_updated_at": int}``.
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 
@@ -1831,13 +1830,12 @@ class AsyncBaseDb(ABC):
             limit: Page size.
             page: 1-indexed page number.
             user_id: Restrict the result to a single user.
-            sort_by: Field to sort by -- one of ``user_id``, ``total_learnings``, or
-                ``last_learning_updated_at`` (the default).
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
             sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
 
         Returns:
             Tuple of (user_stats, total_count) where each entry has the shape
-            ``{"user_id": str, "total_learnings": int, "last_learning_updated_at": int}``.
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 

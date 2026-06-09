@@ -78,8 +78,8 @@ def main():
     resp.raise_for_status()
     for u in resp.json()["data"]:
         print(
-            "  user={} learnings={} last_updated={}".format(
-                u["user_id"], u["total_learnings"], u["last_learning_updated_at"]
+            "  user={} last_updated={}".format(
+                u["user_id"], u["last_learning_updated_at"]
             )
         )
 

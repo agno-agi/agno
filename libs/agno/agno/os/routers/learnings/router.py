@@ -217,8 +217,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             "no owner (`user_id IS NULL`) are excluded. Pass `learning_type` to restrict the "
             "grouping to a single store (e.g. `user_profile` or `user_memory`). When the request "
             "is authenticated with a JWT, results are scoped to the JWT subject; passing a "
-            "`user_id` that differs from the subject is rejected with 403. Sortable by `user_id`, "
-            "`total_learnings`, or `last_learning_updated_at` (the default)."
+            "`user_id` that differs from the subject is rejected with 403. Sortable by `user_id` "
+            "or `last_learning_updated_at` (the default)."
         ),
     )
     async def list_learning_users(
@@ -229,7 +229,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         page: int = Query(1, ge=1, description="1-indexed page number"),
         sort_by: Optional[str] = Query(
             None,
-            description="Field to sort by: user_id, total_learnings, or last_learning_updated_at (the default)",
+            description="Field to sort by: user_id or last_learning_updated_at (the default)",
         ),
         sort_order: Optional[SortOrder] = Query(SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(None, description="Database ID to query"),

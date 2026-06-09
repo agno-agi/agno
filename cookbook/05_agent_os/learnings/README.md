@@ -31,7 +31,7 @@ In another, run the REST client:
 |--------|------|-------------|
 | `GET` | `/learnings` | Paginated list with filters |
 | `POST` | `/learnings` | Create a new learning record |
-| `GET` | `/learnings/users` | List the users that own learnings, with per-user counts |
+| `GET` | `/learnings/users` | List the users that own learnings, with last-activity timestamps |
 | `GET` | `/learnings/{learning_id}` | Fetch a single record |
 | `PATCH` | `/learnings/{learning_id}` | Update `content` and/or `metadata` (full replace) |
 | `DELETE` | `/learnings/{learning_id}` | Delete a record |

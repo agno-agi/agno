@@ -126,15 +126,14 @@ class TestListLearningUsers:
 
     def test_returns_user_stats(self, client, mock_db):
         stats = [
-            {"user_id": "user-1", "total_learnings": 3, "last_learning_updated_at": 1714560000},
-            {"user_id": "user-2", "total_learnings": 1, "last_learning_updated_at": 1714000000},
+            {"user_id": "user-1", "last_learning_updated_at": 1714560000},
+            {"user_id": "user-2", "last_learning_updated_at": 1714000000},
         ]
         mock_db.get_learnings_user_stats = MagicMock(return_value=(stats, 2))
         resp = client.get("/learnings/users")
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert [r["user_id"] for r in data] == ["user-1", "user-2"]
-        assert data[0]["total_learnings"] == 3
         assert data[0]["last_learning_updated_at"] == 1714560000
 
     def test_does_not_collide_with_get_by_id(self, client, mock_db):
@@ -154,7 +153,7 @@ class TestListLearningUsers:
         assert kwargs["limit"] == 5
 
     def test_pagination_meta(self, client, mock_db):
-        stats = [{"user_id": "u", "total_learnings": 1, "last_learning_updated_at": 1}]
+        stats = [{"user_id": "u", "last_learning_updated_at": 1}]
         mock_db.get_learnings_user_stats = MagicMock(return_value=(stats, 25))
         resp = client.get("/learnings/users?limit=10")
         meta = resp.json()["meta"]
@@ -180,9 +179,9 @@ class TestListLearningUsers:
         assert kwargs["sort_order"] == "desc"
 
     def test_sort_passed_through(self, client, mock_db):
-        client.get("/learnings/users?sort_by=total_learnings&sort_order=asc")
+        client.get("/learnings/users?sort_by=user_id&sort_order=asc")
         kwargs = mock_db.get_learnings_user_stats.call_args[1]
-        assert kwargs["sort_by"] == "total_learnings"
+        assert kwargs["sort_by"] == "user_id"
         assert kwargs["sort_order"] == "asc"
 
     def test_table_without_db_id_rejected(self, client, mock_db):

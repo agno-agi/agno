@@ -3184,11 +3184,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [], 0
 
             async with self.async_session_factory() as sess:
-                total_col = func.count(table.c.learning_id)
                 last_updated_col = func.max(table.c.updated_at)
                 stmt = select(
                     table.c.user_id,
-                    total_col.label("total_learnings"),
                     last_updated_col.label("last_learning_updated_at"),
                 )
                 if learning_type is not None:
@@ -3201,7 +3199,6 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 sort_columns = {
                     "user_id": table.c.user_id,
-                    "total_learnings": total_col,
                     "last_learning_updated_at": last_updated_col,
                 }
                 sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
@@ -3221,7 +3218,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [
                     {
                         "user_id": row.user_id,
-                        "total_learnings": row.total_learnings,
                         "last_learning_updated_at": row.last_learning_updated_at,
                     }
                     for row in rows

@@ -3404,7 +3404,6 @@ class AsyncMongoDb(AsyncBaseDb):
                 {
                     "$group": {
                         "_id": "$user_id",
-                        "total_learnings": {"$sum": 1},
                         "last_learning_updated_at": {"$max": "$updated_at"},
                     }
                 },
@@ -3425,7 +3424,6 @@ class AsyncMongoDb(AsyncBaseDb):
             formatted_results = [
                 {
                     "user_id": result["_id"],
-                    "total_learnings": result["total_learnings"],
                     "last_learning_updated_at": result["last_learning_updated_at"],
                 }
                 for result in results
