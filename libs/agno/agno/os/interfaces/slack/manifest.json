@@ -1,5 +1,4 @@
 {
-    "_comment": "Slack App manifest for Agno agents. Replace https://YOUR-URL with your server URL.",
     "display_information": {
         "name": "My Agent",
         "description": "An AI agent powered by Agno"
