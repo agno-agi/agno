@@ -95,6 +95,22 @@ class TestListLearnings:
         resp = client.get("/learnings")
         assert resp.status_code == 501
 
+    def test_default_sort_passed_through(self, client, mock_db):
+        client.get("/learnings")
+        kwargs = mock_db.list_learnings.call_args[1]
+        assert kwargs["sort_by"] is None
+        assert kwargs["sort_order"] == "desc"
+
+    def test_sort_passed_through(self, client, mock_db):
+        client.get("/learnings?sort_by=created_at&sort_order=asc")
+        kwargs = mock_db.list_learnings.call_args[1]
+        assert kwargs["sort_by"] == "created_at"
+        assert kwargs["sort_order"] == "asc"
+
+    def test_invalid_sort_order_rejected(self, client, mock_db):
+        resp = client.get("/learnings?sort_order=sideways")
+        assert resp.status_code == 422
+
 
 class TestListLearningUsers:
     def test_empty(self, client, mock_db):
@@ -145,6 +161,18 @@ class TestListLearningUsers:
         mock_db.get_learning_user_stats.side_effect = NotImplementedError
         resp = client.get("/learnings/users")
         assert resp.status_code == 501
+
+    def test_default_sort_passed_through(self, client, mock_db):
+        client.get("/learnings/users")
+        kwargs = mock_db.get_learning_user_stats.call_args[1]
+        assert kwargs["sort_by"] is None
+        assert kwargs["sort_order"] == "desc"
+
+    def test_sort_passed_through(self, client, mock_db):
+        client.get("/learnings/users?sort_by=total_learnings&sort_order=asc")
+        kwargs = mock_db.get_learning_user_stats.call_args[1]
+        assert kwargs["sort_by"] == "total_learnings"
+        assert kwargs["sort_order"] == "asc"
 
 
 class TestCreateLearning:

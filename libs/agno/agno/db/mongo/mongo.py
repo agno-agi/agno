@@ -2962,6 +2962,8 @@ class MongoDb(BaseDb):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Learning methods not yet implemented for MongoDb")
 
@@ -2971,5 +2973,7 @@ class MongoDb(BaseDb):
         limit: Optional[int] = None,
         page: Optional[int] = None,
         user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Learning methods not yet implemented for MongoDb")

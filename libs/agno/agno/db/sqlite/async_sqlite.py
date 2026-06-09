@@ -3301,6 +3301,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="learnings")
@@ -3333,7 +3335,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 count_result = await sess.execute(count_stmt)
                 total_count = count_result.scalar() or 0
 
-                stmt = stmt.order_by(table.c.updated_at.desc()).limit(limit).offset((page - 1) * limit)
+                stmt = apply_sorting(stmt, table, sort_by or "updated_at", sort_order or "desc")
+                stmt = stmt.limit(limit).offset((page - 1) * limit)
                 result = await sess.execute(stmt)
                 results = result.fetchall()
                 return [dict(row._mapping) for row in results], int(total_count)
@@ -3348,6 +3351,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         limit: Optional[int] = None,
         page: Optional[int] = None,
         user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="learnings")
@@ -3355,10 +3360,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return [], 0
 
             async with self.async_session_factory() as sess:
+                total_col = func.count(table.c.learning_id)
+                last_updated_col = func.max(table.c.updated_at)
                 stmt = select(
                     table.c.user_id,
-                    func.count(table.c.learning_id).label("total_learnings"),
-                    func.max(table.c.updated_at).label("last_learning_updated_at"),
+                    total_col.label("total_learnings"),
+                    last_updated_col.label("last_learning_updated_at"),
                 )
                 if learning_type is not None:
                     stmt = stmt.where(table.c.learning_type == learning_type)
@@ -3366,7 +3373,15 @@ class AsyncSqliteDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.user_id == user_id)
                 else:
                     stmt = stmt.where(table.c.user_id.is_not(None))
-                stmt = stmt.group_by(table.c.user_id).order_by(func.max(table.c.updated_at).desc())
+                stmt = stmt.group_by(table.c.user_id)
+
+                sort_columns = {
+                    "user_id": table.c.user_id,
+                    "total_learnings": total_col,
+                    "last_learning_updated_at": last_updated_col,
+                }
+                sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
+                stmt = stmt.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
 
                 count_stmt = select(func.count()).select_from(stmt.subquery())
                 count_result = await sess.execute(count_stmt)

@@ -992,6 +992,8 @@ class BaseDb(ABC):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List learning records with pagination, returning the page and total count.
 
@@ -1009,6 +1011,8 @@ class BaseDb(ABC):
                 ``user_id`` is None.
             limit: Page size.
             page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
 
         Returns:
             Tuple of (records, total_count) where records is the requested page.
@@ -1021,6 +1025,8 @@ class BaseDb(ABC):
         limit: Optional[int] = None,
         page: Optional[int] = None,
         user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List the users that own learning records, with per-user counts.
 
@@ -1034,6 +1040,9 @@ class BaseDb(ABC):
             limit: Page size.
             page: 1-indexed page number.
             user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- one of ``user_id``, ``total_learnings``, or
+                ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
 
         Returns:
             Tuple of (user_stats, total_count) where each entry has the shape
@@ -1774,6 +1783,8 @@ class AsyncBaseDb(ABC):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Async list learning records with pagination, returning the page and total count.
 
@@ -1791,6 +1802,8 @@ class AsyncBaseDb(ABC):
                 ``user_id`` is None.
             limit: Page size.
             page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
 
         Returns:
             Tuple of (records, total_count) where records is the requested page.
@@ -1803,6 +1816,8 @@ class AsyncBaseDb(ABC):
         limit: Optional[int] = None,
         page: Optional[int] = None,
         user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Async list the users that own learning records, with per-user counts.
 
@@ -1816,6 +1831,9 @@ class AsyncBaseDb(ABC):
             limit: Page size.
             page: 1-indexed page number.
             user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- one of ``user_id``, ``total_learnings``, or
+                ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
 
         Returns:
             Tuple of (user_stats, total_count) where each entry has the shape

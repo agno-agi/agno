@@ -16,6 +16,7 @@ from agno.os.schema import (
     NotFoundResponse,
     PaginatedResponse,
     PaginationInfo,
+    SortOrder,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -72,6 +73,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         entity_type: Optional[str] = Query(None, description="Filter by entity type"),
         limit: int = Query(100, ge=1, le=1000, description="Page size"),
         page: int = Query(1, ge=1, description="1-indexed page number"),
+        sort_by: Optional[str] = Query(None, description="Field to sort by (defaults to updated_at)"),
+        sort_order: Optional[SortOrder] = Query(SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(None, description="Database ID to query"),
     ) -> PaginatedResponse[LearningResponse]:
         include_global = False
@@ -101,6 +104,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     include_global=include_global,
                     limit=limit,
                     page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
                 )
             else:
                 records, total_count = cast(BaseDb, db).list_learnings(
@@ -115,6 +120,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     include_global=include_global,
                     limit=limit,
                     page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
                 )
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
@@ -208,7 +215,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             "no owner (`user_id IS NULL`) are excluded. Pass `learning_type` to restrict the "
             "grouping to a single store (e.g. `user_profile` or `user_memory`). When the request "
             "is authenticated with a JWT, results are scoped to the JWT subject; passing a "
-            "`user_id` that differs from the subject is rejected with 403."
+            "`user_id` that differs from the subject is rejected with 403. Sortable by `user_id`, "
+            "`total_learnings`, or `last_learning_updated_at` (the default)."
         ),
     )
     async def list_learning_users(
@@ -217,6 +225,11 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         user_id: Optional[str] = Query(None, description="Restrict the result to a single user"),
         limit: int = Query(20, ge=1, le=1000, description="Page size"),
         page: int = Query(1, ge=1, description="1-indexed page number"),
+        sort_by: Optional[str] = Query(
+            None,
+            description="Field to sort by: user_id, total_learnings, or last_learning_updated_at (the default)",
+        ),
+        sort_order: Optional[SortOrder] = Query(SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(None, description="Database ID to query"),
     ) -> PaginatedResponse[LearningUserStats]:
         jwt_user_id = getattr(request.state, "user_id", None)
@@ -237,6 +250,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     user_id=user_id,
                     limit=limit,
                     page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
                 )
             else:
                 records, total_count = cast(BaseDb, db).get_learning_user_stats(
@@ -244,6 +259,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     user_id=user_id,
                     limit=limit,
                     page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
                 )
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")

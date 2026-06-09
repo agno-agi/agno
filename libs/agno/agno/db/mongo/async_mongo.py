@@ -3318,6 +3318,8 @@ class AsyncMongoDb(AsyncBaseDb):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
@@ -3347,7 +3349,13 @@ class AsyncMongoDb(AsyncBaseDb):
 
             total_count = await collection.count_documents(query)
 
-            cursor = collection.find(query).sort("updated_at", -1).skip((page - 1) * limit).limit(limit)
+            sort_direction = 1 if sort_order == "asc" else -1
+            cursor = (
+                collection.find(query)
+                .sort(sort_by or "updated_at", sort_direction)
+                .skip((page - 1) * limit)
+                .limit(limit)
+            )
             results = await cursor.to_list(length=limit)
 
             learnings = []
@@ -3367,6 +3375,8 @@ class AsyncMongoDb(AsyncBaseDb):
         limit: Optional[int] = None,
         page: Optional[int] = None,
         user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
@@ -3379,6 +3389,14 @@ class AsyncMongoDb(AsyncBaseDb):
             if user_id is not None:
                 match_stage["user_id"] = user_id
 
+            # The grouped user_id is the "_id" field after $group.
+            sort_field = (
+                "_id"
+                if (sort_by or "last_learning_updated_at") == "user_id"
+                else (sort_by or "last_learning_updated_at")
+            )
+            sort_direction = 1 if sort_order == "asc" else -1
+
             pipeline: List[Dict[str, Any]] = [
                 {"$match": match_stage},
                 {
@@ -3388,7 +3406,7 @@ class AsyncMongoDb(AsyncBaseDb):
                         "last_learning_updated_at": {"$max": "$updated_at"},
                     }
                 },
-                {"$sort": {"last_learning_updated_at": -1}},
+                {"$sort": {sort_field: sort_direction}},
             ]
 
             count_pipeline = pipeline + [{"$count": "total"}]
