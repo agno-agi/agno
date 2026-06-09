@@ -736,6 +736,230 @@ async def test_session_creation_lock_exists_after_first_call():
     assert tools._session_creation_lock is lock
 
 
+# =============================================================================
+# Connect-failure cleanup tests
+# =============================================================================
+
+
+class _FailingAenterContext:
+    """Async context manager whose __aenter__ raises.
+    Tracks whether cleanup was attempted."""
+
+    def __init__(self, error: Exception):
+        self.error = error
+        self.aexit_called = False
+        self.aclose_called = False
+
+    async def __aenter__(self):
+        raise self.error
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.aexit_called = True
+        return False
+
+    async def aclose(self):
+        self.aclose_called = True
+
+
+class _SucceedingAenterContext:
+    """Async CM whose __aenter__ succeeds with a sentinel value."""
+
+    def __init__(self, value):
+        self.value = value
+        self.aexit_called = False
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.aexit_called = True
+        return False
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_cleans_up_transport_context_streamable_http():
+    """When streamablehttp_client.__aenter__ raises, the partially-entered
+    transport context must be explicitly closed otherwise it leaks."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+
+    failing_context = _FailingAenterContext(ConnectionRefusedError("server unreachable"))
+
+    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=failing_context):
+        with pytest.raises(ConnectionRefusedError):
+            await tools._connect()
+
+    assert failing_context.aexit_called or failing_context.aclose_called
+    assert tools._context is None
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_cleans_up_transport_context_sse():
+    """SSE transport variant of the cleanup-on-aenter-failure test."""
+    tools = MCPTools(
+        server_params=SSEClientParams(url="http://localhost:8080/sse"),
+        transport="sse",
+    )
+
+    failing_context = _FailingAenterContext(ConnectionRefusedError("server unreachable"))
+
+    with patch("agno.tools.mcp.mcp.sse_client", return_value=failing_context):
+        with pytest.raises(ConnectionRefusedError):
+            await tools._connect()
+
+    assert failing_context.aexit_called or failing_context.aclose_called
+    assert tools._context is None
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_cleans_up_both_contexts_when_session_aenter_fails():
+    """If the transport context enters successfully but the ClientSession
+    fails to enter, both context managers must be cleaned up before re-raise."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+
+    transport_context = _SucceedingAenterContext(("read", "write", None))
+    failing_session_context = _FailingAenterContext(RuntimeError("session init failed"))
+
+    with (
+        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=transport_context),
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=failing_session_context),
+    ):
+        with pytest.raises(RuntimeError, match="session init failed"):
+            await tools._connect()
+
+    assert failing_session_context.aexit_called or failing_session_context.aclose_called
+    assert transport_context.aexit_called
+    assert tools._context is None
+    assert tools._session_context is None
+
+
+@pytest.mark.asyncio
+async def test_connect_public_does_not_raise_when_mcp_server_unreachable():
+    """connect() entrypoint used by the agent run loop and AgentOS /agents endpoint.
+    If the MCP server is down it must NOT raise"""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+
+    failing_context = _FailingAenterContext(ConnectionRefusedError("server unreachable"))
+
+    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=failing_context):
+        # Must not raise — connect() catches and logs.
+        await tools.connect()
+
+    assert tools._initialized is False
+    assert tools.session is None
+
+
+@pytest.mark.asyncio
+async def test_agent_aget_tools_path_survives_dead_mcp_server():
+    """Simulate what GET /agents does, build Agent with an
+    MCPTools pointing at a dead server."""
+    from uuid import uuid4
+
+    from agno.agent.agent import Agent
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+    failing_context = _FailingAenterContext(ConnectionRefusedError("server unreachable"))
+
+    agent = Agent(tools=[tools], telemetry=False)
+
+    session_id = str(uuid4())
+    run_id = str(uuid4())
+
+    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=failing_context):
+        agent_tools = await agent.aget_tools(
+            session=AgentSession(session_id=session_id, session_data={}),
+            run_response=RunOutput(run_id=run_id, session_id=session_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id),
+            check_mcp_tools=False,
+        )
+
+    # /agents must complete
+    assert isinstance(agent_tools, list)
+
+    # MCP left in clean state
+    assert tools._initialized is False
+    assert tools._context is None
+    assert tools._session_context is None
+
+
+@pytest.mark.asyncio
+async def test_multimcp_connect_failure_closes_partially_entered_stack():
+    """If one MultiMCP server connects and the next fails, connect() must close
+    the first server's contexts before returning."""
+    tools = MultiMCPTools(
+        server_params_list=[
+            StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+            StreamableHTTPClientParams(url="http://localhost:8081/mcp"),
+        ],
+    )
+
+    first_transport_context = _SucceedingAenterContext(("read-1", "write-1", None))
+    first_session = AsyncMock()
+    first_session.initialize = AsyncMock()
+    first_session_context = _SucceedingAenterContext(first_session)
+    second_transport_context = _FailingAenterContext(ConnectionRefusedError("server 2 unreachable"))
+
+    with (
+        patch(
+            "agno.tools.mcp.multi_mcp.streamablehttp_client",
+            side_effect=[first_transport_context, second_transport_context],
+        ),
+        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=first_session_context),
+    ):
+        await tools.connect()
+
+    assert first_session_context.aexit_called
+    assert first_transport_context.aexit_called
+    assert second_transport_context.aexit_called or second_transport_context.aclose_called
+    assert tools._sessions == []
+    assert tools._successful_connections == 0
+    assert tools._initialized is False
+
+
+@pytest.mark.asyncio
+async def test_multimcp_create_and_connect_failure_cleans_up_before_reraising():
+    """create_and_connect() raises to the caller, but it should still clean up
+    any server contexts entered before the failure."""
+    first_transport_context = _SucceedingAenterContext(("read-1", "write-1", None))
+    first_session = AsyncMock()
+    first_session.initialize = AsyncMock()
+    first_session_context = _SucceedingAenterContext(first_session)
+    second_transport_context = _FailingAenterContext(ConnectionRefusedError("server 2 unreachable"))
+
+    with (
+        patch(
+            "agno.tools.mcp.multi_mcp.streamablehttp_client",
+            side_effect=[first_transport_context, second_transport_context],
+        ),
+        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=first_session_context),
+        pytest.raises(ValueError, match="MCP connection failed"),
+    ):
+        await MultiMCPTools.create_and_connect(
+            server_params_list=[
+                StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+                StreamableHTTPClientParams(url="http://localhost:8081/mcp"),
+            ],
+        )
+
+    assert first_session_context.aexit_called
+    assert first_transport_context.aexit_called
+    assert second_transport_context.aexit_called or second_transport_context.aclose_called
+
+
 @pytest.mark.asyncio
 async def test_parallel_calls_no_deadlock_with_timeout():
     """Ensure parallel get_session_for_run completes within a reasonable time
