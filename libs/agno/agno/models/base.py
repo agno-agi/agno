@@ -851,6 +851,13 @@ class Model(ABC):
                         if any(not req.is_resolved() for req in run_response.requirements):
                             break
 
+                    # If every tool call in this batch was blocked by the tool-call limit,
+                    # stop immediately. Without this guard the model receives only
+                    # "limit reached" errors, ignores them, and retries the same tools
+                    # indefinitely — burning tokens in an infinite loop.
+                    if function_call_results and all(m.tool_call_error for m in function_call_results):
+                        break
+
                     # Continue loop to get next response
                     continue
 
@@ -1071,6 +1078,13 @@ class Model(ABC):
                     if run_response is not None and run_response.requirements:
                         if any(not req.is_resolved() for req in run_response.requirements):
                             break
+
+                    # If every tool call in this batch was blocked by the tool-call limit,
+                    # stop immediately. Without this guard the model receives only
+                    # "limit reached" errors, ignores them, and retries the same tools
+                    # indefinitely — burning tokens in an infinite loop.
+                    if function_call_results and all(m.tool_call_error for m in function_call_results):
+                        break
 
                     # Continue loop to get next response
                     continue
@@ -1578,6 +1592,13 @@ class Model(ABC):
                         if any(not req.is_resolved() for req in run_response.requirements):
                             break
 
+                    # If every tool call in this batch was blocked by the tool-call limit,
+                    # stop immediately. Without this guard the model receives only
+                    # "limit reached" errors, ignores them, and retries the same tools
+                    # indefinitely — burning tokens in an infinite loop.
+                    if function_call_results and all(m.tool_call_error for m in function_call_results):
+                        break
+
                     # Continue loop to get next response
                     continue
 
@@ -1856,6 +1877,13 @@ class Model(ABC):
                     if run_response is not None and run_response.requirements:
                         if any(not req.is_resolved() for req in run_response.requirements):
                             break
+
+                    # If every tool call in this batch was blocked by the tool-call limit,
+                    # stop immediately. Without this guard the model receives only
+                    # "limit reached" errors, ignores them, and retries the same tools
+                    # indefinitely — burning tokens in an infinite loop.
+                    if function_call_results and all(m.tool_call_error for m in function_call_results):
+                        break
 
                     # Continue loop to get next response
                     continue
