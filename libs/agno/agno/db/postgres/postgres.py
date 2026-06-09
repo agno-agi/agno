@@ -57,6 +57,14 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
+def _log_session_upsert_no_row(session_dict: Dict[str, Any]) -> None:
+    log_warning(
+        "Postgres session upsert returned no row for "
+        f"session_id={session_dict.get('session_id')!r}, user_id={session_dict.get('user_id')!r}. "
+        "The update may have been blocked by the session user_id isolation condition."
+    )
+
+
 class PostgresDb(BaseDb):
     def __init__(
         self,
@@ -1015,6 +1023,7 @@ class PostgresDb(BaseDb):
                     result = sess.execute(stmt)
                     row = result.fetchone()
                     if row is None:
+                        _log_session_upsert_no_row(session_dict)
                         return None
                     session_dict = dict(row._mapping)
 
@@ -1054,6 +1063,7 @@ class PostgresDb(BaseDb):
                     result = sess.execute(stmt)
                     row = result.fetchone()
                     if row is None:
+                        _log_session_upsert_no_row(session_dict)
                         return None
                     session_dict = dict(row._mapping)
 
@@ -1093,6 +1103,7 @@ class PostgresDb(BaseDb):
                     result = sess.execute(stmt)
                     row = result.fetchone()
                     if row is None:
+                        _log_session_upsert_no_row(session_dict)
                         return None
                     session_dict = dict(row._mapping)
 
