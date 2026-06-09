@@ -15,6 +15,7 @@ from agno.db.postgres.schemas import (
     get_table_schema_definition,
 )
 from agno.db.utils import json_serializer
+from agno.session import AgentSession
 
 
 @pytest.fixture
@@ -306,6 +307,32 @@ def test_get_table_invalid_type(postgres_db):
     """Test getting table with invalid type"""
     with pytest.raises(ValueError, match="Unknown table type"):
         postgres_db._get_table("invalid_type")
+
+
+def test_upsert_session_warns_when_user_id_condition_blocks_update(postgres_db, mock_session):
+    """Warn when PostgreSQL upsert returns no row due to user_id isolation."""
+    postgres_db.Session = Mock(return_value=mock_session)
+    result = Mock()
+    result.fetchone.return_value = None
+    mock_session.execute.return_value = result
+
+    with patch.object(Table, "create"):
+        with patch("agno.db.postgres.postgres.create_schema"):
+            table = postgres_db._create_table("test_sessions", "sessions")
+
+    with patch.object(postgres_db, "_get_table", return_value=table):
+        with patch("agno.db.postgres.postgres.log_warning") as mock_warning:
+            upserted = postgres_db.upsert_session(
+                AgentSession(session_id="session-1", agent_id="agent-1", user_id="user-b"),
+                deserialize=False,
+            )
+
+    assert upserted is None
+    mock_warning.assert_called_once()
+    warning = mock_warning.call_args.args[0]
+    assert "session_id='session-1'" in warning
+    assert "user_id='user-b'" in warning
+    assert "user_id isolation condition" in warning
 
 
 @patch("agno.db.postgres.postgres.is_table_available")
