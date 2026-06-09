@@ -82,6 +82,7 @@ def get_mcp_server(
             available_models=os.config.available_models if os.config else [],
             databases=[db.id for db_list in os.dbs.values() for db in db_list],
             chat=os.config.chat if os.config else None,
+            manifest=os.config.manifest if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
             knowledge=os._get_knowledge_config(),
