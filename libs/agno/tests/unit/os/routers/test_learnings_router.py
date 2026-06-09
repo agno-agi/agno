@@ -111,6 +111,10 @@ class TestListLearnings:
         resp = client.get("/learnings?sort_order=sideways")
         assert resp.status_code == 422
 
+    def test_table_without_db_id_rejected(self, client, mock_db):
+        resp = client.get("/learnings?table=some_learnings")
+        assert resp.status_code == 400
+
 
 class TestListLearningUsers:
     def test_empty(self, client, mock_db):
@@ -173,6 +177,10 @@ class TestListLearningUsers:
         kwargs = mock_db.get_learning_user_stats.call_args[1]
         assert kwargs["sort_by"] == "total_learnings"
         assert kwargs["sort_order"] == "asc"
+
+    def test_table_without_db_id_rejected(self, client, mock_db):
+        resp = client.get("/learnings/users?table=some_learnings")
+        assert resp.status_code == 400
 
 
 class TestCreateLearning:

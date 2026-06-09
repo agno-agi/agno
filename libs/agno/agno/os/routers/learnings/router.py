@@ -76,6 +76,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         sort_by: Optional[str] = Query(None, description="Field to sort by (defaults to updated_at)"),
         sort_order: Optional[SortOrder] = Query(SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(None, description="Database ID to query"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> PaginatedResponse[LearningResponse]:
         include_global = False
         jwt_user_id = getattr(request.state, "user_id", None)
@@ -85,7 +86,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             user_id = jwt_user_id
             include_global = True
 
-        db = await get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
@@ -153,12 +154,13 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         request: Request,
         body: LearningCreate,
         db_id: Optional[str] = Query(None, description="Database ID to use"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> LearningResponse:
         jwt_user_id = getattr(request.state, "user_id", None)
         if jwt_user_id is not None and body.user_id is not None and body.user_id != jwt_user_id:
             raise HTTPException(status_code=403, detail="Cannot create learnings for another user")
 
-        db = await get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
@@ -231,6 +233,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         ),
         sort_order: Optional[SortOrder] = Query(SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(None, description="Database ID to query"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> PaginatedResponse[LearningUserStats]:
         jwt_user_id = getattr(request.state, "user_id", None)
         if jwt_user_id is not None:
@@ -238,7 +241,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 raise HTTPException(status_code=403, detail="Cannot list learning users for another user")
             user_id = jwt_user_id
 
-        db = await get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
@@ -287,8 +290,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         request: Request,
         learning_id: str = Path(description="The learning ID"),
         db_id: Optional[str] = Query(None, description="Database ID to query"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> LearningResponse:
-        db = await get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
         record = await _fetch_learning(db, learning_id)
         _enforce_user_scope(request, record)
         return LearningResponse.model_validate(record)
@@ -309,8 +313,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         body: LearningUpdate,
         learning_id: str = Path(description="The learning ID"),
         db_id: Optional[str] = Query(None, description="Database ID to use"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> LearningResponse:
-        db = await get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
         existing = await _fetch_learning(db, learning_id)
         _enforce_user_scope(request, existing)
 
@@ -393,8 +398,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         request: Request,
         learning_id: str = Path(description="The learning ID"),
         db_id: Optional[str] = Query(None, description="Database ID to use"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> None:
-        db = await get_db(dbs, db_id)
+        db = await get_db(dbs, db_id, table)
         existing = await _fetch_learning(db, learning_id)
         _enforce_user_scope(request, existing)
 
