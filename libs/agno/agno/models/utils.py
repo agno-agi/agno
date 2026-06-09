@@ -4,7 +4,12 @@ from agno.models.base import Model
 
 
 def _get_model_class(model_id: str, model_provider: str) -> Model:
-    if model_provider == "aimlapi":
+    if model_provider == "agno":
+        from agno.models.agno import Agno
+
+        return Agno(id=model_id)
+
+    elif model_provider == "aimlapi":
         from agno.models.aimlapi import AIMLAPI
 
         return AIMLAPI(id=model_id)
