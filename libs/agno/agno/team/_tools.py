@@ -25,7 +25,7 @@ from agno.agent import Agent
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.run import RunContext
+from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput
 from agno.run.team import (
     TeamRunOutput,
@@ -43,6 +43,7 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
+from agno.utils.message import close_incomplete_tool_calls
 from agno.utils.team import (
     get_member_id,
     get_team_member_interactions_str,
@@ -477,10 +478,14 @@ def _get_history_for_member_agent(
     # to preserve conversation continuity.
     skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
+    # Keep cancelled runs in history when the member sets add_cancelled_runs_to_context; paused and error stay excluded.
+    skip_statuses = [RunStatus.paused, RunStatus.error] if member_agent.add_cancelled_runs_to_context else None
+
     history = session.get_messages(
         last_n_runs=member_agent.num_history_runs or team.num_history_runs,
         limit=member_agent.num_history_messages,
         skip_roles=[skip_role] if skip_role else None,
+        skip_statuses=skip_statuses,
         member_ids=[member_agent_id] if member_agent_id else None,
         team_id=member_team_id,
     )
@@ -488,6 +493,10 @@ def _get_history_for_member_agent(
     if len(history) > 0:
         # Create a deep copy of the history messages to avoid modifying the original messages
         history_copy = [deepcopy(msg) for msg in history]
+
+        # Close tool calls left unanswered by a cancelled run so providers don't reject the history.
+        if member_agent.add_cancelled_runs_to_context:
+            history_copy = close_incomplete_tool_calls(history_copy)
 
         # Tag each message as coming from history
         for _msg in history_copy:

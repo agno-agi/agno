@@ -103,6 +103,45 @@ def filter_tool_calls(messages: List[Message], max_tool_calls: int) -> None:
     log_debug(f"Filtered {num_filtered} tool calls, kept {len(tool_call_ids_to_keep)}")
 
 
+def close_incomplete_tool_calls(messages: List[Message]) -> List[Message]:
+    """Insert a placeholder result for any tool call that was never answered.
+
+    A run cancelled mid tool-execution can leave an assistant message whose
+    tool call has no matching tool result. Providers reject a tool call with no
+    response, so a synthetic result is added after each unanswered call.
+    Messages with no dangling tool calls are returned unchanged.
+    """
+    # A tool result resolves a call by tool_call_id; older combined-format results
+    # (one tool message holding several results) keep the ids inside tool_calls instead.
+    resolved_ids: set[str] = set()
+    for msg in messages:
+        if msg.role != "tool":
+            continue
+        if msg.tool_call_id:
+            resolved_ids.add(msg.tool_call_id)
+        for tc in msg.tool_calls or []:
+            if tc.get("tool_call_id"):
+                resolved_ids.add(tc["tool_call_id"])
+
+    result: List[Message] = []
+    for msg in messages:
+        result.append(msg)
+        if msg.role == "assistant" and msg.tool_calls:
+            for tc in msg.tool_calls:
+                tool_call_id = tc.get("id")
+                if tool_call_id and tool_call_id not in resolved_ids:
+                    result.append(
+                        Message(
+                            role="tool",
+                            tool_call_id=tool_call_id,
+                            tool_name=tc.get("function", {}).get("name"),
+                            content='{"status": "cancelled"}',
+                        )
+                    )
+                    resolved_ids.add(tool_call_id)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Provider tool call ID configuration
 # ---------------------------------------------------------------------------

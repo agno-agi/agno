@@ -138,6 +138,8 @@ class Agent:
     num_history_messages: Optional[int] = None
     # Maximum number of tool calls to include from history (None = no limit)
     max_tool_calls_from_history: Optional[int] = None
+    # Include cancelled runs (with their partial content) in the history added to context (requires add_history_to_context=True).
+    add_cancelled_runs_to_context: bool = False
 
     # --- Knowledge ---
     knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None
@@ -411,6 +413,7 @@ class Agent:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
+        add_cancelled_runs_to_context: bool = False,
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
@@ -563,6 +566,7 @@ class Agent:
             self.num_history_runs = 3
 
         self.max_tool_calls_from_history = max_tool_calls_from_history
+        self.add_cancelled_runs_to_context = add_cancelled_runs_to_context
 
         self.store_media = store_media
         self.store_tool_messages = store_tool_messages

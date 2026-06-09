@@ -27,6 +27,7 @@ from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.response import ModelResponse
 from agno.run import RunContext
+from agno.run.base import RunStatus
 from agno.run.messages import RunMessages
 from agno.run.team import (
     TeamRunOutput,
@@ -45,7 +46,7 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import close_incomplete_tool_calls, filter_tool_calls, get_text_from_message
 from agno.utils.team import (
     get_member_id,
 )
@@ -891,16 +892,24 @@ def _get_run_messages(
         # to preserve conversation continuity.
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
+        # Keep cancelled runs in history when add_cancelled_runs_to_context is set; paused and error stay excluded.
+        skip_statuses = [RunStatus.paused, RunStatus.error] if team.add_cancelled_runs_to_context else None
+
         history = session.get_messages(
             last_n_runs=team.num_history_runs,
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
+            skip_statuses=skip_statuses,
             team_id=team.id if team.parent_team_id is not None else None,
         )
 
         if len(history) > 0:
             # Create a deep copy of the history messages to avoid modifying the original messages
             history_copy = [deepcopy(msg) for msg in history]
+
+            # Close tool calls left unanswered by a cancelled run so providers don't reject the history.
+            if team.add_cancelled_runs_to_context:
+                history_copy = close_incomplete_tool_calls(history_copy)
 
             # Tag each message as coming from history
             for _msg in history_copy:
@@ -1025,16 +1034,23 @@ async def _aget_run_messages(
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
+        # Keep cancelled runs in history when add_cancelled_runs_to_context is set; paused and error stay excluded.
+        skip_statuses = [RunStatus.paused, RunStatus.error] if team.add_cancelled_runs_to_context else None
         history = session.get_messages(
             last_n_runs=team.num_history_runs,
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
+            skip_statuses=skip_statuses,
             team_id=team.id if team.parent_team_id is not None else None,
         )
 
         if len(history) > 0:
             # Create a deep copy of the history messages to avoid modifying the original messages
             history_copy = [deepcopy(msg) for msg in history]
+
+            # Close tool calls left unanswered by a cancelled run so providers don't reject the history.
+            if team.add_cancelled_runs_to_context:
+                history_copy = close_incomplete_tool_calls(history_copy)
 
             # Tag each message as coming from history
             for _msg in history_copy:

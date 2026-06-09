@@ -330,6 +330,8 @@ class Team:
     num_history_messages: Optional[int] = None
     # Maximum number of tool calls to include from history (None = no limit)
     max_tool_calls_from_history: Optional[int] = None
+    # Include cancelled runs (with their partial content) in the history added to context (requires add_history_to_context=True).
+    add_cancelled_runs_to_context: bool = False
 
     # --- Team Storage ---
     # Metadata stored with this team
@@ -494,6 +496,7 @@ class Team:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
+        add_cancelled_runs_to_context: bool = False,
         skills: Optional[Skills] = None,
         tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -616,6 +619,7 @@ class Team:
             num_history_runs=num_history_runs,
             num_history_messages=num_history_messages,
             max_tool_calls_from_history=max_tool_calls_from_history,
+            add_cancelled_runs_to_context=add_cancelled_runs_to_context,
             skills=skills,
             tools=tools,
             tool_call_limit=tool_call_limit,

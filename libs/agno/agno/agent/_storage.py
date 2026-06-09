@@ -523,6 +523,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["num_history_messages"] = agent.num_history_messages
     if agent.max_tool_calls_from_history is not None:
         config["max_tool_calls_from_history"] = agent.max_tool_calls_from_history
+    if agent.add_cancelled_runs_to_context:
+        config["add_cancelled_runs_to_context"] = agent.add_cancelled_runs_to_context
 
     # --- Knowledge settings ---
     # Knowledge is a non-serializable object (it holds live db/vector_db connections),
@@ -912,6 +914,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         num_history_runs=config.get("num_history_runs"),
         num_history_messages=config.get("num_history_messages"),
         max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+        add_cancelled_runs_to_context=config.get("add_cancelled_runs_to_context", False),
         # --- Knowledge settings ---
         knowledge=config.get("knowledge"),
         knowledge_filters=config.get("knowledge_filters"),

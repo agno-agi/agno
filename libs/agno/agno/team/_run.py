@@ -4703,19 +4703,25 @@ def _get_continue_run_messages(
     if add_history_to_context and session is not None and not input_has_history:
         from copy import deepcopy
 
-        from agno.utils.message import filter_tool_calls
+        from agno.utils.message import close_incomplete_tool_calls, filter_tool_calls
 
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
+        # Keep cancelled runs in history when add_cancelled_runs_to_context is set; paused and error stay excluded.
+        skip_statuses = [RunStatus.paused, RunStatus.error] if team.add_cancelled_runs_to_context else None
         history: List[Message] = session.get_messages(
             last_n_runs=team.num_history_runs,
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
+            skip_statuses=skip_statuses,
             team_id=team.id if team.parent_team_id is not None else None,
         )
 
         if len(history) > 0:
             history_copy = [deepcopy(msg) for msg in history]
+            # Close tool calls left unanswered by a cancelled run so providers don't reject the history.
+            if team.add_cancelled_runs_to_context:
+                history_copy = close_incomplete_tool_calls(history_copy)
             for _msg in history_copy:
                 _msg.from_history = True
             if team.max_tool_calls_from_history is not None:
