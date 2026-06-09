@@ -153,6 +153,15 @@ class SetRoleScopesRequest(BaseModel):
     is_default: Optional[bool] = Field(None, description="Mark as a default role")
 
 
+class CreateRoleRequest(BaseModel):
+    """Create a role — metadata only; scopes are managed via /roles/{slug}/scopes."""
+
+    slug: str = Field(..., min_length=1, description="Unique role id")
+    name: Optional[str] = Field(None, description="Display name (defaults to slug)")
+    description: Optional[str] = Field(None, description="Role description")
+    is_default: Optional[bool] = Field(None, description="Mark as a default role")
+
+
 class UpdateRoleRequest(BaseModel):
     """Metadata-only update (PATCH) — does not touch scopes."""
 
@@ -253,6 +262,18 @@ def get_roles_router(
     ):
         roles = [RoleSchema.from_record(r) for r in store.list_roles_detailed()]
         return _page(roles, page, limit)
+
+    @router.post("/roles", response_model=RoleSchema, status_code=201)
+    def create_role(body: CreateRoleRequest, actor: str = Depends(require_admin)):
+        """Create a role (metadata only — RESTful). Add permissions afterwards via
+        PUT/PATCH /roles/{slug}/scopes. Mirrors the cloud POST /roles."""
+        try:
+            store.create_role(
+                body.slug, name=body.name, description=body.description, is_default=body.is_default, actor=actor
+            )
+        except FileExistsError:
+            raise HTTPException(status_code=409, detail=f"Role {body.slug!r} already exists")
+        return RoleSchema.from_record(_role_or_404(body.slug))
 
     @router.get("/roles/{slug}", response_model=RoleSchema)
     def get_role(slug: str):

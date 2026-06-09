@@ -321,6 +321,22 @@ class ManagedRoleStore:
                 entries.append({"scope": _obj_act_to_scope(p[1], p[2]), "effect": effect})
         return sorted(entries, key=lambda e: (e["scope"], e["effect"]))
 
+    def create_role(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Create a role with metadata only — no scopes (add those via
+        set_role_scopes / patch_role_scopes). Raises FileExistsError if it exists."""
+        if self.get_role(role) is not None:
+            raise FileExistsError(role)
+        rec = self._meta_upsert(role, name=name, description=description, is_default=is_default)
+        self._emit("role.created", role, None, [self._meta_summary(rec)], actor)
+        return rec
+
     def set_role_meta(
         self,
         role: str,

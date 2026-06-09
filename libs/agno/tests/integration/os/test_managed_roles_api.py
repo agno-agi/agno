@@ -260,3 +260,24 @@ def test_patch_scopes_subresource_diffs(client_and_store):
     assert r.status_code == 200, r.text
     raws = {s["raw"] for s in r.json()["scopes"]}
     assert raws == {"agents:read", "agents:run"}  # teams:read removed, agents:run added, agents:read kept
+
+
+def test_create_role_metadata_only_then_add_scopes(client_and_store):
+    """POST /roles creates a role with NO scopes (RESTful); scopes are added
+    separately via the /scopes subresource."""
+    client, store = client_and_store
+
+    r = client.post("/authz/roles", headers=_auth("alice"), json={"slug": "support", "name": "Support"})
+    assert r.status_code == 201, r.text
+    role = r.json()
+    assert role["slug"] == "support" and role["name"] == "Support" and role["scopes"] == []
+
+    # creating the same role again -> 409
+    assert client.post("/authz/roles", headers=_auth("alice"), json={"slug": "support"}).status_code == 409
+
+    # add permissions via the subresource
+    r = client.put("/authz/roles/support/scopes", headers=_auth("alice"), json={"scopes": ["sessions:read"]})
+    assert r.status_code == 200
+    assert [s["raw"] for s in client.get("/authz/roles/support", headers=_auth("alice")).json()["scopes"]] == [
+        "sessions:read"
+    ]
