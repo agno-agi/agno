@@ -3169,7 +3169,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error listing learnings: {e}")
             return [], 0
 
-    async def get_learning_user_stats(
+    async def get_learnings_user_stats(
         self,
         learning_type: Optional[str] = None,
         limit: Optional[int] = None,
@@ -3228,8 +3228,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 ], int(total_count)
 
         except Exception as e:
-            log_debug(f"Error getting learning user stats: {e}")
-            return [], 0
+            log_error(f"Error getting learning user stats: {e}")
+            raise e
 
     # --- Components (Not yet supported for async) ---
     def get_component(

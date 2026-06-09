@@ -4664,7 +4664,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Error listing learnings: {e}")
             return [], 0
 
-    def get_learning_user_stats(
+    def get_learnings_user_stats(
         self,
         learning_type: Optional[str] = None,
         limit: Optional[int] = None,
@@ -4721,8 +4721,8 @@ class PostgresDb(BaseDb):
                 ], int(total_count)
 
         except Exception as e:
-            log_debug(f"Error getting learning user stats: {e}")
-            return [], 0
+            log_error(f"Error getting learning user stats: {e}")
+            raise e
 
     # -- Schedule methods --
     def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:

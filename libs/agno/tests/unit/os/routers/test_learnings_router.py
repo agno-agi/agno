@@ -37,7 +37,7 @@ def _make_learning(**overrides):
 def mock_db():
     db = MagicMock(spec=BaseDb)
     db.list_learnings = MagicMock(return_value=([], 0))
-    db.get_learning_user_stats = MagicMock(return_value=([], 0))
+    db.get_learnings_user_stats = MagicMock(return_value=([], 0))
     db.get_learning_by_id = MagicMock(return_value=None)
     db.upsert_learning = MagicMock(return_value=None)
     db.delete_learning = MagicMock(return_value=True)
@@ -129,7 +129,7 @@ class TestListLearningUsers:
             {"user_id": "user-1", "total_learnings": 3, "last_learning_updated_at": 1714560000},
             {"user_id": "user-2", "total_learnings": 1, "last_learning_updated_at": 1714000000},
         ]
-        mock_db.get_learning_user_stats = MagicMock(return_value=(stats, 2))
+        mock_db.get_learnings_user_stats = MagicMock(return_value=(stats, 2))
         resp = client.get("/learnings/users")
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -139,15 +139,15 @@ class TestListLearningUsers:
 
     def test_does_not_collide_with_get_by_id(self, client, mock_db):
         # "/learnings/users" must route to the stats endpoint, not get_learning(learning_id="users")
-        mock_db.get_learning_user_stats = MagicMock(return_value=([], 0))
+        mock_db.get_learnings_user_stats = MagicMock(return_value=([], 0))
         resp = client.get("/learnings/users")
         assert resp.status_code == 200
-        mock_db.get_learning_user_stats.assert_called_once()
+        mock_db.get_learnings_user_stats.assert_called_once()
         mock_db.get_learning_by_id.assert_not_called()
 
     def test_filters_passed_through(self, client, mock_db):
         client.get("/learnings/users?learning_type=user_profile&user_id=u1&page=2&limit=5")
-        kwargs = mock_db.get_learning_user_stats.call_args[1]
+        kwargs = mock_db.get_learnings_user_stats.call_args[1]
         assert kwargs["learning_type"] == "user_profile"
         assert kwargs["user_id"] == "u1"
         assert kwargs["page"] == 2
@@ -155,26 +155,33 @@ class TestListLearningUsers:
 
     def test_pagination_meta(self, client, mock_db):
         stats = [{"user_id": "u", "total_learnings": 1, "last_learning_updated_at": 1}]
-        mock_db.get_learning_user_stats = MagicMock(return_value=(stats, 25))
+        mock_db.get_learnings_user_stats = MagicMock(return_value=(stats, 25))
         resp = client.get("/learnings/users?limit=10")
         meta = resp.json()["meta"]
         assert meta["total_count"] == 25
         assert meta["total_pages"] == 3
 
     def test_not_implemented_returns_501(self, client, mock_db):
-        mock_db.get_learning_user_stats.side_effect = NotImplementedError
+        mock_db.get_learnings_user_stats.side_effect = NotImplementedError
         resp = client.get("/learnings/users")
         assert resp.status_code == 501
 
+    def test_db_error_returns_500(self, client, mock_db):
+        # The stats method surfaces DB errors (matching get_user_memory_stats); the
+        # router converts them to a 500 rather than masking them as an empty page.
+        mock_db.get_learnings_user_stats.side_effect = RuntimeError("boom")
+        resp = client.get("/learnings/users")
+        assert resp.status_code == 500
+
     def test_default_sort_passed_through(self, client, mock_db):
         client.get("/learnings/users")
-        kwargs = mock_db.get_learning_user_stats.call_args[1]
+        kwargs = mock_db.get_learnings_user_stats.call_args[1]
         assert kwargs["sort_by"] is None
         assert kwargs["sort_order"] == "desc"
 
     def test_sort_passed_through(self, client, mock_db):
         client.get("/learnings/users?sort_by=total_learnings&sort_order=asc")
-        kwargs = mock_db.get_learning_user_stats.call_args[1]
+        kwargs = mock_db.get_learnings_user_stats.call_args[1]
         assert kwargs["sort_by"] == "total_learnings"
         assert kwargs["sort_order"] == "asc"
 
@@ -404,16 +411,16 @@ class TestIDORScoping:
 
     def test_list_users_binds_subject(self, jwt_client, mock_db):
         jwt_client.get("/learnings/users")
-        kwargs = mock_db.get_learning_user_stats.call_args[1]
+        kwargs = mock_db.get_learnings_user_stats.call_args[1]
         assert kwargs["user_id"] == "user-A"
 
     def test_list_users_matching_user_id_allowed(self, jwt_client, mock_db):
         resp = jwt_client.get("/learnings/users?user_id=user-A")
         assert resp.status_code == 200
-        kwargs = mock_db.get_learning_user_stats.call_args[1]
+        kwargs = mock_db.get_learnings_user_stats.call_args[1]
         assert kwargs["user_id"] == "user-A"
 
     def test_list_users_mismatched_user_id_rejected(self, jwt_client, mock_db):
         resp = jwt_client.get("/learnings/users?user_id=user-B")
         assert resp.status_code == 403
-        mock_db.get_learning_user_stats.assert_not_called()
+        mock_db.get_learnings_user_stats.assert_not_called()

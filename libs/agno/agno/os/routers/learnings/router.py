@@ -248,7 +248,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
 
         try:
             if isinstance(db, AsyncBaseDb):
-                records, total_count = await db.get_learning_user_stats(
+                records, total_count = await db.get_learnings_user_stats(
                     learning_type=learning_type,
                     user_id=user_id,
                     limit=limit,
@@ -257,7 +257,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     sort_order=sort_order.value if sort_order else None,
                 )
             else:
-                records, total_count = cast(BaseDb, db).get_learning_user_stats(
+                records, total_count = cast(BaseDb, db).get_learnings_user_stats(
                     learning_type=learning_type,
                     user_id=user_id,
                     limit=limit,
@@ -267,6 +267,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 )
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get learning users: {e}")
 
         total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
         return PaginatedResponse(

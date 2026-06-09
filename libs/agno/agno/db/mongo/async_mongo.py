@@ -3369,7 +3369,7 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error listing learnings: {e}")
             return [], 0
 
-    async def get_learning_user_stats(
+    async def get_learnings_user_stats(
         self,
         learning_type: Optional[str] = None,
         limit: Optional[int] = None,
@@ -3383,7 +3383,9 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return [], 0
 
-            match_stage: Dict[str, Any] = {"user_id": {"$ne": None}}
+            # Exclude ownerless records: both explicit null and a missing user_id field
+            # (otherwise they group under _id: null and break LearningUserStats validation).
+            match_stage: Dict[str, Any] = {"user_id": {"$ne": None, "$exists": True}}
             if learning_type is not None:
                 match_stage["learning_type"] = learning_type
             if user_id is not None:
@@ -3432,5 +3434,5 @@ class AsyncMongoDb(AsyncBaseDb):
             return formatted_results, int(total_count)
 
         except Exception as e:
-            log_debug(f"Error getting learning user stats: {e}")
-            return [], 0
+            log_error(f"Error getting learning user stats: {e}")
+            raise e
