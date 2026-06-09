@@ -47,7 +47,7 @@
         },
         "interactivity": {
             "is_enabled": true,
-            "request_url": "https://YOUR-URL/slack/events"
+            "request_url": "https://YOUR-URL/slack/interactions"
         },
         "org_deploy_enabled": false,
         "socket_mode_enabled": false,
