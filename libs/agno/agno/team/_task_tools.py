@@ -355,7 +355,15 @@ def _get_task_management_tools(
             session.upsert_run(member_run_response)
 
         if run_context.session_state is not None and member_session_state_copy is not None and not skip_session_merge:
+            # Preserve the leader's reasoning steps for its current run before merging the
+            # member's session state back. merge_dictionaries overwrites list values with
+            # the member's snapshot, which can lose steps the leader accumulated after the
+            # snapshot was taken (fixes #5514).
+            _rs = run_context.session_state.get("reasoning_steps")
+            _saved_leader_steps = _rs.get(run_context.run_id) if isinstance(_rs, dict) else None
             merge_dictionaries(run_context.session_state, member_session_state_copy)
+            if _saved_leader_steps is not None:
+                run_context.session_state.setdefault("reasoning_steps", {})[run_context.run_id] = _saved_leader_steps
 
         if member_run_response is not None:
             _update_team_media(team, member_run_response)
