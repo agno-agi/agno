@@ -1825,7 +1825,27 @@ def get_relevant_docs_from_knowledge(
             num_documents = getattr(resolved_knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
-        relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+        # Owner scope flows from the run context (which carries the JWT sub
+        # for routed runs, or whatever ``Agent.user_id`` was set to). When
+        # None, retrieval is unscoped — see Knowledge.search docstring.
+        # Probe the retrieve signature so a custom Knowledge subclass that
+        # doesn't accept user_id keeps working — passing the kwarg would
+        # blow up.
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+        from inspect import signature as _sig
+
+        try:
+            if "user_id" in _sig(retrieve_fn).parameters:
+                retrieve_kwargs["user_id"] = run_context.user_id if run_context is not None else None
+        except (TypeError, ValueError):
+            # Some callables (builtins, C-extensions) don't have inspectable
+            # signatures. Skip user_id rather than crash.
+            pass
+        relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
             log_debug("No relevant documents found for query")
@@ -1919,10 +1939,25 @@ async def aget_relevant_docs_from_knowledge(
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
+        # Probe the retrieve signatures and only pass user_id if the
+        # underlying method accepts it (see sync variant for rationale).
+        from inspect import signature as _sig
+
+        scope_user_id = run_context.user_id if run_context is not None else None
+
+        def _maybe_with_user_id(fn: Any) -> Dict[str, Any]:
+            base = {"query": query, "max_results": num_documents, "filters": filters}
+            try:
+                if "user_id" in _sig(fn).parameters:
+                    base["user_id"] = scope_user_id
+            except (TypeError, ValueError):
+                pass
+            return base
+
         if callable(aretrieve_fn):
-            relevant_docs: List[Document] = await aretrieve_fn(query=query, max_results=num_documents, filters=filters)
+            relevant_docs: List[Document] = await aretrieve_fn(**_maybe_with_user_id(aretrieve_fn))
         elif callable(retrieve_fn):
-            relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+            relevant_docs = retrieve_fn(**_maybe_with_user_id(retrieve_fn))
         else:
             return None
 

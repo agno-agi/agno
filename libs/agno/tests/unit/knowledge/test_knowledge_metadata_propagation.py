@@ -141,25 +141,29 @@ def test_prepare_documents_for_insert_with_metadata():
     # Call _prepare_documents_for_insert with metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata=metadata)
 
-    # Verify metadata was merged (linked_to is always added, empty string for unnamed knowledge)
+    # Verify metadata was merged (linked_to + user_id are always added; user_id
+    # defaults to the SHARED_KNOWLEDGE_USER_ID sentinel when no owner is passed).
     assert result[0].meta_data == {
         "existing": "value1",
         "document_id": "123",
         "knowledge_base_id": "456",
         "filename": "test.txt",
         "linked_to": "",
+        "user_id": "__shared__",
     }
     assert result[1].meta_data == {
         "document_id": "123",
         "knowledge_base_id": "456",
         "filename": "test.txt",
         "linked_to": "",
+        "user_id": "__shared__",
     }
     assert result[2].meta_data == {
         "document_id": "123",
         "knowledge_base_id": "456",
         "filename": "test.txt",
         "linked_to": "",
+        "user_id": "__shared__",
     }
 
     # Verify content_id was set
@@ -181,9 +185,9 @@ def test_prepare_documents_for_insert_without_metadata():
     # Call _prepare_documents_for_insert without metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1")
 
-    # Verify existing metadata is preserved (linked_to is always added)
-    assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
-    assert result[1].meta_data == {"linked_to": ""}
+    # Verify existing metadata is preserved (linked_to + user_id are always added)
+    assert result[0].meta_data == {"existing": "value1", "linked_to": "", "user_id": "__shared__"}
+    assert result[1].meta_data == {"linked_to": "", "user_id": "__shared__"}
 
     # Verify content_id was set
     for doc in result:
@@ -203,8 +207,8 @@ def test_prepare_documents_for_insert_with_empty_metadata():
     # Call _prepare_documents_for_insert with empty metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata={})
 
-    # Verify existing metadata is preserved (linked_to is always added)
-    assert result[0].meta_data == {"existing": "value1", "linked_to": ""}
+    # Verify existing metadata is preserved (linked_to + user_id are always added)
+    assert result[0].meta_data == {"existing": "value1", "linked_to": "", "user_id": "__shared__"}
 
 
 @pytest.mark.asyncio
@@ -314,10 +318,11 @@ def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
     ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
-    # Verify documents were inserted with original metadata preserved (linked_to is always added)
+    # Verify documents were inserted with original metadata preserved (linked_to
+    # + user_id are always added; user_id defaults to the shared sentinel).
     assert len(mock_vector_db.inserted_documents) == 1
     doc = mock_vector_db.inserted_documents[0]
-    assert doc.meta_data == {"original": "data", "linked_to": ""}
+    assert doc.meta_data == {"original": "data", "linked_to": "", "user_id": "__shared__"}
 
 
 def test_metadata_merges_with_existing_document_metadata(temp_text_file, mock_vector_db):
