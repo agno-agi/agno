@@ -1,6 +1,6 @@
 {
     "display_information": {
-        "name": "My Agent",
+        "name": "Slack Agent",
         "description": "An AI agent powered by Agno"
     },
     "features": {
@@ -10,7 +10,7 @@
             "messages_tab_read_only_enabled": false
         },
         "bot_user": {
-            "display_name": "My Agent",
+            "display_name": "Slack Agent",
             "always_online": true
         },
         "assistant_view": {
