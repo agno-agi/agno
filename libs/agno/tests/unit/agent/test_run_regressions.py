@@ -66,6 +66,46 @@ def test_run_dispatch_cleans_up_registered_run_on_setup_failure(monkeypatch: pyt
     assert run_id not in get_active_runs()
 
 
+def test_cleanup_and_store_can_omit_run_session_state_snapshot(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(name="compact-runs-agent", store_run_session_state=False)
+    session = AgentSession(session_id="session-1", runs=[], session_data={})
+    session_state = {"large_registry": {"item": "value"}}
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state=session_state)
+    run_response = RunOutput(run_id="run-1", session_id="session-1", content="ok")
+
+    monkeypatch.setattr(_session, "save_session", lambda agent, session=None: None)
+
+    _run.cleanup_and_store(agent, run_response=run_response, session=session, run_context=run_context)
+
+    assert run_response.session_state is session_state
+    assert session.session_data["session_state"] is session_state
+    assert session.runs is not None
+    assert len(session.runs) == 1
+    assert session.runs[0].session_state is None
+
+
+@pytest.mark.asyncio
+async def test_acleanup_and_store_can_omit_run_session_state_snapshot(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(name="compact-runs-agent", store_run_session_state=False)
+    session = AgentSession(session_id="session-1", runs=[], session_data={})
+    session_state = {"large_registry": {"item": "value"}}
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state=session_state)
+    run_response = RunOutput(run_id="run-1", session_id="session-1", content="ok")
+
+    async def fake_asave_session(agent, session=None):
+        return None
+
+    monkeypatch.setattr(_session, "asave_session", fake_asave_session)
+
+    await _run.acleanup_and_store(agent, run_response=run_response, session=session, run_context=run_context)
+
+    assert run_response.session_state is session_state
+    assert session.session_data["session_state"] is session_state
+    assert session.runs is not None
+    assert len(session.runs) == 1
+    assert session.runs[0].session_state is None
+
+
 def test_run_dispatch_does_not_reset_cancellation_before_impl(monkeypatch: pytest.MonkeyPatch):
     agent = Agent(name="test-agent")
     _patch_sync_dispatch_dependencies(agent, monkeypatch, runs=[])

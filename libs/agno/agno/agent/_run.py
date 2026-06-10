@@ -5116,6 +5116,8 @@ def cleanup_and_store(
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
         storage_copy.session_state = run_context.session_state
+        if not agent.store_run_session_state:
+            storage_copy.session_state = None
 
     # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
@@ -5173,6 +5175,8 @@ async def acleanup_and_store(
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
         storage_copy.session_state = run_context.session_state
+        if not agent.store_run_session_state:
+            storage_copy.session_state = None
 
     # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(

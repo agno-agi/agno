@@ -604,6 +604,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["store_tool_messages"] = agent.store_tool_messages
     if agent.store_history_messages:
         config["store_history_messages"] = agent.store_history_messages
+    if not agent.store_run_session_state:
+        config["store_run_session_state"] = agent.store_run_session_state
 
     # --- System message settings ---
     # Skip system_message if it's a callable or Message object
@@ -937,6 +939,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         store_media=config.get("store_media", True),
         store_tool_messages=config.get("store_tool_messages", True),
         store_history_messages=config.get("store_history_messages", False),
+        store_run_session_state=config.get("store_run_session_state", True),
         # --- System message settings ---
         system_message=config.get("system_message"),
         system_message_role=config.get("system_message_role", "system"),

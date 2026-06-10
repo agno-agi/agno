@@ -168,6 +168,14 @@ class TestAgentToDict:
         assert "store_history_messages" in config
         assert config["store_history_messages"] is True
 
+    def test_to_dict_includes_store_run_session_state_when_false(self):
+        """Test that store_run_session_state=False is serialized."""
+        agent = Agent(id="compact-runs-agent", store_run_session_state=False)
+        config = agent.to_dict()
+
+        assert "store_run_session_state" in config
+        assert config["store_run_session_state"] is False
+
     def test_to_dict_with_db(self, basic_agent, mock_db):
         """Test to_dict includes database configuration."""
         basic_agent.db = mock_db
@@ -368,6 +376,14 @@ class TestAgentFromDict:
         reconstructed = Agent.from_dict(config)
 
         assert reconstructed.store_history_messages is False
+
+    def test_from_dict_roundtrip_store_run_session_state_false(self):
+        """Test that store_run_session_state=False survives to_dict/from_dict round-trip."""
+        agent = Agent(id="compact-runs-agent", store_run_session_state=False)
+        config = agent.to_dict()
+        reconstructed = Agent.from_dict(config)
+
+        assert reconstructed.store_run_session_state is False
 
 
 # =============================================================================
