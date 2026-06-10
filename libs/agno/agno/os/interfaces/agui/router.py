@@ -45,10 +45,12 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
-        # Look for user_id in run_input.forwarded_props
-        user_id = None
-        if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
-            user_id = run_input.forwarded_props.get("user_id")
+        # AG-UI forwardedProps is an open container for arbitrary runtime context
+        # (auth/delegation context, tenant ids, tracing ids, feature flags, locale, ...).
+        # Extract user_id from it, and forward the full payload via run metadata so the
+        # other fields are not dropped before reaching the agent.
+        forwarded_props = run_input.forwarded_props if isinstance(run_input.forwarded_props, dict) else {}
+        user_id = forwarded_props.get("user_id")
 
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(run_input.state, run_input.thread_id)
@@ -71,6 +73,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
             files=files or None,
             session_state=session_state,
             run_id=run_id,
+            metadata={"forwarded_props": forwarded_props} if forwarded_props else None,
         )
 
         # Stream the response content in AG-UI format
@@ -98,10 +101,12 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         images, audio, videos, files = extract_agui_media(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
-        # Look for user_id in input.forwarded_props
-        user_id = None
-        if input.forwarded_props and isinstance(input.forwarded_props, dict):
-            user_id = input.forwarded_props.get("user_id")
+        # AG-UI forwardedProps is an open container for arbitrary runtime context
+        # (auth/delegation context, tenant ids, tracing ids, feature flags, locale, ...).
+        # Extract user_id from it, and forward the full payload via run metadata so the
+        # other fields are not dropped before reaching the team.
+        forwarded_props = input.forwarded_props if isinstance(input.forwarded_props, dict) else {}
+        user_id = forwarded_props.get("user_id")
 
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(input.state, input.thread_id)
@@ -124,6 +129,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             files=files or None,
             session_state=session_state,
             run_id=run_id,
+            metadata={"forwarded_props": forwarded_props} if forwarded_props else None,
         )
 
         # Stream the response content in AG-UI format
