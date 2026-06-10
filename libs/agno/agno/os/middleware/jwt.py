@@ -644,6 +644,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         scopes: List[str],
         token: Optional[str],
         claims: Optional[dict] = None,
+        reason: Optional[str] = None,
     ) -> None:
         """Record one authorization decision to the audit sink (if configured).
 
@@ -664,13 +665,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
             from agno.os.authz.audit import AuditEvent
 
             token_ref = self._token_reference(token, claims)
+            metadata = {"required": required_scopes, "token": token_ref, "scopes": scopes}
+            if reason:
+                metadata["reason"] = reason
             sink.record(
                 AuditEvent(
                     action="access.allowed" if allowed else "access.denied",
                     actor=principal,
                     target=f"{method} {path}",
                     timestamp=int(time.time()),
-                    metadata={"required": required_scopes, "token": token_ref, "scopes": scopes},
+                    metadata=metadata,
                 )
             )
         except Exception as e:  # pragma: no cover - audit must never break requests
