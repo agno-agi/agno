@@ -166,6 +166,7 @@ COMPONENTS_TABLE_SCHEMA = {
     "component_id": {"type": String, "primary_key": True},
     "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
     "name": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "description": {"type": String, "nullable": True},
     "current_version": {"type": BigInteger, "nullable": True, "index": True},
     "metadata": {"type": JSON, "nullable": True},
