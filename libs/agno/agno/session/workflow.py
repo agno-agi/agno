@@ -46,7 +46,7 @@ class WorkflowSession:
     def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
 
-        session_dict = {
+        session_dict: Dict[str, Any] = {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "workflow_id": self.workflow_id,
