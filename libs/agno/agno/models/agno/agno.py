@@ -58,6 +58,11 @@ class Agno(Model):
     name: str = "Agno"
     provider: str = "Agno"
 
+    # The gateway speaks the OpenAI chat-completions schema, so it forwards a
+    # ``response_format`` json_schema to the underlying provider. Enable the native
+    # structured-output path (used by ``output_schema``) the same way OpenAIChat does.
+    supports_native_structured_outputs: bool = True
+
     # Connection / auth
     api_key: Optional[str] = None
     base_url: Optional[str] = None
