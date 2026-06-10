@@ -12,14 +12,17 @@ class LocalFileSystemTools(Toolkit):
         target_directory: Optional[str] = None,
         default_extension: str = "txt",
         enable_write_file: bool = True,
+        enable_read_file: bool = True,
         all: bool = False,
         **kwargs,
     ):
         """
-        Initialize the WriteToLocal toolkit.
+        Initialize the LocalFileSystem toolkit.
         Args:
             target_directory (Optional[str]): Default directory to write files to. Creates if doesn't exist.
             default_extension (str): Default file extension to use if none specified.
+            enable_write_file (bool): Enable the write_file tool.
+            enable_read_file (bool): Enable the read_file tool.
         """
 
         self.target_directory = target_directory or str(Path.cwd())
@@ -31,8 +34,10 @@ class LocalFileSystemTools(Toolkit):
         tools = []
         if all or enable_write_file:
             tools.append(self.write_file)
+        if all or enable_read_file:
+            tools.append(self.read_file)
 
-        super().__init__(name="write_to_local", tools=tools, **kwargs)
+        super().__init__(name="local_file_system", tools=tools, **kwargs)
 
     def write_file(
         self,
