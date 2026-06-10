@@ -125,6 +125,11 @@ class JWTValidator:
 
         # Add key from environment variable if not already provided
         env_key = getenv("JWT_VERIFICATION_KEY", "")
+        if env_key and "-----BEGIN" in env_key and "\\n" in env_key:
+            # A PEM exported as a single line carries literal "\n" sequences
+            # (e.g. JWT_VERIFICATION_KEY="-----BEGIN PUBLIC KEY-----\nMII...").
+            # Un-escape it, otherwise it reaches PyJWT as an unparseable key.
+            env_key = env_key.replace("\\n", "\n")
         if env_key and env_key not in self.verification_keys:
             self.verification_keys.append(env_key)
 
@@ -285,6 +290,19 @@ class JWTValidator:
                     break
                 except jwt.ExpiredSignatureError:
                     raise
+                except jwt.exceptions.InvalidKeyError as e:
+                    # This key is not a parseable key at all (mangled PEM,
+                    # bad newline escaping in JWT_VERIFICATION_KEY, stray
+                    # whitespace). Skip it and keep trying the others —
+                    # one bad key shouldn't abort validation — but say so
+                    # loudly, since the symptom otherwise is a cryptic 401.
+                    log_warning(
+                        f"A configured verification key could not be parsed and was skipped: {e} "
+                        f"(check PEM formatting / newline escapes, e.g. in JWT_VERIFICATION_KEY)"
+                    )
+                    if last_exception is None:  # don't mask a real signature failure
+                        last_exception = e
+                    continue
                 except jwt.InvalidTokenError as e:
                     last_exception = e
                     continue
