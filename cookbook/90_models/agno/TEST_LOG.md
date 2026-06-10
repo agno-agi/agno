@@ -43,3 +43,119 @@ reassembled correctly. No provider SDK loaded.
   endpoints share the same CF-account managed billing.
 
 ---
+
+### structured_output.py
+
+**Status:** PASS
+
+**Description:** `output_schema=MovieScript` on `openai/gpt-5.4` (BYOK via staging),
+covering native structured outputs, JSON mode (`use_json_mode=True`), and async.
+
+**Result:** All three returned valid JSON matching the schema. The native path now
+exercises the `response_format` json_schema branch (see note below).
+
+**Notes:**
+- This required a model fix: `Agno` did not set `supports_native_structured_outputs`,
+  so it inherited `False` and `output_schema` silently degraded to JSON-object mode -
+  the json_schema branch in `agno.py` was dead code. Set the flag to `True` (matching
+  OpenAIChat) so the gateway forwards a strict `response_format` json_schema.
+
+---
+
+### metrics.py
+
+**Status:** PASS
+
+**Description:** Per-message and aggregated metrics on `openai/gpt-5.4` (BYOK via
+staging).
+
+**Result:** Token counts (input/output/total) populated correctly. `cost` is `None`
+under BYOK on staging - cost is only surfaced when the gateway bills it (managed mode);
+BYOK is billed by the provider, so the gateway returns no cost field. Code handles both.
+
+---
+
+### image_input.py
+
+**Status:** PASS
+
+**Description:** Image URL input on `openai/gpt-5.4` (BYOK via staging).
+
+**Result:** Correctly identified the Golden Gate Bridge from the image URL.
+
+---
+
+### pdf_input.py
+
+**Status:** PASS
+
+**Description:** PDF URL input (`File(url=...)`) on `openai/gpt-5.4` (BYOK via staging).
+
+**Result:** Read the attached ThaiRecipes.pdf and returned a recipe from it.
+
+---
+
+### reasoning_effort.py
+
+**Status:** PASS
+
+**Description:** `reasoning_effort="high"` on `openai/gpt-5.4` (BYOK via staging).
+
+**Result:** Solved the train word problem correctly (7:00 PM) with step-by-step
+reasoning.
+
+---
+
+### db.py
+
+**Status:** PASS
+
+**Description:** `PostgresDb` + `add_history_to_context` on `openai/gpt-5.4` (BYOK via
+staging), against the local pgvector container.
+
+**Result:** History carried across turns - the second turn ("their national anthem")
+correctly resolved to Canada. Agent-level persistence is model-agnostic and works
+unchanged through the gateway.
+
+---
+
+### memory.py
+
+**Status:** PASS
+
+**Description:** `update_memory_on_run` + `enable_session_summaries` on `openai/gpt-5.4`
+(BYOK via staging), against the local pgvector container.
+
+**Result:** Extracted and recalled user memories (name "John Billings", city "NYC").
+Session summary updated.
+
+---
+
+### knowledge.py
+
+**Status:** PASS
+
+**Description:** `Knowledge` + `PgVector` RAG on `openai/gpt-5.4` (BYOK via staging),
+against the local pgvector container.
+
+**Result:** Retrieved from the ThaiRecipes.pdf vector store and grounded the answer in
+the retrieved content.
+
+---
+
+### audio_input.py / audio_output.py
+
+**Status:** UNVERIFIED (blocked by test-credential access)
+
+**Description:** Audio in/out on `openai/gpt-4o-audio-preview` via `request_params`
+(`modalities`, `audio`).
+
+**Result:** Could not run end to end - the BYOK OpenAI key has no access to
+`gpt-4o-audio-preview` ("the model does not exist or you do not have access to it").
+Notably, the error is OpenAI's own, forwarded back through the gateway, which confirms
+the gateway routed the request correctly; only the audio model access is missing. The
+cookbooks exercise the same audio code path the `Agno` class already implements
+(`_format_message` audio handling, `_parse_provider_response` audio decode). Re-run with
+an audio-enabled key or managed `AGNO_API_KEY` to confirm.
+
+---

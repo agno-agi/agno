@@ -61,6 +61,20 @@ Agent(model="agno:openai/gpt-5.4")
 | `basic.py` | Sync, streaming, and async runs (managed `AGNO_API_KEY`) |
 | `bring_your_own_key.py` | BYOK: provider key by prefix, or explicit `api_key=` |
 | `tool_use.py` | Function calling: single, parallel, streaming, and async |
+| `structured_output.py` | Typed responses with `output_schema` (native + JSON mode) |
+| `metrics.py` | Per-message and aggregated token metrics |
+| `image_input.py` | Image input to a vision model |
+| `pdf_input.py` | PDF / file input |
+| `reasoning_effort.py` | `reasoning_effort` on a reasoning model |
+| `db.py` | Persistence and conversation history (`PostgresDb`) |
+| `memory.py` | User memories and session summaries |
+| `knowledge.py` | Retrieval-augmented generation with `PgVector` |
+| `audio_input.py` | Audio input to an audio model |
+| `audio_output.py` | Audio (speech) output from an audio model |
+
+Agent-level features (`db.py`, `memory.py`, `knowledge.py`) are model-agnostic and work
+unchanged through the gateway; they need a local Postgres container
+(`./cookbook/scripts/run_pgvector.sh`).
 
 ### Configuration
 
