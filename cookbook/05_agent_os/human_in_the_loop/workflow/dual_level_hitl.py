@@ -45,7 +45,6 @@ travel_agent = Agent(
         "You are a travel agent. Use the book_flight tool to book flights. "
         "Check the user_input in the context for the destination city."
     ),
-    db=db,
     telemetry=False,
 )
 
