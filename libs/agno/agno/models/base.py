@@ -688,13 +688,21 @@ class Model(ABC):
 
             function_call_count = 0
 
-            _tool_dicts = self._format_tools(tools) if tools is not None else []
-            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
+            # `tools` is mutable (DiscoverableTools appends matched Functions mid-run),
+            # so recompute the per-API-call dispatch only when the list grows.
+            _tool_dicts: List[Dict[str, Any]] = []
+            _functions: Dict[str, Function] = {}
+            _prev_tool_count = -1
+
             while True:
+                if tools is not None and len(tools) != _prev_tool_count:
+                    _tool_dicts = self._format_tools(tools)
+                    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+                    _prev_tool_count = len(tools)
+
                 # Compress tool results if compression is enabled and threshold is met
                 if _compression_manager is not None and _compression_manager.should_compress(
                     messages, tools, model=self, response_format=response_format
@@ -908,15 +916,21 @@ class Model(ABC):
             _log_messages(messages)
             model_response = ModelResponse()
 
-            _tool_dicts = self._format_tools(tools) if tools is not None else []
-            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
+            _tool_dicts: List[Dict[str, Any]] = []
+            _functions: Dict[str, Function] = {}
+            _prev_tool_count = -1
+
             while True:
+                if tools is not None and len(tools) != _prev_tool_count:
+                    _tool_dicts = self._format_tools(tools)
+                    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+                    _prev_tool_count = len(tools)
+
                 # Compress existing tool results BEFORE making API call to avoid context overflow
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
                     messages, tools, model=self, response_format=response_format
@@ -1397,15 +1411,21 @@ class Model(ABC):
             log_debug(f"Model: {self.id}", center=True, symbol="-")
             _log_messages(messages)
 
-            _tool_dicts = self._format_tools(tools) if tools is not None else []
-            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
+            _tool_dicts: List[Dict[str, Any]] = []
+            _functions: Dict[str, Function] = {}
+            _prev_tool_count = -1
+
             while True:
+                if tools is not None and len(tools) != _prev_tool_count:
+                    _tool_dicts = self._format_tools(tools)
+                    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+                    _prev_tool_count = len(tools)
+
                 # Compress existing tool results BEFORE invoke
                 if _compression_manager is not None and _compression_manager.should_compress(
                     messages, tools, model=self, response_format=response_format
@@ -1676,15 +1696,21 @@ class Model(ABC):
             log_debug(f"Model: {self.id}", center=True, symbol="-")
             _log_messages(messages)
 
-            _tool_dicts = self._format_tools(tools) if tools is not None else []
-            _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
-
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
 
+            _tool_dicts: List[Dict[str, Any]] = []
+            _functions: Dict[str, Function] = {}
+            _prev_tool_count = -1
+
             while True:
+                if tools is not None and len(tools) != _prev_tool_count:
+                    _tool_dicts = self._format_tools(tools)
+                    _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)}
+                    _prev_tool_count = len(tools)
+
                 # Compress existing tool results BEFORE making API call to avoid context overflow
                 if _compression_manager is not None and await _compression_manager.ashould_compress(
                     messages, tools, model=self, response_format=response_format

@@ -326,18 +326,15 @@ def _determine_tools_for_model(
     _functions: List[Union[Function, dict]] = []
     team._tool_instructions = []
 
-    # Get output_schema from run_context
-    output_schema = run_context.output_schema if run_context else None
+    from agno.agent._tools import should_use_strict_mode
 
-    # Check if we need strict mode for the model
-    strict = False
-    if (
-        output_schema is not None
-        and team.parser_model is None
-        and not team.use_json_mode
-        and model.supports_native_structured_outputs
-    ):
-        strict = True
+    strict = should_use_strict_mode(
+        model=model,
+        use_json_mode=team.use_json_mode,
+        structured_outputs=None,
+        run_context=run_context,
+        parser_model=team.parser_model,
+    )
 
     for tool in _tools:
         if isinstance(tool, Dict):
@@ -427,22 +424,39 @@ def _determine_tools_for_model(
             except Exception as e:
                 log_warning(f"Could not add tool {tool}: {str(e)}")
 
-    if _functions:
+    # Toolkits flagged with has_runtime_bind=True (e.g. DiscoverableTools) get
+    # a polymorphic callback after parse_tools. Base Toolkit.on_runtime_bind is
+    # a no-op, so normal toolkits skip this path automatically.
+    runtime_bind_toolkits = [t for t in _tools if isinstance(t, Toolkit) and t.has_runtime_bind]
+
+    joint_images = joint_files = joint_audios = joint_videos = None
+
+    if runtime_bind_toolkits:
         from inspect import signature
 
-        # Check if any functions need media before collecting
-        needs_media = any(
-            any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
-            for func in _functions
-            if isinstance(func, Function) and func.entrypoint is not None
-        )
+        def _func_needs_media(func: Function) -> bool:
+            if func.entrypoint is None:
+                return False
+            params = signature(func.entrypoint).parameters
+            return any(p in params for p in ("images", "videos", "audios", "files"))
 
-        # Only collect media if functions actually need them
-        joint_images = collect_joint_images(run_response.input, session) if needs_media else None  # type: ignore
-        joint_files = collect_joint_files(run_response.input) if needs_media else None  # type: ignore
-        joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None  # type: ignore
-        joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None  # type: ignore
+        needs_media = any(_func_needs_media(f) for f in _functions if isinstance(f, Function))
+        if not needs_media:
+            needs_media = any(tk.requires_media(async_mode) for tk in runtime_bind_toolkits)
 
+        if needs_media:
+            joint_images = collect_joint_images(run_response.input, session)  # type: ignore
+            joint_files = collect_joint_files(run_response.input)  # type: ignore
+            joint_audios = collect_joint_audios(run_response.input, session)  # type: ignore
+            joint_videos = collect_joint_videos(run_response.input, session)  # type: ignore
+    elif _functions:
+        # No runtime-bind toolkits - preserve pre-PR behavior: collect unconditionally.
+        joint_images = collect_joint_images(run_response.input, session)  # type: ignore
+        joint_files = collect_joint_files(run_response.input)  # type: ignore
+        joint_audios = collect_joint_audios(run_response.input, session)  # type: ignore
+        joint_videos = collect_joint_videos(run_response.input, session)  # type: ignore
+
+    if _functions:
         for func in _functions:  # type: ignore
             if isinstance(func, Function):
                 func._run_context = run_context
@@ -450,6 +464,27 @@ def _determine_tools_for_model(
                 func._files = joint_files
                 func._audios = joint_audios
                 func._videos = joint_videos
+
+    # Polymorphic runtime-bind hook for flagged toolkits.
+    for tk in runtime_bind_toolkits:
+        tk.on_runtime_bind(
+            tools_list=_functions,
+            team=team,
+            strict=should_use_strict_mode(
+                model=model,
+                use_json_mode=team.use_json_mode,
+                structured_outputs=None,
+                run_context=run_context,
+                parser_model=team.parser_model,
+            ),
+            tool_hooks=team.tool_hooks,
+            run_context=run_context,
+            images=joint_images,
+            files=joint_files,
+            audios=joint_audios,
+            videos=joint_videos,
+            async_mode=async_mode,
+        )
 
     return _functions
 

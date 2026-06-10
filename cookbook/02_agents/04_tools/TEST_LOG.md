@@ -58,3 +58,21 @@
 **Result:** Timed out after 120s.
 
 ---
+
+### 05_discoverable_tools.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates DiscoverableTools — pool of tools withheld from context until discovered via search_tools meta-tool. Validated end-to-end on Azure OpenAI gpt-5.1: model called search_tools(query="contacts email") → DiscoverableTools injected send_email + search_contacts → model called search_contacts(query="Jordan") then send_email(...) directly.
+**Result:** Full discovery + invocation flow worked. 7.9s total.
+
+---
+
+### 06_discoverable_tools_token_savings.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Instruments Model._format_tools to log tool dispatch per API iteration. Proves discoverable tools are NOT preloaded — only matched tools enter context after search_tools runs. Validated on Azure OpenAI gpt-5.1: API call #1 sent 2 tools (get_weather + search_tools); call #2 grew to 4 (added send_email + search_contacts after discovery); 3 of 7 discoverable tools never loaded.
+**Result:** Pool=7 discoverable, peak context=4 tools (~43% loaded). Confirms token-savings thesis.
+
+---

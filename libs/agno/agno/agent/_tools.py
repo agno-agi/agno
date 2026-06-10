@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from typing import (
     TYPE_CHECKING,
+    Any,
     AsyncIterator,
     Callable,
     Dict,
@@ -337,6 +338,23 @@ async def aget_tools(
     return agent_tools
 
 
+def should_use_strict_mode(
+    model: Model,
+    use_json_mode: bool,
+    structured_outputs: Optional[bool],
+    run_context: Optional[RunContext],
+    parser_model: Optional[Any] = None,
+) -> bool:
+    """Whether functions should be sent with strict structured-output schemas."""
+    output_schema = run_context.output_schema if run_context else None
+    return bool(
+        output_schema is not None
+        and parser_model is None
+        and (structured_outputs or (not use_json_mode))
+        and model.supports_native_structured_outputs
+    )
+
+
 def parse_tools(
     agent: Agent,
     tools: List[Union[Toolkit, Callable, Function, Dict]],
@@ -348,18 +366,13 @@ def parse_tools(
     _functions: List[Union[Function, dict]] = []
     agent._tool_instructions = []
 
-    # Get output_schema from run_context
-    output_schema = run_context.output_schema if run_context else None
-
-    # Check if we need strict mode for the functions for the model
-    strict = False
-    if (
-        output_schema is not None
-        and agent.parser_model is None
-        and (agent.structured_outputs or (not agent.use_json_mode))
-        and model.supports_native_structured_outputs
-    ):
-        strict = True
+    strict = should_use_strict_mode(
+        model=model,
+        use_json_mode=agent.use_json_mode,
+        structured_outputs=agent.structured_outputs,
+        run_context=run_context,
+        parser_model=agent.parser_model,
+    )
 
     for tool in tools:
         if isinstance(tool, Dict):
@@ -488,23 +501,41 @@ def determine_tools_for_model(
             agent, tools=processed_tools, model=model, run_context=run_context, async_mode=async_mode
         )
 
-    # Update the session state for the functions
-    if _functions:
+    # Toolkits flagged with has_runtime_bind=True (e.g. DiscoverableTools) need
+    # a per-run callback after parse_tools so they can wire themselves to the
+    # live _functions list. The base Toolkit.on_runtime_bind is a no-op, so
+    # normal toolkits are not affected by this iteration.
+    runtime_bind_toolkits = [t for t in (processed_tools or []) if isinstance(t, Toolkit) and t.has_runtime_bind]
+
+    joint_images = joint_files = joint_audios = joint_videos = None
+
+    if runtime_bind_toolkits:
         from inspect import signature
 
-        # Check if any functions need media before collecting
-        needs_media = any(
-            any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
-            for func in _functions
-            if isinstance(func, Function) and func.entrypoint is not None
-        )
+        def _func_needs_media(func: Function) -> bool:
+            if func.entrypoint is None:
+                return False
+            params = signature(func.entrypoint).parameters
+            return any(p in params for p in ("images", "videos", "audios", "files"))
 
-        # Only collect media if functions actually need them
-        joint_images = collect_joint_images(run_response.input, session) if needs_media else None
-        joint_files = collect_joint_files(run_response.input) if needs_media else None
-        joint_audios = collect_joint_audios(run_response.input, session) if needs_media else None
-        joint_videos = collect_joint_videos(run_response.input, session) if needs_media else None
+        # Scan upfront tools + ask each runtime-bind toolkit whether it needs media
+        needs_media = any(_func_needs_media(f) for f in _functions if isinstance(f, Function))
+        if not needs_media:
+            needs_media = any(tk.requires_media(async_mode) for tk in runtime_bind_toolkits)
 
+        if needs_media:
+            joint_images = collect_joint_images(run_response.input, session)
+            joint_files = collect_joint_files(run_response.input)
+            joint_audios = collect_joint_audios(run_response.input, session)
+            joint_videos = collect_joint_videos(run_response.input, session)
+    elif _functions:
+        # No runtime-bind toolkits - preserve pre-PR behavior: collect unconditionally.
+        joint_images = collect_joint_images(run_response.input, session)
+        joint_files = collect_joint_files(run_response.input)
+        joint_audios = collect_joint_audios(run_response.input, session)
+        joint_videos = collect_joint_videos(run_response.input, session)
+
+    if _functions:
         for func in _functions:  # type: ignore
             if isinstance(func, Function):
                 func._run_context = run_context
@@ -512,6 +543,29 @@ def determine_tools_for_model(
                 func._files = joint_files
                 func._audios = joint_audios
                 func._videos = joint_videos
+
+    # Polymorphic runtime-bind hook - one call per flagged toolkit, no
+    # subclass-specific imports or private-attribute access in this path.
+    for tk in runtime_bind_toolkits:
+        tk.on_runtime_bind(
+            tools_list=_functions,
+            agent=agent,
+            team=agent._team,
+            strict=should_use_strict_mode(
+                model=model,
+                use_json_mode=agent.use_json_mode,
+                structured_outputs=agent.structured_outputs,
+                run_context=run_context,
+                parser_model=agent.parser_model,
+            ),
+            tool_hooks=agent.tool_hooks,
+            run_context=run_context,
+            images=joint_images,
+            files=joint_files,
+            audios=joint_audios,
+            videos=joint_videos,
+            async_mode=async_mode,
+        )
 
     return _functions
 

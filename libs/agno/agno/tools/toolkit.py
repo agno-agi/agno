@@ -14,6 +14,11 @@ class Toolkit:
     # When True, the Agent will automatically call connect() before using tools and close() after
     _requires_connect: bool = False
 
+    # Set to True for toolkits that need a per-run callback after the model's tool list
+    # has been resolved (e.g. DiscoverableTools wiring its meta-Function to the live list).
+    # Default False so normal toolkits are skipped by the Agent/Team tool-resolution pipeline.
+    has_runtime_bind: bool = False
+
     def __init__(
         self,
         name: str = "toolkit",
@@ -361,6 +366,38 @@ class Toolkit:
             return True, resolved_path
         except (PathSecurityError, OSError):
             return False, base_dir
+
+    # ------------------------------------------------------------------
+    # Runtime-bind hook (default: no-op). Subclasses with has_runtime_bind=True
+    # override this to inject per-run state into the live tools list after the
+    # Agent/Team has resolved upfront functions.
+    # ------------------------------------------------------------------
+    def on_runtime_bind(
+        self,
+        tools_list: List[Any],
+        *,
+        agent: Optional[Any] = None,
+        team: Optional[Any] = None,
+        strict: bool = False,
+        tool_hooks: Optional[List[Callable]] = None,
+        run_context: Optional[Any] = None,
+        images: Optional[Sequence[Any]] = None,
+        files: Optional[Sequence[Any]] = None,
+        audios: Optional[Sequence[Any]] = None,
+        videos: Optional[Sequence[Any]] = None,
+        async_mode: bool = False,
+    ) -> None:
+        """No-op hook. Override in subclasses that flip ``has_runtime_bind`` to True."""
+        return None
+
+    def requires_media(self, async_mode: bool) -> bool:
+        """Whether this toolkit's runtime-resolved tools need joint media collected.
+
+        Default False. Override when functions become visible only after
+        ``on_runtime_bind`` (i.e. they don't appear in the parsed _functions list
+        upfront) and may consume images/files/audios/videos.
+        """
+        return False
 
     def __repr__(self):
         return f"<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>"
