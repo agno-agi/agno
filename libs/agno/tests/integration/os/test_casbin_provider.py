@@ -87,6 +87,29 @@ def test_accessible_resource_ids(tmp_path):
     assert prov.accessible_resource_ids(_ctx("alice", "agents", None, "run")) == {"research-agent"}
 
 
+def test_accessible_resource_ids_honours_roles_from_token(tmp_path):
+    """IdP case: roles come off the token (no stored g row for the subject). List
+    filtering must enumerate the role's grants, else collection endpoints return
+    empty for exactly the population the route gate allows."""
+    prov = CasbinAuthorizationProvider(_enforcer(tmp_path), roles_claim="roles")
+    read_ctx = AuthorizationContext(
+        principal_id="auth0|xyz", resource_type="agents", resource_id=None,
+        action="read", claims={"roles": ["member"]},
+    )
+    run_ctx = AuthorizationContext(
+        principal_id="auth0|xyz", resource_type="agents", resource_id=None,
+        action="run", claims={"roles": ["member"]},
+    )
+    assert prov.accessible_resource_ids(read_ctx) == {"*"}  # agents/* read
+    assert prov.accessible_resource_ids(run_ctx) == {"research-agent"}
+    # a role the policy doesn't grant -> nothing accessible
+    guest_ctx = AuthorizationContext(
+        principal_id="auth0|xyz", resource_type="agents", resource_id=None,
+        action="read", claims={"roles": ["guest"]},
+    )
+    assert prov.accessible_resource_ids(guest_ctx) == set()
+
+
 def test_bad_enforcer_type():
     with pytest.raises(TypeError):
         CasbinAuthorizationProvider(object())

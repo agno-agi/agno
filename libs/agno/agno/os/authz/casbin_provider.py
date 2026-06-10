@@ -170,21 +170,40 @@ class CasbinAuthorizationProvider(AuthorizationProvider):
         implicit permissions (direct + via roles). Returns ``{"*"}`` for
         wildcard/collection grants, otherwise the set of specific ids.
         """
-        if not ctx.resource_type or not ctx.principal_id:
+        if not ctx.resource_type:
             return set()
 
         rt = ctx.resource_type
         action = ctx.action
-        try:
-            perms = self._enforcer.get_implicit_permissions_for_user(ctx.principal_id)
-        except Exception:
-            # Some models/adapters don't support implicit perms; fall back to
-            # explicit policy for the user.
-            perms = [p for p in self._enforcer.get_policy() if p and p[0] == ctx.principal_id]
+        # Mirror _enforce's identity resolution: roles-from-token take precedence
+        # (IdP case, no stored g rows for the subject); else the subject's own
+        # assignments. Without honouring roles here, the IdP population — whose
+        # grants live on the role, not the subject — would see an empty list on
+        # collection endpoints even though the route gate allows them.
+        principals = []
+        if self._roles_claim:
+            roles = ctx.claims.get(self._roles_claim)
+            if isinstance(roles, str):
+                roles = [roles]
+            if isinstance(roles, list):
+                principals = list(roles)
+        if not principals and ctx.principal_id:
+            principals = [ctx.principal_id]
+        if not principals:
+            return set()
+
+        perms = []
+        for principal in principals:
+            try:
+                perms.extend(self._enforcer.get_implicit_permissions_for_user(principal))
+            except Exception:
+                # Some models/adapters don't support implicit perms; fall back to
+                # explicit policy for the principal.
+                perms.extend(p for p in self._enforcer.get_policy() if p and p[0] == principal)
 
         ids: Set[str] = set()
         for perm in perms:
-            # perm is [sub, obj, act, ...]. A row missing obj or act is malformed;
+            # perm is [sub, obj, act, eft?]. A row missing obj or act is malformed;
             # skip it. Crucially we do NOT treat a missing/None act as "matches any
             # action" — that was a fail-open that let a malformed policy row grant
             # ids for actions it never authorised.
@@ -192,6 +211,10 @@ class CasbinAuthorizationProvider(AuthorizationProvider):
                 continue
             p_obj, p_act = perm[1], perm[2]
             if p_obj is None or p_act is None:
+                continue
+            # Skip explicit denies: a deny row must not surface an id into a list
+            # (the per-resource gate already denies it via deny-overrides).
+            if len(perm) >= 4 and str(perm[3]).lower() == "deny":
                 continue
             # When a concrete action is requested, only count grants for that exact
             # action or a true Casbin action-wildcard ("*").

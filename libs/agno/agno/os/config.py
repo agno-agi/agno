@@ -1,6 +1,6 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -22,7 +22,7 @@ class AuthorizationConfig(BaseModel):
     # Pin the token issuer ("iss"). When set, a token whose "iss" is not in this
     # set is rejected, so a signature-valid token minted by a trusted issuer for a
     # different relying party can't be replayed here. None = not checked.
-    issuer: Optional[Any] = None
+    issuer: Optional[Union[str, List[str]]] = None
     # Clock-skew tolerance in seconds (clamped to [0, 300]).
     leeway: Optional[int] = None
     # Require an "exp" claim on validated tokens (default True). Off only if you

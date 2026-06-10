@@ -109,9 +109,14 @@ class JWTValidator:
         self.user_id_claim = user_id_claim
         self.session_id_claim = session_id_claim
         self.audience_claim = audience_claim
-        # Clamp leeway: a huge value would accept tokens long past expiry.
-        self.leeway = max(0, min(int(leeway), 300))
+        # Clamp leeway: a huge value would accept tokens long past expiry. Tolerate
+        # None (treat as the default 0) so direct construction can't crash on int(None).
+        self.leeway = max(0, min(int(leeway or 0), 300))
         self.issuer = issuer
+        # An empty issuer ("" or []) is falsy, so pinning is skipped — make that
+        # non-silent so a blank JWT_ISSUER env var doesn't quietly disable the check.
+        if issuer is not None and not issuer:
+            log_warning("issuer is set but empty; issuer ('iss') pinning is DISABLED. Unset it or provide a value.")
         self.require_expiration = require_expiration
 
         # Build list of verification keys
@@ -166,7 +171,7 @@ class JWTValidator:
         # Fail closed at startup rather than silently accept forged tokens.
         if self.validate and self.algorithm.upper().startswith("HS"):
             for key in self.verification_keys:
-                if isinstance(key, str) and "-----BEGIN" in key and "PUBLIC KEY" in key:
+                if isinstance(key, str) and "-----BEGIN" in key and ("PUBLIC KEY" in key or "CERTIFICATE" in key):
                     raise ValueError(
                         f"Refusing to use an asymmetric public key with the symmetric "
                         f"algorithm {self.algorithm!r}: an attacker could HMAC-sign tokens "
