@@ -10,6 +10,7 @@ class AuthorizationConfig(BaseModel):
 
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
+    jwks_url: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
