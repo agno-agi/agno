@@ -281,11 +281,14 @@ class ContextProvider(ABC):
                 yield json.dumps(serialize_answer(answer))
                 return
 
-            async for chunk in provider._stream_from_agent(agent, question, run_context):
-                if isinstance(chunk, Answer):
-                    yield json.dumps(serialize_answer(chunk))
-                else:
-                    yield chunk
+            try:
+                async for chunk in provider._stream_from_agent(agent, question, run_context):
+                    if isinstance(chunk, Answer):
+                        yield json.dumps(serialize_answer(chunk))
+                    else:
+                        yield chunk
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
         return _query
 
@@ -315,11 +318,14 @@ class ContextProvider(ABC):
                 yield json.dumps(serialize_answer(answer))
                 return
 
-            async for chunk in provider._stream_from_agent(agent, instruction, run_context):
-                if isinstance(chunk, Answer):
-                    yield json.dumps(serialize_answer(chunk))
-                else:
-                    yield chunk
+            try:
+                async for chunk in provider._stream_from_agent(agent, instruction, run_context):
+                    if isinstance(chunk, Answer):
+                        yield json.dumps(serialize_answer(chunk))
+                    else:
+                        yield chunk
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
         return _update
 
