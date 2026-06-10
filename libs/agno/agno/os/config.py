@@ -45,6 +45,12 @@ class AuthorizationConfig(BaseModel):
     auto_provision_users: bool = False
     user_email_claim: str = "email"
     user_name_claim: str = "name"
+    # How to treat a user-directory read that errors (e.g. the directory DB is
+    # unreachable) while checking the disabled flag. Default False = fail OPEN
+    # (let the request through; availability over the kill-switch). Set True to
+    # fail CLOSED (reject with 503) so a directory outage can't silently re-enable
+    # every disabled/compromised account.
+    directory_error_fail_closed: bool = False
     # Optional AuditSink. When set, AgentOS records each authorization decision
     # (allow/deny) at the route gate — principal, route, required scopes, and a
     # non-secret token reference — so you get an access trail, not just a change

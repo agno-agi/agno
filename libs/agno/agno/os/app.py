@@ -994,6 +994,7 @@ class AgentOS:
         auto_provision_users = False
         user_email_claim = "email"
         user_name_claim = "name"
+        directory_error_fail_closed = False
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
@@ -1015,6 +1016,7 @@ class AgentOS:
             auto_provision_users = self.authorization_config.auto_provision_users
             user_email_claim = self.authorization_config.user_email_claim
             user_name_claim = self.authorization_config.user_name_claim
+            directory_error_fail_closed = self.authorization_config.directory_error_fail_closed
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -1054,6 +1056,7 @@ class AgentOS:
         fastapi_app.state.user_auto_provision = auto_provision_users
         fastapi_app.state.user_email_claim = user_email_claim
         fastapi_app.state.user_name_claim = user_name_claim
+        fastapi_app.state.user_directory_fail_closed = directory_error_fail_closed
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms

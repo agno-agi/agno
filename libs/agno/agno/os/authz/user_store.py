@@ -167,20 +167,22 @@ class ManagedUserStore:
         enforcement point even with a valid token — this is the revocation hook."""
         existing = self.get(id)
         if existing is None:
-            # Disabling an unknown subject still creates a tombstone row so the
-            # block is durable (the app may mint tokens for a sub we've not seen).
+            # Unknown subject: write a single durable tombstone in the TARGET state
+            # (the app may mint tokens for a sub we've not seen) and emit only the
+            # disable/enable event — no spurious "user.created … active" round-trip.
             now = _now()
-            existing = {
+            row = {
                 "id": id,
                 "email": None,
                 "name": None,
-                "disabled": False,
+                "disabled": bool(disabled),
                 "created_at": now,
                 "updated_at": now,
                 "metadata": None,
             }
-            self._write(existing, insert=True)
-            self._emit("user.created", id, None, [self._summary(existing)], actor)
+            self._write(row, insert=True)
+            self._emit("user.disabled" if disabled else "user.enabled", id, None, [self._summary(row)], actor)
+            return row
 
         if bool(existing["disabled"]) == bool(disabled):
             return existing  # no-op, no event
@@ -194,7 +196,13 @@ class ManagedUserStore:
 
     def remove(self, id: str, actor: Optional[str] = None) -> bool:
         """Delete a user from the directory. Does NOT remove role assignments —
-        those live in the role store; remove them there if needed."""
+        those live in the role store; remove them there if needed.
+
+        NOTE: delete is NOT a revocation primitive. With JIT auto-provisioning on
+        (``AuthorizationConfig(auto_provision_users=True)``), the next valid token
+        from this subject re-creates the row as *active*, and any surviving role
+        assignments come back with it. To revoke access, use :meth:`set_disabled`
+        (a durable tombstone enforced at every request), not :meth:`remove`."""
         existing = self.get(id)
         if existing is None:
             return False
@@ -240,23 +248,41 @@ class ManagedUserStore:
             r = conn.execute(sa.select(self._table).where(self._table.c.id == id)).mappings().first()  # type: ignore[union-attr]
         return self._row_to_dict(r) if r else None
 
-    def list(self, limit: int = 1000, include_disabled: bool = True) -> List[dict]:
-        """All users (newest first), optionally excluding disabled ones."""
+    def list(self, limit: int = 1000, include_disabled: bool = True, offset: int = 0) -> List[dict]:
+        """A page of users (newest first), optionally excluding disabled ones.
+
+        ``offset``/``limit`` page in the store so callers don't materialise the
+        whole directory; pair with :meth:`count` for the total."""
         if self._mem is not None:
             rows = sorted(self._mem.values(), key=lambda r: r["created_at"], reverse=True)
             if not include_disabled:
                 rows = [r for r in rows if not r["disabled"]]
-            return [dict(r) for r in rows[:limit]]
+            return [dict(r) for r in rows[offset : offset + limit]]
 
         import sqlalchemy as sa
 
         stmt = sa.select(self._table)
         if not include_disabled:
             stmt = stmt.where(self._table.c.disabled.is_(False))  # type: ignore[union-attr]
-        stmt = stmt.order_by(self._table.c.created_at.desc()).limit(limit)  # type: ignore[union-attr]
+        stmt = stmt.order_by(self._table.c.created_at.desc()).limit(limit).offset(offset)  # type: ignore[union-attr]
         with self._engine.connect() as conn:  # type: ignore[union-attr]
             rows = conn.execute(stmt).mappings().all()
         return [self._row_to_dict(r) for r in rows]
+
+    def count(self, include_disabled: bool = True) -> int:
+        """Total number of users (for pagination), optionally excluding disabled."""
+        if self._mem is not None:
+            if include_disabled:
+                return len(self._mem)
+            return sum(1 for r in self._mem.values() if not r["disabled"])
+
+        import sqlalchemy as sa
+
+        stmt = sa.select(sa.func.count()).select_from(self._table)  # type: ignore[arg-type]
+        if not include_disabled:
+            stmt = stmt.where(self._table.c.disabled.is_(False))  # type: ignore[union-attr]
+        with self._engine.connect() as conn:  # type: ignore[union-attr]
+            return int(conn.execute(stmt).scalar() or 0)
 
     def is_disabled(self, id: Optional[str]) -> bool:
         """Fast path for the enforcement point: True only if the user exists AND is

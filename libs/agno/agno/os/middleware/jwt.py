@@ -476,7 +476,9 @@ class JWTIssuer:
             default_expiry_seconds: token lifetime when ``expires_in`` isn't given.
         """
         self.signing_key = signing_key
-        self.algorithm = algorithm or ("RS256" if "BEGIN" in signing_key else "HS256")
+        # Match the validator's own PEM detection ("-----BEGIN"): a plain HMAC
+        # secret that merely contains the word "BEGIN" must not be misread as RS256.
+        self.algorithm = algorithm or ("RS256" if "-----BEGIN" in signing_key else "HS256")
         self.audience = audience
         self.issuer = issuer
         self.scopes_claim = scopes_claim
@@ -1187,8 +1189,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
                             name_claim=getattr(request.app.state, "user_name_claim", "name"),
                         )
                     disabled = user_store.is_disabled(user_id)
-                except Exception as e:  # never let directory issues fail open OR crash the request
-                    log_warning(f"user directory check failed for {user_id!r}: {e}")
+                except Exception as e:  # directory unreachable: honour the configured policy
+                    fail_closed = bool(getattr(request.app.state, "user_directory_fail_closed", False))
+                    log_warning(
+                        f"user directory check failed for {user_id!r}: {e} "
+                        f"(failing {'closed' if fail_closed else 'open'})"
+                    )
+                    if fail_closed:
+                        return self._create_error_response(
+                            503, "User directory unavailable", origin, cors_allowed_origins
+                        )
                     disabled = False
                 if disabled:
                     log_warning(f"Disabled user denied: {user_id} for {method} {path}")

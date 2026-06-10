@@ -205,6 +205,40 @@ def test_disabled_user_is_denied_even_with_valid_token():
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
 
 
+def test_disabled_user_is_denied_on_websocket():
+    """The kill-switch must also fire on the WebSocket connect path, not just HTTP:
+    a disabled user with a valid token is rejected at WS authenticate."""
+    import json as _json
+
+    roles = ManagedRoleStore()
+    roles.set_role_scopes("viewer", ["agents:*:read", "workflows:*:run"])
+    roles.assign("bob", "viewer")
+    users = ManagedUserStore()
+    users.upsert("bob", email="bob@co")
+
+    client = TestClient(_os(roles, users).get_app())
+
+    def _auth_result():
+        with client.websocket_connect("/workflows/ws") as ws:
+            for _ in range(8):
+                if _json.loads(ws.receive_text()).get("event") == "connected":
+                    break
+            ws.send_text(_json.dumps({"action": "authenticate", "token": _token("bob", scopes=["workflows:run"])}))
+            for _ in range(8):
+                frame = _json.loads(ws.receive_text())
+                if frame.get("event") in ("authenticated", "auth_error"):
+                    return frame
+        raise AssertionError("no auth result frame within 8 messages")
+
+    # active -> authenticates over WS
+    assert _auth_result()["event"] == "authenticated"
+
+    # disabled -> rejected at WS authenticate despite a valid token
+    users.set_disabled("bob", True)
+    err = _auth_result()
+    assert err["event"] == "auth_error" and err.get("error_type") == "user_disabled", err
+
+
 def test_auto_provision_from_claims_at_the_gate():
     roles = ManagedRoleStore()
     roles.set_role_scopes("viewer", ["agents:*:read"])
