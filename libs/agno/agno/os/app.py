@@ -778,10 +778,6 @@ class AgentOS:
         def _model_key(model: Any) -> Any:
             return ("model", getattr(model, "provider", None), getattr(model, "id", None))
 
-        def _tool_key(tool: Any) -> Any:
-            name = getattr(tool, "name", None) or getattr(tool, "__name__", None) or tool.__class__.__name__
-            return ("tool", name)
-
         def _db_key(db: Any) -> Any:
             return ("db", getattr(db, "id", None) or id(db))
 
@@ -789,9 +785,19 @@ class AgentOS:
             return ("vector_db", getattr(vector_db, "id", None) or getattr(vector_db, "name", None) or id(vector_db))
 
         _merge(self.registry.models, collector.models, _model_key)
-        _merge(self.registry.tools, collector.tools, _tool_key)
+        # Tools dedupe by object identity, not by name: two distinct tools that
+        # share a name (two toolkit instances with the same name, or multiple
+        # lambdas/functools.partial callables) must both be kept. Keying by name
+        # would silently drop one and break rehydration of agents that use it.
+        _merge(self.registry.tools, collector.tools, id)
         _merge(self.registry.dbs, collector.dbs, _db_key)
         _merge(self.registry.vector_dbs, collector.vector_dbs, _vector_db_key)
+
+        # registry.tools may have grown: drop the cached entrypoint lookup so
+        # rehydrate_function() rebuilds it and can see the newly discovered
+        # tools. _entrypoint_lookup is a cached_property derived from tools, so
+        # without this, tools added on a later resync() stay invisible to it.
+        self.registry.__dict__.pop("_entrypoint_lookup", None)
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.

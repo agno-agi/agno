@@ -20,6 +20,7 @@ from agno.os import AgentOS
 from agno.registry import Registry
 from agno.session.summary import SessionSummaryManager
 from agno.team.team import Team
+from agno.tools.toolkit import Toolkit
 from agno.vectordb.base import VectorDb
 from agno.workflow.condition import Condition
 from agno.workflow.router import Router
@@ -404,3 +405,60 @@ class TestPopulateRegistryComponentsSafety:
         assert os.registry.tools == []
         assert os.registry.dbs == []
         assert os.registry.vector_dbs == []
+
+
+class TestPopulateRegistryComponentsToolDedup:
+    """Tools dedupe by object identity, never by name."""
+
+    def test_distinct_tools_sharing_a_name_are_both_kept(self):
+        # Two toolkit instances with the same name are distinct objects; keying
+        # by name would silently drop one (and break rehydration of its agent).
+        class _NamedToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="shared_name", tools=[])
+
+        toolkit_alpha = _NamedToolkit()
+        toolkit_beta = _NamedToolkit()
+        a = Agent(name="A1", id="a1", tools=[toolkit_alpha], telemetry=False)
+        b = Agent(name="A2", id="a2", tools=[toolkit_beta], telemetry=False)
+
+        os = AgentOS(agents=[a, b], telemetry=False)
+
+        assert toolkit_alpha in os.registry.tools
+        assert toolkit_beta in os.registry.tools
+
+    def test_same_tool_instance_collected_once(self):
+        # The same shared object across agents is collected a single time.
+        shared_toolkit = Toolkit(name="shared", tools=[])
+        a = Agent(name="A1", id="a1", tools=[shared_toolkit], telemetry=False)
+        b = Agent(name="A2", id="a2", tools=[shared_toolkit], telemetry=False)
+
+        os = AgentOS(agents=[a, b], telemetry=False)
+
+        assert os.registry.tools.count(shared_toolkit) == 1
+
+
+class TestPopulateRegistryComponentsCacheInvalidation:
+    """The entrypoint lookup cache is rebuilt when discovered tools change."""
+
+    def test_entrypoint_lookup_sees_tools_discovered_after_priming(self):
+        def tool_a(x: str) -> str:
+            """Tool A."""
+            return x
+
+        agent_a = Agent(name="A1", id="a1", tools=[tool_a], telemetry=False)
+        os = AgentOS(agents=[agent_a], telemetry=False)
+
+        # Prime (cache) the entrypoint lookup, as rehydrate_function() would
+        assert "tool_a" in os.registry._entrypoint_lookup
+
+        # A later resync discovers a new agent with a new tool
+        def tool_b(x: str) -> str:
+            """Tool B."""
+            return x
+
+        os.agents.append(Agent(name="A2", id="a2", tools=[tool_b], telemetry=False))
+        os._populate_registry_components()
+
+        # The cached lookup must have been invalidated and rebuilt with tool_b
+        assert "tool_b" in os.registry._entrypoint_lookup
