@@ -11,6 +11,7 @@ from agno.agent import Agent
 from agno.exceptions import ModelProviderError
 from agno.models.google import Gemini
 from agno.models.message import Message
+from agno.run.agent import RunErrorEvent
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 pytestmark = pytest.mark.skipif(not GOOGLE_API_KEY, reason="GOOGLE_API_KEY not set")
@@ -23,6 +24,12 @@ NUM_REQUESTS = 16
 def get_capital(country: str) -> str:
     """Return the capital city of the given country."""
     return {"France": "Paris", "Japan": "Tokyo"}.get(country, "Unknown")
+
+
+def run_succeeded(response) -> bool:
+    """Agent runs convert provider errors into RunOutput(status=ERROR, content=error text),
+    so genuine success requires checking status, not just content presence."""
+    return "error" not in str(response.status).lower() and response.content is not None
 
 
 class CityInfo(BaseModel):
@@ -44,7 +51,7 @@ class TestGeminiConcurrentSync:
         def run_agent(_):
             try:
                 response = agent.run(PROMPT)
-                assert response.content is not None
+                assert run_succeeded(response), f"Run failed: {str(response.content)[:100]}"
                 with lock:
                     results["success"] += 1
                 return True
@@ -71,7 +78,8 @@ class TestGeminiConcurrentSync:
         model = Gemini(id="gemini-flash-latest")
         messages = [Message(role="user", content=PROMPT)]
 
-        results = {"success": 0, "ssl_errors": 0}
+        results = {"success": 0, "ssl_errors": 0, "other_errors": 0}
+        errors = []
         lock = threading.Lock()
 
         def call_response(_):
@@ -85,11 +93,15 @@ class TestGeminiConcurrentSync:
                 with lock:
                     if "ssl" in err_str or "tls" in err_str:
                         results["ssl_errors"] += 1
+                    else:
+                        results["other_errors"] += 1
+                    errors.append(str(e)[:100])
 
         with ThreadPoolExecutor(max_workers=NUM_WORKERS) as pool:
             list(pool.map(call_response, range(NUM_REQUESTS)))
 
-        assert results["ssl_errors"] == 0, "SSL/TLS errors in model.response()"
+        assert results["ssl_errors"] == 0, f"SSL/TLS errors in model.response(): {errors}"
+        assert results["success"] >= NUM_REQUESTS // 2, f"Too many model.response() failures: {errors}"
 
     def test_client_reused_across_concurrent_calls(self):
         """Verify the same client is reused across concurrent get_client() calls."""
@@ -122,7 +134,7 @@ class TestGeminiConcurrentAsync:
         async def run_agent():
             try:
                 response = await agent.arun(PROMPT)
-                assert response.content is not None
+                assert run_succeeded(response), f"Run failed: {str(response.content)[:100]}"
                 results["success"] += 1
                 return True
             except Exception as e:
@@ -146,7 +158,8 @@ class TestGeminiConcurrentAsync:
         model = Gemini(id="gemini-flash-latest")
         messages = [Message(role="user", content=PROMPT)]
 
-        results = {"success": 0, "ssl_errors": 0}
+        results = {"success": 0, "ssl_errors": 0, "other_errors": 0}
+        errors = []
 
         async def call_aresponse():
             try:
@@ -157,11 +170,15 @@ class TestGeminiConcurrentAsync:
                 err_str = str(e).lower()
                 if "ssl" in err_str or "tls" in err_str:
                     results["ssl_errors"] += 1
+                else:
+                    results["other_errors"] += 1
+                errors.append(str(e)[:100])
 
         tasks = [call_aresponse() for _ in range(NUM_REQUESTS)]
         await asyncio.gather(*tasks)
 
-        assert results["ssl_errors"] == 0, "SSL/TLS errors in model.aresponse()"
+        assert results["ssl_errors"] == 0, f"SSL/TLS errors in model.aresponse(): {errors}"
+        assert results["success"] >= NUM_REQUESTS // 2, f"Too many model.aresponse() failures: {errors}"
 
 
 class TestGeminiConcurrentStreaming:
@@ -178,7 +195,7 @@ class TestGeminiConcurrentStreaming:
         def stream_response(_):
             try:
                 events = list(agent.run(PROMPT, stream=True))
-                assert len(events) > 0
+                assert events and not any(isinstance(ev, RunErrorEvent) for ev in events)
                 with lock:
                     results["success"] += 1
             except Exception as e:
@@ -207,7 +224,7 @@ class TestGeminiConcurrentStreaming:
         async def stream_response():
             try:
                 events = [event async for event in agent.arun(PROMPT, stream=True)]
-                assert len(events) > 0
+                assert events and not any(isinstance(ev, RunErrorEvent) for ev in events)
                 results["success"] += 1
             except Exception as e:
                 err_str = str(e).lower()
@@ -265,7 +282,8 @@ class TestGeminiStressTest:
 
         def run_agent(_):
             try:
-                agent.run(PROMPT)
+                response = agent.run(PROMPT)
+                assert run_succeeded(response), f"Run failed: {str(response.content)[:100]}"
                 with lock:
                     results["success"] += 1
             except Exception as e:
@@ -333,10 +351,7 @@ class TestGeminiMultiUserAsync:
 
         async def run_user(i):
             response = await agent.arun(PROMPT, user_id=f"user-{i}", session_id=f"session-{i}")
-            # Agno converts provider errors into RunOutput with status=ERROR and the
-            # error text as content, so checking content alone would mask failures
-            assert "error" not in str(response.status).lower(), f"Run failed: {str(response.content)[:80]}"
-            assert response.content is not None
+            assert run_succeeded(response), f"Run failed: {str(response.content)[:80]}"
             return id(agent.model.client)
 
         client_ids = set(await asyncio.gather(*(run_user(i) for i in range(24))))
@@ -362,7 +377,7 @@ class TestGeminiToolCalling:
         def run_agent(_):
             try:
                 response = agent.run("Use the get_capital tool to find the capital of France.")
-                assert response.content is not None
+                assert run_succeeded(response), f"Run failed: {str(response.content)[:100]}"
                 with lock:
                     results["success"] += 1
             except Exception as e:
@@ -389,6 +404,7 @@ class TestGeminiToolCalling:
             event async for event in agent.arun("Use the get_capital tool to find the capital of Japan.", stream=True)
         ]
         assert len(events) > 0, "Streaming tool-call run produced no events"
+        assert not any(isinstance(ev, RunErrorEvent) for ev in events), "Streaming tool-call run emitted an error"
         content = "".join(getattr(event, "content", None) or "" for event in events)
         assert content, "Streaming tool-call run produced no content"
 
@@ -408,7 +424,7 @@ class TestGeminiClientResilience:
                 break
 
         response = agent.run(PROMPT)
-        assert response.content is not None
+        assert run_succeeded(response), f"Run after interrupted stream failed: {str(response.content)[:100]}"
 
     def test_error_then_recovery_same_client(self):
         """Verify a failed request does not poison the cached client for later requests."""
@@ -515,6 +531,11 @@ class TestGeminiThoughtSignatures:
                 pytest.skip("gemini-3-flash-preview not available for this API key")
             raise
 
-        assert response.content is not None
+        if not run_succeeded(response):
+            content = str(response.content)
+            if "404" in content or "NOT_FOUND" in content:
+                pytest.skip("gemini-3-flash-preview not available for this API key")
+            pytest.fail(f"Run failed: {content[:120]}")
+
         tool_messages = [m for m in (response.messages or []) if m.role == "tool"]
         assert tool_messages, "Tool was not executed"
