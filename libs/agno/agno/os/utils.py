@@ -1673,6 +1673,28 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 # ---------------------------------------------------------------------------
 
 
+def _apply_agno_api_key(entity: Any, agno_api_key: Optional[str]) -> None:
+    """Set a per-run Agno API key on a resolved Agent/Team, but only when its model is an
+    Agno gateway model. No-op otherwise, so a caller-supplied key can never override another
+    provider's auth. The entity is a fresh per-request copy, so this is isolation-safe, and the
+    key never persists (Model.to_dict does not serialize api_key).
+    """
+    if not agno_api_key:
+        return
+    import copy
+
+    from agno.models.agno import Agno
+
+    model = getattr(entity, "model", None)
+    if isinstance(model, Agno):
+        # The fresh agent shares the registered agent's model instance (deep_copy shares
+        # heavy resources like the model). Copy the model before setting the key so the
+        # per-run credential never leaks to the shared instance or to concurrent requests.
+        fresh_model = copy.copy(model)
+        fresh_model.api_key = agno_api_key
+        entity.model = fresh_model
+
+
 async def resolve_agent(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]],
@@ -1683,6 +1705,7 @@ async def resolve_agent(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    agno_api_key: Optional[str] = None,
 ) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
@@ -1719,6 +1742,7 @@ async def resolve_agent(
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    _apply_agno_api_key(agent, agno_api_key)
     return agent
 
 
@@ -1732,6 +1756,7 @@ async def resolve_team(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    agno_api_key: Optional[str] = None,
 ) -> Union[Team, RemoteTeam]:
     """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
@@ -1762,6 +1787,7 @@ async def resolve_team(
 
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
+    _apply_agno_api_key(team, agno_api_key)
     return team
 
 

@@ -79,7 +79,6 @@ class Agno(Model):
     strict_output: bool = False
     request_params: Optional[Dict[str, Any]] = None
 
-    # ------------------------------------------------------------------ auth ---
     def _resolve_auth(self) -> Tuple[str, str]:
         # Anthropic is not yet supported: the gateway's chat-completions endpoint returns
         # empty content for Anthropic models. Support via the messages endpoint is planned.
@@ -110,12 +109,19 @@ class Agno(Model):
         return key, base
 
     def _headers(self, key: str) -> Dict[str, str]:
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+        # Managed Agno keys (the "ag-" prefix) go in the x-agno-api-key header; the gateway
+        # validates them and injects its own cf-aig-authorization. Any other key is treated as
+        # a bring-your-own-key provider credential and goes in Authorization: Bearer, which the
+        # gateway forwards to the provider as-is. This matches the gateway's auth contract.
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if key.lower().startswith("ag-"):
+            headers["x-agno-api-key"] = key
+        else:
+            headers["Authorization"] = f"Bearer {key}"
         if self.default_headers:
             headers.update(self.default_headers)
         return headers
 
-    # --------------------------------------------------------------- request ---
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         content = message.get_content(use_compressed_content=compress_tool_results)
         message_dict: Dict[str, Any] = {
@@ -222,7 +228,6 @@ class Agno(Model):
             body["stream_options"] = {"include_usage": True}
         return body
 
-    # ----------------------------------------------------------- transport ---
     def _raise_for_error(self, status: int, text: str) -> None:
         try:
             err = json.loads(text).get("error", {})
@@ -357,7 +362,6 @@ class Agno(Model):
                         yield self._parse_provider_response_delta(data)
         assistant_message.metrics.stop_timer()
 
-    # ------------------------------------------------------------- parsing ---
     def _parse_provider_response(self, response: Dict[str, Any], **kwargs) -> ModelResponse:
         model_response = ModelResponse()
         if response.get("error"):

@@ -620,6 +620,9 @@ def get_team_router(
             user_id=user_id,
             session_id=session_id,
             factory_input=factory_input,
+            # Per-run Agno API key (only applied to Agno gateway models). Read from a header
+            # so it stays out of form data, logged kwargs, and the persisted session.
+            agno_api_key=request.headers.get("X-Agno-Api-Key"),
         )
 
         # Member HITL needs member runs embedded on the team run (member_responses).
