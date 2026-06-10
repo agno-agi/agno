@@ -1,5 +1,9 @@
 """Unit tests for Toolkit class."""
 
+import sys
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from agno.tools import Toolkit, tool
@@ -254,11 +258,6 @@ def test_toolkit_with_none_instructions():
     assert toolkit.add_instructions is True
 
 
-# =============================================================================
-# Tests for @tool decorator on class methods
-# =============================================================================
-
-
 class TestToolDecoratorOnClassMethods:
     """Tests for using @tool decorator on class methods within a Toolkit."""
 
@@ -468,11 +467,6 @@ class TestToolDecoratorOnClassMethods:
         assert toolkit._get_tool_name(standalone_func) == "custom_name"
         # Test with regular callable
         assert toolkit._get_tool_name(example_func) == "example_func"
-
-
-# =============================================================================
-# Tests for sync/async tool registration
-# =============================================================================
 
 
 async def async_example_func(a: int, b: int) -> int:
@@ -795,3 +789,70 @@ def test_partial_async_get_async_functions():
     assert async_funcs["tool_a"].entrypoint == toolkit.atool_a
     # tool_b should still be sync version (no async variant)
     assert async_funcs["tool_b"].entrypoint == toolkit.tool_b
+
+
+def test_check_path_simple_filename_returns_true(basic_toolkit):
+    """Plain filename inside base_dir returns (True, resolved_path)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("report.json", base)
+        assert ok is True
+        assert path == (base / "report.json").resolve()
+
+
+def test_check_path_multi_segment_subdir_returns_resolved_path(basic_toolkit):
+    """Multi-segment subdir/file path is preserved (regression for test_agent_skills.py:449)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("subdir/file.txt", base)
+        assert ok is True
+        assert path == (base / "subdir" / "file.txt").resolve()
+
+
+def test_check_path_subdir_traversal_returns_false_with_base_dir(basic_toolkit):
+    """Subdir traversal escape returns (False, base_dir) — regression for test_python_tools.py:179."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("subdir/../../escape.py", base)
+        assert ok is False
+        assert path == base
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_check_path_symlinked_base_containment_enforced(basic_toolkit):
+    """Symlinked base_dir does not bypass containment (resolves both paths)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        outside = Path(tmp_dir) / "outside"
+        outside.mkdir()
+        inside = Path(tmp_dir) / "inside"
+        inside.mkdir()
+        try:
+            (inside / "escape").symlink_to(outside)
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        ok, path = basic_toolkit._check_path("escape", inside)
+        assert ok is False
+        assert path == inside
+
+
+def test_check_path_restrict_false_returns_resolved_outside(basic_toolkit):
+    """restrict_to_base_dir=False escape-hatch returns (True, resolved) without containment check."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("../../somewhere.txt", base, restrict_to_base_dir=False)
+        assert ok is True
+        assert path.is_absolute()
+        assert path.name == "somewhere.txt"
+        # Use is_relative_to (the same primitive safe_join_relative_path uses internally)
+        # so sibling-prefix names like base="/tmp/foo" vs "/tmp/foobar/..." don't
+        # produce a false-positive containment.
+        assert not path.is_relative_to(base.resolve())
+
+
+def test_check_path_restrict_false_returns_false_on_nul_byte(basic_toolkit):
+    """Escape-hatch must honor the (bool, Path) contract, not raise on NUL."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("name\x00", base, restrict_to_base_dir=False)
+        assert ok is False
+        assert path == base

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import json
 import re
@@ -5,13 +7,15 @@ from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
 from ssl import SSLContext
-from typing import Any, Dict, List, Literal, Optional, Union, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import httpx
 
+from agno.exceptions import PathSecurityError
 from agno.run.base import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.utils.path_safety import safe_join_filename, safe_join_relative_path, sanitize_filename
 
 try:
     from slack_sdk import WebClient
@@ -130,6 +134,7 @@ class SlackTools(Toolkit):
         token: Optional[str] = None,
         markdown: bool = True,
         output_directory: Optional[str] = None,
+        save_downloads: bool = False,
         enable_send_message: bool = True,
         enable_send_message_thread: bool = True,
         enable_list_channels: bool = True,
@@ -154,7 +159,8 @@ class SlackTools(Toolkit):
         Args:
             token (str): The Slack API token. Defaults to the SLACK_TOKEN environment variable.
             markdown (bool): Whether to enable Slack markdown formatting. Defaults to True.
-            output_directory (str): Optional path to save downloaded/uploaded files locally.
+            output_directory (str): Directory for saving downloaded files. Only used when save_downloads=True.
+            save_downloads (bool): Whether to save downloaded files to disk. Defaults to False (base64 only).
             enable_send_message (bool): Whether to enable the send_message tool. Defaults to True.
             enable_send_message_thread (bool): Whether to enable the send_message_thread tool. Defaults to True.
             enable_list_channels (bool): Whether to enable the list_channels tool. Defaults to True.
@@ -182,12 +188,18 @@ class SlackTools(Toolkit):
         self.markdown = markdown
         self.max_file_size = max_file_size
         self.thread_message_limit = thread_message_limit
-        self.output_directory = Path(output_directory) if output_directory else None
+        # output_directory implies save_downloads=True for backward compatibility
+        self.save_downloads = save_downloads or (output_directory is not None)
         self._channel_cache: Dict[str, _ResolvedChannel] = {}
 
-        if self.output_directory:
+        if self.save_downloads:
+            self.output_directory: Optional[Path] = (
+                Path(output_directory).resolve() if output_directory else Path.cwd().resolve()
+            )
             self.output_directory.mkdir(parents=True, exist_ok=True)
-            log_debug(f"Uploaded files will be saved to: {self.output_directory}")
+            log_debug(f"Downloaded files will be saved to: {self.output_directory}")
+        else:
+            self.output_directory = None
 
         tools: List[Any] = []
         if enable_send_message or all:
@@ -264,19 +276,31 @@ class SlackTools(Toolkit):
             entry["attachments"] = msg["attachments"]
         return entry
 
-    def _save_file_to_disk(self, content: bytes, filename: str) -> Optional[str]:
-        """Save file to disk if output_directory is set. Return file path or None."""
-        if not self.output_directory:
-            return None
+    def _save_file_to_disk(
+        self, content: bytes, filename: str, *, dest_path: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Save file to disk within output_directory.
 
-        file_path = self.output_directory / Path(filename).name
+        Args:
+            content: File content as bytes.
+            filename: Flat filename (used when dest_path is None).
+            dest_path: Optional relative path preserving directory structure.
+
+        Returns:
+            Tuple of (saved_path, error_message). If successful, error is None.
+        """
         try:
+            if dest_path:
+                file_path = safe_join_relative_path(self.output_directory, dest_path)  # type: ignore[arg-type]
+            else:
+                file_path = safe_join_filename(self.output_directory, filename)  # type: ignore[arg-type]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
-            log_debug(f"File saved to: {file_path}")
-            return str(file_path)
-        except OSError as e:
+        except (OSError, PathSecurityError) as e:
             log_warning(f"Failed to save file locally: {str(e)}")
-            return None
+            return None, str(e)
+        log_debug(f"File saved to: {file_path}")
+        return str(file_path), None
 
     @staticmethod
     def _channel_cache_key(channel: str) -> str:
@@ -622,23 +646,21 @@ class SlackTools(Toolkit):
                     {"error": f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB upload limit"}
                 )
 
-            file_path = self._save_file_to_disk(content_bytes, filename)
+            try:
+                file_name = sanitize_filename(filename)
+            except PathSecurityError as e:
+                return json.dumps({"error": f"Invalid filename: {e}"})
 
             response = self.client.files_upload_v2(
                 channel=channel,
                 content=content_bytes,
-                filename=filename,
+                filename=file_name,
                 title=title,
                 initial_comment=initial_comment,
                 thread_ts=thread_ts,
             )
 
-            # Copy to avoid mutating the SDK's response object
-            result: Dict[str, Any] = dict(cast(Dict[str, Any], response.data))
-            if file_path:
-                result["local_path"] = file_path
-
-            return json.dumps(result)
+            return json.dumps(dict(cast(Dict[str, Any], response.data)))
         except SlackApiError as e:
             logger.exception("Error uploading file")
             return json.dumps({"error": str(e)})
@@ -676,28 +698,19 @@ class SlackTools(Toolkit):
             download_response.raise_for_status()
             content = download_response.content
 
-            save_path: Optional[Path] = None
-            if dest_path:
-                save_path = Path(dest_path).resolve()
-                if self.output_directory and not save_path.is_relative_to(self.output_directory.resolve()):
-                    return json.dumps({"error": "dest_path must be within the configured output_directory"})
-            elif self.output_directory:
-                save_path = self.output_directory / Path(filename).name
-
             result: Dict[str, Any] = {
                 "file_id": file_id,
                 "filename": filename,
                 "size": file_size,
             }
 
-            if save_path:
-                try:
-                    save_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_path.write_bytes(content)
-                    log_debug(f"File downloaded to: {save_path}")
-                    result["path"] = str(save_path)
-                except OSError as e:
-                    log_warning(f"Failed to save file locally: {str(e)}")
+            if self.save_downloads and self.output_directory:
+                path, error = self._save_file_to_disk(content, filename, dest_path=dest_path)
+                if path:
+                    result["path"] = path
+                else:
+                    log_debug(f"Local save failed, falling back to base64: {error}")
+                    result["save_error"] = error
                     result["content_base64"] = base64.b64encode(content).decode("utf-8")
             else:
                 result["content_base64"] = base64.b64encode(content).decode("utf-8")

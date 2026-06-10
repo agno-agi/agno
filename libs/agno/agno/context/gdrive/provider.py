@@ -43,11 +43,11 @@ from typing import TYPE_CHECKING
 
 from agno.agent import Agent
 from agno.context._utils import answer_from_run
-from agno.tools.google.drive import GoogleDriveTools
 from agno.context.google import validate_google_credentials
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
 from agno.run import RunContext
+from agno.tools.google.drive import GoogleDriveTools
 
 if TYPE_CHECKING:
     from agno.models.base import Model
@@ -150,6 +150,9 @@ class GoogleDriveContextProvider(ContextProvider):
                 drive_id=self._drive_id,
             )
         return self._tools
+
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_agent()
 
     def _ensure_agent(self) -> Agent:
         if self._agent is None:

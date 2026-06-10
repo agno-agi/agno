@@ -227,6 +227,7 @@ class WorkflowCancelledEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.workflow_cancelled.value
     reason: Optional[str] = None
+    content: Optional[str] = None
 
     @property
     def is_cancelled(self):

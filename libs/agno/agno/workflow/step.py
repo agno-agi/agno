@@ -12,15 +12,36 @@ from typing_extensions import TypeGuard
 
 from agno.agent import Agent
 from agno.db.base import BaseDb
+from agno.exceptions import RunCancelledException
 from agno.media import Audio, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
-from agno.run.agent import RunContentEvent, RunOutput
+from agno.run.agent import (
+    RunCancelledEvent as AgentRunCancelledEvent,
+)
+from agno.run.agent import (
+    RunCompletedEvent as AgentRunCompletedEvent,
+)
+from agno.run.agent import (
+    RunContentEvent,
+    RunOutput,
+)
 from agno.run.base import BaseRunOutputEvent, RunStatus
-from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutput
+from agno.run.cancel import aregister_member_run, register_member_run
+from agno.run.team import (
+    RunCancelledEvent as TeamRunCancelledEvent,
+)
+from agno.run.team import (
+    RunCompletedEvent as TeamRunCompletedEvent,
+)
+from agno.run.team import (
+    RunContentEvent as TeamRunContentEvent,
+)
+from agno.run.team import (
+    TeamRunOutput,
+)
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
@@ -49,6 +70,14 @@ from agno.workflow.types import (
 
 if TYPE_CHECKING:
     from agno.workflow.workflow import Workflow
+
+# Terminal events always reach the wire even when stream_executor_events is False
+_EXECUTOR_TERMINAL_EVENT_TYPES = (
+    AgentRunCancelledEvent,
+    AgentRunCompletedEvent,
+    TeamRunCancelledEvent,
+    TeamRunCompletedEvent,
+)
 
 # Maximum nesting depth for nested workflow execution to prevent circular references or stack overflow.
 _MAX_NESTED_WORKFLOW_DEPTH = 10
@@ -873,6 +902,9 @@ class Step:
                             feedback = step_input.additional_data["rejection_feedback"]
                             final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
+                        executor_run_id = str(uuid4())
+                        if workflow_run_response is not None and workflow_run_response.run_id:
+                            register_member_run(workflow_run_response.run_id, executor_run_id)
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -883,6 +915,7 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
+                            run_id=executor_run_id,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
@@ -928,6 +961,9 @@ class Step:
 
                 return step_output
 
+            except RunCancelledException:
+                # Don't retry a cancelled run
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1095,7 +1131,7 @@ class Step:
                                         else:
                                             content = str(event.content)
                                     # Only yield executor events if stream_executor_events is True
-                                    if stream_executor_events:
+                                    if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                         enriched_event = self._enrich_event_with_context(
                                             event, workflow_run_response, step_index
                                         )
@@ -1201,6 +1237,9 @@ class Step:
                             feedback = step_input.additional_data["rejection_feedback"]
                             final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
+                        executor_run_id = str(uuid4())
+                        if workflow_run_response is not None and workflow_run_response.run_id:
+                            register_member_run(workflow_run_response.run_id, executor_run_id)
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
                             images=images,
@@ -1214,6 +1253,7 @@ class Step:
                             stream_events=stream_events,
                             yield_run_output=True,
                             run_context=run_context,
+                            run_id=executor_run_id,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
@@ -1225,7 +1265,7 @@ class Step:
                                 active_executor_run_response = event
                                 continue
                             # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events:
+                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
@@ -1270,7 +1310,7 @@ class Step:
                                 final_response = event
                             else:
                                 # Yield nested workflow events
-                                if stream_executor_events:
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
@@ -1310,6 +1350,9 @@ class Step:
                     )
 
                 return
+            except RunCancelledException:
+                # Don't retry a cancelled run
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1533,6 +1576,9 @@ class Step:
                             feedback = step_input.additional_data["rejection_feedback"]
                             final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
+                        executor_run_id = str(uuid4())
+                        if workflow_run_response is not None and workflow_run_response.run_id:
+                            await aregister_member_run(workflow_run_response.run_id, executor_run_id)
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -1543,6 +1589,7 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
+                            run_id=executor_run_id,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
@@ -1588,6 +1635,9 @@ class Step:
 
                 return step_output
 
+            except RunCancelledException:
+                # Don't retry a cancelled run
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1685,7 +1735,7 @@ class Step:
                                         content = str(event.content)
 
                                 # Only yield executor events if stream_executor_events is True
-                                if stream_executor_events:
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
@@ -1736,7 +1786,7 @@ class Step:
                                         content = str(event.content)
 
                                 # Only yield executor events if stream_executor_events is True
-                                if stream_executor_events:
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
@@ -1835,6 +1885,9 @@ class Step:
                             feedback = step_input.additional_data["rejection_feedback"]
                             final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
+                        executor_run_id = str(uuid4())
+                        if workflow_run_response is not None and workflow_run_response.run_id:
+                            await aregister_member_run(workflow_run_response.run_id, executor_run_id)
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,
                             images=images,
@@ -1848,6 +1901,7 @@ class Step:
                             stream_events=stream_events,
                             run_context=run_context,
                             yield_run_output=True,
+                            run_id=executor_run_id,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
@@ -1859,7 +1913,7 @@ class Step:
                                 active_executor_run_response = event
                                 break
                             # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events:
+                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
@@ -1904,7 +1958,7 @@ class Step:
                                 final_response = event
                             else:
                                 # Yield nested workflow events
-                                if stream_executor_events:
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
@@ -1944,6 +1998,9 @@ class Step:
                     )
                 return
 
+            except RunCancelledException:
+                # Don't retry a cancelled run
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -2074,9 +2131,9 @@ class Step:
                 if isinstance(raw_response, TeamRunOutput) and getattr(
                     self.active_executor, "store_member_responses", False
                 ):
-                    for mr in raw_response.member_responses or []:
-                        if isinstance(mr, RunOutput):
-                            workflow_run_response.step_executor_runs.append(mr)
+                    for member_response in raw_response.member_responses or []:
+                        if isinstance(member_response, RunOutput):
+                            workflow_run_response.step_executor_runs.append(member_response)
 
     def _get_deepest_content_from_step_output(self, step_output: "StepOutput") -> Optional[str]:
         """
@@ -2186,6 +2243,11 @@ class Step:
         # Determine step type based on executor type
         step_type = StepType.WORKFLOW if self._executor_type == "workflow" else StepType.STEP
 
+        # Propagate cancelled / error status from the executor's RunOutput
+        response_status = getattr(response, "status", None)
+        success = response_status not in (RunStatus.cancelled, RunStatus.error)
+        error = response.content if not success else None
+
         return StepOutput(
             step_name=self.name or "unnamed_step",
             step_id=self.step_id,
@@ -2199,6 +2261,8 @@ class Step:
             audio=audio,
             files=files,
             metrics=metrics,
+            success=success,
+            error=error,
         )
 
     def _convert_function_result_to_response(self, result: Any) -> RunOutput:
@@ -2329,6 +2393,10 @@ class Step:
 
         log_debug(f"Executing nested workflow: {self.workflow.name}")
 
+        nested_run_id = str(uuid4())
+        if workflow_run_response is not None and workflow_run_response.run_id:
+            register_member_run(workflow_run_response.run_id, nested_run_id)
+
         # Execute the nested workflow with shared session
         nested_run_output: WorkflowRunOutput = self.workflow.run(
             input=message,
@@ -2341,6 +2409,7 @@ class Step:
             files=step_input.files,
             stream=False,
             background_tasks=background_tasks,
+            run_id=nested_run_id,
         )
 
         # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
@@ -2444,6 +2513,10 @@ class Step:
 
         log_debug(f"Executing nested workflow (streaming): {self.workflow.name}")
 
+        nested_run_id = str(uuid4())
+        if workflow_run_response is not None and workflow_run_response.run_id:
+            register_member_run(workflow_run_response.run_id, nested_run_id)
+
         # Execute the nested workflow with streaming
         # Capture the WorkflowCompletedEvent to get the final results
         completed_event: Optional[WorkflowCompletedEvent] = None
@@ -2459,6 +2532,7 @@ class Step:
             stream=True,
             stream_events=stream_events,
             background_tasks=background_tasks,
+            run_id=nested_run_id,
         ):
             # Capture the WorkflowCompletedEvent which contains step_results
             if isinstance(event, WorkflowCompletedEvent):
@@ -2588,6 +2662,10 @@ class Step:
 
         log_debug(f"Executing nested workflow (async): {self.workflow.name}")
 
+        nested_run_id = str(uuid4())
+        if workflow_run_response is not None and workflow_run_response.run_id:
+            await aregister_member_run(workflow_run_response.run_id, nested_run_id)
+
         # Execute the nested workflow asynchronously with shared session
         nested_run_output: WorkflowRunOutput = await self.workflow.arun(
             input=message,
@@ -2600,6 +2678,7 @@ class Step:
             files=step_input.files,
             stream=False,
             background_tasks=background_tasks,
+            run_id=nested_run_id,
         )
 
         # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
@@ -2704,6 +2783,10 @@ class Step:
 
         log_debug(f"Executing nested workflow (async streaming): {self.workflow.name}")
 
+        nested_run_id = str(uuid4())
+        if workflow_run_response is not None and workflow_run_response.run_id:
+            await aregister_member_run(workflow_run_response.run_id, nested_run_id)
+
         # Execute the nested workflow with async streaming
         # Capture the WorkflowCompletedEvent to get the final results
         completed_event: Optional[WorkflowCompletedEvent] = None
@@ -2719,6 +2802,7 @@ class Step:
             stream=True,
             stream_events=stream_events,
             background_tasks=background_tasks,
+            run_id=nested_run_id,
         ):
             # Capture the WorkflowCompletedEvent which contains step_results
             if isinstance(event, WorkflowCompletedEvent):
