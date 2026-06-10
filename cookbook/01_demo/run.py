@@ -2,8 +2,7 @@
 Agno Demo — AgentOS Entrypoint
 ===============================
 
-A demo AgentOS of wiki agents: one multimodal capability across three
-backends. CodeSearch is left in as an example of a different kind of agent.
+A demo AgentOS made of wiki agents.
 
 Agents
   LocalWiki    — read + write a local markdown wiki; ingest URLs or media
@@ -20,7 +19,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from agents.code_search import code_search, code_search_provider
-from agents.file_generator import file_generator
 from agents.git_wiki import git_wiki, git_wiki_provider
 from agents.local_wiki import local_wiki, local_wiki_provider
 from agents.notion_wiki import notion_wiki, notion_wiki_provider
@@ -50,9 +48,8 @@ async def lifespan(app):  # type: ignore[no-untyped-def]
             await notion_wiki_provider.aclose()
 
 
-# LocalWiki + CodeSearch are always on. GitWiki and NotionWiki register only
-# when their backend credentials are set; they're appended after the
-# always-on agents, so the optional wiki backends come last.
+# LocalWiki + CodeSearch are always on.
+# GitWiki and NotionWiki are available when their backend credentials are set
 _agents = [local_wiki, code_search]
 if git_wiki is not None:
     _agents.append(git_wiki)
