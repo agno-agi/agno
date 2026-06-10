@@ -63,10 +63,12 @@ def test_store_emits_change_events_with_actor_and_diff():
         ("user.unassigned", "bob", "alice"),
         ("role.removed", "member", "alice"),
     ]
-    # before/after captured on the widen
+    # before/after captured on the widen — full entries (scope + effect) so an
+    # allow<->deny flip is visible in the trail.
     widen = sink.events[1]
-    assert widen.before == ["agents:read"]
-    assert set(widen.after) == {"agents:read", "agents:run"}
+    assert widen.before == [{"scope": "agents:read", "effect": "allow"}]
+    assert {e["scope"] for e in widen.after} == {"agents:read", "agents:run"}
+    assert all(e["effect"] == "allow" for e in widen.after)
     # assignment diff
     assign = sink.events[2]
     assert assign.before == [] and assign.after == ["member"]

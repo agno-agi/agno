@@ -41,7 +41,8 @@ class AuditEvent:
         actor: the principal who made the change (JWT ``sub`` of the admin), or
             None for changes made in code outside a request (treated as system).
         target: the role name (role changes) or subject id (assignment changes).
-        before: prior state (the role's scopes, or the subject's roles), or None.
+        before: prior state — the subject's roles (list of str) or a role's scope
+            entries (list of ``{"scope", "effect"}`` dicts) — or None.
         after: new state, or None (e.g. on removal).
         timestamp: epoch seconds when the change was recorded.
     """
@@ -49,8 +50,8 @@ class AuditEvent:
     action: str
     actor: Optional[str]
     target: str
-    before: Optional[List[str]] = None
-    after: Optional[List[str]] = None
+    before: Optional[List[Any]] = None
+    after: Optional[List[Any]] = None
     timestamp: int = 0
     metadata: dict = field(default_factory=dict)
 

@@ -257,8 +257,8 @@ def get_roles_router(
     # ---- roles ----------------------------------------------------------
     @router.get("/roles", response_model=PaginatedResponse[RoleSchema])
     def list_roles(
-        limit: int = Query(default=20, ge=1, description="Items per page"),
-        page: int = Query(default=1, ge=0, description="Page number"),
+        limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
+        page: int = Query(default=1, ge=1, description="Page number"),
     ):
         roles = [RoleSchema.from_record(r) for r in store.list_roles_detailed()]
         return _page(roles, page, limit)
@@ -353,13 +353,13 @@ def get_roles_router(
 
     # ---- audit ----------------------------------------------------------
     @router.get("/audit")
-    def list_audit(limit: int = 100) -> dict:
+    def list_audit(limit: int = Query(default=100, ge=1, le=1000)) -> dict:
         """Recent *change* events (role/assignment mutations, newest first). Empty
         unless the store was given a readable audit sink (e.g. DbAuditSink)."""
         return {"events": store.audit_log(limit)}
 
     @router.get("/decisions")
-    def list_decisions(request: Request, limit: int = 100) -> dict:
+    def list_decisions(request: Request, limit: int = Query(default=100, ge=1, le=1000)) -> dict:
         """Recent *decision* events (allow/deny per request, newest first).
 
         Decision audit is configured on ``AuthorizationConfig(audit=...)`` and lands
@@ -396,11 +396,24 @@ def get_roles_router(
         @router.get("/users", response_model=PaginatedResponse[AuthzUserSchema])
         def list_users(
             include_disabled: bool = True,
-            limit: int = Query(default=20, ge=1, description="Items per page"),
-            page: int = Query(default=1, ge=0, description="Page number"),
+            limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
+            page: int = Query(default=1, ge=1, description="Page number"),
         ):
-            users = [_user(u) for u in user_store.list(limit=100000, include_disabled=include_disabled)]
-            return _page(users, page, limit)
+            # Paginate in the store (offset/limit + count) so we don't materialise
+            # the whole directory and resolve roles for every user on each call.
+            total = user_store.count(include_disabled=include_disabled)
+            rows = user_store.list(
+                limit=limit, offset=(page - 1) * limit, include_disabled=include_disabled
+            )
+            return PaginatedResponse(
+                data=[_user(u) for u in rows],
+                meta=PaginationInfo(
+                    page=page,
+                    limit=limit,
+                    total_count=total,
+                    total_pages=(total + limit - 1) // limit if limit > 0 else 0,
+                ),
+            )
 
         @router.post("/users", response_model=AuthzUserSchema)
         def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):

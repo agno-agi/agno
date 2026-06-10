@@ -222,6 +222,17 @@ class ManagedRoleStore:
             r = conn.execute(sa.select(self._meta_table).where(self._meta_table.c.slug == slug)).mappings().first()  # type: ignore[union-attr]
         return dict(r) if r else None
 
+    def _meta_get_all(self) -> dict:
+        """All metadata rows as ``{slug: row}`` in a single read, so list views
+        don't do one SELECT per role (N+1)."""
+        if self._meta_mem is not None:
+            return {slug: dict(row) for slug, row in self._meta_mem.items()}
+        import sqlalchemy as sa
+
+        with self._meta_engine.connect() as conn:  # type: ignore[union-attr]
+            rows = conn.execute(sa.select(self._meta_table)).mappings().all()  # type: ignore[union-attr]
+        return {r["slug"]: dict(r) for r in rows}
+
     def _meta_upsert(
         self,
         slug: str,
@@ -297,14 +308,16 @@ class ManagedRoleStore:
         tuples, or ``{"scope": ..., "effect": "allow"|"deny"}`` dicts. Also creates
         / updates the role's metadata (display ``name`` / ``description`` /
         ``is_default``)."""
-        before = self.get_role_scopes(role) if self._audit else None
+        # Audit the full entries (scope + effect) so an allow<->deny flip is visible
+        # in the trail; plain scope strings would show no change.
+        before = self.get_role_scope_entries(role) if self._audit else None
         self._enforcer.remove_filtered_policy(0, role)
         for entry in scopes:
             scope, effect = _normalize_scope(entry)
             obj, act = scope_to_obj_act(scope)
             self._enforcer.add_policy(role, obj, act, effect)
         self._meta_upsert(role, name=name, description=description, is_default=is_default)
-        self._emit("role.set_scopes", role, before, self.get_role_scopes(role) if self._audit else None, actor)
+        self._emit("role.set_scopes", role, before, self.get_role_scope_entries(role) if self._audit else None, actor)
 
     def get_role_scopes(self, role: str) -> List[str]:
         """Return a role's scope strings (allow + deny), for display/read-back."""
@@ -363,7 +376,7 @@ class ManagedRoleStore:
     ) -> None:
         """Apply a scope diff: add/flip the ``upsert`` scopes and drop the ``remove``
         scopes, leaving every other scope (and the metadata) intact."""
-        before = self.get_role_scopes(role) if self._audit else None
+        before = self.get_role_scope_entries(role) if self._audit else None
         for entry in upsert or []:
             scope, effect = _normalize_scope(entry)
             obj, act = scope_to_obj_act(scope)
@@ -374,7 +387,7 @@ class ManagedRoleStore:
             obj, act = scope_to_obj_act(scope)
             self._enforcer.remove_filtered_policy(0, role, obj, act)
         self._meta_upsert(role)  # touch updated_at / ensure metadata row exists
-        self._emit("role.set_scopes", role, before, self.get_role_scopes(role) if self._audit else None, actor)
+        self._emit("role.set_scopes", role, before, self.get_role_scope_entries(role) if self._audit else None, actor)
 
     @staticmethod
     def _meta_summary(rec: dict) -> str:
@@ -414,8 +427,16 @@ class ManagedRoleStore:
         return sorted(slugs)
 
     def list_roles_detailed(self) -> List[dict]:
-        """Every role as a full record (metadata + scope entries)."""
-        return [self.get_role(slug) for slug in self.list_roles()]  # type: ignore[misc]
+        """Every role as a full record (metadata + scope entries).
+
+        Metadata is fetched in one read (not one SELECT per role)."""
+        meta_all = self._meta_get_all()
+        default = {"name": None, "description": None, "is_default": False, "created_at": 0, "updated_at": 0}
+        out: List[dict] = []
+        for slug in self.list_roles():
+            meta = meta_all.get(slug) or {"slug": slug, **default, "name": slug}
+            out.append({**meta, "scopes": self.get_role_scope_entries(slug)})
+        return out
 
     # ------------------------------------------------------------- assignments
     def assign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
