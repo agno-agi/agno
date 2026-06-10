@@ -278,12 +278,12 @@ class ContextProvider(ABC):
                 except Exception as exc:
                     yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
                     return
-                yield json.dumps(_serialize_answer(answer))
+                yield json.dumps(serialize_answer(answer))
                 return
 
             async for chunk in provider._stream_from_agent(agent, question, run_context):
                 if isinstance(chunk, Answer):
-                    yield json.dumps(_serialize_answer(chunk))
+                    yield json.dumps(serialize_answer(chunk))
                 else:
                     yield chunk
 
@@ -312,12 +312,12 @@ class ContextProvider(ABC):
                 except Exception as exc:
                     yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
                     return
-                yield json.dumps(_serialize_answer(answer))
+                yield json.dumps(serialize_answer(answer))
                 return
 
             async for chunk in provider._stream_from_agent(agent, instruction, run_context):
                 if isinstance(chunk, Answer):
-                    yield json.dumps(_serialize_answer(chunk))
+                    yield json.dumps(serialize_answer(chunk))
                 else:
                     yield chunk
 
@@ -332,7 +332,7 @@ def _sanitize_id(raw: str) -> str:
     return s.strip("_") or "context"
 
 
-def _serialize_answer(answer: Answer) -> dict:
+def serialize_answer(answer: Answer) -> dict:
     """Build the JSON payload returned to the calling agent.
 
     Omit empty fields so the calling agent doesn't see filler. Today

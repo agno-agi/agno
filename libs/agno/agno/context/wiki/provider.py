@@ -200,7 +200,7 @@ class WikiContextProvider(ContextProvider):
         return self._ensure_read_agent()
 
     def _update_tool(self):
-        from agno.context.provider import _serialize_answer
+        from agno.context.provider import serialize_answer
 
         provider = self
 
@@ -232,7 +232,7 @@ class WikiContextProvider(ContextProvider):
                         answer = Answer(results=answer.results, text=(answer.text or "") + note)
 
                 if answer is not None:
-                    yield json.dumps(_serialize_answer(answer))
+                    yield json.dumps(serialize_answer(answer))
                 else:
                     yield json.dumps({})
 
