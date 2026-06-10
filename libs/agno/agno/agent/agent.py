@@ -57,6 +57,28 @@ from agno.run.agent import (
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
+from agno.settings import (
+    CacheSettings,
+    CompressionSettings,
+    ContextSettings,
+    CultureSettings,
+    DebugSettings,
+    EventSettings,
+    FollowupSettings,
+    HistorySettings,
+    KnowledgeSettings,
+    LearningSettings,
+    MemorySettings,
+    ModelSettings,
+    OutputSettings,
+    ReasoningSettings,
+    RetrySettings,
+    SessionSettings,
+    StorageSettings,
+    ToolSettings,
+    resolve_setting,
+    warn_unsupported_setting,
+)
 from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -407,7 +429,7 @@ class Agent:
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
-        knowledge: Optional[KnowledgeProtocol] = None,
+        knowledge: Optional[Union[KnowledgeProtocol, Callable[..., KnowledgeProtocol]]] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
@@ -484,7 +506,185 @@ class Agent:
         cache_callables: bool = True,
         callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        # --- Grouped settings (alternative to the flat parameters above) ---
+        model_settings: Optional[ModelSettings] = None,
+        session_settings: Optional[SessionSettings] = None,
+        context_settings: Optional[ContextSettings] = None,
+        knowledge_settings: Optional[KnowledgeSettings] = None,
+        memory_settings: Optional[MemorySettings] = None,
+        history_settings: Optional[HistorySettings] = None,
+        output_settings: Optional[OutputSettings] = None,
+        tool_settings: Optional[ToolSettings] = None,
+        reasoning_settings: Optional[ReasoningSettings] = None,
+        storage_settings: Optional[StorageSettings] = None,
+        event_settings: Optional[EventSettings] = None,
+        followup_settings: Optional[FollowupSettings] = None,
+        retry_settings: Optional[RetrySettings] = None,
+        debug_settings: Optional[DebugSettings] = None,
+        compression_settings: Optional[CompressionSettings] = None,
+        cache_settings: Optional[CacheSettings] = None,
+        culture_settings: Optional[CultureSettings] = None,
+        learning_settings: Optional[LearningSettings] = None,
     ):
+        # Resolve grouped settings into the flat parameters.
+        # If a parameter is set both ways, the settings object wins (a warning is logged if the values differ).
+        if model_settings is not None:
+            model = resolve_setting(model_settings, "model", model)
+            fallback_models = resolve_setting(model_settings, "fallback_models", fallback_models)
+            fallback_config = resolve_setting(model_settings, "fallback_config", fallback_config)
+        if session_settings is not None:
+            session_id = resolve_setting(session_settings, "session_id", session_id)
+            session_state = resolve_setting(session_settings, "session_state", session_state)
+            add_session_state_to_context = resolve_setting(
+                session_settings, "add_session_state_to_context", add_session_state_to_context
+            )
+            enable_agentic_state = resolve_setting(session_settings, "enable_agentic_state", enable_agentic_state)
+            overwrite_db_session_state = resolve_setting(
+                session_settings, "overwrite_db_session_state", overwrite_db_session_state
+            )
+            cache_session = resolve_setting(session_settings, "cache_session", cache_session)
+            search_past_sessions = resolve_setting(session_settings, "search_past_sessions", search_past_sessions)
+            num_past_sessions_to_search = resolve_setting(
+                session_settings, "num_past_sessions_to_search", num_past_sessions_to_search
+            )
+            num_past_session_runs_in_search = resolve_setting(
+                session_settings, "num_past_session_runs_in_search", num_past_session_runs_in_search
+            )
+            enable_session_summaries = resolve_setting(
+                session_settings, "enable_session_summaries", enable_session_summaries
+            )
+            add_session_summary_to_context = resolve_setting(
+                session_settings, "add_session_summary_to_context", add_session_summary_to_context
+            )
+            session_summary_manager = resolve_setting(
+                session_settings, "session_summary_manager", session_summary_manager
+            )
+        if context_settings is not None:
+            markdown = resolve_setting(context_settings, "markdown", markdown)
+            add_name_to_context = resolve_setting(context_settings, "add_name_to_context", add_name_to_context)
+            add_datetime_to_context = resolve_setting(
+                context_settings, "add_datetime_to_context", add_datetime_to_context
+            )
+            add_location_to_context = resolve_setting(
+                context_settings, "add_location_to_context", add_location_to_context
+            )
+            datetime_format = resolve_setting(context_settings, "datetime_format", datetime_format)
+            timezone_identifier = resolve_setting(context_settings, "timezone_identifier", timezone_identifier)
+            resolve_in_context = resolve_setting(context_settings, "resolve_in_context", resolve_in_context)
+            additional_context = resolve_setting(context_settings, "additional_context", additional_context)
+            additional_input = resolve_setting(context_settings, "additional_input", additional_input)
+            dependencies = resolve_setting(context_settings, "dependencies", dependencies)
+            add_dependencies_to_context = resolve_setting(
+                context_settings, "add_dependencies_to_context", add_dependencies_to_context
+            )
+            use_instruction_tags = resolve_setting(context_settings, "use_instruction_tags", use_instruction_tags)
+            system_message_role = resolve_setting(context_settings, "system_message_role", system_message_role)
+            user_message_role = resolve_setting(context_settings, "user_message_role", user_message_role)
+            build_context = resolve_setting(context_settings, "build_context", build_context)
+            build_user_context = resolve_setting(context_settings, "build_user_context", build_user_context)
+        if knowledge_settings is not None:
+            knowledge = resolve_setting(knowledge_settings, "knowledge", knowledge)
+            knowledge_filters = resolve_setting(knowledge_settings, "knowledge_filters", knowledge_filters)
+            enable_agentic_knowledge_filters = resolve_setting(
+                knowledge_settings, "enable_agentic_knowledge_filters", enable_agentic_knowledge_filters
+            )
+            add_knowledge_to_context = resolve_setting(
+                knowledge_settings, "add_knowledge_to_context", add_knowledge_to_context
+            )
+            knowledge_retriever = resolve_setting(knowledge_settings, "knowledge_retriever", knowledge_retriever)
+            references_format = resolve_setting(knowledge_settings, "references_format", references_format)
+            search_knowledge = resolve_setting(knowledge_settings, "search_knowledge", search_knowledge)
+            add_search_knowledge_instructions = resolve_setting(
+                knowledge_settings, "add_search_knowledge_instructions", add_search_knowledge_instructions
+            )
+            update_knowledge = resolve_setting(knowledge_settings, "update_knowledge", update_knowledge)
+        if memory_settings is not None:
+            memory_manager = resolve_setting(memory_settings, "memory_manager", memory_manager)
+            enable_agentic_memory = resolve_setting(memory_settings, "enable_agentic_memory", enable_agentic_memory)
+            update_memory_on_run = resolve_setting(memory_settings, "update_memory_on_run", update_memory_on_run)
+            add_memories_to_context = resolve_setting(
+                memory_settings, "add_memories_to_context", add_memories_to_context
+            )
+        if history_settings is not None:
+            add_history_to_context = resolve_setting(history_settings, "add_history_to_context", add_history_to_context)
+            num_history_runs = resolve_setting(history_settings, "num_history_runs", num_history_runs)
+            num_history_messages = resolve_setting(history_settings, "num_history_messages", num_history_messages)
+            max_tool_calls_from_history = resolve_setting(
+                history_settings, "max_tool_calls_from_history", max_tool_calls_from_history
+            )
+            read_chat_history = resolve_setting(history_settings, "read_chat_history", read_chat_history)
+            read_tool_call_history = resolve_setting(history_settings, "read_tool_call_history", read_tool_call_history)
+        if output_settings is not None:
+            input_schema = resolve_setting(output_settings, "input_schema", input_schema)
+            output_schema = resolve_setting(output_settings, "output_schema", output_schema)
+            parser_model = resolve_setting(output_settings, "parser_model", parser_model)
+            parser_model_prompt = resolve_setting(output_settings, "parser_model_prompt", parser_model_prompt)
+            output_model = resolve_setting(output_settings, "output_model", output_model)
+            output_model_prompt = resolve_setting(output_settings, "output_model_prompt", output_model_prompt)
+            parse_response = resolve_setting(output_settings, "parse_response", parse_response)
+            structured_outputs = resolve_setting(output_settings, "structured_outputs", structured_outputs)
+            use_json_mode = resolve_setting(output_settings, "use_json_mode", use_json_mode)
+            save_response_to_file = resolve_setting(output_settings, "save_response_to_file", save_response_to_file)
+        if tool_settings is not None:
+            tool_call_limit = resolve_setting(tool_settings, "tool_call_limit", tool_call_limit)
+            tool_choice = resolve_setting(tool_settings, "tool_choice", tool_choice)
+            tool_hooks = resolve_setting(tool_settings, "tool_hooks", tool_hooks)
+            send_media_to_model = resolve_setting(tool_settings, "send_media_to_model", send_media_to_model)
+        if reasoning_settings is not None:
+            reasoning = resolve_setting(reasoning_settings, "reasoning", reasoning)
+            reasoning_model = resolve_setting(reasoning_settings, "reasoning_model", reasoning_model)
+            reasoning_agent = resolve_setting(reasoning_settings, "reasoning_agent", reasoning_agent)
+            reasoning_min_steps = resolve_setting(reasoning_settings, "reasoning_min_steps", reasoning_min_steps)
+            reasoning_max_steps = resolve_setting(reasoning_settings, "reasoning_max_steps", reasoning_max_steps)
+        if storage_settings is not None:
+            store_media = resolve_setting(storage_settings, "store_media", store_media)
+            store_tool_messages = resolve_setting(storage_settings, "store_tool_messages", store_tool_messages)
+            store_history_messages = resolve_setting(storage_settings, "store_history_messages", store_history_messages)
+        if event_settings is not None:
+            stream = resolve_setting(event_settings, "stream", stream)
+            stream_events = resolve_setting(event_settings, "stream_events", stream_events)
+            store_events = resolve_setting(event_settings, "store_events", store_events)
+            events_to_skip = resolve_setting(event_settings, "events_to_skip", events_to_skip)
+            warn_unsupported_setting(event_settings, "stream_executor_events", "Agent")
+        if followup_settings is not None:
+            followups = resolve_setting(followup_settings, "followups", followups)
+            num_followups = resolve_setting(followup_settings, "num_followups", num_followups)
+            followup_model = resolve_setting(followup_settings, "followup_model", followup_model)
+        if retry_settings is not None:
+            retries = resolve_setting(retry_settings, "retries", retries)
+            delay_between_retries = resolve_setting(retry_settings, "delay_between_retries", delay_between_retries)
+            exponential_backoff = resolve_setting(retry_settings, "exponential_backoff", exponential_backoff)
+        if debug_settings is not None:
+            debug_mode = resolve_setting(debug_settings, "debug_mode", debug_mode)
+            debug_level = resolve_setting(debug_settings, "debug_level", debug_level)
+            telemetry = resolve_setting(debug_settings, "telemetry", telemetry)
+        if compression_settings is not None:
+            compress_tool_results = resolve_setting(
+                compression_settings, "compress_tool_results", compress_tool_results
+            )
+            compression_manager = resolve_setting(compression_settings, "compression_manager", compression_manager)
+        if cache_settings is not None:
+            cache_callables = resolve_setting(cache_settings, "cache_callables", cache_callables)
+            callable_tools_cache_key = resolve_setting(
+                cache_settings, "callable_tools_cache_key", callable_tools_cache_key
+            )
+            callable_knowledge_cache_key = resolve_setting(
+                cache_settings, "callable_knowledge_cache_key", callable_knowledge_cache_key
+            )
+            warn_unsupported_setting(cache_settings, "callable_members_cache_key", "Agent")
+        if culture_settings is not None:
+            culture_manager = resolve_setting(culture_settings, "culture_manager", culture_manager)
+            enable_agentic_culture = resolve_setting(culture_settings, "enable_agentic_culture", enable_agentic_culture)
+            update_cultural_knowledge = resolve_setting(
+                culture_settings, "update_cultural_knowledge", update_cultural_knowledge
+            )
+            add_culture_to_context = resolve_setting(culture_settings, "add_culture_to_context", add_culture_to_context)
+        if learning_settings is not None:
+            learning = resolve_setting(learning_settings, "learning", learning)
+            add_learnings_to_context = resolve_setting(
+                learning_settings, "add_learnings_to_context", add_learnings_to_context
+            )
+
         self.model = model  # type: ignore[assignment]
         if fallback_config is not None:
             if fallback_models:

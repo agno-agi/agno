@@ -1,3 +1,4 @@
+from agno.settings import DebugSettings, EventSettings, SessionSettings
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.cel import CEL_AVAILABLE, validate_cel_expression
 from agno.workflow.condition import Condition
@@ -13,6 +14,9 @@ from agno.workflow.types import HumanReview, OnError, OnReject, OnTimeout, StepI
 from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
 
 __all__ = [
+    "DebugSettings",
+    "EventSettings",
+    "SessionSettings",
     "Workflow",
     "WorkflowAgent",
     "WorkflowFactory",
