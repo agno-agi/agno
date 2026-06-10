@@ -20,9 +20,9 @@ The only thing we define is the role -> permissions list (here, in memory):
   - admin  -> can do anything
 WorkOS decides WHO is a member or admin; we decide what those words mean.
 
-(Real WorkOS tokens are signed by WorkOS. In production you point agno at WorkOS's
-live keys URL and it fetches + rotates them for you - no key file to manage:
-    AuthorizationConfig(jwks_url="https://<your-workos>/.well-known/jwks.json", ...)
+(Real WorkOS tokens are signed by WorkOS. In production you download its published
+JWKS and point agno at it:
+    AuthorizationConfig(jwks_file="workos_jwks.json", ...)
 Here we use a simple shared secret so the example runs on its own; the
 authorization behaviour is identical.)
 

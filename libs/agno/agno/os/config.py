@@ -12,10 +12,6 @@ class AuthorizationConfig(BaseModel):
 
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
-    # Remote JWKS URL published by an IdP (e.g. WorkOS/Auth0). Keys are fetched
-    # and cached at startup and re-fetched on key rotation, so no static key file
-    # to snapshot. Use jwks_file for an offline/static key set instead.
-    jwks_url: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None

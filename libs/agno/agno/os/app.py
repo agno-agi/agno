@@ -979,7 +979,6 @@ class AgentOS:
 
         verify_audience = False
         jwks_file = None
-        jwks_url = None
         verification_keys = None
         algorithm = "RS256"
         audience = None
@@ -995,7 +994,6 @@ class AgentOS:
             algorithm = self.authorization_config.algorithm or "RS256"
             verification_keys = self.authorization_config.verification_keys
             jwks_file = self.authorization_config.jwks_file
-            jwks_url = self.authorization_config.jwks_url
             verify_audience = self.authorization_config.verify_audience or False
             audience = self.authorization_config.audience
             issuer = self.authorization_config.issuer
@@ -1014,7 +1012,6 @@ class AgentOS:
         jwt_validator = JWTValidator(
             verification_keys=verification_keys,
             jwks_file=jwks_file,
-            jwks_url=jwks_url,
             algorithm=algorithm,
             leeway=leeway,
             issuer=issuer,
@@ -1068,7 +1065,6 @@ class AgentOS:
         middleware_kwargs: Dict[str, Any] = {
             "verification_keys": verification_keys,
             "jwks_file": jwks_file,
-            "jwks_url": jwks_url,
             "algorithm": algorithm,
             "authorization": self.authorization,
             "verify_audience": verify_audience,
