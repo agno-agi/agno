@@ -1,6 +1,6 @@
-"""Tests for the Memories schema's framework-owned per-memory timestamps."""
+"""Tests for framework-owned per-entry timestamps on learning schemas (memories, entity facts...)."""
 
-from agno.learn.schemas import Memories, UserProfile
+from agno.learn.schemas import EntityMemory, Memories, UserProfile
 
 
 class TestAddMemory:
@@ -81,3 +81,42 @@ class TestToDictExcludesInternalFields:
         assert back is not None
         assert back.user_id == "u1"
         assert back.name == "lm"
+
+
+class TestEntityMemoryEntryTimestamps:
+    """facts / events / relationships are object-lists inside content; each entry gets
+    framework-owned created_at + updated_at, same as memories."""
+
+    def test_add_fact_stamps_timestamps(self):
+        e = EntityMemory(entity_id="acme", entity_type="company")
+        fid = e.add_fact("uses PostgreSQL", confidence=0.9)
+        fact = e.facts[0]
+        assert fact["id"] == fid
+        assert fact["created_at"].endswith("Z")
+        assert fact["created_at"] == fact["updated_at"]
+        assert fact["confidence"] == 0.9
+
+    def test_add_event_and_relationship_stamp_timestamps(self):
+        e = EntityMemory(entity_id="acme", entity_type="company")
+        e.add_event("launched v2", date="2024-01-15")
+        e.add_relationship("bob", "CEO")
+        assert e.events[0]["created_at"].endswith("Z")
+        assert e.events[0]["date"] == "2024-01-15"
+        assert e.relationships[0]["created_at"] == e.relationships[0]["updated_at"]
+
+    def test_add_fact_caller_cannot_override_reserved_fields(self):
+        e = EntityMemory(entity_id="acme", entity_type="company")
+        fid = e.add_fact("x", id="HACK", created_at="1999-01-01")
+        fact = e.facts[0]
+        assert fact["id"] == fid != "HACK"
+        assert fact["created_at"] != "1999-01-01"
+
+    def test_update_fact_bumps_updated_at_preserves_created_at(self):
+        e = EntityMemory(entity_id="acme", entity_type="company")
+        fid = e.add_fact("uses PG")
+        created = e.facts[0]["created_at"]
+        assert e.update_fact(fid, "uses PG 16") is True
+        fact = e.facts[0]
+        assert fact["content"] == "uses PG 16"
+        assert fact["created_at"] == created
+        assert fact["updated_at"] >= created
