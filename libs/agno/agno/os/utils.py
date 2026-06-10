@@ -20,7 +20,6 @@ from agno.factory import (
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.models.base import Model
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
 from agno.registry import Registry
@@ -31,7 +30,6 @@ from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
-from agno.vectordb.base import VectorDb
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
@@ -1444,65 +1442,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         collect_mcp_tools_from_workflow(step, mcp_tools)
 
 
-class ComponentCollector:
-    """Accumulates the concrete component instances (models, tools, databases and
-    vector databases) found while recursively walking an agent/team/workflow tree.
-
-    Deduplication during the walk is by object identity, so a single instance
-    shared across many agents (a model, a db, a toolkit) is collected once.
-    Semantic deduplication (by id/name) is applied later when the collected
-    components are merged into the Registry. User objects are only referenced,
-    never mutated.
-    """
-
-    def __init__(self) -> None:
-        self.models: List[Any] = []
-        self.tools: List[Any] = []
-        self.dbs: List[Any] = []
-        self.vector_dbs: List[Any] = []
-        # Identity sets to avoid collecting the same object twice
-        self._seen: Set[int] = set()
-        # Identity set of already-walked agents/teams/workflows to avoid
-        # infinite recursion on cyclic composition graphs
-        self._visited_nodes: Set[int] = set()
-
-    def _add(self, bucket: List[Any], item: Any) -> None:
-        if item is None:
-            return
-        key = id(item)
-        if key in self._seen:
-            return
-        self._seen.add(key)
-        bucket.append(item)
-
-    def add_model(self, model: Any) -> None:
-        if isinstance(model, Model):
-            self._add(self.models, model)
-
-    def add_tool(self, tool: Any) -> None:
-        # Toolkits, Functions and raw callables are all valid registry tools.
-        if isinstance(tool, (Toolkit, Function)) or callable(tool):
-            self._add(self.tools, tool)
-
-    def add_db(self, db: Any) -> None:
-        if isinstance(db, (BaseDb, AsyncBaseDb)):
-            self._add(self.dbs, db)
-
-    def add_vector_db(self, vector_db: Any) -> None:
-        if isinstance(vector_db, VectorDb):
-            self._add(self.vector_dbs, vector_db)
-
-    def mark_visited(self, node: Any) -> bool:
-        """Record ``node`` as visited. Returns True if it was already visited."""
-        key = id(node)
-        if key in self._visited_nodes:
-            return True
-        self._visited_nodes.add(key)
-        return False
-
-
-def _collect_fallback_models(owner: Any, collector: ComponentCollector) -> None:
-    """Collect fallback models from an agent or team.
+def _collect_fallback_models(owner: Any, registry: Registry) -> None:
+    """Add an agent's or team's fallback models to the registry.
 
     Fallback models may be provided directly via ``fallback_models`` (before
     initialization) or normalised into a ``FallbackConfig`` with per-trigger
@@ -1511,8 +1452,8 @@ def _collect_fallback_models(owner: Any, collector: ComponentCollector) -> None:
     fallback_models = getattr(owner, "fallback_models", None)
     if isinstance(fallback_models, list):
         for fallback_model in fallback_models:
-            # May contain plain string ids; add_model ignores non-Model values
-            collector.add_model(fallback_model)
+            # May contain plain string ids; Registry.add_model ignores non-Model values
+            registry.add_model(fallback_model)
 
     fallback_config = getattr(owner, "fallback_config", None)
     if fallback_config is not None:
@@ -1520,11 +1461,11 @@ def _collect_fallback_models(owner: Any, collector: ComponentCollector) -> None:
             models = getattr(fallback_config, attr, None)
             if isinstance(models, list):
                 for fallback_model in models:
-                    collector.add_model(fallback_model)
+                    registry.add_model(fallback_model)
 
 
-def _collect_components_from_knowledge(knowledge: Any, collector: ComponentCollector) -> None:
-    """Collect the vector db and contents db backing a knowledge instance.
+def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> None:
+    """Add the vector db and contents db backing a knowledge instance to the registry.
 
     ``knowledge`` may be a Knowledge instance, a custom KnowledgeProtocol
     implementation, or a callable factory. Attribute access is guarded so any
@@ -1532,86 +1473,93 @@ def _collect_components_from_knowledge(knowledge: Any, collector: ComponentColle
     """
     if knowledge is None:
         return
-    collector.add_vector_db(getattr(knowledge, "vector_db", None))
-    collector.add_db(getattr(knowledge, "contents_db", None))
+    registry.add_vector_db(getattr(knowledge, "vector_db", None))
+    registry.add_db(getattr(knowledge, "contents_db", None))
 
 
-def collect_components_from_agent(agent: Any, collector: ComponentCollector) -> None:
-    """Collect the models, tools, db and vector db referenced by an agent."""
-    if collector.mark_visited(agent):
+def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add the models, tools, db and vector db referenced by an agent to the registry.
+
+    ``visited`` tracks already-walked agents/teams/workflows (by object id) to
+    avoid redundant work and infinite recursion on cyclic composition graphs.
+    """
+    if id(agent) in visited:
         return
+    visited.add(id(agent))
 
-    collector.add_model(getattr(agent, "model", None))
-    collector.add_model(getattr(agent, "reasoning_model", None))
-    collector.add_model(getattr(agent, "parser_model", None))
-    collector.add_model(getattr(agent, "output_model", None))
-    _collect_fallback_models(agent, collector)
+    registry.add_model(getattr(agent, "model", None))
+    registry.add_model(getattr(agent, "reasoning_model", None))
+    registry.add_model(getattr(agent, "parser_model", None))
+    registry.add_model(getattr(agent, "output_model", None))
+    _collect_fallback_models(agent, registry)
 
     tools = getattr(agent, "tools", None)
     if isinstance(tools, list):
         for tool in tools:
-            collector.add_tool(tool)
+            registry.add_tool(tool)
 
-    collector.add_db(getattr(agent, "db", None))
-    _collect_components_from_knowledge(getattr(agent, "knowledge", None), collector)
+    registry.add_db(getattr(agent, "db", None))
+    _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
 
 
-def collect_components_from_team(team: Any, collector: ComponentCollector) -> None:
-    """Collect components from a team and recursively from all of its members."""
-    if collector.mark_visited(team):
+def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add a team's components to the registry, recursing into all of its members."""
+    if id(team) in visited:
         return
+    visited.add(id(team))
 
-    collector.add_model(getattr(team, "model", None))
-    collector.add_model(getattr(team, "reasoning_model", None))
-    collector.add_model(getattr(team, "parser_model", None))
-    collector.add_model(getattr(team, "output_model", None))
-    _collect_fallback_models(team, collector)
+    registry.add_model(getattr(team, "model", None))
+    registry.add_model(getattr(team, "reasoning_model", None))
+    registry.add_model(getattr(team, "parser_model", None))
+    registry.add_model(getattr(team, "output_model", None))
+    _collect_fallback_models(team, registry)
 
     tools = getattr(team, "tools", None)
     if isinstance(tools, list):
         for tool in tools:
-            collector.add_tool(tool)
+            registry.add_tool(tool)
 
-    collector.add_db(getattr(team, "db", None))
-    _collect_components_from_knowledge(getattr(team, "knowledge", None), collector)
+    registry.add_db(getattr(team, "db", None))
+    _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
 
     members = getattr(team, "members", None)
     if isinstance(members, list):
         for member in members:
             if isinstance(member, Agent):
-                collect_components_from_agent(member, collector)
+                collect_components_from_agent(member, registry, visited)
             elif isinstance(member, Team):
-                collect_components_from_team(member, collector)
+                collect_components_from_team(member, registry, visited)
 
 
-def collect_components_from_workflow(workflow: Any, collector: ComponentCollector) -> None:
-    """Collect components from a workflow, its coordinator agent and its step tree."""
-    if collector.mark_visited(workflow):
+def collect_components_from_workflow(workflow: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add a workflow's components (coordinator agent and step tree) to the registry."""
+    if id(workflow) in visited:
         return
+    visited.add(id(workflow))
 
-    collector.add_db(getattr(workflow, "db", None))
+    registry.add_db(getattr(workflow, "db", None))
 
-    # Agentic workflow coordinator (WorkflowAgent is agent-like; access is guarded)
+    # Agentic workflow coordinator (WorkflowAgent is an Agent subclass)
     workflow_agent = getattr(workflow, "agent", None)
     if workflow_agent is not None:
-        collect_components_from_agent(workflow_agent, collector)
+        collect_components_from_agent(workflow_agent, registry, visited)
 
-    _collect_components_from_steps(getattr(workflow, "steps", None), collector)
+    _collect_components_from_steps(getattr(workflow, "steps", None), registry, visited)
 
 
-def _collect_components_from_steps(steps: Any, collector: ComponentCollector) -> None:
-    """Collect components from a workflow's ``steps`` value (list, container or callable)."""
+def _collect_components_from_steps(steps: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add components from a workflow's ``steps`` value (list, container or callable)."""
     if steps is None:
         return
     if isinstance(steps, list):
         for step in steps:
-            _collect_components_from_step(step, collector)
+            _collect_components_from_step(step, registry, visited)
     else:
-        _collect_components_from_step(steps, collector)
+        _collect_components_from_step(steps, registry, visited)
 
 
-def _collect_components_from_step(step: Any, collector: ComponentCollector) -> None:
-    """Collect components from a single workflow step of any type.
+def _collect_components_from_step(step: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add components from a single workflow step of any type.
 
     Handles primitive steps (Step pointing at an agent/team/nested workflow),
     agents/teams/workflows used directly as steps, and the composite container
@@ -1630,21 +1578,21 @@ def _collect_components_from_step(step: Any, collector: ComponentCollector) -> N
 
     if isinstance(step, Step):
         if step.agent is not None:
-            collect_components_from_agent(step.agent, collector)
+            collect_components_from_agent(step.agent, registry, visited)
         if step.team is not None:
-            collect_components_from_team(step.team, collector)
+            collect_components_from_team(step.team, registry, visited)
         nested_workflow = getattr(step, "workflow", None)
         if nested_workflow is not None:
-            collect_components_from_workflow(nested_workflow, collector)
+            collect_components_from_workflow(nested_workflow, registry, visited)
 
     elif isinstance(step, Agent):
-        collect_components_from_agent(step, collector)
+        collect_components_from_agent(step, registry, visited)
 
     elif isinstance(step, Team):
-        collect_components_from_team(step, collector)
+        collect_components_from_team(step, registry, visited)
 
     elif isinstance(step, Workflow):
-        collect_components_from_workflow(step, collector)
+        collect_components_from_workflow(step, registry, visited)
 
     elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
         # Walk every sub-step container: `steps` (all), `else_steps` (Condition)
@@ -1653,30 +1601,32 @@ def _collect_components_from_step(step: Any, collector: ComponentCollector) -> N
             sub_steps = getattr(step, attr, None)
             if isinstance(sub_steps, list):
                 for sub_step in sub_steps:
-                    _collect_components_from_step(sub_step, collector)
+                    _collect_components_from_step(sub_step, registry, visited)
 
     # else: plain callable executor or unknown step type -> nothing to collect
 
 
 def collect_components_from_os(
-    agents: Optional[List[Any]] = None,
-    teams: Optional[List[Any]] = None,
-    workflows: Optional[List[Any]] = None,
-) -> ComponentCollector:
-    """Walk all agents, teams and workflows of an AgentOS and collect their components.
+    agents: Optional[List[Any]],
+    teams: Optional[List[Any]],
+    workflows: Optional[List[Any]],
+    registry: Registry,
+) -> None:
+    """Walk all agents, teams and workflows of an AgentOS and add their components to ``registry``.
 
-    Each top-level node is walked inside its own guard so a single malformed
-    agent/team/workflow degrades to "not collected" rather than failing the
-    whole walk. Remote and factory components are skipped because they expose no
-    locally-walkable instances.
+    The registry owns deduplication (see ``Registry.add_*``), so components are
+    added directly during the walk. Each top-level node is walked inside its own
+    guard, so a single malformed agent/team/workflow degrades to "not collected"
+    rather than failing the whole walk. Remote and factory components are skipped
+    because they expose no locally-walkable instances.
     """
-    collector = ComponentCollector()
+    visited: Set[int] = set()
 
     for agent in agents or []:
         if not isinstance(agent, Agent):
             continue
         try:
-            collect_components_from_agent(agent, collector)
+            collect_components_from_agent(agent, registry, visited)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped agent due to error: {e}")
 
@@ -1684,7 +1634,7 @@ def collect_components_from_os(
         if not isinstance(team, Team):
             continue
         try:
-            collect_components_from_team(team, collector)
+            collect_components_from_team(team, registry, visited)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped team due to error: {e}")
 
@@ -1692,11 +1642,9 @@ def collect_components_from_os(
         if not isinstance(workflow, Workflow):
             continue
         try:
-            collect_components_from_workflow(workflow, collector)
+            collect_components_from_workflow(workflow, registry, visited)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped workflow due to error: {e}")
-
-    return collector
 
 
 def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:

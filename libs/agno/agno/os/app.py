@@ -2,7 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -747,57 +747,20 @@ class AgentOS:
         and therefore ``GET /registry``, consistent with what is actually wired
         into the AgentOS without requiring components to be declared twice.
 
-        Deduplication is by id/name so user-provided registry components and
-        instances shared across many agents are never duplicated. User objects
-        are only referenced, never mutated. The walk degrades gracefully: a
-        malformed node is skipped rather than failing AgentOS construction.
+        The registry owns deduplication and cache invalidation (see
+        ``Registry.add_*``): models/dbs/vector dbs dedupe by id/name, tools by
+        object identity. User-provided registry components and instances shared
+        across many agents are never duplicated, and user objects are only
+        referenced, never mutated. The walk degrades gracefully: a malformed node
+        is skipped rather than failing AgentOS construction.
         """
         if self.registry is None:
             self.registry = Registry()
 
         try:
-            collector = collect_components_from_os(self._agents, self._teams, self._workflows)
+            collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
         except Exception as e:
             log_debug(f"Registry auto-population skipped: {e}")
-            return
-
-        def _merge(existing: List[Any], discovered: List[Any], key_fn: Callable[[Any], Any]) -> None:
-            def _safe_key(item: Any) -> Any:
-                try:
-                    return key_fn(item)
-                except Exception:
-                    return id(item)
-
-            existing_keys = {_safe_key(item) for item in existing}
-            for item in discovered:
-                key = _safe_key(item)
-                if key not in existing_keys:
-                    existing.append(item)
-                    existing_keys.add(key)
-
-        def _model_key(model: Any) -> Any:
-            return ("model", getattr(model, "provider", None), getattr(model, "id", None))
-
-        def _db_key(db: Any) -> Any:
-            return ("db", getattr(db, "id", None) or id(db))
-
-        def _vector_db_key(vector_db: Any) -> Any:
-            return ("vector_db", getattr(vector_db, "id", None) or getattr(vector_db, "name", None) or id(vector_db))
-
-        _merge(self.registry.models, collector.models, _model_key)
-        # Tools dedupe by object identity, not by name: two distinct tools that
-        # share a name (two toolkit instances with the same name, or multiple
-        # lambdas/functools.partial callables) must both be kept. Keying by name
-        # would silently drop one and break rehydration of agents that use it.
-        _merge(self.registry.tools, collector.tools, id)
-        _merge(self.registry.dbs, collector.dbs, _db_key)
-        _merge(self.registry.vector_dbs, collector.vector_dbs, _vector_db_key)
-
-        # registry.tools may have grown: drop the cached entrypoint lookup so
-        # rehydrate_function() rebuilds it and can see the newly discovered
-        # tools. _entrypoint_lookup is a cached_property derived from tools, so
-        # without this, tools added on a later resync() stay invisible to it.
-        self.registry.__dict__.pop("_entrypoint_lookup", None)
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.

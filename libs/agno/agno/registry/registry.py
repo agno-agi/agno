@@ -62,6 +62,64 @@ class Registry:
         func.entrypoint = self._entrypoint_lookup.get(func.name)
         return func
 
+    def add_model(self, model: Any) -> None:
+        """Add a model unless an equivalent one (same provider and id) is already present.
+
+        Models that share a provider and id are interchangeable catalog entries,
+        so duplicates are collapsed. Non-Model values (e.g. plain string ids) are ignored.
+        """
+        if not isinstance(model, Model):
+            return
+        key = (getattr(model, "provider", None), getattr(model, "id", None))
+        if any((getattr(m, "provider", None), getattr(m, "id", None)) == key for m in self.models):
+            return
+        self.models.append(model)
+
+    def add_tool(self, tool: Any) -> None:
+        """Add a tool unless the exact same object is already present.
+
+        Tools dedupe by object identity, never by name: two distinct tools that
+        share a name (two toolkit instances with the same name, or multiple
+        ``<lambda>``/``functools.partial`` callables) must both be kept, otherwise
+        one is silently dropped and rehydration of the agent that uses it breaks.
+        Adding a tool invalidates the ``_entrypoint_lookup`` cache so that
+        ``rehydrate_function`` rebuilds it and sees the new tool.
+        """
+        if not (isinstance(tool, (Toolkit, Function)) or callable(tool)):
+            return
+        if any(existing is tool for existing in self.tools):
+            return
+        self.tools.append(tool)
+        self.__dict__.pop("_entrypoint_lookup", None)
+
+    def add_db(self, db: Any) -> None:
+        """Add a database unless one with the same id (or the same instance) is already present.
+
+        Only synchronous ``BaseDb`` instances are tracked, matching the registry's
+        db rehydration which is synchronous (see ``get_db``).
+        """
+        if not isinstance(db, BaseDb):
+            return
+        db_id = getattr(db, "id", None)
+        if db_id is not None:
+            if any(getattr(d, "id", None) == db_id for d in self.dbs):
+                return
+        elif any(d is db for d in self.dbs):
+            return
+        self.dbs.append(db)
+
+    def add_vector_db(self, vector_db: Any) -> None:
+        """Add a vector db unless one with the same id/name (or the same instance) is already present."""
+        if not isinstance(vector_db, VectorDb):
+            return
+        key = getattr(vector_db, "id", None) or getattr(vector_db, "name", None)
+        if key is not None:
+            if any((getattr(v, "id", None) or getattr(v, "name", None)) == key for v in self.vector_dbs):
+                return
+        elif any(v is vector_db for v in self.vector_dbs):
+            return
+        self.vector_dbs.append(vector_db)
+
     def get_schema(self, name: str) -> Optional[Type[BaseModel]]:
         """Get a schema by name."""
         if self.schemas:

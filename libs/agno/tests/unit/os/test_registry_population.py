@@ -367,6 +367,29 @@ class TestPopulateRegistryComponentsNested:
         assert ("openai", "outer-model") in keys
         assert ("openai", "coordinator-model") in keys
 
+    def test_workflow_coordinator_and_step_team_models_collected(self):
+        # Regression: the model on a workflow's coordinator agent and the model
+        # on a team used inside a workflow step must both be collected.
+        from agno.workflow.agent import WorkflowAgent
+
+        coordinator = WorkflowAgent(model=_model("coordinator-model"))
+        member = Agent(name="M", id="m", model=_model("member-model"), telemetry=False)
+        team = Team(name="T", id="t", members=[member], model=_model("team-model"), telemetry=False)
+
+        workflow = Workflow(
+            name="WF",
+            id="wf",
+            agent=coordinator,
+            steps=[Step(name="team-step", team=team)],
+        )
+
+        os = AgentOS(workflows=[workflow], telemetry=False)
+
+        keys = _model_keys(os.registry)
+        assert ("openai", "coordinator-model") in keys
+        assert ("openai", "team-model") in keys
+        assert ("openai", "member-model") in keys
+
     def test_workflow_condition_and_router_branches_traversed(self):
         # Each agent carries a uniquely-identifiable model so we can assert it
         # was reached through the corresponding branch/route.
