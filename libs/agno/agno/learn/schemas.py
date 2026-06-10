@@ -250,9 +250,9 @@ class Memories:
             return None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict, excluding internal fields that duplicate the row columns."""
+        """Convert to dict. Works with subclasses."""
         try:
-            return _to_dict_excluding_internal(self)
+            return asdict(self)
         except Exception as e:
             log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}

@@ -56,8 +56,9 @@ class TestUpdateMemory:
 
 
 class TestToDictExcludesInternalFields:
-    """Internal audit/identity fields mirror the agno_learnings row columns, so they must
-    not be duplicated (as nulls) inside the persisted content. user_id is kept for round-trip."""
+    """UserProfile drops its internal audit/identity fields from content (they mirror the
+    agno_learnings row columns and would always be null). Scoped to UserProfile only;
+    Memories keeps its full serialization. user_id is kept for round-trip."""
 
     def test_profile_drops_internal_fields(self):
         content = UserProfile(user_id="u1", name="lm", preferred_name="neha").to_dict()
@@ -65,13 +66,13 @@ class TestToDictExcludesInternalFields:
         for f in ("agent_id", "team_id", "created_at", "updated_at"):
             assert f not in content
 
-    def test_memories_drops_parent_internal_but_keeps_entry_timestamps(self):
+    def test_memories_keeps_parent_fields_and_entry_timestamps(self):
         m = Memories(user_id="u1")
         m.add_memory("likes Python")
         content = m.to_dict()
-        # Parent-level internal fields are gone...
-        assert set(content.keys()) == {"user_id", "memories"}
-        # ...but the per-memory timestamps inside the entries survive.
+        # Memories keeps its full serialization (parent internal fields included)...
+        assert "created_at" in content and "agent_id" in content
+        # ...and the per-memory timestamps inside the entries are present.
         entry = content["memories"][0]
         assert "created_at" in entry and "updated_at" in entry
 
