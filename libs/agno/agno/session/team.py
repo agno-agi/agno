@@ -42,10 +42,18 @@ class TeamSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        session_dict = asdict(self)
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
+        # Exclude runs from asdict to avoid the deep serialization cost when not needed
+        runs, self.runs = self.runs, None
+        try:
+            session_dict = asdict(self)
+        finally:
+            self.runs = runs
 
-        session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        if include_runs:
+            session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        else:
+            session_dict.pop("runs", None)
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict

@@ -43,33 +43,36 @@ class WorkflowSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
 
-        runs_data: Optional[List[Dict[str, Any]]] = None
-        if self.runs:
-            runs_data = []
-            for run in self.runs:
-                try:
-                    if isinstance(run, dict):
-                        runs_data.append(run)  # type: ignore[arg-type]
-                    else:
-                        runs_data.append(run.to_dict())
-                except Exception as e:
-                    raise ValueError(f"Serialization failed: {str(e)}")
-
-        return {
+        session_dict = {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "workflow_id": self.workflow_id,
             "workflow_name": self.workflow_name,
-            "runs": runs_data,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
             "metadata": self.metadata,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+        if include_runs:
+            runs_data: Optional[List[Dict[str, Any]]] = None
+            if self.runs:
+                runs_data = []
+                for run in self.runs:
+                    try:
+                        if isinstance(run, dict):
+                            runs_data.append(run)  # type: ignore[arg-type]
+                        else:
+                            runs_data.append(run.to_dict())
+                    except Exception as e:
+                        raise ValueError(f"Serialization failed: {str(e)}")
+            session_dict["runs"] = runs_data
+
+        return session_dict
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[WorkflowSession]:

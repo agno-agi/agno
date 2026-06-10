@@ -36,6 +36,7 @@ class BaseDb(ABC):
     def __init__(
         self,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -55,6 +56,7 @@ class BaseDb(ABC):
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
+        self.runs_table_name = runs_table or "agno_runs"
         self.culture_table_name = culture_table or "agno_culture"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
@@ -78,6 +80,7 @@ class BaseDb(ABC):
         return {
             "id": self.id,
             "session_table": self.session_table_name,
+            "runs_table": self.runs_table_name,
             "culture_table": self.culture_table_name,
             "memory_table": self.memory_table_name,
             "metrics_table": self.metrics_table_name,
@@ -102,6 +105,7 @@ class BaseDb(ABC):
         """
         return cls(
             session_table=data.get("session_table"),
+            runs_table=data.get("runs_table"),
             culture_table=data.get("culture_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
@@ -1102,6 +1106,7 @@ class AsyncBaseDb(ABC):
         self,
         id: Optional[str] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -1117,6 +1122,7 @@ class AsyncBaseDb(ABC):
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
+        self.runs_table_name = runs_table or "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"

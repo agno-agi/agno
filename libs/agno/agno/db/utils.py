@@ -1,6 +1,7 @@
 """Logic shared across different database implementations"""
 
 import json
+import time
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 DB_TABLE_NAME_KEYS: frozenset = frozenset(
     {
         "session_table",
+        "runs_table",
         "culture_table",
         "memory_table",
         "metrics_table",
@@ -121,6 +123,82 @@ def deserialize_sessions(session_type: Optional["SessionType"], records: List[Di
         List of Session subclass instances.
     """
     return [deserialize_session(session_type, record) for record in records]
+
+
+def get_run_type(run: Any) -> str:
+    """Return the run type ("agent", "team" or "workflow") for the given run object or dict."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.run.workflow import WorkflowRunOutput
+
+    if isinstance(run, RunOutput):
+        return "agent"
+    if isinstance(run, TeamRunOutput):
+        return "team"
+    if isinstance(run, WorkflowRunOutput):
+        return "workflow"
+    if isinstance(run, dict):
+        if run.get("agent_id"):
+            return "agent"
+        if run.get("team_id"):
+            return "team"
+        return "workflow"
+    raise ValueError(f"Cannot determine run type for: {type(run)}")
+
+
+def deserialize_run(run_type: Optional[str], run_data: Dict[str, Any]) -> Any:
+    """Deserialize a run dict into the correct run output class based on its type."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.run.workflow import WorkflowRunOutput
+
+    if run_type is None:
+        run_type = get_run_type(run_data)
+    if run_type == "agent":
+        return RunOutput.from_dict(run_data)
+    if run_type == "team":
+        return TeamRunOutput.from_dict(run_data)
+    if run_type == "workflow":
+        return WorkflowRunOutput.from_dict(run_data)
+    raise ValueError(f"Invalid run type: {run_type}")
+
+
+def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
+    """Build runs-table rows for every run in the given session.
+
+    Args:
+        session: The session whose runs should be persisted.
+
+    Returns:
+        List of row dicts matching the runs table schema (run_data is the raw run dict).
+    """
+    current_time = int(time.time())
+    rows: List[Dict[str, Any]] = []
+    for run_index, run in enumerate(session.runs or []):
+        run_id = run.get("run_id") if isinstance(run, dict) else getattr(run, "run_id", None)
+        if run_id is None:
+            continue
+
+        run_data = run if isinstance(run, dict) else run.to_dict()
+        rows.append(
+            {
+                "run_id": run_id,
+                "session_id": session.session_id,
+                "run_type": get_run_type(run),
+                "agent_id": run_data.get("agent_id"),
+                "team_id": run_data.get("team_id"),
+                "workflow_id": run_data.get("workflow_id"),
+                "user_id": session.user_id,
+                "parent_run_id": run_data.get("parent_run_id"),
+                "status": run_data.get("status"),
+                "run_index": run_index,
+                "run_data": run_data,
+                "created_at": run_data.get("created_at") or current_time,
+                "updated_at": current_time,
+            }
+        )
+
+    return rows
 
 
 async def resolve_session_type(

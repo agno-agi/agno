@@ -27,18 +27,24 @@ from agno.db.sqlite.utils import (
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import (
+    CustomJSONEncoder,
+    build_run_rows_for_session,
+    deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
     serialize_session_json_fields,
 )
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, or_, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, null, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -54,6 +60,7 @@ class SqliteDb(BaseDb):
         db_engine: Optional[Engine] = None,
         db_url: Optional[str] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -85,6 +92,7 @@ class SqliteDb(BaseDb):
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_url (Optional[str]): The database URL to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
+            runs_table (Optional[str]): Name of the table to store the runs of each session.
             culture_table (Optional[str]): Name of the table to store cultural notions.
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
@@ -111,6 +119,7 @@ class SqliteDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
@@ -170,6 +179,7 @@ class SqliteDb(BaseDb):
             db_file=data.get("db_file"),
             db_url=data.get("db_url"),
             session_table=data.get("session_table"),
+            runs_table=data.get("runs_table"),
             culture_table=data.get("culture_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
@@ -214,6 +224,7 @@ class SqliteDb(BaseDb):
         """Create all tables for the database."""
         tables_to_create = [
             (self.session_table_name, "sessions"),
+            (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
@@ -428,6 +439,7 @@ class SqliteDb(BaseDb):
             "traces": self.trace_table_name,
             "spans": self.span_table_name,
             "sessions": self.session_table_name,
+            "runs": self.runs_table_name,
             "memories": self.memory_table_name,
             "metrics": self.metrics_table_name,
             "evals": self.eval_table_name,
@@ -445,6 +457,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
+
+        elif table_type == "runs":
+            self.runs_table = self._get_or_create_table(
+                table_name=self.runs_table_name,
+                table_type="runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.runs_table
 
         elif table_type == "memories":
             self.memory_table = self._get_or_create_table(
@@ -654,6 +674,219 @@ class SqliteDb(BaseDb):
             )
             sess.execute(stmt)
 
+    # -- Run methods --
+    def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order."""
+        stmt = (
+            select(runs_table.c.run_data)
+            .where(runs_table.c.session_id == session_id)
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+        )
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
+
+    def _get_sessions_runs_data(
+        self, sess, runs_table: Table, session_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Get the raw run_data dicts for the given sessions, grouped by session_id."""
+        if not session_ids:
+            return {}
+        stmt = (
+            select(runs_table.c.session_id, runs_table.c.run_data)
+            .where(runs_table.c.session_id.in_(session_ids))
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+        )
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        for session_id, run_data in sess.execute(stmt).fetchall():
+            if isinstance(run_data, str):
+                run_data = json.loads(run_data)
+            runs_by_session.setdefault(session_id, []).append(run_data)
+        return runs_by_session
+
+    def _store_session_runs(self, sess, runs_table: Table, session: Session) -> None:
+        """Upsert every run of the given session into the runs table."""
+        rows = build_run_rows_for_session(session=session)
+        if not rows:
+            return
+
+        for row in rows:
+            row["run_data"] = json.dumps(row["run_data"], cls=CustomJSONEncoder)
+
+        stmt = sqlite.insert(runs_table)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["run_id"],
+            set_=dict(
+                status=stmt.excluded.status,
+                run_index=stmt.excluded.run_index,
+                run_data=stmt.excluded.run_data,
+                user_id=stmt.excluded.user_id,
+                parent_run_id=stmt.excluded.parent_run_id,
+                updated_at=stmt.excluded.updated_at,
+            ),
+        )
+        sess.execute(stmt, rows)
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to read.
+            deserialize (Optional[bool]): Whether to deserialize the run. Defaults to True.
+
+        Returns:
+            - When deserialize=True: RunOutput, TeamRunOutput or WorkflowRunOutput object
+            - When deserialize=False: Run row dictionary
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return None
+
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.run_id == run_id)).fetchone()
+                if result is None:
+                    return None
+
+                run_row = dict(result._mapping)
+                if isinstance(run_row.get("run_data"), str):
+                    run_row["run_data"] = json.loads(run_row["run_data"])
+
+            if not deserialize:
+                return run_row
+
+            return deserialize_run(run_row.get("run_type"), run_row["run_data"])
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get all runs matching the given filters.
+
+        Args:
+            session_id (Optional[str]): The ID of the session to filter by.
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            status (Optional[RunStatus]): The run status to filter by.
+            limit (Optional[int]): The maximum number of runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
+            sort_order (Optional[str]): The sort order.
+            deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+
+        Returns:
+            - When deserialize=True: List of run output objects
+            - When deserialize=False: Tuple of (run row dictionaries, total count)
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            with self.Session() as sess:
+                stmt = select(table)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if status is not None:
+                    status_value = status.value if isinstance(status, RunStatus) else status
+                    stmt = stmt.where(table.c.status == status_value)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                if sort_by is not None:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                else:
+                    stmt = stmt.order_by(table.c.run_index.asc(), table.c.created_at.asc())
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                records = sess.execute(stmt).fetchall()
+                run_rows = []
+                for record in records:
+                    run_row = dict(record._mapping)
+                    if isinstance(run_row.get("run_data"), str):
+                        run_row["run_data"] = json.loads(run_row["run_data"])
+                    run_rows.append(run_row)
+
+            if not deserialize:
+                return run_rows, total_count
+
+            return [deserialize_run(row.get("run_type"), row["run_data"]) for row in run_rows]
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to delete.
+
+        Returns:
+            bool: True if the run was deleted, False otherwise.
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return False
+
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.run_id == run_id))
+                return result.rowcount > 0
+
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs from the runs table.
+
+        Args:
+            run_ids (List[str]): The IDs of the runs to delete.
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+
+            log_debug(f"Successfully deleted {result.rowcount} runs")
+
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
+
     # -- Session methods --
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
@@ -671,6 +904,7 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return False
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -680,9 +914,13 @@ class SqliteDb(BaseDb):
                 if result.rowcount == 0:
                     log_debug(f"No session found to delete with session_id: {session_id}")
                     return False
-                else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id}")
-                    return True
+
+                # Also delete the runs belonging to the session
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+
+                log_debug(f"Successfully deleted session with session_id: {session_id}")
+                return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -703,12 +941,20 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
+
+                # Also delete the runs belonging to the sessions
+                if runs_table is not None:
+                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(session_ids))
+                    if user_id is not None:
+                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
@@ -744,6 +990,7 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return None
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -757,6 +1004,14 @@ class SqliteDb(BaseDb):
                     return None
 
                 session_raw = deserialize_session_json_fields(dict(result._mapping))
+
+                # Attach the runs stored in the runs table. If the session has no rows in the
+                # runs table, fall back to the legacy `runs` column content, if any.
+                if session_raw is not None and runs_table is not None:
+                    runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
+                    if runs_data or not session_raw.get("runs"):
+                        session_raw["runs"] = runs_data
+
                 if not session_raw or not deserialize:
                     return session_raw
 
@@ -808,6 +1063,7 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return [] if deserialize else ([], 0)
+            runs_table = self._get_table(table_type="runs")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -855,6 +1111,18 @@ class SqliteDb(BaseDb):
                     return [] if deserialize else ([], 0)
 
                 sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
+
+                # Attach the runs stored in the runs table. If a session has no rows in the
+                # runs table, fall back to its legacy `runs` column content, if any.
+                if runs_table is not None and sessions_raw:
+                    runs_by_session = self._get_sessions_runs_data(
+                        sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in sessions_raw]
+                    )
+                    for s in sessions_raw:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        if runs_data or not s.get("runs"):
+                            s["runs"] = runs_data
+
                 if not deserialize:
                     return sessions_raw, total_count
                 if not sessions_raw:
@@ -934,123 +1202,77 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
 
-            serialized_session = serialize_session_json_fields(session.to_dict())
+            serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
 
             if isinstance(session, AgentSession):
-                with self.Session() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.AGENT.value,
-                        agent_id=serialized_session.get("agent_id"),
-                        user_id=serialized_session.get("user_id"),
-                        agent_data=serialized_session.get("agent_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            agent_id=serialized_session.get("agent_id"),
-                            user_id=serialized_session.get("user_id"),
-                            runs=serialized_session.get("runs"),
-                            summary=serialized_session.get("summary"),
-                            agent_data=serialized_session.get("agent_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
-
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return AgentSession.from_dict(session_raw)
-
+                values = dict(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=serialized_session.get("agent_id"),
+                    user_id=serialized_session.get("user_id"),
+                    agent_data=serialized_session.get("agent_data"),
+                    session_data=serialized_session.get("session_data"),
+                    summary=serialized_session.get("summary"),
+                    metadata=serialized_session.get("metadata"),
+                )
             elif isinstance(session, TeamSession):
-                with self.Session() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.TEAM.value,
-                        team_id=serialized_session.get("team_id"),
-                        user_id=serialized_session.get("user_id"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
-                        team_data=serialized_session.get("team_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                    )
-
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            team_id=serialized_session.get("team_id"),
-                            user_id=serialized_session.get("user_id"),
-                            summary=serialized_session.get("summary"),
-                            runs=serialized_session.get("runs"),
-                            team_data=serialized_session.get("team_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
-
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return TeamSession.from_dict(session_raw)
-
+                values = dict(
+                    session_type=SessionType.TEAM.value,
+                    team_id=serialized_session.get("team_id"),
+                    user_id=serialized_session.get("user_id"),
+                    team_data=serialized_session.get("team_data"),
+                    session_data=serialized_session.get("session_data"),
+                    summary=serialized_session.get("summary"),
+                    metadata=serialized_session.get("metadata"),
+                )
             else:
-                with self.Session() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.WORKFLOW.value,
-                        workflow_id=serialized_session.get("workflow_id"),
-                        user_id=serialized_session.get("user_id"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at") or int(time.time()),
-                        updated_at=serialized_session.get("updated_at") or int(time.time()),
-                        workflow_data=serialized_session.get("workflow_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                    )
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            workflow_id=serialized_session.get("workflow_id"),
-                            user_id=serialized_session.get("user_id"),
-                            summary=serialized_session.get("summary"),
-                            runs=serialized_session.get("runs"),
-                            workflow_data=serialized_session.get("workflow_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = sess.execute(stmt)
-                    row = result.fetchone()
+                values = dict(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=serialized_session.get("workflow_id"),
+                    user_id=serialized_session.get("user_id"),
+                    workflow_data=serialized_session.get("workflow_data"),
+                    session_data=serialized_session.get("session_data"),
+                    summary=serialized_session.get("summary"),
+                    metadata=serialized_session.get("metadata"),
+                )
 
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return WorkflowSession.from_dict(session_raw)
+            update_values = {k: v for k, v in values.items() if k != "session_type"}
+            # Clear the legacy runs column if it still exists. Runs are stored in the runs table.
+            if "runs" in table.c:
+                update_values["runs"] = null()
+
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    session_id=serialized_session.get("session_id"),
+                    created_at=serialized_session.get("created_at") or int(time.time()),
+                    updated_at=serialized_session.get("created_at") or int(time.time()),
+                    **values,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["session_id"],
+                    set_=dict(updated_at=int(time.time()), **update_values),
+                    where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
+                )
+                stmt = stmt.returning(*table.columns)  # type: ignore
+                result = sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                session_raw = deserialize_session_json_fields(dict(row._mapping))
+
+                # Persist the new and modified runs into the runs table
+                if runs_table is not None:
+                    self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
+
+            if not deserialize:
+                session_raw["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+                return session_raw
+
+            session_raw.pop("runs", None)
+            upserted_session = deserialize_session(None, session_raw)
+            upserted_session.runs = session.runs  # type: ignore[union-attr]
+            return upserted_session
 
         except Exception as e:
             log_warning(f"Exception upserting into table: {str(e)}")
@@ -1104,6 +1326,18 @@ class SqliteDb(BaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+
+            sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions}
+
+            def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
+                original_session = sessions_by_id.get(session_dict.get("session_id"))  # type: ignore[arg-type]
+                session_dict["runs"] = [
+                    run if isinstance(run, dict) else run.to_dict()
+                    for run in (original_session.runs if original_session else None) or []
+                ]
+                return session_dict
+
             results: List[Union[Session, Dict[str, Any]]] = []
 
             with self.Session() as sess, sess.begin():
@@ -1111,7 +1345,7 @@ class SqliteDb(BaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
@@ -1123,7 +1357,6 @@ class SqliteDb(BaseDb):
                                 "agent_data": serialized_session.get("agent_data"),
                                 "session_data": serialized_session.get("session_data"),
                                 "metadata": serialized_session.get("metadata"),
-                                "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
                                 "updated_at": updated_at,
@@ -1140,12 +1373,15 @@ class SqliteDb(BaseDb):
                                 agent_data=stmt.excluded.agent_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, agent_data)
+
+                        if runs_table is not None:
+                            for session in agent_sessions:
+                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
@@ -1153,7 +1389,7 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_agent_session = AgentSession.from_dict(session_dict)
                                 if deserialized_agent_session is None:
@@ -1166,7 +1402,7 @@ class SqliteDb(BaseDb):
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
@@ -1175,7 +1411,6 @@ class SqliteDb(BaseDb):
                                 "session_type": SessionType.TEAM.value,
                                 "team_id": serialized_session.get("team_id"),
                                 "user_id": serialized_session.get("user_id"),
-                                "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
                                 "updated_at": updated_at,
@@ -1195,12 +1430,15 @@ class SqliteDb(BaseDb):
                                 team_data=stmt.excluded.team_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, team_data)
+
+                        if runs_table is not None:
+                            for session in team_sessions:
+                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
@@ -1208,7 +1446,7 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_team_session = TeamSession.from_dict(session_dict)
                                 if deserialized_team_session is None:
@@ -1221,7 +1459,7 @@ class SqliteDb(BaseDb):
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
@@ -1230,7 +1468,6 @@ class SqliteDb(BaseDb):
                                 "session_type": SessionType.WORKFLOW.value,
                                 "workflow_id": serialized_session.get("workflow_id"),
                                 "user_id": serialized_session.get("user_id"),
-                                "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
                                 "updated_at": updated_at,
@@ -1250,12 +1487,15 @@ class SqliteDb(BaseDb):
                                 workflow_data=stmt.excluded.workflow_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
                         )
                         sess.execute(stmt, workflow_data)
+
+                        if runs_table is not None:
+                            for session in workflow_sessions:
+                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]
@@ -1263,7 +1503,7 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
                                 if deserialized_workflow_session is None:
@@ -1805,14 +2045,20 @@ class SqliteDb(BaseDb):
             table = self._get_table(table_type="sessions")
             if table is None:
                 return []
+            runs_table = self._get_table(table_type="runs")
 
-            stmt = select(
+            columns = [
+                table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
-                table.c.runs,
                 table.c.created_at,
                 table.c.session_type,
-            )
+            ]
+            # Include the legacy runs column if it still exists, to count not yet migrated runs
+            if "runs" in table.c:
+                columns.append(table.c.runs)
+
+            stmt = select(*columns)
 
             if start_timestamp is not None:
                 stmt = stmt.where(table.c.created_at >= start_timestamp)
@@ -1821,7 +2067,29 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
-                return [record._mapping for record in result]
+                sessions = [dict(record._mapping) for record in result]
+
+                # Attach lightweight run info (model and provider) from the runs table
+                if runs_table is not None and sessions:
+                    session_ids = [s["session_id"] for s in sessions]
+                    runs_stmt = select(
+                        runs_table.c.session_id,
+                        func.json_extract(runs_table.c.run_data, "$.model").label("model"),
+                        func.json_extract(runs_table.c.run_data, "$.model_provider").label("model_provider"),
+                    ).where(runs_table.c.session_id.in_(session_ids))
+
+                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                    for session_id, model, model_provider in sess.execute(runs_stmt).fetchall():
+                        runs_by_session.setdefault(session_id, []).append(
+                            {"model": model, "model_provider": model_provider}
+                        )
+
+                    for s in sessions:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        if runs_data or not s.get("runs"):
+                            s["runs"] = runs_data
+
+                return sessions
 
         except Exception as e:
             log_error(f"Error reading from sessions table: {str(e)}")
