@@ -31,7 +31,16 @@ from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 
 
 class CompositeAuthorizationProvider(AuthorizationProvider):
-    """Allow if ANY of the wrapped providers allows (union of grants)."""
+    """Allow if ANY of the wrapped providers allows (union of grants).
+
+    INVARIANT: every provider in the list is a GRANT source. Because the
+    composition is an OR, a provider can only ever *widen* access — it can never
+    restrict what another provider grants. Do NOT add a provider whose purpose is
+    to deny (an IP fence, a compliance/step-up gate); under OR its "deny" is
+    silently overridden by any other provider's "allow". Such a control belongs
+    upstream (middleware) or inside a single provider's own logic, not as a peer
+    in this list.
+    """
 
     def __init__(self, providers: List[AuthorizationProvider]):
         if not providers:
@@ -39,6 +48,13 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
         self.providers = list(providers)
 
     def check(self, ctx: AuthorizationContext) -> bool:
+        # A non-resource check (no resource_type/action) isn't expressible as a
+        # per-resource decision; by contract every provider DEFERS it to the route
+        # gate (authorize_route). Encode that deferral uniformly here rather than
+        # OR-ing the providers' vacuous "True"s — otherwise a provider that DID
+        # mean to deny a non-resource check would be silently overridden.
+        if not ctx.resource_type or not ctx.action:
+            return True
         return any(p.check(ctx) for p in self.providers)
 
     def authorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:

@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from agno.os.scopes import AgentOSScope
+
 if TYPE_CHECKING:
     from agno.os.authz.role_store import ManagedRoleStore
     from agno.os.authz.user_store import ManagedUserStore
@@ -81,7 +83,7 @@ def get_roles_router(
         principal_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}
         token_scopes = getattr(request.state, "scopes", []) or []
-        admin_scope = getattr(request.state, "admin_scope", None) or "agent_os:admin"
+        admin_scope = getattr(request.state, "admin_scope", None) or AgentOSScope.ADMIN.value
         if admin_scope in token_scopes or store.can_manage(principal_id, claims):
             return principal_id or ""
         raise HTTPException(status_code=403, detail="Admin privileges required to manage roles")
