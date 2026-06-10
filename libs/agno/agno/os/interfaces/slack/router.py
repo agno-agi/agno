@@ -35,6 +35,71 @@ _IGNORED_SUBTYPES = frozenset(
     }
 )
 
+# OpenAPI docs for the Slack endpoints. Live here (not in the docs repo's
+# openapi.yaml) so spec regeneration from /openapi.json reproduces them.
+_SLACK_SIGNATURE_HEADER_PARAMS = [
+    {
+        "name": "X-Slack-Request-Timestamp",
+        "in": "header",
+        "required": True,
+        "schema": {"type": "string"},
+        "description": "Unix timestamp when Slack sent the request",
+    },
+    {
+        "name": "X-Slack-Signature",
+        "in": "header",
+        "required": True,
+        "schema": {"type": "string"},
+        "description": "HMAC signature for request verification (v0=hash)",
+    },
+]
+
+_EVENTS_DESCRIPTION = """Receives incoming Slack events (messages, mentions, thread starts).
+
+**URL Verification:** On first setup, Slack sends a `url_verification` challenge. The endpoint echoes back the challenge string.
+
+**Event Processing:** Normal events are acknowledged immediately with `{"status": "ok"}` and processed in the background. This prevents Slack's 3-second retry timeout.
+
+**Retry Handling:** Events with `X-Slack-Retry-Num` header are duplicates and return 200 without reprocessing.
+
+**Setup:** Configure this URL in your [Slack App](https://api.slack.com/apps) under **Event Subscriptions > Request URL**.
+
+See the [setup guide](/agent-os/interfaces/slack/setup) for creating a Slack App or use the [manifest](/agent-os/interfaces/slack/setup#2-create-the-slack-app) for quick setup.
+"""
+
+_INTERACTIONS_DESCRIPTION = """Handles Slack interactive components for Human-in-the-Loop (HITL) workflows.
+
+**Supported Actions:**
+- `row_approve` - Approve a pending tool call
+- `row_reject` - Reject a pending tool call
+- `submit_pause` - Submit form data for a paused workflow
+
+**Setup:** Configure this URL in your [Slack App](https://api.slack.com/apps) under **Interactivity & Shortcuts > Request URL**.
+
+See the [setup guide](/agent-os/interfaces/slack/setup) for step-by-step instructions or the [HITL guide](/agent-os/interfaces/slack/hitl) for approval workflows.
+"""
+
+_INTERACTIONS_REQUEST_BODY = {
+    "required": True,
+    "content": {
+        "application/x-www-form-urlencoded": {
+            "schema": {
+                "type": "object",
+                "required": ["payload"],
+                "properties": {
+                    "payload": {
+                        "type": "string",
+                        "description": (
+                            "URL-encoded JSON interaction payload "
+                            "(Slack sends interactive component data as a single form field)"
+                        ),
+                    }
+                },
+            }
+        }
+    },
+}
+
 
 class SlackEventResponse(BaseModel):
     status: str = Field(default="ok")
@@ -113,13 +178,26 @@ def attach_routes(
         "/events",
         operation_id=f"slack_events_{op_suffix}",
         name="slack_events",
-        description="Process incoming Slack events",
+        description=_EVENTS_DESCRIPTION,
         response_model=Union[SlackChallengeResponse, SlackEventResponse],
         response_model_exclude_none=True,
         responses={
             200: {"description": "Event processed successfully"},
-            400: {"description": "Missing Slack headers"},
-            403: {"description": "Invalid Slack signature"},
+            400: {"description": "Missing required Slack headers (X-Slack-Request-Timestamp or X-Slack-Signature)"},
+            403: {"description": "Invalid Slack signature - signing secret mismatch"},
+            500: {"description": "SLACK_SIGNING_SECRET is not set (checked on each request, not at startup)"},
+        },
+        openapi_extra={
+            "parameters": _SLACK_SIGNATURE_HEADER_PARAMS
+            + [
+                {
+                    "name": "X-Slack-Retry-Num",
+                    "in": "header",
+                    "required": False,
+                    "schema": {"type": "string"},
+                    "description": "Retry attempt number (present on retried events)",
+                }
+            ]
         },
     )
     async def slack_events(request: Request, background_tasks: BackgroundTasks):
@@ -175,13 +253,17 @@ def attach_routes(
         "/interactions",
         operation_id=f"slack_interactions_{op_suffix}",
         name="slack_interactions",
-        description="Handle Slack interactive components (HITL buttons / form submit)",
+        description=_INTERACTIONS_DESCRIPTION,
         response_model=SlackEventResponse,
         response_model_exclude_none=True,
         responses={
             200: {"description": "Interaction accepted"},
-            400: {"description": "Malformed interaction payload"},
-            403: {"description": "Invalid Slack signature"},
+            400: {"description": "Malformed interaction payload or missing payload field"},
+            403: {"description": "Invalid Slack signature - signing secret mismatch"},
+        },
+        openapi_extra={
+            "parameters": _SLACK_SIGNATURE_HEADER_PARAMS,
+            "requestBody": _INTERACTIONS_REQUEST_BODY,
         },
     )
     async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
