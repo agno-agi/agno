@@ -9,20 +9,25 @@ Demonstrates the two halves of the K2 vector-DB isolation feature:
   2. An admin uploads "company-wide" content without an owner. That ends
      up in the SHARED bucket and is visible to BOTH Alice and Bob.
 
-How it works under the hood:
+How it works under the hood (pgvector):
 
-  * Every chunk written to pgvector carries a ``user_id`` in its JSONB
-    metadata. Owned chunks carry the uploader's id (e.g. ``"alice"``);
-    shared chunks carry the sentinel ``"__shared__"``.
+  * The pgvector schema has a top-level ``user_id`` column (nullable,
+    B-tree indexed). Owned chunks carry the uploader's id; shared chunks
+    carry ``NULL``.
 
   * Retrieval (``Knowledge.asearch(user_id=...)``) compiles to a
-    server-side WHERE clause that matches the caller's chunks OR the
-    shared bucket — i.e. ``WHERE meta_data @> '{"user_id": "alice"}' OR
-    meta_data @> '{"user_id": "__shared__"}'``. The filter is pushed
-    down before vector ranking, so top-K math stays correct.
+    server-side WHERE clause: ``WHERE user_id = 'alice' OR user_id IS
+    NULL``. The filter is pushed down before vector ranking via the
+    user_id B-tree, so top-K math stays correct AND the planner can
+    prune most rows before doing distance math.
 
-  * When you pass ``user_id=None``, no owner predicate is added. That's
-    the admin / debugging path — admins can see everything.
+  * When you pass ``user_id=None``, no owner predicate is added — admin
+    / debugging path. Admins see everything.
+
+Each vector backend implements isolation using whatever primitive it was
+designed for. pgvector uses a column; Chroma uses per-user collections;
+Pinecone uses namespaces. The ``Knowledge.asearch(user_id=...)`` API is
+identical across all of them — the per-backend translation is internal.
 
 Prerequisites:
 
@@ -61,6 +66,16 @@ async def main() -> None:
     # ------------------------------------------------------------------
     vector_db = PgVector(table_name="per_user_isolation_demo", db_url=DB_URL)
 
+    # Drop any pre-existing table so we start with the current schema. If
+    # you ran an earlier version of this cookbook (or anything that
+    # created the table before pgvector grew a ``user_id`` column), the
+    # legacy table would lack that column and every row would look like
+    # shared content to the new WHERE clause — isolation would silently
+    # fail. Starting clean avoids that footgun. In production, run a real
+    # migration; here we just drop-and-reingest.
+    await vector_db.async_drop()
+    await vector_db.async_create()
+
     knowledge = Knowledge(
         name="per_user_demo",
         description="Per-user RAG isolation demo",
@@ -97,8 +112,10 @@ async def main() -> None:
         ),
         name="company_holidays",
         # No ``user_id`` — this is org-wide / admin-uploaded shared content.
-        # K2 stamps the chunks with the SHARED sentinel so both Alice and
-        # Bob can retrieve them.
+        # In pgvector the column stores NULL; scoped searches match it via
+        # ``user_id = caller OR user_id IS NULL``. Other backends use
+        # whatever primitive applies (shared collection, shared namespace,
+        # etc.) — the cookbook API stays the same.
     )
 
     # ------------------------------------------------------------------

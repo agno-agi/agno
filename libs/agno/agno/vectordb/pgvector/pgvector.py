@@ -187,6 +187,13 @@ class PgVector(VectorDb):
             Column("updated_at", DateTime(timezone=True), onupdate=func.now()),
             Column("content_hash", String),
             Column("content_id", String),
+            # Owner column for per-user RAG isolation. ``NULL`` means
+            # "shared / org-wide" content — readable by everyone, including
+            # admin/unscoped callers. A non-NULL value scopes the chunk to
+            # that user; scoped searches return ``WHERE user_id = caller
+            # OR user_id IS NULL`` so users see their own chunks plus shared.
+            # See agno.knowledge.knowledge for the wrapper that drives this.
+            Column("user_id", String, nullable=True),
             extend_existing=True,
         )
 
@@ -195,6 +202,11 @@ class PgVector(VectorDb):
         Index(f"idx_{self.table_name}_name", table.c.name)
         Index(f"idx_{self.table_name}_content_hash", table.c.content_hash)
         Index(f"idx_{self.table_name}_content_id", table.c.content_id)
+        # B-tree on user_id for fast scope filtering. The isolation
+        # predicate is a column equality — exactly what a B-tree handles
+        # best. Indexes already-NULL rows too via PostgreSQL's NULL-aware
+        # index semantics.
+        Index(f"idx_{self.table_name}_user_id", table.c.user_id)
         return table
 
     def get_table(self) -> Table:
@@ -316,6 +328,7 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Insert documents into the database.
@@ -325,6 +338,9 @@ class PgVector(VectorDb):
             documents (List[Document]): List of documents to insert.
             filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
             batch_size (int): Number of documents to insert in each batch.
+            user_id (Optional[str]): Owner of these chunks for per-user RAG
+                isolation. Stored in the dedicated ``user_id`` column.
+                ``None`` means shared / unscoped.
         """
         try:
             with self.Session() as sess:
@@ -336,7 +352,9 @@ class PgVector(VectorDb):
                         batch_records = []
                         for doc in batch_docs:
                             try:
-                                batch_records.append(self._get_document_record(doc, filters, content_hash))
+                                batch_records.append(
+                                    self._get_document_record(doc, filters, content_hash, user_id)
+                                )
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
@@ -359,8 +377,13 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Insert documents asynchronously with parallel embedding."""
+        """Insert documents asynchronously with parallel embedding.
+
+        ``user_id`` is the explicit owner of these chunks for per-user RAG
+        isolation; ``None`` means shared / unscoped. See ``insert``.
+        """
         try:
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
@@ -394,6 +417,7 @@ class PgVector(VectorDb):
                                     "usage": doc.usage,
                                     "content_hash": content_hash,
                                     "content_id": doc.content_id,
+                                    "user_id": user_id,
                                 }
                                 batch_records.append(record)
                             except Exception as e:
@@ -428,16 +452,19 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert documents by content hash.
         First delete all documents with the same content hash.
         Then upsert the new documents.
+
+        ``user_id`` is the explicit owner; ``None`` means shared. See ``insert``.
         """
         try:
             if self.content_hash_exists(content_hash):
                 self._delete_by_content_hash(content_hash)
-            self._upsert(content_hash, documents, filters, batch_size)
+            self._upsert(content_hash, documents, filters, batch_size, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")
             raise
@@ -448,6 +475,7 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert (insert or update) documents in the database.
@@ -456,6 +484,7 @@ class PgVector(VectorDb):
             documents (List[Document]): List of documents to upsert.
             filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
             batch_size (int): Number of documents to upsert in each batch.
+            user_id (Optional[str]): Explicit owner for per-user RAG isolation.
         """
         try:
             with self.Session() as sess:
@@ -467,7 +496,7 @@ class PgVector(VectorDb):
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                record = self._get_document_record(doc, filters, content_hash)
+                                record = self._get_document_record(doc, filters, content_hash, user_id)
                                 # Use the generated record ID (which includes content_hash) for deduplication
                                 batch_records_dict[record["id"]] = record
                             except Exception as e:
@@ -492,6 +521,10 @@ class PgVector(VectorDb):
                                 "usage": insert_stmt.excluded.usage,
                                 "content_hash": insert_stmt.excluded.content_hash,
                                 "content_id": insert_stmt.excluded.content_id,
+                                # Refresh user_id on conflict so re-upserting
+                                # the same content_hash doesn't leave a stale
+                                # owner behind.
+                                "user_id": insert_stmt.excluded.user_id,
                             },
                         )
                         sess.execute(upsert_stmt)
@@ -506,7 +539,11 @@ class PgVector(VectorDb):
             raise
 
     def _get_document_record(
-        self, doc: Document, filters: Optional[Dict[str, Any]] = None, content_hash: str = ""
+        self,
+        doc: Document,
+        filters: Optional[Dict[str, Any]] = None,
+        content_hash: str = "",
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
@@ -529,6 +566,8 @@ class PgVector(VectorDb):
             "usage": doc.usage,
             "content_hash": content_hash,
             "content_id": doc.content_id,
+            # Per-user RAG isolation owner. ``None`` = shared / unscoped.
+            "user_id": user_id,
         }
 
     async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
@@ -623,12 +662,16 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Upsert documents asynchronously by running in a thread."""
+        """Upsert documents asynchronously by running in a thread.
+
+        ``user_id`` is the explicit owner; ``None`` means shared. See ``insert``.
+        """
         try:
             if self.content_hash_exists(content_hash):
                 self._delete_by_content_hash(content_hash)
-            await self._async_upsert(content_hash, documents, filters, batch_size)
+            await self._async_upsert(content_hash, documents, filters, batch_size, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")
             raise
@@ -639,6 +682,7 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert (insert or update) documents in the database.
@@ -647,6 +691,7 @@ class PgVector(VectorDb):
             documents (List[Document]): List of documents to upsert.
             filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
             batch_size (int): Number of documents to upsert in each batch.
+            user_id (Optional[str]): Explicit owner for per-user RAG isolation.
         """
         try:
             with self.Session() as sess:
@@ -688,6 +733,7 @@ class PgVector(VectorDb):
                                     "usage": doc.usage,
                                     "content_hash": content_hash,
                                     "content_id": doc.content_id,
+                                    "user_id": user_id,
                                 }
                                 batch_records_dict[record_id] = record  # This deduplicates by ID
                             except Exception as e:
@@ -712,6 +758,10 @@ class PgVector(VectorDb):
                                 "usage": insert_stmt.excluded.usage,
                                 "content_hash": insert_stmt.excluded.content_hash,
                                 "content_id": insert_stmt.excluded.content_id,
+                                # Refresh user_id on conflict so re-upserting
+                                # the same content_hash doesn't leave a stale
+                                # owner behind.
+                                "user_id": insert_stmt.excluded.user_id,
                             },
                         )
                         sess.execute(upsert_stmt)
@@ -753,7 +803,11 @@ class PgVector(VectorDb):
             raise
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a search based on the configured search type.
@@ -762,25 +816,34 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
+            user_id (Optional[str]): Per-user RAG isolation scope. When set,
+                results are restricted to rows owned by this user (matching
+                ``user_id``) or shared rows (``user_id IS NULL``). When
+                ``None``, no owner predicate is applied — admin / unscoped
+                callers see every row.
 
         Returns:
             List[Document]: List of matching documents.
         """
         if self.search_type == SearchType.vector:
-            return self.vector_search(query=query, limit=limit, filters=filters)
+            return self.vector_search(query=query, limit=limit, filters=filters, user_id=user_id)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query=query, limit=limit, filters=filters)
+            return self.keyword_search(query=query, limit=limit, filters=filters, user_id=user_id)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query=query, limit=limit, filters=filters)
+            return self.hybrid_search(query=query, limit=limit, filters=filters, user_id=user_id)
         else:
             log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
-        return await asyncio.to_thread(self.search, query, limit, filters)
+        return await asyncio.to_thread(self.search, query, limit, filters, user_id)
 
     def _dsl_to_sqlalchemy(self, filter_expr, table) -> ColumnElement[bool]:
         op = filter_expr["op"]
@@ -803,8 +866,24 @@ class PgVector(VectorDb):
         else:
             raise ValueError(f"Unknown filter operator: {op}")
 
+    def _apply_user_scope(self, stmt, user_id: Optional[str]):
+        """AND the user-isolation predicate into ``stmt`` when ``user_id``
+        is set. The predicate is ``user_id = X OR user_id IS NULL`` — i.e.
+        rows owned by the caller plus shared/admin rows. Returns the
+        modified statement (no-op if ``user_id`` is ``None``).
+        """
+        if user_id is None:
+            return stmt
+        return stmt.where(
+            or_(self.table.c.user_id == user_id, self.table.c.user_id.is_(None))
+        )
+
     def vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a vector similarity search.
@@ -813,6 +892,7 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
+            user_id (Optional[str]): Per-user isolation scope. See ``search``.
 
         Returns:
             List[Document]: List of matching documents.
@@ -846,6 +926,10 @@ class PgVector(VectorDb):
 
             # Build the base statement
             stmt = select(*columns)
+
+            # Apply per-user isolation FIRST so the planner can use the
+            # user_id index to narrow before the (more expensive) ANN search.
+            stmt = self._apply_user_scope(stmt, user_id)
 
             # Apply filters if provided
             if filters is not None:
@@ -972,7 +1056,11 @@ class PgVector(VectorDb):
         return func.to_tsquery(self.content_language, bindparam("query", value=prefix_query))
 
     def keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a keyword search on the 'content' column.
@@ -981,6 +1069,7 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
+            user_id (Optional[str]): Per-user isolation scope. See ``search``.
 
         Returns:
             List[Document]: List of matching documents.
@@ -998,6 +1087,9 @@ class PgVector(VectorDb):
 
             # Build the base statement
             stmt = select(*columns)
+
+            # Apply per-user isolation FIRST (B-tree narrows before FTS).
+            stmt = self._apply_user_scope(stmt, user_id)
 
             # Build the text search vector
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
@@ -1069,6 +1161,7 @@ class PgVector(VectorDb):
         query: str,
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector similarity and full-text search.
@@ -1077,6 +1170,7 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
+            user_id (Optional[str]): Per-user isolation scope. See ``search``.
 
         Returns:
             List[Document]: List of matching documents.
@@ -1152,6 +1246,9 @@ class PgVector(VectorDb):
 
             # Build the base statement, including the hybrid score
             stmt = select(*columns, hybrid_score.label("hybrid_score"))
+
+            # Apply per-user isolation FIRST.
+            stmt = self._apply_user_scope(stmt, user_id)
 
             # Add the full-text search condition
             # stmt = stmt.where(ts_vector.op("@@")(ts_query))

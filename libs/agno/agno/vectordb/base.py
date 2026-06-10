@@ -61,13 +61,41 @@ class VectorDb(ABC):
     def content_hash_exists(self, content_hash: str) -> bool:
         raise NotImplementedError
 
+    # ---- ``user_id`` semantics for per-user RAG isolation ----
+    #
+    # ``user_id`` is a first-class parameter on every insert / upsert /
+    # search method below. It identifies the OWNER of the chunks. Backends
+    # translate it into their native primitive: pgvector writes a column,
+    # Chroma routes to a per-user collection, Pinecone uses a namespace,
+    # etc.
+    #
+    # ``None`` means "shared / org-wide / unscoped" — chunks become
+    # visible to every caller, and searches with ``user_id=None`` see
+    # everything (admin / RBAC-off view).
+    #
+    # Backends that don't yet implement isolation must still accept the
+    # parameter (no-op) so the Knowledge wrapper can pass it uniformly.
+    # When you wire up a new backend, write a smoke test that proves the
+    # native primitive actually isolates (alice's search doesn't surface
+    # bob's chunks) before claiming support.
+
     @abstractmethod
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         raise NotImplementedError
 
@@ -75,21 +103,43 @@ class VectorDb(ABC):
         return False
 
     @abstractmethod
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Any] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def async_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Any] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
         raise NotImplementedError
 
     @abstractmethod

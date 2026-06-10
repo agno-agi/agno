@@ -30,15 +30,6 @@ from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
 
-# Sentinel ``user_id`` stamped on vector-DB chunks that have no owner — i.e.
-# admin uploads / org-wide shared knowledge / pre-isolation legacy ingests.
-# Retrieval includes this bucket alongside the caller's own chunks so shared
-# content stays discoverable. Mirrors the K1 metadata-layer semantics
-# ("NULL = shared") in a way pgvector's JSONB containment filter can express
-# (containment is AND-only and has no "key absent" operator). See
-# KNOWLEDGE_ISOLATION_DESIGN.md.
-SHARED_KNOWLEDGE_USER_ID: str = "__shared__"
-
 
 class KnowledgeContentOrigin(Enum):
     PATH = "path"
@@ -531,58 +522,30 @@ class Knowledge(RemoteKnowledge):
     # PUBLIC API - SEARCH METHODS
     # ==========================================
 
-    def _build_user_scope_filter(self, user_id: str) -> "FilterExpr":
-        """Build the owner-scope filter predicate for vector retrieval.
-
-        Returns a DSL filter that matches the caller's own chunks PLUS the
-        shared bucket. This is the vector-DB equivalent of K1's
-        ``WHERE user_id = :uid OR user_id IS NULL`` predicate: pgvector's
-        dict-filter (JSONB containment) is AND-only and has no "key absent"
-        operator, so we use a literal sentinel for the shared bucket and
-        OR-combine via the DSL.
-        """
-        from agno.filters import OR
-
-        return OR(
-            EQ("user_id", user_id),
-            EQ("user_id", SHARED_KNOWLEDGE_USER_ID),
-        )
-
-    def _inject_search_scope_filters(
+    def _inject_instance_scope_filter(
         self,
         search_filters: Optional[Union[Dict[str, Any], List["FilterExpr"]]],
-        user_id: Optional[str],
     ) -> Optional[Union[Dict[str, Any], List["FilterExpr"]]]:
-        """Merge ``linked_to`` (instance scope) and ``user_id`` (owner scope)
-        into ``search_filters``. Centralised here so ``search`` / ``asearch``
-        and any future variants stay aligned.
+        """Inject the ``linked_to`` (Knowledge instance) scope into the
+        caller-provided filters when ``isolate_vector_search`` is on.
+
+        ``user_id`` is NOT mixed into the filter DSL — each backend handles
+        per-user isolation natively (pgvector uses a column predicate, Chroma
+        uses per-user collections, Pinecone uses namespaces, etc.). The
+        ``user_id`` value flows separately to ``vector_db.search(user_id=...)``.
 
         Returns the new filter object — original ``search_filters`` is not
         mutated.
         """
-        # linked_to is a simple EQ — keep dict semantics when we can.
-        if self.isolate_vector_search and self.name:
-            if search_filters is None:
-                search_filters = {"linked_to": self.name}
-            elif isinstance(search_filters, dict):
-                search_filters = {**search_filters, "linked_to": self.name}
-            elif isinstance(search_filters, list):
-                search_filters = [EQ("linked_to", self.name), *search_filters]
+        if not (self.isolate_vector_search and self.name):
+            return search_filters
 
-        # user_id needs an OR (own + shared) so dict filters are not enough;
-        # promote to a list whenever a user scope is requested.
-        if user_id:
-            user_scope = self._build_user_scope_filter(user_id)
-            if search_filters is None:
-                search_filters = [user_scope]
-            elif isinstance(search_filters, dict):
-                # Convert any existing dict filters to EQ entries and prepend
-                # the user-scope OR. Dict semantics (AND-of-keys) are preserved.
-                converted = [EQ(k, v) for k, v in search_filters.items()]
-                search_filters = [user_scope, *converted]
-            elif isinstance(search_filters, list):
-                search_filters = [user_scope, *search_filters]
-
+        if search_filters is None:
+            return {"linked_to": self.name}
+        if isinstance(search_filters, dict):
+            return {**search_filters, "linked_to": self.name}
+        if isinstance(search_filters, list):
+            return [EQ("linked_to", self.name), *search_filters]
         return search_filters
 
     def search(
@@ -596,9 +559,11 @@ class Knowledge(RemoteKnowledge):
         """Returns relevant documents matching a query.
 
         Args:
-            user_id: Restricts retrieval to chunks owned by this user plus
-                the shared bucket. ``None`` returns everything (admin /
-                isolation-off behaviour). See ``KNOWLEDGE_ISOLATION_DESIGN.md``.
+            user_id: Per-user RAG isolation scope. Forwarded directly to the
+                underlying ``vector_db.search(user_id=...)`` — each backend
+                handles isolation using its native primitive (pgvector
+                column, Chroma collection, etc.). ``None`` returns
+                everything (admin / isolation-off behaviour).
         """
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
@@ -616,11 +581,13 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
-            search_filters = self._inject_search_scope_filters(filters, user_id)
+            search_filters = self._inject_instance_scope_filter(filters)
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+            return self.vector_db.search(
+                query=query, limit=_max_results, filters=search_filters, user_id=user_id
+            )
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -649,15 +616,19 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
-            search_filters = self._inject_search_scope_filters(filters, user_id)
+            search_filters = self._inject_instance_scope_filter(filters)
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
+                return await self.vector_db.async_search(
+                    query=query, limit=_max_results, filters=search_filters, user_id=user_id
+                )
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+                return self.vector_db.search(
+                    query=query, limit=_max_results, filters=search_filters, user_id=user_id
+                )
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -1390,26 +1361,26 @@ class Knowledge(RemoteKnowledge):
         content_id: str,
         calculate_sizes: bool = False,
         metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
-        Prepare documents for insertion by assigning content_id and optionally calculating sizes and updating metadata.
+        Prepare documents for insertion by assigning content_id and optionally
+        calculating sizes and updating metadata.
+
+        Note: ``user_id`` is NOT written into ``meta_data`` here. It flows as
+        an explicit parameter on the ``vector_db.insert`` / ``async_insert``
+        calls (see ``_aload_content`` etc.) — that keeps owner identity out
+        of the user-controlled JSONB blob and avoids collisions with any
+        ``user_id`` key callers might legitimately have in their own metadata.
 
         Args:
             documents: List of documents to prepare
             content_id: Content ID to assign to documents
             calculate_sizes: Whether to calculate document sizes
             metadata: Optional metadata to merge into document metadata
-            user_id: Owner to stamp on every chunk's ``meta_data``. ``None``
-                means shared / org-wide content — stored as the
-                ``SHARED_KNOWLEDGE_USER_ID`` sentinel so retrieval can find
-                it via the standard JSONB-containment filter.
 
         Returns:
             List of prepared documents
         """
-        # Resolve the bucket once per call: explicit owner, else shared.
-        owner_bucket = user_id if user_id else SHARED_KNOWLEDGE_USER_ID
         for document in documents:
             document.content_id = content_id
             if calculate_sizes and document.content and not document.size:
@@ -1417,7 +1388,6 @@ class Knowledge(RemoteKnowledge):
             if metadata:
                 document.meta_data.update(metadata)
             document.meta_data["linked_to"] = self.name or ""
-            document.meta_data["user_id"] = owner_bucket
         return documents
 
     def _chunk_documents_sync(self, reader: Reader, documents: List[Document]) -> List[Document]:
@@ -1499,7 +1469,7 @@ class Knowledge(RemoteKnowledge):
 
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata, user_id=content.user_id)
+                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 await self._ahandle_vector_db_insert(content, read_documents, upsert)
 
@@ -1584,7 +1554,7 @@ class Knowledge(RemoteKnowledge):
 
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata, user_id=content.user_id)
+                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 self._handle_vector_db_insert(content, read_documents, upsert)
 
@@ -1739,18 +1709,22 @@ class Knowledge(RemoteKnowledge):
                     continue
 
                 doc_id = generate_id(doc_hash)
-                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True, user_id=content.user_id)
+                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
 
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
+                        await self.vector_db.async_upsert(
+                            doc_hash, source_docs, content.metadata, user_id=content.user_id
+                        )
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
-                        await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
+                        await self.vector_db.async_insert(
+                            doc_hash, documents=source_docs, filters=content.metadata, user_id=content.user_id
+                        )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
@@ -1762,7 +1736,7 @@ class Knowledge(RemoteKnowledge):
         # 9. Single source - use existing logic with original content hash
         if not content.id:
             content.id = generate_id(content.content_hash or "")
-        self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True, user_id=content.user_id)
+        self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
         await self._ahandle_vector_db_insert(content, read_documents, upsert)
 
     def _load_from_url(
@@ -1898,18 +1872,22 @@ class Knowledge(RemoteKnowledge):
                     continue
 
                 doc_id = generate_id(doc_hash)
-                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True, user_id=content.user_id)
+                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
 
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        self.vector_db.upsert(doc_hash, source_docs, content.metadata)
+                        self.vector_db.upsert(
+                            doc_hash, source_docs, content.metadata, user_id=content.user_id
+                        )
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
-                        self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
+                        self.vector_db.insert(
+                            doc_hash, documents=source_docs, filters=content.metadata, user_id=content.user_id
+                        )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
@@ -1921,7 +1899,7 @@ class Knowledge(RemoteKnowledge):
         # 9. Single source - use existing logic with original content hash
         if not content.id:
             content.id = generate_id(content.content_hash or "")
-        self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True, user_id=content.user_id)
+        self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
         self._handle_vector_db_insert(content, read_documents, upsert)
 
     async def _aload_from_content(
@@ -2014,7 +1992,7 @@ class Knowledge(RemoteKnowledge):
                 read_documents = await reader.async_read(content_io, name=reader_name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata, user_id=content.user_id)
+                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 if len(read_documents) == 0:
                     content.status = ContentStatus.FAILED
@@ -2121,7 +2099,7 @@ class Knowledge(RemoteKnowledge):
                 read_documents = reader.read(content_io, name=reader_name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata, user_id=content.user_id)
+                self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
                 if len(read_documents) == 0:
                     content.status = ContentStatus.FAILED
@@ -2189,7 +2167,7 @@ class Knowledge(RemoteKnowledge):
 
             read_documents = await content.reader.async_read(topic)
             if len(read_documents) > 0:
-                self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True, user_id=content.user_id)
+                self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
             else:
                 content.status = ContentStatus.FAILED
                 content.status_message = "No content found for topic"
@@ -2250,7 +2228,7 @@ class Knowledge(RemoteKnowledge):
 
             read_documents = content.reader.read(topic)
             if len(read_documents) > 0:
-                self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True, user_id=content.user_id)
+                self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
             else:
                 content.status = ContentStatus.FAILED
                 content.status_message = "No content found for topic"
@@ -2560,7 +2538,12 @@ class Knowledge(RemoteKnowledge):
 
         if self.vector_db.upsert_available() and upsert:
             try:
-                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                await self.vector_db.async_upsert(
+                    content.content_hash,  # type: ignore[arg-type]
+                    read_documents,
+                    content.metadata,
+                    user_id=content.user_id,
+                )
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
@@ -2573,6 +2556,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
+                    user_id=content.user_id,
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -2599,7 +2583,12 @@ class Knowledge(RemoteKnowledge):
 
         if self.vector_db.upsert_available() and upsert:
             try:
-                self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                self.vector_db.upsert(
+                    content.content_hash,  # type: ignore[arg-type]
+                    read_documents,
+                    content.metadata,
+                    user_id=content.user_id,
+                )
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
@@ -2612,6 +2601,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
+                    user_id=content.user_id,
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -2796,7 +2786,7 @@ class Knowledge(RemoteKnowledge):
                 read_documents = reader.read(content.url, name=content.name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, user_id=content.user_id)
+                self._prepare_documents_for_insert(read_documents, content.id)
 
                 if not read_documents:
                     log_error("No documents read from URL")
@@ -2956,7 +2946,7 @@ class Knowledge(RemoteKnowledge):
                 read_documents = reader.read(content.url, name=content.name)
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
-                self._prepare_documents_for_insert(read_documents, content.id, user_id=content.user_id)
+                self._prepare_documents_for_insert(read_documents, content.id)
 
                 if not read_documents:
                     log_error("No documents read from URL")
