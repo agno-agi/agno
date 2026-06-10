@@ -182,8 +182,13 @@ def test_management_helpers():
     store.set_role_scopes("a", ["agents:*:read"])
     store.set_role_scopes("b", ["teams:*:read"])
     store.assign("bob", "a")
+    assert store.roles_of("bob") == ["a"]
+    # One role per subject: assigning another REPLACES, never stacks.
     store.assign("bob", "b")
     assert set(store.list_roles()) == {"a", "b"}
-    assert set(store.roles_of("bob")) == {"a", "b"}
-    store.unassign("bob", "a")
     assert store.roles_of("bob") == ["b"]
+    # Re-assigning the same role is a no-op.
+    store.assign("bob", "b")
+    assert store.roles_of("bob") == ["b"]
+    store.unassign("bob", "b")
+    assert store.roles_of("bob") == []

@@ -128,6 +128,8 @@ def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: Li
 
     @router.post("/users/{subject}/roles")
     def assign_role(subject: str, body: AssignRoleRequest, actor: str = Depends(require_admin)) -> dict:
+        """Set the subject's role. One role per subject: this REPLACES any
+        current role (a role select in a UI, not a multi-grant)."""
         store.assign(subject, body.role, actor=actor)
         return {"subject": subject, "roles": store.roles_of(subject)}
 

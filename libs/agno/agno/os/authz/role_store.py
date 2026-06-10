@@ -173,10 +173,24 @@ class ManagedRoleStore:
 
     # ------------------------------------------------------------- assignments
     def assign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
-        """Give a subject a role (runtime, persisted)."""
-        before = self.roles_of(subject) if self._audit else None
+        """Give a subject THE role (runtime, persisted).
+
+        A subject holds at most ONE role at a time — assigning replaces any
+        current role rather than accumulating. This mirrors the cloud RBAC model
+        (a membership has one role) so role management is a select, not a
+        multi-grant. Compose permissions in the role's scopes, not by stacking
+        roles on a user. No-op if the subject already holds exactly this role.
+        """
+        before = self.roles_of(subject)
+        if before == [role]:
+            return  # already exactly this role; no change, no audit noise
+        for existing in before:
+            self._enforcer.delete_role_for_user(subject, existing)
         self._enforcer.add_role_for_user(subject, role)
-        self._emit("user.assigned", subject, before, self.roles_of(subject) if self._audit else None, actor)
+        self._emit(
+            "user.assigned", subject, before if self._audit else None,
+            self.roles_of(subject) if self._audit else None, actor,
+        )
 
     def unassign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
         before = self.roles_of(subject) if self._audit else None
