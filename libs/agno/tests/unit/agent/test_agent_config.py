@@ -91,6 +91,7 @@ def agent_with_settings():
         tool_call_limit=10,
         num_history_runs=5,
         add_history_to_context=True,
+        add_cancelled_runs_to_context=True,
         add_datetime_to_context=True,
     )
 
@@ -146,6 +147,7 @@ class TestAgentToDict:
         assert config["tool_call_limit"] == 10
         assert config["num_history_runs"] == 5
         assert config["add_history_to_context"] is True
+        assert config["add_cancelled_runs_to_context"] is True
         assert config["add_datetime_to_context"] is True
 
     def test_to_dict_excludes_default_values(self):
@@ -158,6 +160,7 @@ class TestAgentToDict:
         assert "debug_mode" not in config  # defaults to False
         assert "retries" not in config  # defaults to 0
         assert "add_history_to_context" not in config  # defaults to False
+        assert "add_cancelled_runs_to_context" not in config  # defaults to False
         assert "store_history_messages" not in config  # defaults to False
 
     def test_to_dict_includes_store_history_messages_when_true(self):
@@ -269,6 +272,7 @@ class TestAgentFromDict:
             "tool_call_limit": 10,
             "num_history_runs": 5,
             "add_history_to_context": True,
+            "add_cancelled_runs_to_context": True,
             "add_datetime_to_context": True,
         }
 
@@ -279,6 +283,7 @@ class TestAgentFromDict:
         assert agent.tool_call_limit == 10
         assert agent.num_history_runs == 5
         assert agent.add_history_to_context is True
+        assert agent.add_cancelled_runs_to_context is True
         assert agent.add_datetime_to_context is True
 
     def test_from_dict_with_db_postgres(self):
