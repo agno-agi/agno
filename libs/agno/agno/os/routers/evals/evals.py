@@ -9,7 +9,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.middleware.user_scope import apply_scope_to_kwargs, get_scoped_user_id
 from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
@@ -128,7 +128,7 @@ def attach_routes(
     ) -> PaginatedResponse[EvalSchema]:
         db = await get_db(dbs, db_id, table)
 
-        scoped_user_id = get_scoped_user_id(request)
+        scope = apply_scope_to_kwargs(request)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -161,7 +161,7 @@ def attach_routes(
                 eval_type=eval_types,
                 filter_type=filter_type,
                 deserialize=False,
-                user_id=scoped_user_id,
+                **scope,
             )
         else:
             eval_runs, total_count = db.get_eval_runs(  # type: ignore
@@ -176,7 +176,7 @@ def attach_routes(
                 eval_type=eval_types,
                 filter_type=filter_type,
                 deserialize=False,
-                user_id=scoped_user_id,
+                **scope,
             )
 
         return PaginatedResponse(
@@ -233,7 +233,7 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="Table to query eval run from"),
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
-        scoped_user_id = get_scoped_user_id(request)
+        scope = apply_scope_to_kwargs(request)
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -241,9 +241,9 @@ def attach_routes(
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False, user_id=scoped_user_id)
+            eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False, **scope)
         else:
-            eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False, user_id=scoped_user_id)
+            eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False, **scope)
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
@@ -268,7 +268,7 @@ def attach_routes(
     ) -> None:
         try:
             db = await get_db(dbs, db_id, table)
-            scoped_user_id = get_scoped_user_id(http_request)
+            scope = apply_scope_to_kwargs(http_request)
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(http_request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -278,9 +278,9 @@ def attach_routes(
 
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, user_id=scoped_user_id)
+                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
             else:
-                db.delete_eval_runs(eval_run_ids=request.eval_run_ids, user_id=scoped_user_id)
+                db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -331,7 +331,7 @@ def attach_routes(
     ) -> EvalSchema:
         try:
             db = await get_db(dbs, db_id, table)
-            scoped_user_id = get_scoped_user_id(http_request)
+            scope = apply_scope_to_kwargs(http_request)
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(http_request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -342,12 +342,10 @@ def attach_routes(
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
                 eval_run = await db.rename_eval_run(
-                    eval_run_id=eval_run_id, name=request.name, deserialize=False, user_id=scoped_user_id
+                    eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope
                 )
             else:
-                eval_run = db.rename_eval_run(
-                    eval_run_id=eval_run_id, name=request.name, deserialize=False, user_id=scoped_user_id
-                )
+                eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
