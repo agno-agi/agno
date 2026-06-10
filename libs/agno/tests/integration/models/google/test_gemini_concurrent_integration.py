@@ -317,6 +317,33 @@ class TestGeminiCrossEventLoop:
         assert len(events2) > 0, "Second event loop produced no stream events"
 
 
+class TestGeminiMultiUserAsync:
+    """Integration tests for one agent serving many concurrent users on one event loop.
+
+    This is the AgentOS production shape: a single shared agent, concurrent
+    requests with distinct user_id/session_id pairs, one event loop. The cached
+    client must serve all of them; get_client() has no await so first-call races
+    are structurally impossible here.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_multi_user_arun(self):
+        """Verify 24 concurrent users on one agent share one client with zero failed runs."""
+        agent = Agent(model=Gemini(id="gemini-flash-latest"))
+
+        async def run_user(i):
+            response = await agent.arun(PROMPT, user_id=f"user-{i}", session_id=f"session-{i}")
+            # Agno converts provider errors into RunOutput with status=ERROR and the
+            # error text as content, so checking content alone would mask failures
+            assert "error" not in str(response.status).lower(), f"Run failed: {str(response.content)[:80]}"
+            assert response.content is not None
+            return id(agent.model.client)
+
+        client_ids = set(await asyncio.gather(*(run_user(i) for i in range(24))))
+
+        assert len(client_ids) == 1, "Concurrent users must share one cached client"
+
+
 class TestGeminiToolCalling:
     """Integration tests for tool-calling loops on a shared cached client.
 
