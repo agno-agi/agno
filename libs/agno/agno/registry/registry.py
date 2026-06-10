@@ -11,6 +11,7 @@ from agno.db.base import BaseDb
 from agno.models.base import Model
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
+from agno.utils.log import log_warning
 from agno.vectordb.base import VectorDb
 
 if TYPE_CHECKING:
@@ -44,16 +45,31 @@ class Registry:
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
         lookup: Dict[str, Callable] = {}
+
+        def register(name: str, entrypoint: Callable) -> None:
+            # This lookup is keyed by name only, so two genuinely different tools
+            # that share a name collapse to one slot (last wins). We can't resolve
+            # that from a serialized function name alone, but we can surface it so
+            # the user can give the tools distinct names.
+            existing = lookup.get(name)
+            if existing is not None and existing is not entrypoint:
+                log_warning(
+                    f"Registry: multiple distinct tools share the name '{name}'. "
+                    "rehydrate_function() can only resolve one of them; give the tools "
+                    "or toolkits distinct names to disambiguate."
+                )
+            lookup[name] = entrypoint
+
         for tool in self.tools:
             if isinstance(tool, Toolkit):
                 for func in tool.functions.values():
                     if func.entrypoint is not None:
-                        lookup[func.name] = func.entrypoint
+                        register(func.name, func.entrypoint)
             elif isinstance(tool, Function):
                 if tool.entrypoint is not None:
-                    lookup[tool.name] = tool.entrypoint
+                    register(tool.name, tool.entrypoint)
             elif callable(tool):
-                lookup[tool.__name__] = tool
+                register(tool.__name__, tool)
         return lookup
 
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:

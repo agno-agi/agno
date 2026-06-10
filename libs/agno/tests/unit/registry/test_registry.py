@@ -1094,3 +1094,67 @@ class TestAddDbAndVectorDb:
         reg.add_vector_db(v1)
         reg.add_vector_db(v2)
         assert len(reg.vector_dbs) == 1
+
+
+class TestEntrypointLookupCollisionWarning:
+    """The entrypoint lookup warns when distinct tools collide on a name."""
+
+    def test_warns_on_distinct_tools_sharing_a_name(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def entrypoint_a():
+            pass
+
+        def entrypoint_b():
+            pass
+
+        reg = Registry(
+            tools=[
+                Function(name="search", entrypoint=entrypoint_a),
+                Function(name="search", entrypoint=entrypoint_b),
+            ]
+        )
+        # Build the lookup
+        _ = reg._entrypoint_lookup
+
+        assert warnings, "expected a warning for the ambiguous tool name"
+        assert "search" in warnings[0]
+
+    def test_no_warning_when_same_entrypoint_repeats(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def entrypoint_a():
+            pass
+
+        reg = Registry(
+            tools=[
+                Function(name="search", entrypoint=entrypoint_a),
+                Function(name="search", entrypoint=entrypoint_a),  # same entrypoint object
+            ]
+        )
+        _ = reg._entrypoint_lookup
+
+        assert warnings == []
+
+    def test_no_warning_for_unique_names(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def tool_a():
+            pass
+
+        def tool_b():
+            pass
+
+        reg = Registry(tools=[tool_a, tool_b])
+        _ = reg._entrypoint_lookup
+
+        assert warnings == []
