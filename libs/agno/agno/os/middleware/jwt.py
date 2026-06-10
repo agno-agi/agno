@@ -169,7 +169,14 @@ class JWTValidator:
 
         import httpx
 
-        response = httpx.get(url, timeout=5.0)
+        # Require https and don't follow redirects: the JWKS is the root of trust
+        # for token verification, so a plaintext fetch (MITM-able) or a redirect to
+        # an attacker-controlled host would let forged keys in.
+        from urllib.parse import urlparse
+
+        if urlparse(url).scheme != "https":
+            raise ValueError(f"JWKS URL must use https (refusing {url!r}): keys fetched over it sign tokens.")
+        response = httpx.get(url, timeout=5.0, follow_redirects=False)
         response.raise_for_status()
         self._parse_jwks_data(response.json())
         self._jwks_last_fetch = time.time()
@@ -276,14 +283,18 @@ class JWTValidator:
                 jwk = None
                 if kid and kid in self.jwks_keys:
                     jwk = self.jwks_keys[kid]
-                elif "_default" in self.jwks_keys:
-                    # Fall back to default key if no kid match
-                    jwk = self.jwks_keys["_default"]
 
-                # Unknown key id: the IdP may have rotated keys. Re-fetch the
-                # remote JWKS (rate-limited) and look again before giving up.
+                # Present-but-unknown kid: the IdP may have rotated keys. Re-fetch
+                # the remote JWKS (rate-limited) and look again. Do this BEFORE any
+                # no-kid fallback so rotation is honoured rather than validating a
+                # rotated token against a stale/unrelated default key.
                 if jwk is None and kid and self.jwks_url and self._maybe_refresh_jwks():
                     jwk = self.jwks_keys.get(kid)
+
+                # Last resort: a no-kid ("_default") cached key. Reached only when
+                # the token carries no kid, or a refresh still didn't resolve one.
+                if jwk is None and "_default" in self.jwks_keys:
+                    jwk = self.jwks_keys["_default"]
 
                 if jwk:
                     payload = jwt.decode(token, jwk.key, **decode_kwargs)
@@ -988,10 +999,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     # Build one context and reuse it for the route gate and the
                     # listing-endpoint filtering below.
                     provider = self._resolve_provider(request)
-                    first_required = required_scopes[0]
-                    action_for_ctx: Optional[str] = (
-                        first_required.rsplit(":", 1)[1] if ":" in first_required else None
-                    )
+                    # Derive a single context action only when all required scopes
+                    # agree on one (true for every built-in mapping). For a route
+                    # with mixed actions, leave it None rather than silently picking
+                    # the first — the full required_scopes list is passed to
+                    # authorize_route, which evaluates each one.
+                    _actions = {s.rsplit(":", 1)[1] for s in required_scopes if ":" in s}
+                    action_for_ctx: Optional[str] = next(iter(_actions)) if len(_actions) == 1 else None
                     authz_ctx = AuthorizationContext(
                         principal_id=user_id,
                         scopes=scopes,
@@ -1048,6 +1062,22 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
                 else:
                     log_debug(f"No scopes required for {method} {path}")
+                    # Decision-audit completeness: record allow-by-default routes
+                    # (empty/unmapped scope map) too, so the trail covers EVERY
+                    # authenticated request, not only the scope-gated ones. No-ops
+                    # when no decision sink is configured.
+                    self._record_decision(
+                        request,
+                        allowed=True,
+                        method=method,
+                        path=path,
+                        principal=user_id,
+                        required_scopes=[],
+                        scopes=scopes,
+                        token=token,
+                        claims=payload,
+                        reason="no_scopes_required",
+                    )
 
             log_debug(f"JWT decoded successfully for user: {user_id}")
 
