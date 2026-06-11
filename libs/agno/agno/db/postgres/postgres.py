@@ -4528,6 +4528,21 @@ class PostgresDb(BaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
+    def delete_user_learnings(self, user_id: str) -> int:
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return 0
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == user_id)
+                result = sess.execute(stmt)
+                return result.rowcount or 0
+
+        except Exception as e:
+            log_debug(f"Error deleting user learnings: {e}")
+            return 0
+
     def get_learnings(
         self,
         learning_type: Optional[str] = None,

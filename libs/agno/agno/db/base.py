@@ -937,6 +937,20 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def delete_user_learnings(self, user_id: str) -> int:
+        """Delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches (across all learning types). Records with
+        no owner (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def get_learnings(
         self,
@@ -1724,6 +1738,20 @@ class AsyncBaseDb(ABC):
 
         Returns:
             True if deleted, False otherwise.
+        """
+        raise NotImplementedError
+
+    async def delete_user_learnings(self, user_id: str) -> int:
+        """Async delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches (across all learning types). Records with
+        no owner (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+
+        Returns:
+            The number of records deleted.
         """
         raise NotImplementedError
 

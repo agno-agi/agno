@@ -7,6 +7,7 @@ This example demonstrates:
 - Fetching a single learning via GET /learnings/{id}
 - Updating content/metadata via PATCH /learnings/{id}
 - Deleting via DELETE /learnings/{id}
+- Deleting a user and all their learnings via DELETE /learnings/users/{user_id}
 
 Requires: a running AgentOS server. Start one with:
 
@@ -128,6 +129,33 @@ def main():
     # Verify it's gone
     resp = client.get(f"/learnings/{learning_id}")
     print(f"  Follow-up GET status: {resp.status_code} (expect 404)")
+
+    # =========================================================================
+    # 7. Delete a user and all of their learnings
+    # =========================================================================
+    # Seed a couple of records for a throwaway user, then remove the user and
+    # everything associated with them in one call.
+    print("\n=== Delete Learning User ===\n")
+    for content in ({"note": "first"}, {"note": "second"}):
+        client.post(
+            "/learnings",
+            json={
+                "learning_type": "user_memory",
+                "user_id": "bulk-demo-user",
+                "content": content,
+            },
+        ).raise_for_status()
+
+    resp = client.delete("/learnings/users/bulk-demo-user")
+    resp.raise_for_status()
+    print(f"  Deleted user (status {resp.status_code})")
+
+    # Verify the user no longer has any records
+    resp = client.get("/learnings", params={"user_id": "bulk-demo-user"})
+    resp.raise_for_status()
+    print(
+        f"  Remaining records for user: {resp.json()['meta']['total_count']} (expect 0)"
+    )
 
     print("\nDone.")
 

@@ -3221,6 +3221,19 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
+    async def delete_user_learnings(self, user_id: str) -> int:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return 0
+
+            result = await collection.delete_many({"user_id": user_id})
+            return int(result.deleted_count or 0)
+
+        except Exception as e:
+            log_debug(f"Error deleting user learnings: {e}")
+            return 0
+
     async def get_learnings(
         self,
         learning_type: Optional[str] = None,

@@ -281,6 +281,42 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             ),
         )
 
+    @router.delete(
+        "/learnings/users/{user_id}",
+        status_code=204,
+        operation_id="delete_learning_user",
+        summary="Delete Learning User",
+        description=(
+            "Delete every learning record owned by a user, across all learning types backed by the "
+            "agno_learnings table (user_profile, user_memory, and any user-scoped entity records). "
+            "Records with no owner (`user_id IS NULL`) are not affected. When the request is "
+            "authenticated with a JWT, only the JWT subject's own learnings may be deleted; a "
+            "different `user_id` is rejected with 403. Returns 204 even if the user had no records."
+        ),
+    )
+    async def delete_learning_user(
+        request: Request,
+        user_id: str = Path(description="The user whose learnings should be deleted"),
+        db_id: Optional[str] = Query(None, description="Database ID to use"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
+    ) -> None:
+        jwt_user_id = getattr(request.state, "user_id", None)
+        if jwt_user_id is not None and user_id != jwt_user_id:
+            raise HTTPException(status_code=403, detail="Cannot delete learnings for another user")
+
+        db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                await db.delete_user_learnings(user_id)
+            else:
+                cast(BaseDb, db).delete_user_learnings(user_id)
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+
     @router.get(
         "/learnings/{learning_id}",
         response_model=LearningResponse,

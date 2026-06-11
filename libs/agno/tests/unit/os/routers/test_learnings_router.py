@@ -41,6 +41,7 @@ def mock_db():
     db.get_learning_by_id = MagicMock(return_value=None)
     db.upsert_learning = MagicMock(return_value=None)
     db.delete_learning = MagicMock(return_value=True)
+    db.delete_user_learnings = MagicMock(return_value=3)
     return db
 
 
@@ -298,6 +299,30 @@ class TestDeleteLearning:
         assert resp.status_code == 404
 
 
+class TestDeleteLearningUser:
+    def test_delete_success(self, client, mock_db):
+        resp = client.delete("/learnings/users/user-1")
+        assert resp.status_code == 204
+        mock_db.delete_user_learnings.assert_called_once_with("user-1")
+
+    def test_delete_with_no_records_still_204(self, client, mock_db):
+        mock_db.delete_user_learnings = MagicMock(return_value=0)
+        resp = client.delete("/learnings/users/nobody")
+        assert resp.status_code == 204
+
+    def test_does_not_collide_with_delete_by_id(self, client, mock_db):
+        # "/learnings/users/{user_id}" must route to the bulk-by-user handler,
+        # not delete_learning(learning_id="users").
+        client.delete("/learnings/users/user-1")
+        mock_db.delete_user_learnings.assert_called_once_with("user-1")
+        mock_db.delete_learning.assert_not_called()
+
+    def test_not_implemented_returns_501(self, client, mock_db):
+        mock_db.delete_user_learnings.side_effect = NotImplementedError
+        resp = client.delete("/learnings/users/user-1")
+        assert resp.status_code == 501
+
+
 class TestIDORScoping:
     """When a JWT subject is present on request.state, the router enforces ownership-based scoping.
 
@@ -423,3 +448,13 @@ class TestIDORScoping:
         resp = jwt_client.get("/learnings/users?user_id=user-B")
         assert resp.status_code == 403
         mock_db.get_learnings_user_stats.assert_not_called()
+
+    def test_delete_own_user_allowed(self, jwt_client, mock_db):
+        resp = jwt_client.delete("/learnings/users/user-A")
+        assert resp.status_code == 204
+        mock_db.delete_user_learnings.assert_called_once_with("user-A")
+
+    def test_delete_other_user_rejected(self, jwt_client, mock_db):
+        resp = jwt_client.delete("/learnings/users/user-B")
+        assert resp.status_code == 403
+        mock_db.delete_user_learnings.assert_not_called()
