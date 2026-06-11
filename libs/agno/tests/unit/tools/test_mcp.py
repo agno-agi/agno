@@ -1125,3 +1125,194 @@ async def test_mcp_tool_with_run_context_argument_does_not_collide():
     called_name, called_kwargs = session.call_tool.await_args.args
     assert called_name == "log_event"
     assert called_kwargs == {"event": "click", "run_context": "from-llm"}
+
+
+# =============================================================================
+# CancelledError propagation tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_mcp_is_alive_propagates_cancelled_error():
+    """is_alive() must let CancelledError propagate, not convert it to False."""
+    import asyncio
+
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = AsyncMock()
+    session.send_ping = AsyncMock(side_effect=asyncio.CancelledError)
+    tools.session = session
+
+    with pytest.raises(asyncio.CancelledError):
+        await tools.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_mcp_is_alive_returns_false_on_ordinary_error():
+    """An ordinary connection error during is_alive() is swallowed and returns False."""
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = AsyncMock()
+    session.send_ping = AsyncMock(side_effect=ConnectionResetError("connection dropped"))
+    tools.session = session
+
+    assert await tools.is_alive() is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_build_tools_propagates_cancelled_error():
+    """build_tools() must let CancelledError propagate."""
+    import asyncio
+
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = AsyncMock()
+    session.list_tools = AsyncMock(side_effect=asyncio.CancelledError)
+    tools.session = session
+
+    with pytest.raises(asyncio.CancelledError):
+        await tools.build_tools()
+
+
+@pytest.mark.asyncio
+async def test_mcp_initialize_propagates_cancelled_error():
+    """initialize() must let CancelledError propagate."""
+    import asyncio
+
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    session = AsyncMock()
+    session.initialize = AsyncMock(side_effect=asyncio.CancelledError)
+    tools.session = session
+
+    with pytest.raises(asyncio.CancelledError):
+        await tools.initialize()
+
+
+@pytest.mark.asyncio
+async def test_multimcp_is_alive_propagates_cancelled_error():
+    """MultiMCPTools.is_alive() must let CancelledError propagate."""
+    import asyncio
+
+    tools = MultiMCPTools(urls=["http://localhost:8080/mcp"])
+    session = AsyncMock()
+    session.send_ping = AsyncMock(side_effect=asyncio.CancelledError)
+    tools._sessions = [session]
+
+    with pytest.raises(asyncio.CancelledError):
+        await tools.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_multimcp_is_alive_returns_false_on_ordinary_error():
+    """An ordinary error during MultiMCPTools.is_alive() returns False."""
+    tools = MultiMCPTools(urls=["http://localhost:8080/mcp"])
+    session = AsyncMock()
+    session.send_ping = AsyncMock(side_effect=ConnectionResetError("connection dropped"))
+    tools._sessions = [session]
+
+    assert await tools.is_alive() is False
+
+
+@pytest.mark.asyncio
+async def test_agent_refresh_propagates_cancelled_error_during_reconnect():
+    """A CancelledError raised while reconnecting a refresh_connection MCP tool
+    must propagate out of aget_tools so the run can be cancelled cleanly"""
+    import asyncio
+    from uuid import uuid4
+
+    from agno.agent.agent import Agent
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    tools = MCPTools(url="http://localhost:8080/mcp", refresh_connection=True)
+    tools.is_alive = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    tools.connect = AsyncMock(side_effect=asyncio.CancelledError)  # type: ignore[method-assign]
+
+    agent = Agent(tools=[tools], telemetry=False)
+
+    session_id = str(uuid4())
+    run_id = str(uuid4())
+
+    with pytest.raises(asyncio.CancelledError):
+        await agent.aget_tools(
+            session=AgentSession(session_id=session_id, session_data={}),
+            run_response=RunOutput(run_id=run_id, session_id=session_id),
+            run_context=RunContext(run_id=run_id, session_id=session_id),
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_refresh_skips_tool_on_ordinary_error():
+    """An ordinary connection error while refreshing a tool is logged and the
+    run continues (graceful degradation)"""
+    from uuid import uuid4
+
+    from agno.agent.agent import Agent
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    tools = MCPTools(url="http://localhost:8080/mcp", refresh_connection=True)
+    tools.is_alive = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    tools.connect = AsyncMock(side_effect=ConnectionRefusedError("server unreachable"))  # type: ignore[method-assign]
+
+    agent = Agent(tools=[tools], telemetry=False)
+
+    session_id = str(uuid4())
+    run_id = str(uuid4())
+
+    agent_tools = await agent.aget_tools(
+        session=AgentSession(session_id=session_id, session_data={}),
+        run_response=RunOutput(run_id=run_id, session_id=session_id),
+        run_context=RunContext(run_id=run_id, session_id=session_id),
+    )
+
+    # Run completed despite the dead tool
+    assert isinstance(agent_tools, list)
+
+
+@pytest.mark.asyncio
+async def test_agent_refresh_does_not_call_build_tools_after_reconnect():
+    """When is_alive() is False, connect(force=True) reconnects.
+    When the connection is alive, build_tools() is called to refresh definitions."""
+    from uuid import uuid4
+
+    from agno.agent.agent import Agent
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    session_id = str(uuid4())
+    run_id = str(uuid4())
+
+    # Case 1: connection is dead -> reconnect, no separate build_tools()
+    dead_tool = MCPTools(url="http://localhost:8080/mcp", refresh_connection=True)
+    dead_tool.is_alive = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    dead_tool.connect = AsyncMock()  # type: ignore[method-assign]
+    dead_tool.build_tools = AsyncMock()  # type: ignore[method-assign]
+
+    await Agent(tools=[dead_tool], telemetry=False).aget_tools(
+        session=AgentSession(session_id=session_id, session_data={}),
+        run_response=RunOutput(run_id=run_id, session_id=session_id),
+        run_context=RunContext(run_id=run_id, session_id=session_id),
+        check_mcp_tools=False,
+    )
+
+    # Reconnected via connect(force=True); build_tools() not called separately
+    dead_tool.connect.assert_any_await(force=True)
+    dead_tool.build_tools.assert_not_awaited()
+
+    # Case 2: connection is alive -> no reconnect, build_tools() refreshes definitions
+    alive_tool = MCPTools(url="http://localhost:8080/mcp", refresh_connection=True)
+    alive_tool.is_alive = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    alive_tool.connect = AsyncMock()  # type: ignore[method-assign]
+    alive_tool.build_tools = AsyncMock()  # type: ignore[method-assign]
+
+    await Agent(tools=[alive_tool], telemetry=False).aget_tools(
+        session=AgentSession(session_id=session_id, session_data={}),
+        run_response=RunOutput(run_id=run_id, session_id=session_id),
+        run_context=RunContext(run_id=run_id, session_id=session_id),
+        check_mcp_tools=False,
+    )
+
+    # No forced reconnect; build_tools() called to refresh definitions
+    assert not any(call.kwargs.get("force") for call in alive_tool.connect.await_args_list)
+    alive_tool.build_tools.assert_awaited_once()
