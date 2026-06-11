@@ -9,9 +9,8 @@ from agno.os import AgentOS
 from agno.workflow import OnReject
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-
 from workflow_db import db
 
 
@@ -55,9 +54,11 @@ workflow = Workflow(
         Step(name="analyze_data", executor=analyze_data),
         Condition(
             name="analysis_depth_decision",
-            requires_confirmation=True,
-            confirmation_message="Run detailed analysis? Reject to use quick summary.",
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Run detailed analysis? Reject to use quick summary.",
+                on_reject=OnReject.else_branch,
+            ),
             steps=[Step(name="detailed_analysis", executor=detailed_analysis)],
             else_steps=[Step(name="quick_summary", executor=quick_summary)],
         ),

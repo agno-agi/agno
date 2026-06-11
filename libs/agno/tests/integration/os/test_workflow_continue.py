@@ -12,7 +12,7 @@ from agno.workflow import OnReject
 from agno.workflow.condition import Condition
 from agno.workflow.factory import WorkflowFactory
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -58,17 +58,21 @@ def hitl_client(temp_storage_db_file):
             Step(name="gather", executor=_gather),
             Condition(
                 name="first_decision",
-                requires_confirmation=True,
-                confirmation_message="Run detailed analysis?",
-                on_reject=OnReject.else_branch,
+                human_review=HumanReview(
+                    requires_confirmation=True,
+                    confirmation_message="Run detailed analysis?",
+                    on_reject=OnReject.else_branch,
+                ),
                 steps=[Step(name="detailed", executor=_detailed)],
                 else_steps=[Step(name="quick", executor=_quick)],
             ),
             Condition(
                 name="second_decision",
-                requires_confirmation=True,
-                confirmation_message="Deep dive or surface review?",
-                on_reject=OnReject.else_branch,
+                human_review=HumanReview(
+                    requires_confirmation=True,
+                    confirmation_message="Deep dive or surface review?",
+                    on_reject=OnReject.else_branch,
+                ),
                 steps=[Step(name="deep", executor=_deep)],
                 else_steps=[Step(name="surface", executor=_surface)],
             ),
@@ -94,17 +98,21 @@ def factory_hitl_client(temp_storage_db_file):
                 Step(name="gather", executor=_gather),
                 Condition(
                     name="first_decision",
-                    requires_confirmation=True,
-                    confirmation_message="Run detailed analysis?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Run detailed analysis?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="detailed", executor=_detailed)],
                     else_steps=[Step(name="quick", executor=_quick)],
                 ),
                 Condition(
                     name="second_decision",
-                    requires_confirmation=True,
-                    confirmation_message="Deep dive or surface review?",
-                    on_reject=OnReject.else_branch,
+                    human_review=HumanReview(
+                        requires_confirmation=True,
+                        confirmation_message="Deep dive or surface review?",
+                        on_reject=OnReject.else_branch,
+                    ),
                     steps=[Step(name="deep", executor=_deep)],
                     else_steps=[Step(name="surface", executor=_surface)],
                 ),

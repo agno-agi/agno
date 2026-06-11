@@ -8,9 +8,8 @@ whether to run the iterative work.
 from agno.os import AgentOS
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-
 from workflow_db import db
 
 
@@ -47,8 +46,10 @@ workflow = Workflow(
             name="refinement_loop",
             steps=[Step(name="refine_analysis", executor=refine_analysis)],
             max_iterations=3,
-            requires_confirmation=True,
-            confirmation_message="Start the refinement loop?",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Start the refinement loop?",
+            ),
         ),
         Step(name="finalize_results", executor=finalize_results),
     ],

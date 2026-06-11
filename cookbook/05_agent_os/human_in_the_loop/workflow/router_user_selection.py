@@ -8,9 +8,8 @@ analysis path should run.
 from agno.os import AgentOS
 from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-
 from workflow_db import db
 
 
@@ -82,9 +81,11 @@ workflow = Workflow(
                     executor=risk_analysis,
                 ),
             ],
-            requires_user_input=True,
-            user_input_message="Select the analysis path to run.",
             allow_multiple_selections=False,
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Select the analysis path to run.",
+            ),
         ),
         Step(name="generate_report", executor=generate_report),
     ],

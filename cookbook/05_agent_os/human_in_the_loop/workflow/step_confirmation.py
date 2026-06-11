@@ -8,9 +8,8 @@ human can approve or reject that step from AgentOS.
 from agno.os import AgentOS
 from agno.workflow import OnReject
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-
 from workflow_db import db
 
 
@@ -50,9 +49,11 @@ workflow = Workflow(
         Step(
             name="process_sensitive_data",
             executor=process_sensitive_data,
-            requires_confirmation=True,
-            confirmation_message="Process sensitive data now?",
-            on_reject=OnReject.skip,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Process sensitive data now?",
+                on_reject=OnReject.skip,
+            ),
         ),
         Step(name="save_results", executor=save_results),
     ],

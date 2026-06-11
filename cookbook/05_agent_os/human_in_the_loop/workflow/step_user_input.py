@@ -16,9 +16,8 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, UserInputField
+from agno.workflow.types import HumanReview, StepInput, StepOutput, UserInputField
 from agno.workflow.workflow import Workflow
-
 from workflow_db import db
 
 
@@ -65,28 +64,30 @@ workflow = Workflow(
             name="generate_content",
             step_id="generate_content123",
             agent=content_agent,
-            requires_user_input=True,
-            user_input_message="Please provide your content preferences:",
-            user_input_schema=[
-                UserInputField(
-                    name="tone",
-                    field_type="str",
-                    description="Tone of the content: 'formal', 'casual', or 'technical'",
-                    required=True,
-                ),
-                UserInputField(
-                    name="length",
-                    field_type="str",
-                    description="Content length: 'short' (1 para), 'medium' (3 para), or 'long' (5+ para)",
-                    required=True,
-                ),
-                UserInputField(
-                    name="include_examples",
-                    field_type="bool",
-                    description="Include practical examples?",
-                    required=False,
-                ),
-            ],
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Please provide your content preferences:",
+                user_input_schema=[
+                    UserInputField(
+                        name="tone",
+                        field_type="str",
+                        description="Tone of the content: 'formal', 'casual', or 'technical'",
+                        required=True,
+                    ),
+                    UserInputField(
+                        name="length",
+                        field_type="str",
+                        description="Content length: 'short' (1 para), 'medium' (3 para), or 'long' (5+ para)",
+                        required=True,
+                    ),
+                    UserInputField(
+                        name="include_examples",
+                        field_type="bool",
+                        description="Include practical examples?",
+                        required=False,
+                    ),
+                ],
+            ),
         ),
         Step(name="format_output", executor=format_output),
     ],
@@ -121,22 +122,24 @@ workflow_with_executor = Workflow(
             name="process_data",
             step_id="process_data123",
             executor=process_data,
-            requires_user_input=True,
-            user_input_message="Configure data processing:",
-            user_input_schema=[
-                UserInputField(
-                    name="format",
-                    field_type="str",
-                    description="Output format: 'json', 'csv', or 'xml'",
-                    required=True,
-                ),
-                UserInputField(
-                    name="include_metadata",
-                    field_type="bool",
-                    description="Include metadata in output?",
-                    required=False,
-                ),
-            ],
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Configure data processing:",
+                user_input_schema=[
+                    UserInputField(
+                        name="format",
+                        field_type="str",
+                        description="Output format: 'json', 'csv', or 'xml'",
+                        required=True,
+                    ),
+                    UserInputField(
+                        name="include_metadata",
+                        field_type="bool",
+                        description="Include metadata in output?",
+                        required=False,
+                    ),
+                ],
+            ),
         ),
         Step(name="format_output", executor=format_output),
     ],

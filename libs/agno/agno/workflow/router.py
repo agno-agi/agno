@@ -96,66 +96,14 @@ class Router:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    # HITL parameters for user-driven routing (selection mode)
-    requires_user_input: bool = False
-    user_input_message: Optional[str] = None
     allow_multiple_selections: bool = False  # If True, user can select multiple choices
-    user_input_schema: Optional[List[Dict[str, Any]]] = field(default=None)  # Custom schema if needed
 
-    # HITL parameters for confirmation mode
-    # If True, the router will pause and ask for confirmation before executing selected steps
-    # User confirms -> execute the selected steps from selector
-    # User rejects -> skip the router entirely
-    requires_confirmation: bool = False
-    confirmation_message: Optional[str] = None
-    on_reject: Union[OnReject, str] = OnReject.skip
-
-    # HITL parameters for post-execution output review
-    # If True, the router will execute the selected branch, then pause for human review.
-    # Approve -> continue to next workflow step
-    # Reject (on_reject=retry) -> discard output, re-pause for user route selection
-    # Cancel -> cancel the workflow
-    requires_output_review: bool = False
-    output_review_message: Optional[str] = None
-    hitl_max_retries: int = 3
-
-    # Consolidated HITL config (takes priority over flat params above)
-    human_review: Optional[HumanReview] = None
+    human_review: HumanReview = field(default_factory=HumanReview)
 
     def __post_init__(self) -> None:
-        # Router uses __post_init__ (not __init__) because it's a pure dataclass
-        # without a manual __init__. Step and Loop have manual __init__ methods
-        # where HumanReview is built directly.
-        if self.human_review is not None:
-            pass  # Use the explicit hitl
-        else:
-            self.human_review = HumanReview(
-                requires_user_input=self.requires_user_input,
-                user_input_message=self.user_input_message,
-                user_input_schema=self.user_input_schema,
-                requires_confirmation=self.requires_confirmation,
-                confirmation_message=self.confirmation_message,
-                on_reject=self.on_reject,
-                requires_output_review=self.requires_output_review,
-                output_review_message=self.output_review_message,
-                max_retries=self.hitl_max_retries,
-            )
-
-        # Validate HumanReview config for Router
         from agno.workflow.types import validate_human_review_for_router
 
         validate_human_review_for_router(self.human_review)
-
-        # Store HITL fields as attributes for backward compatibility
-        self.requires_user_input = self.human_review.requires_user_input
-        self.user_input_message = self.human_review.user_input_message
-        self.user_input_schema = self.human_review.user_input_schema
-        self.requires_confirmation = self.human_review.requires_confirmation
-        self.confirmation_message = self.human_review.confirmation_message
-        self.on_reject = self.human_review.on_reject
-        self.requires_output_review = self.human_review.requires_output_review
-        self.output_review_message = self.human_review.output_review_message
-        self.hitl_max_retries = self.human_review.max_retries
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -163,8 +111,6 @@ class Router:
             "name": self.name,
             "description": self.description,
             "choices": [step.to_dict() for step in self.choices if hasattr(step, "to_dict")],
-            "requires_user_input": self.requires_user_input,
-            "user_input_message": self.user_input_message,
             "allow_multiple_selections": self.allow_multiple_selections,
         }
         # Serialize selector
@@ -180,10 +126,6 @@ class Router:
         else:
             raise ValueError(f"Invalid selector type: {type(self.selector).__name__}")
 
-        if self.user_input_schema:
-            result["user_input_schema"] = self.user_input_schema
-
-        # Add human review config
         if self.human_review:
             result["human_review"] = self.human_review.to_dict()
 
@@ -217,8 +159,9 @@ class Router:
             choice_names = self._get_choice_names()
 
             # Build user input schema for selection (optional, for display purposes)
-            if self.user_input_schema:
-                schema = [UserInputField.from_dict(f) if isinstance(f, dict) else f for f in self.user_input_schema]
+            user_input_schema = self.human_review.user_input_schema
+            if user_input_schema:
+                schema = [UserInputField.from_dict(f) if isinstance(f, dict) else f for f in user_input_schema]
             else:
                 schema = None  # Route selection uses available_choices, not user_input_schema
 
@@ -228,7 +171,8 @@ class Router:
                 step_index=step_index,
                 step_type="Router",
                 requires_route_selection=True,
-                user_input_message=self.user_input_message or f"Select a route from: {', '.join(choice_names)}",
+                user_input_message=self.human_review.user_input_message
+                or f"Select a route from: {', '.join(choice_names)}",
                 user_input_schema=schema,
                 available_choices=choice_names,
                 allow_multiple_selections=self.allow_multiple_selections,
@@ -236,15 +180,16 @@ class Router:
             )
         else:
             # Confirmation mode - user confirms before execution
+            on_reject = self.human_review.on_reject
             return StepRequirement(
                 step_id=str(uuid4()),
                 step_name=step_name,
                 step_index=step_index,
                 step_type="Router",
-                requires_confirmation=self.requires_confirmation,
-                confirmation_message=self.confirmation_message
+                requires_confirmation=self.human_review.requires_confirmation,
+                confirmation_message=self.human_review.confirmation_message
                 or f"Execute router '{self.name or 'router'}' with selected steps?",
-                on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+                on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
                 requires_user_input=False,
                 step_input=step_input,
             )
@@ -274,8 +219,9 @@ class Router:
         """
         step_name = self.name or f"router_{step_index + 1}"
         choice_names = self._get_choice_names()
-        message = self.output_review_message or f"Review output of router '{step_name}'?"
+        message = self.human_review.output_review_message or f"Review output of router '{step_name}'?"
 
+        on_reject = self.human_review.on_reject
         return StepRequirement(
             step_id=str(uuid4()),
             step_name=step_name,
@@ -285,11 +231,11 @@ class Router:
             output_review_message=message,
             requires_confirmation=True,
             confirmation_message=message,
-            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             step_output=step_output,
             is_post_execution=True,
             retry_count=retry_count,
-            max_retries=self.hitl_max_retries,
+            max_retries=self.human_review.max_retries,
             # Include available choices so the user can re-route on reject
             available_choices=choice_names,
         )
@@ -347,22 +293,13 @@ class Router:
         else:
             raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
 
-        # HITL config
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
         else:
-            # Backward compat: build HITL from flat keys
-            human_review = HumanReview(
-                requires_user_input=data.get("requires_user_input", False),
-                user_input_message=data.get("user_input_message"),
-                user_input_schema=data.get("user_input_schema"),
-                requires_confirmation=data.get("requires_confirmation", False),
-                confirmation_message=data.get("confirmation_message"),
-                on_reject=data.get("on_reject", "skip"),
-                requires_output_review=data.get("requires_output_review", False),
-                output_review_message=data.get("output_review_message"),
-                max_retries=data.get("hitl_max_retries", 3),
-            )
+            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
+
+            drop_legacy_hitl_keys(data, StepType.ROUTER)
+            human_review = HumanReview()
 
         return cls(
             selector=selector,
@@ -460,7 +397,7 @@ class Router:
     @property
     def requires_hitl(self) -> bool:
         """Check if this router requires any form of HITL."""
-        return self.requires_user_input
+        return self.human_review.requires_user_input
 
     def _update_step_input_from_outputs(
         self,
