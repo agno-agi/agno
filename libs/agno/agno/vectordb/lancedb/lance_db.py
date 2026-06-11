@@ -954,15 +954,29 @@ class LanceDb(VectorDb):
             logger.exception(f"Error deleting rows by metadata '{metadata}'")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete content by content ID."""
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete content by content ID, scoped to ``user_id`` when set.
+
+        With ``user_id``: only rows where the ``user_id`` column matches
+        AND content_id matches get deleted. Prevents cross-user delete
+        races. Without ``user_id``: deletes across all owners (legacy
+        behaviour; safe only for unscoped/admin tooling).
+        """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
+            # Pre-filter on the user_id column at the server side when
+            # scoped — saves scanning every payload in Python.
+            select_cols = ["id", "payload", self.USER_ID_COL]
+            search = self.table.search().select(select_cols).limit(total_count)
+            if user_id is not None:
+                search = search.where(
+                    f"{self.USER_ID_COL} = '{user_id.replace(chr(39), chr(39) + chr(39))}'"
+                )
+            result = search.to_list()
 
             ids_to_delete = []
             for row in result:

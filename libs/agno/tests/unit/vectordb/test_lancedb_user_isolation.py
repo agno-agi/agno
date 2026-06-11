@@ -146,6 +146,61 @@ class TestSearchIsolationContract:
         assert "company-holidays" in names
 
 
+class TestDeleteByContentIdIsolation:
+    """``delete_by_content_id(content_id, user_id=...)`` must scope the
+    delete to the caller's bucket — otherwise Bob could guess Alice's
+    content_id and wipe her chunks.
+
+    LanceDB scopes via the ``user_id`` column (``WHERE user_id = X``
+    in ``.where()`` before scanning payloads).
+    """
+
+    @pytest.fixture
+    def populated_db(self, lance_db):
+        """Two users own chunks under the SAME content_id 'doc-1'. This
+        is the realistic adversarial scenario — Bob guesses the id and
+        tries to delete it. Without ``user_id`` scoping he'd wipe both."""
+        alice_doc = Document(name="alice-doc", content="Alice's secret.")
+        alice_doc.content_id = "doc-1"
+        bob_doc = Document(name="bob-doc", content="Bob's secret.")
+        bob_doc.content_id = "doc-1"
+
+        lance_db.insert(content_hash="h-alice", documents=[alice_doc], user_id="alice")
+        lance_db.insert(content_hash="h-bob", documents=[bob_doc], user_id="bob")
+        return lance_db
+
+    def test_scoped_delete_only_removes_callers_chunks(self, populated_db):
+        """Bob asks to delete 'doc-1' under his own scope — alice's
+        chunks must remain."""
+        populated_db.delete_by_content_id("doc-1", user_id="bob")
+
+        rows = populated_db.table.search().select([populated_db.USER_ID_COL]).to_list()
+        owners = sorted(r[populated_db.USER_ID_COL] for r in rows)
+        assert owners == ["alice"], (
+            "Isolation broken: bob's scoped delete touched alice's chunks"
+        )
+
+    def test_alice_can_delete_her_own(self, populated_db):
+        populated_db.delete_by_content_id("doc-1", user_id="alice")
+
+        rows = populated_db.table.search().select([populated_db.USER_ID_COL]).to_list()
+        owners = sorted(r[populated_db.USER_ID_COL] for r in rows)
+        assert owners == ["bob"]
+
+    def test_unscoped_delete_wipes_everyone(self, populated_db):
+        """Legacy behaviour: ``user_id=None`` deletes across all owners.
+        Pin it so we notice if the default semantics change."""
+        populated_db.delete_by_content_id("doc-1", user_id=None)
+
+        assert populated_db.table.count_rows() == 0
+
+    def test_scoped_delete_misses_when_user_does_not_own_anything(self, populated_db):
+        """Carol has no chunks. Her scoped delete of doc-1 is a no-op."""
+        populated_db.delete_by_content_id("doc-1", user_id="carol")
+
+        assert populated_db.table.count_rows() == 2
+
+
 class TestWhereClauseHelper:
     """The clause builder is small enough to unit-test directly. We can
     catch escaping bugs and shared-NULL semantics without spinning up a DB."""

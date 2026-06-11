@@ -775,13 +775,13 @@ class Knowledge(RemoteKnowledge):
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                # NOTE (K2 follow-up): vector_db.delete_by_content_id does not
-                # currently take user_id. If user_isolation is on and the
-                # caller is not the owner of this content_id, the contents-db
-                # delete below will short-circuit (rowcount=0) and the vector
-                # rows stay orphaned. Live with this until K2 wires user_id
-                # into vector backends.
-                self.vector_db.delete_by_content_id(content_id)
+                # Scope the vector-DB delete to the same ``user_id`` that
+                # scopes the contents-DB delete below — otherwise a caller
+                # whose ownership check fails on the contents row could
+                # still wipe the vector chunks. Backends that don't yet
+                # implement per-user isolation accept ``user_id`` as a
+                # no-op (see VectorDb.delete_by_content_id).
+                self.vector_db.delete_by_content_id(content_id, user_id=user_id)
 
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
@@ -796,8 +796,8 @@ class Knowledge(RemoteKnowledge):
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                # See K2 follow-up note in ``remove_content_by_id``.
-                self.vector_db.delete_by_content_id(content_id)
+                # See the matching comment in ``remove_content_by_id``.
+                self.vector_db.delete_by_content_id(content_id, user_id=user_id)
 
         if self.contents_db is not None:
             if isinstance(self.contents_db, AsyncBaseDb):

@@ -194,7 +194,16 @@ class VectorDb(ABC):
         )
 
     @abstractmethod
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete all chunks with the given ``content_id``.
+
+        ``user_id`` scopes the delete to the owner's bucket — preventing
+        cross-user delete races where one caller could wipe another's
+        chunks by guessing their content_id. ``None`` deletes across all
+        owners (legacy behaviour; safe only for unscoped deployments).
+        Backends that don't yet implement per-user isolation accept the
+        parameter as a no-op for forward-compatibility.
+        """
         raise NotImplementedError
 
     @abstractmethod

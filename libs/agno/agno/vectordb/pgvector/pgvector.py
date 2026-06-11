@@ -1633,13 +1633,22 @@ class PgVector(VectorDb):
             sess.rollback()
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
-        Delete content by content ID.
+        Delete content by content ID, scoped to ``user_id`` when set.
+
+        With ``user_id``: ``DELETE WHERE content_id = ? AND user_id = ?``.
+        This is the safe path for per-user isolation — Bob cannot wipe
+        Alice's chunks by guessing her content_id.
+
+        Without ``user_id``: deletes across all owners (legacy behaviour).
+        Only safe for unscoped/admin tooling.
         """
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_id == content_id)
+                if user_id is not None:
+                    stmt = stmt.where(self.table.c.user_id == user_id)
                 sess.execute(stmt)
                 sess.commit()
                 log_info(f"Deleted records with content ID '{content_id}' from table '{self.table.fullname}'.")
