@@ -1,5 +1,3 @@
-"""Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
-
 import copy
 import uuid
 from typing import AsyncIterator, Optional, Union

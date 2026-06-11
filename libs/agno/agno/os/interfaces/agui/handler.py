@@ -1,5 +1,3 @@
-"""Top-level sync and async streaming loops mapping Agno responses to AG-UI events."""
-
 from collections.abc import Iterator
 from typing import Any, AsyncIterator, Dict, Optional, Union
 

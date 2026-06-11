@@ -1,5 +1,3 @@
-"""Utility functions for AG-UI: message extraction, state validation, formatting."""
-
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, List, Optional
 

@@ -1,5 +1,3 @@
-"""Per-stream state buffer for AG-UI event ordering."""
-
 import copy
 import uuid
 from dataclasses import dataclass, field

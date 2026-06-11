@@ -1,5 +1,3 @@
-"""Per-chunk Agno → AG-UI event translation, completion cleanup, and state delta computation."""
-
 import copy
 import json
 import uuid
