@@ -517,15 +517,20 @@ def attach_routes(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
-        # Attribute the created run to the caller
+        # Attribute the created run to the caller. Best-effort: the eval run is
+        # already persisted, so a backend that can't stamp the owner (e.g. a
+        # custom Db without update_eval_run_user_id) must not fail the request.
         if eval_run is not None:
             creator_user_id = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
             if creator_user_id is not None:
-                if isinstance(db, AsyncBaseDb):
-                    await db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
-                else:
-                    db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
-                eval_run.user_id = creator_user_id
+                try:
+                    if isinstance(db, AsyncBaseDb):
+                        await db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
+                    else:
+                        db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
+                    eval_run.user_id = creator_user_id
+                except Exception as e:
+                    log_warning(f"Could not set owner on eval run {eval_run.id}: {e}")
 
         return eval_run
 
