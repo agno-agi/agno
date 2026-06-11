@@ -7,8 +7,9 @@
 **Description:** Single agent with fluid chat via the Gateway interface.
 Tests the listener thread (WebSocket connect, mention-gating, DM handling),
 the relay POST to /discord/gateway/events with the shared secret, thread
-creation off the user's message, live tool status edits, chunking, and
-session continuity inside a thread.
+creation off the user's message, the native typing indicator while the agent
+runs, live tool status edits, chunking, and session continuity inside a
+thread.
 
 **Result:** Pending live test against a real Discord application. Requires
 the Message Content Intent enabled and discord.py installed; no tunnel

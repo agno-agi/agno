@@ -29,7 +29,7 @@ happens.
   │   FastAPI route (the processing brain)             │
   │      - re-checks gating (it is the authority)      │
   │      - resolves session, runs the agent (streamed) │
-  │      - live tool status, chunking                  │
+  │      - typing indicator, tool status, chunking     │
   │      ▼                                             │
   │   replies via Discord REST with the bot token      │
   │                                                    │
@@ -46,6 +46,10 @@ Key properties:
   feeding one or more stateless AgentOS replicas (see below).
 - **Replies go over REST**, not the WebSocket — the endpoint is
   self-sufficient.
+- **Native typing indicator.** While the agent works, the bot shows
+  "is typing..." (refreshed every 8 seconds) instead of posting a placeholder
+  message. A status message only appears when the agent actually runs a tool
+  (`Running tool: <name>...`), and that message then becomes the answer.
 - **Shared secret auth.** Unlike Interactions webhooks, relayed gateway
   events carry no Discord signature, so the endpoint rejects any POST without
   the `X-Discord-Gateway-Secret` header (auto-generated per process,

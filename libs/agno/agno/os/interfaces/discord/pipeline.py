@@ -116,6 +116,18 @@ async def edit_channel_message(
     await client.patch(url, headers=bot_headers, json={"content": body})
 
 
+async def trigger_typing(client: httpx.AsyncClient, bot_headers: Dict[str, str], channel_id: str) -> None:
+    """Show the native 'Bot is typing...' indicator (lasts up to 10 seconds).
+
+    Failures are swallowed — typing is cosmetic and must never break a run.
+    """
+    url = f"{DISCORD_API}/channels/{channel_id}/typing"
+    try:
+        await client.post(url, headers=bot_headers)
+    except Exception as e:
+        log_warning(f"Typing indicator failed: {e}")
+
+
 async def create_thread(
     client: httpx.AsyncClient, bot_headers: Dict[str, str], channel_id: str, message_id: str, name: str
 ) -> Optional[str]:
