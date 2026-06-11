@@ -1749,13 +1749,19 @@ def generate_team_followups(
     if not team.followups or run_response.content is None:
         return
 
-    model = team.followup_model or team.model
+    followup_instructions = team.followup_config.instructions if team.followup_config else None
+    model = (team.followup_config.model if team.followup_config else None) or team.followup_model or team.model
     if model is None:
         return
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content,
+        team.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1781,13 +1787,19 @@ async def agenerate_team_followups(
     if not team.followups or run_response.content is None:
         return
 
-    model = team.followup_model or team.model
+    followup_instructions = team.followup_config.instructions if team.followup_config else None
+    model = (team.followup_config.model if team.followup_config else None) or team.followup_model or team.model
     if model is None:
         return
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content,
+        team.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1814,7 +1826,8 @@ def generate_team_followups_stream(
     if not team.followups or run_response.content is None:
         return
 
-    model = team.followup_model or team.model
+    followup_instructions = team.followup_config.instructions if team.followup_config else None
+    model = (team.followup_config.model if team.followup_config else None) or team.followup_model or team.model
     if model is None:
         return
 
@@ -1828,7 +1841,12 @@ def generate_team_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content,
+        team.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1863,7 +1881,8 @@ async def agenerate_team_followups_stream(
     if not team.followups or run_response.content is None:
         return
 
-    model = team.followup_model or team.model
+    followup_instructions = team.followup_config.instructions if team.followup_config else None
+    model = (team.followup_config.model if team.followup_config else None) or team.followup_model or team.model
     if model is None:
         return
 
@@ -1877,7 +1896,12 @@ async def agenerate_team_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content,
+        team.num_followups,
+        user_message=user_message,
+        followup_instructions=followup_instructions,
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
