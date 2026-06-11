@@ -21,6 +21,7 @@ from agno.os.middleware.user_scope import (
 )
 from agno.os.routers.workflows.router import (
     WebSocketAuthContext,
+    handle_workflow_continue_via_websocket,
     handle_workflow_subscription,
     handle_workflow_via_websocket,
 )
@@ -175,6 +176,7 @@ def get_base_router(
             os_database=os.db.id if os.db else None,
             databases=list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             chat=os.config.chat if os.config else None,
+            manifest=os.config.manifest if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
             knowledge=os._get_knowledge_config(),
@@ -493,6 +495,43 @@ def get_websocket_router(
                         user_isolation_enabled=ws_user_isolation_enabled,
                     )
                     await handle_workflow_subscription(websocket, message, os, ws_auth=ws_auth)
+
+                elif action == "continue-workflow":
+                    # Enforce workflow-level RBAC, mirroring start-workflow.
+                    workflow_id = message.get("workflow_id")
+                    if jwt_auth_enabled:
+                        user_scopes = websocket_user_context.get("scopes", [])
+                        if not has_required_scopes(
+                            user_scopes,
+                            ["workflows:run"],
+                            resource_type="workflows",
+                            resource_id=workflow_id,
+                            admin_scope=ws_admin_scope,
+                        ):
+                            await websocket.send_text(
+                                json.dumps(
+                                    {"event": "error", "error": "Insufficient permissions to continue this workflow"}
+                                )
+                            )
+                            continue
+
+                    # Force user_id from JWT for non-admin callers so the client
+                    # cannot continue another user's paused run by spoofing the field.
+                    jwt_user_id = websocket_user_context.get("user_id")
+                    is_admin = False
+                    if jwt_user_id:
+                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                        if is_admin:
+                            message.setdefault("user_id", jwt_user_id)
+                        else:
+                            message["user_id"] = jwt_user_id
+
+                    ws_auth = WebSocketAuthContext(
+                        jwt_enabled=jwt_auth_enabled,
+                        is_admin=is_admin,
+                        user_isolation_enabled=ws_user_isolation_enabled,
+                    )
+                    await handle_workflow_continue_via_websocket(websocket, message, os, ws_auth=ws_auth)
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
