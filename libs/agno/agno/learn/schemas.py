@@ -39,11 +39,6 @@ from typing import Any, Dict, List, Optional
 from agno.learn.utils import _parse_json, _safe_get
 from agno.utils.log import log_debug
 
-# Per-entry id/timestamp fields (for list items like memories, facts, events) are owned by
-# the framework and stamped at write time. They are never accepted from the model / caller,
-# so they cannot be spoofed via kwargs.
-_RESERVED_ENTRY_FIELDS = {"id", "created_at", "updated_at"}
-
 
 def _utc_now_iso() -> str:
     """UTC timestamp in ISO-8601 with a trailing Z (matches the rest of the learn module)."""
@@ -260,14 +255,12 @@ class Memories:
     def add_memory(self, content: str, **kwargs) -> str:
         """Add a new memory.
 
-        ``created_at`` and ``updated_at`` are stamped by the framework here and cannot be
-        supplied by the caller (any such kwargs are ignored) -- the model decides what to
-        remember, we decide when it was recorded.
+        ``created_at`` and ``updated_at`` are stamped by the framework here -- the model
+        decides what to remember, we decide when it was recorded.
 
         Args:
             content: The memory text to add.
-            **kwargs: Additional fields (e.g. source, added_by_agent). Reserved fields
-                (id, created_at, updated_at) are ignored.
+            **kwargs: Additional fields to store on the entry (e.g. source, added_by_agent).
 
         Returns:
             The generated memory ID.
@@ -278,9 +271,8 @@ class Memories:
 
         if content and content.strip():
             now = _utc_now_iso()
-            extra = {k: v for k, v in kwargs.items() if k not in _RESERVED_ENTRY_FIELDS}
             self.memories.append(
-                {"id": memory_id, "content": content.strip(), "created_at": now, "updated_at": now, **extra}
+                {"id": memory_id, "content": content.strip(), "created_at": now, "updated_at": now, **kwargs}
             )
 
         return memory_id
@@ -296,7 +288,6 @@ class Memories:
         """Update an existing memory.
 
         Bumps ``updated_at`` (framework-owned) and preserves the original ``created_at``.
-        Reserved fields (id, created_at, updated_at) in kwargs are ignored.
 
         Returns:
             True if memory was found and updated, False otherwise.
@@ -304,7 +295,7 @@ class Memories:
         for mem in self.memories:
             if isinstance(mem, dict) and mem.get("id") == memory_id:
                 mem["content"] = content.strip()
-                mem.update({k: v for k, v in kwargs.items() if k not in _RESERVED_ENTRY_FIELDS})
+                mem.update(kwargs)
                 mem["updated_at"] = _utc_now_iso()
                 return True
         return False
@@ -674,9 +665,8 @@ class EntityMemory:
 
         if content and content.strip():
             now = _utc_now_iso()
-            extra = {k: v for k, v in kwargs.items() if k not in _RESERVED_ENTRY_FIELDS}
             self.facts.append(
-                {"id": fact_id, "content": content.strip(), "created_at": now, "updated_at": now, **extra}
+                {"id": fact_id, "content": content.strip(), "created_at": now, "updated_at": now, **kwargs}
             )
 
         return fact_id
@@ -698,8 +688,7 @@ class EntityMemory:
 
         if content and content.strip():
             now = _utc_now_iso()
-            extra = {k: v for k, v in kwargs.items() if k not in _RESERVED_ENTRY_FIELDS}
-            event = {"id": event_id, "content": content.strip(), "created_at": now, "updated_at": now, **extra}
+            event = {"id": event_id, "content": content.strip(), "created_at": now, "updated_at": now, **kwargs}
             if date:
                 event["date"] = date
             self.events.append(event)
@@ -723,7 +712,6 @@ class EntityMemory:
         rel_id = str(uuid.uuid4())[:8]
 
         now = _utc_now_iso()
-        extra = {k: v for k, v in kwargs.items() if k not in _RESERVED_ENTRY_FIELDS}
         self.relationships.append(
             {
                 "id": rel_id,
@@ -732,7 +720,7 @@ class EntityMemory:
                 "direction": direction,
                 "created_at": now,
                 "updated_at": now,
-                **extra,
+                **kwargs,
             }
         )
 
@@ -754,7 +742,7 @@ class EntityMemory:
         for fact in self.facts:
             if isinstance(fact, dict) and fact.get("id") == fact_id:
                 fact["content"] = content.strip()
-                fact.update({k: v for k, v in kwargs.items() if k not in _RESERVED_ENTRY_FIELDS})
+                fact.update(kwargs)
                 fact["updated_at"] = _utc_now_iso()
                 return True
         return False
