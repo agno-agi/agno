@@ -15,11 +15,11 @@ from ag_ui.core.types import (
     VideoInputContent,
 )
 
+from agno.os.interfaces.agui.handler import async_stream_agno_response_as_agui_events
+from agno.os.interfaces.agui.helpers import extract_agui_user_input
 from agno.os.interfaces.agui.media import extract_agui_media
-from agno.os.interfaces.agui.messages import extract_agui_user_input
-from agno.os.interfaces.agui.router import run_agent, run_team
+from agno.os.interfaces.agui.router import run_entity
 from agno.os.interfaces.agui.state import EventBuffer
-from agno.os.interfaces.agui.streaming import async_stream_agno_response_as_agui_events
 from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
@@ -1560,7 +1560,7 @@ async def test_message_id_regression_prevention():
 
 def test_validate_agui_state_with_valid_dict():
     """Test validate_agui_state with valid dict."""
-    from agno.os.interfaces.agui.state import validate_agui_state
+    from agno.os.interfaces.agui.helpers import validate_agui_state
 
     result = validate_agui_state({"user_name": "Alice", "counter": 5}, "test_thread")
     assert result == {"user_name": "Alice", "counter": 5}
@@ -1568,7 +1568,7 @@ def test_validate_agui_state_with_valid_dict():
 
 def test_validate_agui_state_with_none():
     """Test validate_agui_state with None state."""
-    from agno.os.interfaces.agui.state import validate_agui_state
+    from agno.os.interfaces.agui.helpers import validate_agui_state
 
     result = validate_agui_state(None, "test_thread")
     assert result is None
@@ -1576,7 +1576,7 @@ def test_validate_agui_state_with_none():
 
 def test_validate_agui_state_with_invalid_type():
     """Test validate_agui_state with non-dict type returns None."""
-    from agno.os.interfaces.agui.state import validate_agui_state
+    from agno.os.interfaces.agui.helpers import validate_agui_state
 
     # String state should be rejected
     result = validate_agui_state("invalid_string", "test_thread")
@@ -1593,7 +1593,7 @@ def test_validate_agui_state_with_basemodel():
     """Test validate_agui_state with Pydantic BaseModel."""
     from pydantic import BaseModel
 
-    from agno.os.interfaces.agui.state import validate_agui_state
+    from agno.os.interfaces.agui.helpers import validate_agui_state
 
     class TestModel(BaseModel):
         name: str
@@ -1608,7 +1608,7 @@ def test_validate_agui_state_with_dataclass():
     """Test validate_agui_state with dataclass."""
     from dataclasses import dataclass
 
-    from agno.os.interfaces.agui.state import validate_agui_state
+    from agno.os.interfaces.agui.helpers import validate_agui_state
 
     @dataclass
     class TestDataclass:
@@ -1622,7 +1622,7 @@ def test_validate_agui_state_with_dataclass():
 
 def test_validate_agui_state_with_to_dict_method():
     """Test validate_agui_state with object having to_dict method."""
-    from agno.os.interfaces.agui.state import validate_agui_state
+    from agno.os.interfaces.agui.helpers import validate_agui_state
 
     class TestClass:
         def __init__(self, name: str, count: int):
@@ -1639,7 +1639,7 @@ def test_validate_agui_state_with_to_dict_method():
 
 def test_validate_agui_state_with_invalid_to_dict():
     """Test validate_agui_state with to_dict method returning non-dict."""
-    from agno.os.interfaces.agui.state import validate_agui_state
+    from agno.os.interfaces.agui.helpers import validate_agui_state
 
     class TestClass:
         def to_dict(self):
@@ -2101,18 +2101,9 @@ def _assert_media_forwarded(captured_kwargs):
 
 
 @pytest.mark.asyncio
-async def test_run_agent_passes_agui_media_to_agent():
-    """Test the AG-UI router forwards extracted media parts to Agent.arun."""
-    fake_agent = _FakeRunner()
-    events = [event async for event in run_agent(fake_agent, _media_run_input())]
+async def test_run_entity_passes_agui_media():
+    """Test the AG-UI router forwards extracted media parts to entity.arun."""
+    fake_entity = _FakeRunner()
+    events = [event async for event in run_entity(fake_entity, _media_run_input())]
     assert events[0].type == EventType.RUN_STARTED
-    _assert_media_forwarded(fake_agent.captured_kwargs)
-
-
-@pytest.mark.asyncio
-async def test_run_team_passes_agui_media_to_team():
-    """Test the AG-UI router forwards extracted media parts to Team.arun."""
-    fake_team = _FakeRunner()
-    events = [event async for event in run_team(fake_team, _media_run_input())]
-    assert events[0].type == EventType.RUN_STARTED
-    _assert_media_forwarded(fake_team.captured_kwargs)
+    _assert_media_forwarded(fake_entity.captured_kwargs)

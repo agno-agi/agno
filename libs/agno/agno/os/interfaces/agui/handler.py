@@ -5,8 +5,7 @@ from typing import Any, AsyncIterator, Dict, Optional, Union
 
 from ag_ui.core import BaseEvent
 
-from agno.os.interfaces.agui.completion import create_completion_events
-from agno.os.interfaces.agui.events import create_events_from_chunk, emit_event_logic
+from agno.os.interfaces.agui.events import create_completion_events, create_events_from_chunk, emit_event_logic
 from agno.os.interfaces.agui.state import EventBuffer
 from agno.run.agent import RunCompletedEvent, RunEvent, RunOutputEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent

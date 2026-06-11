@@ -1,7 +1,7 @@
 import pytest
 from ag_ui.core import EventType
 
-from agno.os.interfaces.agui.streaming import async_stream_agno_response_as_agui_events
+from agno.os.interfaces.agui.handler import async_stream_agno_response_as_agui_events
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
     ReasoningCompletedEvent,

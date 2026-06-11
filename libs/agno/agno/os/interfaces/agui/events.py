@@ -1,5 +1,6 @@
-"""Per-chunk Agno → AG-UI event translation."""
+"""Per-chunk Agno → AG-UI event translation, completion cleanup, and state delta computation."""
 
+import copy
 import json
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -14,6 +15,9 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    RunFinishedEvent,
+    StateDeltaEvent,
+    StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -23,17 +27,17 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
-from agno.os.interfaces.agui.messages import (
+from agno.os.interfaces.agui.helpers import (
     extract_response_chunk_content,
     extract_team_response_chunk_content,
+    format_reasoning_step_delta,
 )
-from agno.os.interfaces.agui.state import EventBuffer, create_state_delta_events
-from agno.reasoning.step import ReasoningStep
+from agno.os.interfaces.agui.state import EventBuffer
 from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
 from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
 from agno.run.agent import ReasoningStepEvent as AgentReasoningStepEvent
-from agno.run.agent import RunEvent, RunOutputEvent
+from agno.run.agent import RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
@@ -41,30 +45,18 @@ from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 
 
-def _format_reasoning_step_delta(step: Optional[ReasoningStep], step_number: int = 0) -> str:
-    """Format a single ReasoningStep as a text delta for REASONING_MESSAGE_CONTENT.
-
-    ReasoningStepEvent.content holds a ReasoningStep object (title, reasoning,
-    action, result, confidence). We format just this one step — NOT the
-    accumulated reasoning_content field, which duplicates prior steps.
-    """
-    if step is None:
-        return ""
-    parts: List[str] = []
-    title = step.title or "Thinking"
-    if step_number > 0:
-        parts.append(f"## Step {step_number}: {title}")
-    else:
-        parts.append(f"## {title}")
-    if step.reasoning:
-        parts.append(step.reasoning)
-    if step.action:
-        parts.append(f"Action: {step.action}")
-    if step.result:
-        parts.append(f"Result: {step.result}")
-    if step.confidence is not None:
-        parts.append(f"Confidence: {step.confidence}")
-    return "\n".join(parts) + "\n\n" if parts else ""
+def create_state_delta_events(
+    run_state: Optional[Dict[str, Any]],
+    event_buffer: EventBuffer,
+) -> List[BaseEvent]:
+    """Compute state delta and return StateDeltaEvent if state changed."""
+    if run_state is None:
+        return []
+    ops = event_buffer.compute_state_delta(run_state)
+    if ops is None:
+        return []
+    event_buffer.set_state_snapshot(run_state)
+    return [StateDeltaEvent(type=EventType.STATE_DELTA, delta=ops)]
 
 
 def create_events_from_chunk(
@@ -74,19 +66,7 @@ def create_events_from_chunk(
     event_buffer: EventBuffer,
     run_state: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[BaseEvent], bool, str]:
-    """
-    Process a single chunk and return events to emit + updated message_started state.
-
-    Args:
-        chunk: The event chunk to process
-        message_id: Current message identifier
-        message_started: Whether a message is currently active
-        event_buffer: Event buffer for tracking tool call state (includes reasoning session state)
-        run_state: Mutable dict reference to the agent's session state (for delta tracking)
-
-    Returns:
-        Tuple of (events_to_emit, new_message_started_state, message_id)
-    """
+    """Process a single chunk and return events to emit + updated message_started state."""
     events_to_emit: List[BaseEvent] = []
     is_content_event = False
 
@@ -102,14 +82,10 @@ def create_events_from_chunk(
 
     # Handle text responses
     if content is not None:
-        # Handle the message start event, emitted once per message
         if not message_started:
             message_started = True
             message_id = event_buffer.start_text_message()
-
-            # Clear pending tool calls parent ID when starting new text message
             event_buffer.clear_pending_tool_calls_parent_id()
-
             start_event = TextMessageStartEvent(
                 type=EventType.TEXT_MESSAGE_START,
                 message_id=message_id,
@@ -117,8 +93,7 @@ def create_events_from_chunk(
             )
             events_to_emit.append(start_event)
 
-        # Handle the text content event, emitted once per text chunk
-        if content is not None and content != "":
+        if content != "":
             content_event = TextMessageContentEvent(
                 type=EventType.TEXT_MESSAGE_CONTENT,
                 message_id=message_id,
@@ -131,43 +106,29 @@ def create_events_from_chunk(
         if chunk.tool is not None:  # type: ignore
             tool_call = chunk.tool  # type: ignore
 
-            # End current text message and handle for tool calls
             current_message_id = message_id
             if message_started:
-                # End the current text message
                 end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=current_message_id)
                 events_to_emit.append(end_message_event)
-
-                # Set this message as the parent for any upcoming tool calls
-                # This ensures multiple sequential tool calls all use the same parent
                 event_buffer.set_pending_tool_calls_parent_id(current_message_id)
-
-                # Reset message started state and generate new message_id for future messages
                 message_started = False
                 message_id = str(uuid.uuid4())
 
-            # Get the parent message ID - uses pending parent if set, so sequential tool calls share a parent
             parent_message_id = event_buffer.get_parent_message_id_for_tool_call()
 
             if not parent_message_id:
-                # Create parent message for tool calls without preceding assistant message
                 parent_message_id = str(uuid.uuid4())
-
-                # Emit a text message to serve as the parent
                 text_start = TextMessageStartEvent(
                     type=EventType.TEXT_MESSAGE_START,
                     message_id=parent_message_id,
                     role="assistant",
                 )
                 events_to_emit.append(text_start)
-
                 text_end = TextMessageEndEvent(
                     type=EventType.TEXT_MESSAGE_END,
                     message_id=parent_message_id,
                 )
                 events_to_emit.append(text_end)
-
-                # Set this as the pending parent for subsequent tool calls in this batch
                 event_buffer.set_pending_tool_calls_parent_id(parent_message_id)
 
             start_event = ToolCallStartEvent(
@@ -206,7 +167,6 @@ def create_events_from_chunk(
                     )
                     events_to_emit.append(result_event)
 
-                # Emit state delta after tool call completion (state may have been mutated by the tool)
                 events_to_emit.extend(create_state_delta_events(run_state, event_buffer))
 
     # Handle reasoning events
@@ -257,7 +217,7 @@ def create_events_from_chunk(
                 )
             )
         step_num = event_buffer.next_reasoning_step()
-        delta = _format_reasoning_step_delta(chunk.content, step_num)
+        delta = format_reasoning_step_delta(chunk.content, step_num)
         if delta:
             events_to_emit.append(
                 ReasoningMessageContentEvent(
@@ -276,13 +236,11 @@ def create_events_from_chunk(
 
     # Handle custom events
     elif chunk.event in (RunEvent.custom_event, TeamRunEvent.custom_event):
-        # Use the name of the event class if available, otherwise default to the CustomEvent
         try:
             custom_event_name = chunk.__class__.__name__
         except Exception:
             custom_event_name = chunk.event
 
-        # Use the complete Agno event as value if parsing it works, else the event content field
         try:
             custom_event_value = chunk.to_dict()
         except Exception:
@@ -291,7 +249,7 @@ def create_events_from_chunk(
         custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
 
-    # Catch-all: emit unmapped events as RawEvent (skip content events which may have None content)
+    # Catch-all: emit unmapped events as RawEvent
     elif not is_content_event:
         try:
             raw_dict = chunk.to_dict()
@@ -302,11 +260,104 @@ def create_events_from_chunk(
     return events_to_emit, message_started, message_id
 
 
+def create_completion_events(
+    chunk: Union[RunOutputEvent, TeamRunOutputEvent],
+    event_buffer: EventBuffer,
+    message_started: bool,
+    message_id: str,
+    thread_id: str,
+    run_id: str,
+    run_state: Optional[Dict[str, Any]] = None,
+) -> List[BaseEvent]:
+    """Create events for run completion (orphan closure, final snapshot, RUN_FINISHED)."""
+    events_to_emit: List[BaseEvent] = []
+
+    # Close orphaned reasoning session if stream ended mid-reasoning
+    if event_buffer.reasoning_message_id is not None:
+        events_to_emit.append(
+            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=event_buffer.reasoning_message_id)
+        )
+        events_to_emit.append(
+            ReasoningEndEvent(type=EventType.REASONING_END, message_id=event_buffer.reasoning_message_id)
+        )
+        event_buffer.end_reasoning()
+
+    # End remaining active tool calls if needed
+    for tool_call_id in list(event_buffer.active_tool_call_ids):
+        if tool_call_id not in event_buffer.ended_tool_call_ids:
+            end_event = ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id)
+            events_to_emit.append(end_event)
+
+    # End the message if started
+    if message_started:
+        end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
+        events_to_emit.append(end_message_event)
+
+    # Emit external execution tools for paused runs
+    if isinstance(chunk, RunPausedEvent):
+        external_tools = chunk.tools_awaiting_external_execution
+        if external_tools:
+            assistant_message_id = str(uuid.uuid4())
+            assistant_start_event = TextMessageStartEvent(
+                type=EventType.TEXT_MESSAGE_START,
+                message_id=assistant_message_id,
+                role="assistant",
+            )
+            events_to_emit.append(assistant_start_event)
+
+            if chunk.content:
+                content_event = TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT,
+                    message_id=assistant_message_id,
+                    delta=str(chunk.content),
+                )
+                events_to_emit.append(content_event)
+
+            assistant_end_event = TextMessageEndEvent(
+                type=EventType.TEXT_MESSAGE_END,
+                message_id=assistant_message_id,
+            )
+            events_to_emit.append(assistant_end_event)
+
+            for tool in external_tools:
+                if tool.tool_call_id is None or tool.tool_name is None:
+                    continue
+
+                start_event = ToolCallStartEvent(
+                    type=EventType.TOOL_CALL_START,
+                    tool_call_id=tool.tool_call_id,
+                    tool_call_name=tool.tool_name,
+                    parent_message_id=assistant_message_id,
+                )
+                events_to_emit.append(start_event)
+
+                args_event = ToolCallArgsEvent(
+                    type=EventType.TOOL_CALL_ARGS,
+                    tool_call_id=tool.tool_call_id,
+                    delta=json.dumps(tool.tool_args),
+                )
+                events_to_emit.append(args_event)
+
+                end_event = ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool.tool_call_id)
+                events_to_emit.append(end_event)
+
+    # Emit final state snapshot
+    if run_state is not None:
+        authoritative_state = getattr(chunk, "session_state", None)
+        final_state = authoritative_state if authoritative_state is not None else run_state
+        snapshot_event = StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(final_state))
+        events_to_emit.append(snapshot_event)
+
+    run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
+    events_to_emit.append(run_finished_event)
+
+    return events_to_emit
+
+
 def emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseEvent]:
-    """Process an event and return events to actually emit."""
+    """Process an event and update buffer state for tracking."""
     events_to_emit: List[BaseEvent] = [event]
 
-    # Update the event buffer state for tracking purposes
     if event.type == EventType.TOOL_CALL_START:
         tool_call_id = getattr(event, "tool_call_id", None)
         if tool_call_id:
