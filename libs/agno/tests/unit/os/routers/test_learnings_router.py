@@ -329,12 +329,13 @@ class TestDeleteLearningUser:
 
 
 class TestIDORScoping:
-    """When a JWT subject is present on request.state, the router enforces ownership-based scoping.
+    """For a scoped (non-admin) JWT caller with user_isolation enabled, the router enforces
+    ownership-based scoping via get_scoped_user_id.
 
     Rules:
-      - LIST: bind user_id filter to JWT subject; include records with user_id IS NULL
+      - LIST: bind user_id filter to the subject; include records with user_id IS NULL
         (global / non-user-scoped); reject explicit user_id query that mismatches with 403.
-      - CREATE: allow body.user_id to be null (global record) or match the JWT subject;
+      - CREATE: allow body.user_id to be null (global record) or match the subject;
         reject mismatch with 403.
       - GET/PATCH/DELETE single record: allow if record.user_id is None (global); 404 on
         cross-user access (no 403 — avoids leaking existence).
@@ -346,7 +347,10 @@ class TestIDORScoping:
 
         @app.middleware("http")
         async def add_jwt_user(request, call_next):
+            # Regular (non-admin) user with user isolation enabled.
+            request.state.user_isolation_enabled = True
             request.state.user_id = "user-A"
+            request.state.scopes = []
             return await call_next(request)
 
         router = get_learnings_router(dbs={"default": [mock_db]}, settings=settings)
@@ -463,3 +467,77 @@ class TestIDORScoping:
         resp = jwt_client.delete("/learnings/users/user-B")
         assert resp.status_code == 403
         mock_db.delete_user_learnings.assert_not_called()
+
+
+def _scoped_client(mock_db, settings, **state):
+    """Build a TestClient whose middleware stamps the given request.state attrs."""
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def add_state(request, call_next):
+        for k, v in state.items():
+            setattr(request.state, k, v)
+        return await call_next(request)
+
+    app.include_router(get_learnings_router(dbs={"default": [mock_db]}, settings=settings))
+    return TestClient(app)
+
+
+class TestAdminAndUnscopedAccess:
+    """get_scoped_user_id returns None for admins and when user_isolation is off, so those
+    callers are NOT bound to their own user_id -- this is what lets /learnings/users report
+    the real user count (not always 1) and keeps admins from being locked out."""
+
+    @pytest.fixture
+    def admin_client(self, mock_db, settings):
+        # Admin: isolation enabled but the caller carries the admin scope.
+        return _scoped_client(
+            mock_db, settings, user_isolation_enabled=True, user_id="admin-1", scopes=["agent_os:admin"]
+        )
+
+    @pytest.fixture
+    def isolation_off_client(self, mock_db, settings):
+        # JWT subject present but user isolation is disabled (the opt-in flag is off).
+        return _scoped_client(mock_db, settings, user_isolation_enabled=False, user_id="user-A", scopes=[])
+
+    def test_admin_list_users_sees_all(self, admin_client, mock_db):
+        stats = [
+            {"user_id": "u1", "last_learning_updated_at": 3},
+            {"user_id": "u2", "last_learning_updated_at": 2},
+            {"user_id": "u3", "last_learning_updated_at": 1},
+        ]
+        mock_db.get_learnings_user_stats = MagicMock(return_value=(stats, 3))
+        resp = admin_client.get("/learnings/users")
+        assert resp.status_code == 200
+        # Not bound to the admin's own id -> queries across all users -> total_count > 1.
+        assert mock_db.get_learnings_user_stats.call_args[1]["user_id"] is None
+        assert resp.json()["meta"]["total_count"] == 3
+
+    def test_admin_list_users_can_filter_any_user(self, admin_client, mock_db):
+        resp = admin_client.get("/learnings/users?user_id=user-B")
+        assert resp.status_code == 200
+        assert mock_db.get_learnings_user_stats.call_args[1]["user_id"] == "user-B"
+
+    def test_admin_list_learnings_not_scoped(self, admin_client, mock_db):
+        admin_client.get("/learnings")
+        kwargs = mock_db.list_learnings.call_args[1]
+        assert kwargs["user_id"] is None
+        assert kwargs["include_global"] is False
+
+    def test_admin_can_access_other_users_record(self, admin_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="user-B"))
+        resp = admin_client.get("/learnings/lrn-1")
+        assert resp.status_code == 200
+
+    def test_admin_can_delete_another_users_learnings(self, admin_client, mock_db):
+        resp = admin_client.delete("/learnings/users/user-B")
+        assert resp.status_code == 204
+        mock_db.delete_user_learnings.assert_called_once_with("user-B", learning_type=None)
+
+    def test_isolation_off_is_unscoped(self, isolation_off_client, mock_db):
+        # Even with a JWT subject, isolation-off means no per-user binding.
+        isolation_off_client.get("/learnings/users")
+        assert mock_db.get_learnings_user_stats.call_args[1]["user_id"] is None
+        # And a cross-user single record is accessible (no 404).
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="user-B"))
+        assert isolation_off_client.get("/learnings/lrn-1").status_code == 200

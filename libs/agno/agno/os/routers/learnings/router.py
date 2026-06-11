@@ -9,6 +9,7 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_authentication_dependency
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.learnings.schema import LearningCreate, LearningResponse, LearningUpdate, LearningUserStats
 from agno.os.schema import (
     BadRequestResponse,
@@ -54,11 +55,12 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         operation_id="list_learnings",
         summary="List Learnings",
         description=(
-            "List learning records with pagination and optional filters. When the request is "
-            "authenticated with a JWT and no `user_id` query is provided, results are scoped to the "
-            "JWT subject and also include records with no owner (`user_id IS NULL`) — this covers "
-            "global, agent, team, session, and entity-scoped learnings. Passing a `user_id` that "
-            "differs from the JWT subject is rejected with 403."
+            "List learning records with pagination and optional filters. For a scoped (non-admin) "
+            "caller with user isolation enabled, results are bound to that user and also include "
+            "records with no owner (`user_id IS NULL`) — this covers global, agent, team, session, "
+            "and entity-scoped learnings; passing a `user_id` that differs from the caller is "
+            "rejected with 403. Admins and unscoped callers see all records (optionally filtered by "
+            "`user_id`)."
         ),
     )
     async def list_learnings(
@@ -79,11 +81,11 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> PaginatedResponse[LearningResponse]:
         include_global = False
-        jwt_user_id = getattr(request.state, "user_id", None)
-        if jwt_user_id is not None:
-            if user_id is not None and user_id != jwt_user_id:
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if user_id is not None and user_id != scoped_user_id:
                 raise HTTPException(status_code=403, detail="Cannot list learnings for another user")
-            user_id = jwt_user_id
+            user_id = scoped_user_id
             include_global = True
 
         db = await get_db(dbs, db_id, table)
@@ -145,9 +147,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         operation_id="create_learning",
         summary="Create Learning",
         description=(
-            "Create a new learning record. When the request is authenticated with a JWT, the body's "
-            "`user_id` must either be omitted/null (creates a global / non-user-scoped record) or "
-            "match the JWT subject. A mismatch is rejected with 403."
+            "Create a new learning record. For a scoped (non-admin) caller, the body's `user_id` "
+            "must either be omitted/null (creates a global / non-user-scoped record) or match the "
+            "caller. A mismatch is rejected with 403. Admins and unscoped callers may set any `user_id`."
         ),
     )
     async def create_learning(
@@ -156,8 +158,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         db_id: Optional[str] = Query(None, description="Database ID to use"),
         table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> LearningResponse:
-        jwt_user_id = getattr(request.state, "user_id", None)
-        if jwt_user_id is not None and body.user_id is not None and body.user_id != jwt_user_id:
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and body.user_id is not None and body.user_id != scoped_user_id:
             raise HTTPException(status_code=403, detail="Cannot create learnings for another user")
 
         db = await get_db(dbs, db_id, table)
@@ -215,10 +217,10 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             "timestamp. Intended as the entry point for a per-user view: list users here, then "
             "drill into a single user's learnings via `GET /learnings?user_id=...`. Records with "
             "no owner (`user_id IS NULL`) are excluded. Pass `learning_type` to restrict the "
-            "grouping to a single store (e.g. `user_profile` or `user_memory`). When the request "
-            "is authenticated with a JWT, results are scoped to the JWT subject; passing a "
-            "`user_id` that differs from the subject is rejected with 403. Sortable by `user_id` "
-            "or `last_learning_updated_at` (the default)."
+            "grouping to a single store (e.g. `user_profile` or `user_memory`). For a scoped "
+            "(non-admin) caller results are bound to that user; an explicit `user_id` that differs "
+            "is rejected with 403. Admins and unscoped callers list all users. Sortable by "
+            "`user_id` or `last_learning_updated_at` (the default)."
         ),
     )
     async def list_learning_users(
@@ -235,11 +237,11 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         db_id: Optional[str] = Query(None, description="Database ID to query"),
         table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> PaginatedResponse[LearningUserStats]:
-        jwt_user_id = getattr(request.state, "user_id", None)
-        if jwt_user_id is not None:
-            if user_id is not None and user_id != jwt_user_id:
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if user_id is not None and user_id != scoped_user_id:
                 raise HTTPException(status_code=403, detail="Cannot list learning users for another user")
-            user_id = jwt_user_id
+            user_id = scoped_user_id
 
         db = await get_db(dbs, db_id, table)
 
@@ -290,9 +292,10 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             "Delete the learning records owned by a user. By default removes every learning type "
             "backed by the agno_learnings table (user_profile, user_memory, and any user-scoped "
             "entity records); pass `learning_type` to restrict deletion to a single store. Records "
-            "with no owner (`user_id IS NULL`) are not affected. When the request is authenticated "
-            "with a JWT, only the JWT subject's own learnings may be deleted; a different `user_id` "
-            "is rejected with 403. Returns 204 even if the user had no matching records."
+            "with no owner (`user_id IS NULL`) are not affected. For a scoped (non-admin) caller, "
+            "only their own learnings may be deleted; a different `user_id` is rejected with 403. "
+            "Admins and unscoped callers may delete any user's learnings. Returns 204 even if the "
+            "user had no matching records."
         ),
     )
     async def delete_learning_user(
@@ -304,8 +307,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         db_id: Optional[str] = Query(None, description="Database ID to use"),
         table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> None:
-        jwt_user_id = getattr(request.state, "user_id", None)
-        if jwt_user_id is not None and user_id != jwt_user_id:
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and user_id != scoped_user_id:
             raise HTTPException(status_code=403, detail="Cannot delete learnings for another user")
 
         db = await get_db(dbs, db_id, table)
@@ -478,16 +481,17 @@ async def _fetch_learning(db: Union[BaseDb, AsyncBaseDb, RemoteDb], learning_id:
 def _enforce_user_scope(request: Request, record: dict) -> None:
     """Block cross-user access without leaking existence.
 
-    Records with ``user_id IS NULL`` are global / non-user-scoped (e.g. agent, team,
-    session, or entity learnings) and remain accessible to any authenticated caller.
-    Returns 404 (not 403) when the record is owned by a different user, to avoid
-    leaking which IDs exist.
+    Scoping is the framework's opt-in ``user_isolation`` contract: admins and callers
+    running with isolation disabled get ``None`` from ``get_scoped_user_id`` and have full
+    access. For a scoped (non-admin) caller, records with ``user_id IS NULL`` are global /
+    non-user-scoped (e.g. agent, team, session, or entity learnings) and remain accessible;
+    a record owned by a different user returns 404 (not 403) to avoid leaking which IDs exist.
     """
-    jwt_user_id = getattr(request.state, "user_id", None)
-    if jwt_user_id is None:
+    scoped_user_id = get_scoped_user_id(request)
+    if scoped_user_id is None:
         return
     record_user_id = record.get("user_id")
     if record_user_id is None:
         return
-    if record_user_id != jwt_user_id:
+    if record_user_id != scoped_user_id:
         raise HTTPException(status_code=404, detail="Learning not found")

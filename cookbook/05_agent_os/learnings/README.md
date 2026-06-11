@@ -39,24 +39,31 @@ In another, run the REST client:
 
 ## Auth and IDOR
 
-When an authenticated request carries a JWT:
+Scoping follows the framework's opt-in `user_isolation` contract (via
+`get_scoped_user_id`). It applies only to a **regular, non-admin** caller when
+user isolation is enabled. **Admins** and requests running with isolation
+disabled are unscoped and have full access — so, for example, an admin's
+`GET /learnings/users` lists *all* users, not just themselves.
 
-- **List**: results are scoped to the JWT subject AND records with no owner
+For a scoped (non-admin) caller:
+
+- **List**: results are scoped to the caller AND records with no owner
   (`user_id IS NULL`) — this covers global, agent, team, session, and
   entity-scoped learnings. An explicit `user_id` query that doesn't match the
-  JWT subject is rejected with `403`.
-- **List users**: results are scoped to the JWT subject. An explicit `user_id`
-  query that doesn't match the JWT subject is rejected with `403`.
-- **Delete user**: only the JWT subject's own learnings may be deleted; a
-  different `user_id` in the path is rejected with `403`.
+  caller is rejected with `403`.
+- **List users**: results are scoped to the caller. An explicit `user_id`
+  query that doesn't match the caller is rejected with `403`.
+- **Delete user**: only the caller's own learnings may be deleted; a different
+  `user_id` in the path is rejected with `403`.
 - **Create**: the body's `user_id` must either be omitted/null (creates a
-  global / non-user-scoped record) or match the JWT subject. A mismatch is
-  rejected with `403`.
+  global / non-user-scoped record) or match the caller. A mismatch is rejected
+  with `403`.
 - **Single record GET / PATCH / DELETE**: records with `user_id IS NULL`
   remain accessible. Records owned by a different user return `404` (not
   `403`) to avoid leaking which IDs exist.
 
-Without a JWT (legacy bearer-token mode) the request passes through.
+With isolation disabled, or for admins, or without a JWT, the request passes
+through unscoped.
 
 ## Identity field rules
 
