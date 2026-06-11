@@ -1,22 +1,3 @@
-"""
-Browser Context Provider
-========================
-
-Makes browser automation queryable by an agent. A `ContextBackend` handles
-the actual browser control (Playwright MCP, BrowserBase, etc.); the provider
-wraps it in a sub-agent that handles natural-language requests.
-
-Default mode is read-only: navigation, screenshots, and content extraction.
-Set `write=True` to enable interaction tools (click, type, form submission).
-
-Usage:
-    from agno.context.browser import BrowserContextProvider
-    from agno.context.browser.playwright_mcp import PlaywrightMCPBackend
-
-    browser = BrowserContextProvider(backend=PlaywrightMCPBackend())
-    agent = Agent(tools=browser.get_tools())
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -33,23 +14,6 @@ if TYPE_CHECKING:
 
 
 class BrowserContextProvider(ContextProvider):
-    """Browser automation via a configurable backend.
-
-    Wraps browser tools in a sub-agent that handles natural-language
-    browsing requests. The agent navigates, extracts content, and
-    optionally interacts with pages.
-
-    Args:
-        backend: The browser backend (PlaywrightMCPBackend, etc.).
-        id: Unique identifier for this provider.
-        name: Display name.
-        instructions: Custom instructions for the sub-agent.
-        mode: Tool exposure mode (default/agent/tools).
-        model: Model for the sub-agent.
-        read: Enable read tools (navigate, screenshot, extract).
-        write: Enable write tools (click, type, submit).
-    """
-
     def __init__(
         self,
         backend: ContextBackend,

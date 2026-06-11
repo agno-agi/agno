@@ -1,15 +1,3 @@
-"""PlaywrightMCPBackend — browser automation via Playwright's official MCP server.
-
-Exposes Playwright's browser tools via the accessibility tree, which is more
-token-efficient than vision-based approaches (~1/4 the tokens). Element refs
-are deterministic within a page snapshot.
-
-Requires Node.js 18+ and `@playwright/mcp` installed globally or via npx.
-
-The server runs as a subprocess via stdio transport. Each backend instance
-manages its own browser session.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -22,17 +10,6 @@ from agno.utils.log import log_info, log_warning
 
 
 class PlaywrightMCPBackend(ContextBackend):
-    """Backend for `BrowserContextProvider` using Playwright's MCP server.
-
-    Args:
-        command: Command to start the MCP server. Defaults to npx.
-        args: Arguments for the command. Defaults to ["@playwright/mcp@latest"].
-        headless: Run browser in headless mode. Defaults to True.
-        include_tools: Allowlist of tool names to expose. None = all tools.
-        exclude_tools: Denylist of tool names to hide.
-        timeout_seconds: Timeout for MCP operations.
-    """
-
     def __init__(
         self,
         *,
