@@ -29,6 +29,11 @@ def main():
     # =========================================================================
     # 1. Create a learning record
     # =========================================================================
+    # For the identity-keyed types (user_profile, user_memory, session_context,
+    # entity_memory) the record id is derived deterministically from the identity fields,
+    # so it reconciles with what the agent reads/writes. Include those identity fields in
+    # `content` too (e.g. user_id) so the agent can deserialize the record. Re-POSTing the
+    # same identity returns 409 -- use PATCH to update.
     print("=== Create Learning ===\n")
     resp = client.post(
         "/learnings",
@@ -37,6 +42,7 @@ def main():
             "namespace": "global",
             "user_id": "demo-user",
             "content": {
+                "user_id": "demo-user",
                 "name": "Yash",
                 "preferences": {"language": "Python", "tone": "concise"},
             },
@@ -134,15 +140,16 @@ def main():
     # 7. Delete a user and all of their learnings
     # =========================================================================
     # Seed a couple of records for a throwaway user, then remove the user and
-    # everything associated with them in one call.
+    # everything associated with them in one call. decision_log uses a generated id
+    # (not identity-keyed), so a user can have many of them.
     print("\n=== Delete Learning User ===\n")
-    for content in ({"note": "first"}, {"note": "second"}):
+    for note in ("first", "second"):
         client.post(
             "/learnings",
             json={
-                "learning_type": "user_memory",
+                "learning_type": "decision_log",
                 "user_id": "bulk-demo-user",
-                "content": content,
+                "content": {"note": note},
             },
         ).raise_for_status()
 

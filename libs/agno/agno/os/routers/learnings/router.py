@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Path, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.learn.utils import IDENTITY_KEYED_LEARNING_TYPES, build_learning_id
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.learnings.schema import LearningCreate, LearningResponse, LearningUpdate, LearningUserStats
@@ -147,9 +148,13 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         operation_id="create_learning",
         summary="Create Learning",
         description=(
-            "Create a new learning record. For a scoped (non-admin) caller, the body's `user_id` "
-            "must either be omitted/null (creates a global / non-user-scoped record) or match the "
-            "caller. A mismatch is rejected with 403. Admins and unscoped callers may set any `user_id`."
+            "Create a new learning record. For the identity-keyed learning types (`user_profile`, "
+            "`user_memory`, `session_context`, `entity_memory`) the record id is derived "
+            "deterministically from the identity fields so it reconciles with what the agent "
+            "reads/writes — provide those fields (else 422), and if a record already exists the "
+            "request is rejected with 409 (use PATCH to update it). Other types get a generated id. "
+            "For a scoped (non-admin) caller, the body's `user_id` must be omitted/null or match the "
+            "caller (mismatch → 403); admins and unscoped callers may set any `user_id`."
         ),
     )
     async def create_learning(
@@ -167,9 +172,42 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
 
-        learning_id = str(uuid4())
+        # The learning stores key their records by a deterministic id derived from the identity
+        # fields, not a random uuid. A POST must use that same id, otherwise the record is
+        # invisible to the agent (which reads/writes the deterministic id) and a duplicate row
+        # appears on the agent's next write. Derive it for the identity-keyed types; fall back to
+        # a uuid only for types that genuinely use generated ids (e.g. decision_log).
+        deterministic_id = build_learning_id(
+            body.learning_type,
+            user_id=body.user_id,
+            session_id=body.session_id,
+            entity_id=body.entity_id,
+            entity_type=body.entity_type,
+            namespace=body.namespace,
+        )
+        if body.learning_type in IDENTITY_KEYED_LEARNING_TYPES and deterministic_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"learning_type '{body.learning_type}' is keyed by its identity fields; provide the "
+                    "required field(s) (user_id, session_id, or entity_id + entity_type) so the record "
+                    "reconciles with the agent's store."
+                ),
+            )
+        learning_id = deterministic_id or str(uuid4())
+
         try:
             if isinstance(db, AsyncBaseDb):
+                # Identity-keyed record already exists -> don't silently overwrite agent-curated
+                # data; steer the caller to PATCH.
+                if deterministic_id is not None and await db.get_learning_by_id(learning_id) is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"A '{body.learning_type}' learning already exists for this identity "
+                            f"(id '{learning_id}'). Use PATCH /learnings/{learning_id} to update it."
+                        ),
+                    )
                 await db.upsert_learning(
                     id=learning_id,
                     learning_type=body.learning_type,
@@ -186,6 +224,14 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 created = await db.get_learning_by_id(learning_id)
             else:
                 sync_db = cast(BaseDb, db)
+                if deterministic_id is not None and sync_db.get_learning_by_id(learning_id) is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"A '{body.learning_type}' learning already exists for this identity "
+                            f"(id '{learning_id}'). Use PATCH /learnings/{learning_id} to update it."
+                        ),
+                    )
                 sync_db.upsert_learning(
                     id=learning_id,
                     learning_type=body.learning_type,
