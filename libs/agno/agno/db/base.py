@@ -937,14 +937,16 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    def delete_user_learnings(self, user_id: str) -> int:
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
         """Delete every learning record owned by a user.
 
-        Removes all rows where ``user_id`` matches (across all learning types). Records with
-        no owner (``user_id IS NULL``) are not affected.
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
 
         Args:
             user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
 
         Returns:
             The number of records deleted.
@@ -1741,14 +1743,16 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
-    async def delete_user_learnings(self, user_id: str) -> int:
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
         """Async delete every learning record owned by a user.
 
-        Removes all rows where ``user_id`` matches (across all learning types). Records with
-        no owner (``user_id IS NULL``) are not affected.
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
 
         Args:
             user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
 
         Returns:
             The number of records deleted.

@@ -2203,7 +2203,7 @@ class RedisDb(BaseDb):
     def delete_learning(self, id: str) -> bool:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
 
-    def delete_user_learnings(self, user_id: str) -> int:
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
 
     def get_learnings(

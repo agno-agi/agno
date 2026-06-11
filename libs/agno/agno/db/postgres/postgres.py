@@ -4528,7 +4528,7 @@ class PostgresDb(BaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
-    def delete_user_learnings(self, user_id: str) -> int:
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
         try:
             table = self._get_table(table_type="learnings")
             if table is None:
@@ -4536,6 +4536,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.user_id == user_id)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
                 result = sess.execute(stmt)
                 return result.rowcount or 0
 

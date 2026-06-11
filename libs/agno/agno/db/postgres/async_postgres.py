@@ -3033,7 +3033,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
-    async def delete_user_learnings(self, user_id: str) -> int:
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
         try:
             table = await self._get_table(table_type="learnings")
             if table is None:
@@ -3041,6 +3041,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.user_id == user_id)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
                 result = await sess.execute(stmt)
                 return getattr(result, "rowcount", 0) or 0
 

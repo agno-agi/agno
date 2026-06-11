@@ -300,10 +300,15 @@ class TestDeleteLearning:
 
 
 class TestDeleteLearningUser:
-    def test_delete_success(self, client, mock_db):
+    def test_delete_success_all_types(self, client, mock_db):
         resp = client.delete("/learnings/users/user-1")
         assert resp.status_code == 204
-        mock_db.delete_user_learnings.assert_called_once_with("user-1")
+        mock_db.delete_user_learnings.assert_called_once_with("user-1", learning_type=None)
+
+    def test_delete_scoped_to_learning_type(self, client, mock_db):
+        resp = client.delete("/learnings/users/user-1?learning_type=user_memory")
+        assert resp.status_code == 204
+        mock_db.delete_user_learnings.assert_called_once_with("user-1", learning_type="user_memory")
 
     def test_delete_with_no_records_still_204(self, client, mock_db):
         mock_db.delete_user_learnings = MagicMock(return_value=0)
@@ -314,7 +319,7 @@ class TestDeleteLearningUser:
         # "/learnings/users/{user_id}" must route to the bulk-by-user handler,
         # not delete_learning(learning_id="users").
         client.delete("/learnings/users/user-1")
-        mock_db.delete_user_learnings.assert_called_once_with("user-1")
+        mock_db.delete_user_learnings.assert_called_once_with("user-1", learning_type=None)
         mock_db.delete_learning.assert_not_called()
 
     def test_not_implemented_returns_501(self, client, mock_db):
@@ -452,7 +457,7 @@ class TestIDORScoping:
     def test_delete_own_user_allowed(self, jwt_client, mock_db):
         resp = jwt_client.delete("/learnings/users/user-A")
         assert resp.status_code == 204
-        mock_db.delete_user_learnings.assert_called_once_with("user-A")
+        mock_db.delete_user_learnings.assert_called_once_with("user-A", learning_type=None)
 
     def test_delete_other_user_rejected(self, jwt_client, mock_db):
         resp = jwt_client.delete("/learnings/users/user-B")

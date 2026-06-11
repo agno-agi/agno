@@ -287,16 +287,20 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         operation_id="delete_learning_user",
         summary="Delete Learning User",
         description=(
-            "Delete every learning record owned by a user, across all learning types backed by the "
-            "agno_learnings table (user_profile, user_memory, and any user-scoped entity records). "
-            "Records with no owner (`user_id IS NULL`) are not affected. When the request is "
-            "authenticated with a JWT, only the JWT subject's own learnings may be deleted; a "
-            "different `user_id` is rejected with 403. Returns 204 even if the user had no records."
+            "Delete the learning records owned by a user. By default removes every learning type "
+            "backed by the agno_learnings table (user_profile, user_memory, and any user-scoped "
+            "entity records); pass `learning_type` to restrict deletion to a single store. Records "
+            "with no owner (`user_id IS NULL`) are not affected. When the request is authenticated "
+            "with a JWT, only the JWT subject's own learnings may be deleted; a different `user_id` "
+            "is rejected with 403. Returns 204 even if the user had no matching records."
         ),
     )
     async def delete_learning_user(
         request: Request,
         user_id: str = Path(description="The user whose learnings should be deleted"),
+        learning_type: Optional[str] = Query(
+            None, description="Restrict deletion to a single learning type; omit to delete all of the user's learnings"
+        ),
         db_id: Optional[str] = Query(None, description="Database ID to use"),
         table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> None:
@@ -311,9 +315,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
 
         try:
             if isinstance(db, AsyncBaseDb):
-                await db.delete_user_learnings(user_id)
+                await db.delete_user_learnings(user_id, learning_type=learning_type)
             else:
-                cast(BaseDb, db).delete_user_learnings(user_id)
+                cast(BaseDb, db).delete_user_learnings(user_id, learning_type=learning_type)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
 
