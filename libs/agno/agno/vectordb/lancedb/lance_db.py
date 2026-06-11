@@ -264,6 +264,17 @@ class LanceDb(VectorDb):
                     logger.exception("Sync table creation also failed")
                     raise
 
+    # Top-level column that holds the chunk owner for per-user RAG isolation.
+    # ``NULL`` means shared / unowned (admin / org-wide content). The column is
+    # populated from the explicit ``user_id`` parameter on insert/upsert. By
+    # promoting this out of the JSON ``payload`` blob, we can push it down
+    # into LanceDB's native ``.where(...)`` clause — the wrapper previously
+    # filtered in Python AFTER the top-K vector search (broken for isolation:
+    # top-K math becomes silently wrong for any predicate that excludes most
+    # of the global top-K). With a real column we use ``prefilter=True`` so
+    # the predicate runs BEFORE the ANN search.
+    USER_ID_COL: str = "user_id"
+
     def _base_schema(self) -> pa.Schema:
         # Use fixed-size list for vector field as required by LanceDB
         if self.dimensions:
@@ -277,6 +288,7 @@ class LanceDb(VectorDb):
                 vector_field,
                 pa.field(self._id, pa.string()),
                 pa.field("payload", pa.string()),
+                pa.field(self.USER_ID_COL, pa.string(), nullable=True),
             ]
         )
 
@@ -291,13 +303,22 @@ class LanceDb(VectorDb):
             tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Insert documents into the database.
 
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to add as metadata to documents
+            user_id (Optional[str]): Owner of these chunks for per-user RAG
+                isolation. Stored in the dedicated ``user_id`` column.
+                ``None`` means shared / unscoped.
         """
         if len(documents) <= 0:
             log_info("No documents to insert")
@@ -335,6 +356,7 @@ class LanceDb(VectorDb):
                     "id": doc_id,
                     "vector": self._prepare_vector(document.embedding),
                     "payload": json.dumps(payload),
+                    self.USER_ID_COL: user_id,
                 }
             )
             log_debug(f"Parsed document: {document.name} ({document.meta_data})")
@@ -355,7 +377,11 @@ class LanceDb(VectorDb):
         log_debug(f"Inserted {len(data)} documents")
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Asynchronously insert documents into the database.
@@ -366,6 +392,7 @@ class LanceDb(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            user_id (Optional[str]): See ``insert``.
         """
         if len(documents) <= 0:
             log_debug("No documents to insert")
@@ -413,26 +440,37 @@ class LanceDb(VectorDb):
 
         # Use sync insert to avoid sync/async table synchronization issues
         # Sync insert will re-embed any documents that failed async embedding
-        self.insert(content_hash, documents, filters)
+        self.insert(content_hash, documents, filters, user_id=user_id)
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in LanceDB."""
         return True
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Upsert documents into the database.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): See ``insert``.
         """
         if self.content_hash_exists(content_hash):
             self._delete_by_content_hash(content_hash)
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Asynchronously upsert documents into the database.
@@ -478,10 +516,30 @@ class LanceDb(VectorDb):
 
         # Use sync upsert for reliability
         # Sync upsert (via insert) will re-embed any documents that failed async embedding
-        self.upsert(content_hash=content_hash, documents=documents, filters=filters)
+        self.upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
+
+    def _user_scope_where_clause(self, user_id: Optional[str]) -> Optional[str]:
+        """Build the LanceDB SQL ``WHERE`` clause for per-user scope.
+
+        ``None`` (no scope) → no WHERE clause.
+        A non-empty string → ``user_id = '<value>' OR user_id IS NULL`` so
+        the caller sees their own chunks plus shared (NULL) content.
+
+        The value is single-quoted with internal quotes doubled (standard
+        SQL escape). ``user_id`` is the column name LanceDB sees; ``payload``
+        is opaque JSON, so this predicate is server-side and indexable.
+        """
+        if user_id is None:
+            return None
+        escaped = user_id.replace("'", "''")
+        return f"({self.USER_ID_COL} = '{escaped}' OR {self.USER_ID_COL} IS NULL)"
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Search for documents matching the query.
@@ -490,6 +548,10 @@ class LanceDb(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            user_id (Optional[str]): Per-user RAG isolation scope. When set,
+                results are restricted to rows with ``user_id = <value>`` OR
+                ``user_id IS NULL`` (shared). When ``None``, no owner
+                predicate is applied.
 
         Returns:
             List[Document]: List of matching documents
@@ -505,11 +567,11 @@ class LanceDb(VectorDb):
             filters = None
 
         if self.search_type == SearchType.vector:
-            results = self.vector_search(query, limit)
+            results = self.vector_search(query, limit, user_id=user_id)
         elif self.search_type == SearchType.keyword:
-            results = self.keyword_search(query, limit)
+            results = self.keyword_search(query, limit, user_id=user_id)
         elif self.search_type == SearchType.hybrid:
-            results = self.hybrid_search(query, limit)
+            results = self.hybrid_search(query, limit, user_id=user_id)
         else:
             log_error(f"Invalid search type '{self.search_type}'.")
             return []
@@ -555,7 +617,11 @@ class LanceDb(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Asynchronously search for documents matching the query.
@@ -567,15 +633,20 @@ class LanceDb(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            user_id (Optional[str]): See ``search``.
 
         Returns:
             List[Document]: List of matching documents
         """
         # Wrap sync search method to avoid sync/async table synchronization issues
-        return self.search(query=query, limit=limit, filters=filters)
+        return self.search(query=query, limit=limit, filters=filters, user_id=user_id)
 
     def vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[List[Dict[str, Any]]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -591,13 +662,25 @@ class LanceDb(VectorDb):
             vector_column_name=self._vector_col,
         ).limit(limit)
 
+        # ``prefilter=True`` runs the predicate BEFORE the ANN top-K so the
+        # vector ranking only sees rows that pass scope. Without this LanceDB
+        # would post-filter, silently truncating results — the exact failure
+        # mode that made K2 unsafe on LanceDB before this refactor.
+        where_clause = self._user_scope_where_clause(user_id)
+        if where_clause is not None:
+            results = results.where(where_clause, prefilter=True)
+
         if self.nprobes:
             results.nprobes(self.nprobes)
 
         return results.to_list()
 
     def hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -622,13 +705,22 @@ class LanceDb(VectorDb):
             .limit(limit)
         )
 
+        # Hybrid search: same prefilter rationale as ``vector_search``.
+        where_clause = self._user_scope_where_clause(user_id)
+        if where_clause is not None:
+            results = results.where(where_clause, prefilter=True)
+
         if self.nprobes:
             results.nprobes(self.nprobes)
 
         return results.to_list()
 
     def keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         if self.table is None:
             log_error("Table not initialized. Please create the table first")
@@ -642,6 +734,12 @@ class LanceDb(VectorDb):
             query=query,
             query_type="fts",
         ).limit(limit)
+
+        # FTS doesn't have the same top-K cliff as ANN, but pre-filtering
+        # still avoids ranking rows the caller can't see.
+        where_clause = self._user_scope_where_clause(user_id)
+        if where_clause is not None:
+            results = results.where(where_clause, prefilter=True)
 
         return results.to_list()
 
@@ -955,7 +1053,15 @@ class LanceDb(VectorDb):
                 return
 
             total_count = self.table.count_rows()
-            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_list()
+            # Select the user_id column too so we can preserve it across the
+            # delete-and-reinsert dance below; without this the column would
+            # come back NULL on every update_metadata call.
+            results = (
+                self.table.search()
+                .select(["id", "payload", "vector", self.USER_ID_COL])
+                .limit(total_count)
+                .to_list()
+            )
 
             if not results:
                 logger.debug("No documents found")
@@ -1004,6 +1110,11 @@ class LanceDb(VectorDb):
                     update_data["vector"] = vector_data
                 if text_data is not None:
                     update_data["text"] = text_data
+                # Preserve the owner column across delete-and-reinsert. The
+                # row dict from ``select`` above carries the existing value;
+                # omitting this would NULL out user_id (and silently turn an
+                # owned chunk into a shared one).
+                update_data[self.USER_ID_COL] = row.get(self.USER_ID_COL)
 
                 # Delete old record and insert updated one
                 self.table.delete(f"id = '{row_id}'")

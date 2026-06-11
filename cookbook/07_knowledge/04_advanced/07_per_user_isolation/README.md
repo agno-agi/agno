@@ -8,20 +8,22 @@ whatever native primitive it was designed for.
 
 ## Backend matrix
 
-| File           | Backend  | Isolation primitive                                          | Status   |
-| -------------- | -------- | ------------------------------------------------------------ | -------- |
-| `pgvector.py`  | PgVector | Top-level `user_id` column, `WHERE user_id = X OR IS NULL`   | Shipped  |
-| `chroma.py`    | Chroma   | One collection per user, `__shared__` collection for org-wide | Pending  |
-| `pinecone.py`  | Pinecone | Namespaces (`user_id` → namespace, `__shared__` namespace)   | Pending  |
-| `qdrant.py`    | Qdrant   | Indexed payload + multi-tenant collection                    | Pending  |
-| `weaviate.py`  | Weaviate | Native multi-tenancy mode                                    | Pending  |
-| `milvus.py`    | Milvus   | Partitions                                                   | Pending  |
-| `mongodb.py`   | MongoDB  | Indexed `user_id` field + `$match` before `$vectorSearch`    | Pending  |
+| File           | Backend  | Isolation primitive                                                            | Status   |
+| -------------- | -------- | ------------------------------------------------------------------------------ | -------- |
+| `pgvector.py`  | PgVector | Top-level `user_id` column, `WHERE user_id = X OR IS NULL`                     | Shipped  |
+| `lancedb.py`   | LanceDB  | Top-level `user_id` column, `.where("... OR IS NULL", prefilter=True)`         | Shipped  |
+| `chroma.py`    | Chroma   | One collection per user, `__shared__` collection for org-wide                  | Pending  |
+| `pinecone.py`  | Pinecone | Namespaces (`user_id` → namespace, `__shared__` namespace)                     | Pending  |
+| `qdrant.py`    | Qdrant   | Indexed payload + multi-tenant collection                                      | Pending  |
+| `weaviate.py`  | Weaviate | Native multi-tenancy mode                                                      | Pending  |
+| `milvus.py`    | Milvus   | Partitions                                                                     | Pending  |
+| `mongodb.py`   | MongoDB  | Indexed `user_id` field + `$match` before `$vectorSearch`                      | Pending  |
 
-Backends not in this table either lack server-side filter pushdown
-(LanceDB, Cassandra, ClickHouse, Redis, SingleStore) or haven't been
-audited yet — AgentOS will refuse to start with `user_isolation=True`
-on those backends. See `agno.vectordb.safety` for the guard.
+Backends not in this table (Cassandra, ClickHouse, Redis, SingleStore)
+haven't been audited yet — they silently accept filters without applying
+them in their current Agno wrappers, so isolation would silently leak.
+Don't enable `user_isolation=True` against them until their per-backend
+work has shipped.
 
 ## How the API stays uniform
 
