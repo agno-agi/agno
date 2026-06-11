@@ -14,7 +14,7 @@ whatever native primitive it was designed for.
 | `lancedb.py`   | LanceDB  | Top-level `user_id` column, `.where("... OR IS NULL", prefilter=True)`         | Shipped  |
 | `chromadb.py`  | Chroma   | One collection per user (`{base}__{user_id}`), base collection = shared bucket | Shipped  |
 | `pinecone.py`  | Pinecone | Namespaces (`user_id` → namespace, `__shared__` namespace)                     | Pending  |
-| `qdrant.py`    | Qdrant   | Indexed payload + multi-tenant collection                                      | Pending  |
+| `qdrant.py`    | Qdrant   | Indexed payload + multi-tenant collection (`is_tenant=True` on `user_id`)      | Shipped  |
 | `weaviate.py`  | Weaviate | Native multi-tenancy mode                                                      | Pending  |
 | `milvus.py`    | Milvus   | Partitions                                                                     | Pending  |
 | `mongodb.py`   | MongoDB  | Indexed `user_id` field + `$match` before `$vectorSearch`                      | Pending  |
