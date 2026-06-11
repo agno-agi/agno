@@ -385,7 +385,7 @@ class AsyncMongoDb(AsyncBaseDb):
         reset_cache = self._should_reset_collection_cache()
 
         if table_type == "sessions":
-            if reset_cache or not hasattr(self, "session_collection"):
+            if reset_cache or getattr(self, "session_collection", None) is None:
                 if self.session_table_name is None:
                     raise ValueError("Session collection was not provided on initialization")
                 self.session_collection = await self._get_or_create_collection(
@@ -396,7 +396,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.session_collection
 
         if table_type == "memories":
-            if reset_cache or not hasattr(self, "memory_collection"):
+            if reset_cache or getattr(self, "memory_collection", None) is None:
                 if self.memory_table_name is None:
                     raise ValueError("Memory collection was not provided on initialization")
                 self.memory_collection = await self._get_or_create_collection(
@@ -407,7 +407,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.memory_collection
 
         if table_type == "metrics":
-            if reset_cache or not hasattr(self, "metrics_collection"):
+            if reset_cache or getattr(self, "metrics_collection", None) is None:
                 if self.metrics_table_name is None:
                     raise ValueError("Metrics collection was not provided on initialization")
                 self.metrics_collection = await self._get_or_create_collection(
@@ -418,7 +418,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.metrics_collection
 
         if table_type == "evals":
-            if reset_cache or not hasattr(self, "eval_collection"):
+            if reset_cache or getattr(self, "eval_collection", None) is None:
                 if self.eval_table_name is None:
                     raise ValueError("Eval collection was not provided on initialization")
                 self.eval_collection = await self._get_or_create_collection(
@@ -429,7 +429,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.eval_collection
 
         if table_type == "knowledge":
-            if reset_cache or not hasattr(self, "knowledge_collection"):
+            if reset_cache or getattr(self, "knowledge_collection", None) is None:
                 if self.knowledge_table_name is None:
                     raise ValueError("Knowledge collection was not provided on initialization")
                 self.knowledge_collection = await self._get_or_create_collection(
@@ -440,7 +440,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.knowledge_collection
 
         if table_type == "culture":
-            if reset_cache or not hasattr(self, "culture_collection"):
+            if reset_cache or getattr(self, "culture_collection", None) is None:
                 if self.culture_table_name is None:
                     raise ValueError("Culture collection was not provided on initialization")
                 self.culture_collection = await self._get_or_create_collection(
@@ -451,7 +451,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.culture_collection
 
         if table_type == "traces":
-            if reset_cache or not hasattr(self, "traces_collection"):
+            if reset_cache or getattr(self, "traces_collection", None) is None:
                 if self.trace_table_name is None:
                     raise ValueError("Traces collection was not provided on initialization")
                 self.traces_collection = await self._get_or_create_collection(
@@ -462,7 +462,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.traces_collection
 
         if table_type == "spans":
-            if reset_cache or not hasattr(self, "spans_collection"):
+            if reset_cache or getattr(self, "spans_collection", None) is None:
                 if self.span_table_name is None:
                     raise ValueError("Spans collection was not provided on initialization")
                 self.spans_collection = await self._get_or_create_collection(
@@ -473,7 +473,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.spans_collection
 
         if table_type == "learnings":
-            if reset_cache or not hasattr(self, "learnings_collection"):
+            if reset_cache or getattr(self, "learnings_collection", None) is None:
                 if self.learnings_table_name is None:
                     raise ValueError("Learnings collection was not provided on initialization")
                 self.learnings_collection = await self._get_or_create_collection(
@@ -484,7 +484,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.learnings_collection
 
         if table_type == "schedules":
-            if reset_cache or not hasattr(self, "schedules_collection"):
+            if reset_cache or getattr(self, "schedules_collection", None) is None:
                 if self.schedules_table_name is None:
                     raise ValueError("Schedules collection was not provided on initialization")
                 self.schedules_collection = await self._get_or_create_collection(
@@ -495,7 +495,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return self.schedules_collection
 
         if table_type == "schedule_runs":
-            if reset_cache or not hasattr(self, "schedule_runs_collection"):
+            if reset_cache or getattr(self, "schedule_runs_collection", None) is None:
                 if self.schedule_runs_table_name is None:
                     raise ValueError("Schedule runs collection was not provided on initialization")
                 self.schedule_runs_collection = await self._get_or_create_collection(
