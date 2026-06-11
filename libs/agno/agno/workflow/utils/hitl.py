@@ -51,8 +51,8 @@ def drop_legacy_hitl_keys(config: Dict[str, Any], component: StepType) -> None:
         return
     name = config.get("name") or component.value
     log_debug(
-        f"{component.value} '{name}': dropping legacy flat HITL keys {legacy} "
-        f"— re-save with human_review to preserve config"
+        f"{component.value} '{name}': dropping deprecated flat HITL keys {legacy}, "
+        f"use human_review to preserve config"
     )
     for k in legacy:
         config.pop(k, None)
