@@ -39,11 +39,10 @@ import io
 import json
 import mimetypes
 import textwrap
+from os import getenv
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, List, Optional, Tuple, Union, cast
 
-from agno.agent.agent import Agent
-from agno.run.base import RunContext
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error
@@ -51,7 +50,7 @@ from agno.utils.log import log_debug, log_error
 try:
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from googleapiclient.discovery import Resource, build
+    from googleapiclient.discovery import Resource
     from googleapiclient.errors import HttpError
     from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 except ImportError:
@@ -216,8 +215,7 @@ class GoogleDriveTools(GoogleToolkit):
     api_name = "drive"
     api_version = "v3"
     google_service_name = "drive"
-
-    default_scopes: Dict[str, str] = {
+    DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",
         "full": "https://www.googleapis.com/auth/drive",
@@ -254,13 +252,12 @@ class GoogleDriveTools(GoogleToolkit):
     SEARCH_FIELDS = "nextPageToken, incompleteSearch, files(id, name, mimeType, modifiedTime, size, parents, description, webViewLink, webContentLink, owners(displayName, emailAddress))"
     READ_METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
 
+    service: Optional[Resource]
+
     def __init__(
         self,
-        auth_config: Optional[Any] = None,
-        store_token_in_db: bool = False,
         # Authentication
-        oauth_port: Optional[int] = 5050,
-        auth_port: Optional[int] = None,  # Legacy kwarg; prefer oauth_port.
+        auth_port: Optional[int] = 5050,
         login_hint: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         scopes: Optional[List[str]] = None,
@@ -295,24 +292,19 @@ class GoogleDriveTools(GoogleToolkit):
         add_instructions: bool = True,
         **kwargs,
     ):
-        import os
-
         if instructions is None:
-            instructions = DRIVE_QUERY_INSTRUCTIONS
+            self.instructions = DRIVE_QUERY_INSTRUCTIONS
+        else:
+            self.instructions = instructions
 
-        # Drive-specific attributes
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
         self.download_dir = Path(download_dir).resolve()
-        self.quota_project_id = quota_project_id or os.getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
         self.corpora = corpora
         self.supports_all_drives = supports_all_drives
         self.include_items_from_all_drives = include_items_from_all_drives
         self.drive_id = drive_id
-
-        # oauth_port is the canonical kwarg; auth_port is kept for pre-existing callers
-        if oauth_port == 5050 and auth_port is not None:
-            oauth_port = auth_port
+        self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
 
         read_tools_enabled = any([list_files, search_files, read_file, download_file])
 
@@ -320,20 +312,22 @@ class GoogleDriveTools(GoogleToolkit):
         if scopes is None:
             resolved_scopes: List[str] = []
             if read_tools_enabled:
-                resolved_scopes.append(self.default_scopes["read"])
+                resolved_scopes.append(self.DEFAULT_SCOPES["read"])
             if upload_file:
-                resolved_scopes.append(self.default_scopes["write"])
+                resolved_scopes.append(self.DEFAULT_SCOPES["write"])
             if not resolved_scopes:
-                resolved_scopes.append(self.default_scopes["read"])
-            scopes = list(dict.fromkeys(resolved_scopes))
+                resolved_scopes.append(self.DEFAULT_SCOPES["read"])
+            self.scopes = list(dict.fromkeys(resolved_scopes))
+        else:
+            self.scopes = scopes
 
         # drive.file only covers app-created files — not sufficient for browsing all files
-        read_scopes = {self.default_scopes["read"], self.default_scopes["full"]}
-        write_scopes = {self.default_scopes["write"], self.default_scopes["full"]}
+        read_scopes = {self.DEFAULT_SCOPES["read"], self.DEFAULT_SCOPES["full"]}
+        write_scopes = {self.DEFAULT_SCOPES["write"], self.DEFAULT_SCOPES["full"]}
 
-        if read_tools_enabled and not any(s in scopes for s in read_scopes):
+        if read_tools_enabled and not any(s in self.scopes for s in read_scopes):
             raise ValueError("A Google Drive read scope is required for enabled tools")
-        if upload_file and not any(s in scopes for s in write_scopes):
+        if upload_file and not any(s in self.scopes for s in write_scopes):
             raise ValueError("A Google Drive write scope is required for enabled tools")
 
         tools: List[Any] = []
@@ -361,22 +355,22 @@ class GoogleDriveTools(GoogleToolkit):
             name="google_drive_tools",
             tools=tools,
             async_tools=async_tools,
-            instructions=instructions,
+            instructions=self.instructions,
             add_instructions=add_instructions,
-            scopes=scopes,
+            scopes=self.scopes,
             creds=creds,
             token_path=token_path,
             credentials_path=creds_path,
             service_account_path=service_account_path,
             delegated_user=delegated_user,
-            auth_config=auth_config,
-            store_token_in_db=store_token_in_db,
-            oauth_port=oauth_port,
+            oauth_port=auth_port,
             login_hint=login_hint,
             **kwargs,
         )
 
-    def _build_service(self, creds):
+    def _build_service(self, creds: Any) -> Any:
+        from googleapiclient.discovery import build
+
         creds_to_use = creds
         if self.quota_project_id and hasattr(creds_to_use, "with_quota_project"):
             creds_to_use = cast(Any, creds_to_use).with_quota_project(self.quota_project_id)
@@ -395,17 +389,8 @@ class GoogleDriveTools(GoogleToolkit):
             _, done = downloader.next_chunk()
         return buffer.getvalue()
 
-    # TODO(deprecate): Duplicates search_files logic. Separate impl required so @authenticate
-    # receives run_context directly. Consolidate into search_files once decorator supports passthrough.
-    @authenticate
-    def list_files(
-        self,
-        agent: Agent,
-        run_context: RunContext,
-        query: Optional[str] = None,
-        page_size: int = 10,
-        page_token: Optional[str] = None,
-    ) -> str:
+    # No @authenticate — delegates to search_files which handles auth
+    def list_files(self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None) -> str:
         """
         List recent files and folders from Google Drive.
 
@@ -417,48 +402,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing file metadata or error message
         """
-        if page_size < 1:
-            return json.dumps({"error": "page_size must be greater than 0"})
-
-        try:
-            service = cast(Resource, self.service)
-            if self.include_trashed:
-                effective_query = query or ""
-            elif query:
-                effective_query = f"({query}) and trashed=false"
-            else:
-                effective_query = "trashed=false"
-            list_kwargs: dict = {
-                "q": effective_query,
-                "pageSize": page_size,
-                "orderBy": "modifiedTime desc",
-                "fields": self.SEARCH_FIELDS,
-            }
-            if page_token:
-                list_kwargs["pageToken"] = page_token
-            results = service.files().list(**list_kwargs).execute()
-            files = results.get("files", [])
-            return json.dumps(
-                {
-                    "query": effective_query,
-                    "files": files,
-                    "count": len(files),
-                    "nextPageToken": results.get("nextPageToken"),
-                }
-            )
-        except HttpError as e:
-            return json.dumps({"error": f"Google Drive API error: {e}"})
-        except Exception as e:
-            log_error(f"Could not list Google Drive files: {str(e)}")
-            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+        return self.search_files(query=query, max_results=page_size, page_token=page_token)
 
     async def alist_files(
-        self,
-        agent: Agent,
-        run_context: RunContext,
-        query: Optional[str] = None,
-        page_size: int = 10,
-        page_token: Optional[str] = None,
+        self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None
     ) -> str:
         """
         List recent files and folders from Google Drive (async).
@@ -471,19 +418,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing file metadata or error message
         """
-        return await asyncio.to_thread(
-            self.list_files, agent, run_context, query=query, page_size=page_size, page_token=page_token
-        )
+        return await asyncio.to_thread(self.list_files, query=query, page_size=page_size, page_token=page_token)
 
     @authenticate
-    def search_files(
-        self,
-        agent: Agent,
-        run_context: RunContext,
-        query: Optional[str] = None,
-        max_results: int = 10,
-        page_token: Optional[str] = None,
-    ) -> str:
+    def search_files(self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None) -> str:
         """
         Search Google Drive using a query expression.
         Searches in file name, type, folder, owner, and modification date.
@@ -544,12 +482,7 @@ class GoogleDriveTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def asearch_files(
-        self,
-        agent: Agent,
-        run_context: RunContext,
-        query: Optional[str] = None,
-        max_results: int = 10,
-        page_token: Optional[str] = None,
+        self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None
     ) -> str:
         """
         Search Google Drive using a query expression (async).
@@ -562,12 +495,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing matching files and metadata or error message
         """
-        return await asyncio.to_thread(
-            self.search_files, agent, run_context, query=query, max_results=max_results, page_token=page_token
-        )
+        return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
 
     @authenticate
-    def read_file(self, agent: Agent, run_context: RunContext, file_id: str) -> str:
+    def read_file(self, file_id: str) -> str:
         """
         Read a Drive file and return its text content.
 
@@ -681,7 +612,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not read Google Drive file {file_id}: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aread_file(self, agent: Agent, run_context: RunContext, file_id: str) -> str:
+    async def aread_file(self, file_id: str) -> str:
         """
         Read a Drive file and return its text content (async).
 
@@ -691,10 +622,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing file metadata and text content or error message
         """
-        return await asyncio.to_thread(self.read_file, agent, run_context, file_id)
+        return await asyncio.to_thread(self.read_file, file_id)
 
     @authenticate
-    def upload_file(self, agent: Agent, run_context: RunContext, file_path: Union[str, Path]) -> str:
+    def upload_file(self, file_path: Union[str, Path]) -> str:
         """
         Upload a local file to Google Drive.
 
@@ -730,7 +661,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not upload file '{path}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aupload_file(self, agent: Agent, run_context: RunContext, file_path: Union[str, Path]) -> str:
+    async def aupload_file(self, file_path: Union[str, Path]) -> str:
         """
         Upload a local file to Google Drive (async).
 
@@ -740,12 +671,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string with uploaded file metadata (id, name, webViewLink)
         """
-        return await asyncio.to_thread(self.upload_file, agent, run_context, file_path)
+        return await asyncio.to_thread(self.upload_file, file_path)
 
     @authenticate
-    def download_file(
-        self, agent: Agent, run_context: RunContext, file_id: str, export_format: Optional[str] = None
-    ) -> str:
+    def download_file(self, file_id: str, export_format: Optional[str] = None) -> str:
         """
         Download a Drive file and save it locally.
 
@@ -807,9 +736,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not download file '{file_id}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def adownload_file(
-        self, agent: Agent, run_context: RunContext, file_id: str, export_format: Optional[str] = None
-    ) -> str:
+    async def adownload_file(self, file_id: str, export_format: Optional[str] = None) -> str:
         """
         Download a Drive file and save it locally (async).
 
@@ -820,4 +747,4 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing saved file path and status or error message
         """
-        return await asyncio.to_thread(self.download_file, agent, run_context, file_id, export_format=export_format)
+        return await asyncio.to_thread(self.download_file, file_id, export_format=export_format)

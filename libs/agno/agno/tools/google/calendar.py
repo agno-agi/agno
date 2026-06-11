@@ -4,8 +4,6 @@ import textwrap
 import uuid
 from typing import Any, Dict, List, Optional, Union, cast
 
-from agno.agent.agent import Agent
-from agno.run.base import RunContext
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error
@@ -51,8 +49,6 @@ class GoogleCalendarTools(GoogleToolkit):
 
     def __init__(
         self,
-        auth_config: Optional[Any] = None,
-        store_token_in_db: bool = False,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = "token.json",
@@ -89,7 +85,7 @@ class GoogleCalendarTools(GoogleToolkit):
             token_path: Path to cached token file. Created on first auth.
             service_account_path: Path to service account JSON key. When set, OAuth is skipped.
             delegated_user: Email to impersonate via domain-wide delegation. Optional for Calendar.
-            scopes: Custom OAuth scopes. If None, uses default_scopes.
+            scopes: Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
             oauth_port: Port for OAuth local redirect server (default: 8080).
             login_hint: Email to pre-select in the OAuth consent screen.
             calendar_id: Calendar to operate on. Defaults to "primary".
@@ -102,12 +98,13 @@ class GoogleCalendarTools(GoogleToolkit):
             delete_event = True
 
         if instructions is None:
-            instructions = CALENDAR_INSTRUCTIONS
+            self.instructions = CALENDAR_INSTRUCTIONS
+        else:
+            self.instructions = instructions
 
-        # Calendar-specific attributes
         self.calendar_id = calendar_id
-        self._user_email: str = ""
-
+        # Cached email for respond_to_event
+        self._user_email: Optional[str] = None
         tools: List[Any] = []
 
         if list_events:
@@ -143,7 +140,7 @@ class GoogleCalendarTools(GoogleToolkit):
         super().__init__(
             name="google_calendar_tools",
             tools=tools,
-            instructions=instructions,
+            instructions=self.instructions,
             add_instructions=add_instructions,
             scopes=scopes,
             creds=creds,
@@ -151,8 +148,6 @@ class GoogleCalendarTools(GoogleToolkit):
             credentials_path=credentials_path,
             service_account_path=service_account_path,
             delegated_user=delegated_user,
-            auth_config=auth_config,
-            store_token_in_db=store_token_in_db,
             oauth_port=oauth_port,
             login_hint=login_hint,
             **kwargs,
@@ -189,9 +184,7 @@ class GoogleCalendarTools(GoogleToolkit):
                 raise ValueError(f"The scope {read_scope} is required for read operations")
 
     @authenticate
-    def list_events(
-        self, agent: Agent, run_context: RunContext, limit: int = 10, start_date: Optional[str] = None
-    ) -> str:
+    def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
         """
         List upcoming events from the user's Google Calendar.
 
@@ -237,8 +230,6 @@ class GoogleCalendarTools(GoogleToolkit):
     @authenticate
     def create_event(
         self,
-        agent: Agent,
-        run_context: RunContext,
         start_date: str,
         end_date: str,
         title: Optional[str] = None,
@@ -314,8 +305,6 @@ class GoogleCalendarTools(GoogleToolkit):
     @authenticate
     def update_event(
         self,
-        agent: Agent,
-        run_context: RunContext,
         event_id: str,
         title: Optional[str] = None,
         description: Optional[str] = None,
@@ -389,9 +378,7 @@ class GoogleCalendarTools(GoogleToolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def delete_event(
-        self, agent: Agent, run_context: RunContext, event_id: str, notify_attendees: Optional[bool] = True
-    ) -> str:
+    def delete_event(self, event_id: str, notify_attendees: Optional[bool] = True) -> str:
         """
         Delete an event from the Google Calendar.
 
@@ -415,8 +402,6 @@ class GoogleCalendarTools(GoogleToolkit):
     @authenticate
     def fetch_all_events(
         self,
-        agent: Agent,
-        run_context: RunContext,
         max_results: int = 10,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
@@ -493,8 +478,6 @@ class GoogleCalendarTools(GoogleToolkit):
     @authenticate
     def find_available_slots(
         self,
-        agent: Agent,
-        run_context: RunContext,
         start_date: str,
         end_date: str,
         duration_minutes: int = 30,
@@ -519,7 +502,7 @@ class GoogleCalendarTools(GoogleToolkit):
             if end_dt.tzinfo is None:
                 end_dt = end_dt.replace(tzinfo=datetime.timezone.utc)
 
-            working_hours_json = self._get_working_hours(agent, run_context)
+            working_hours_json = self._get_working_hours()
             working_hours_data = json.loads(working_hours_json)
 
             if "error" not in working_hours_data:
@@ -536,7 +519,7 @@ class GoogleCalendarTools(GoogleToolkit):
                 locale = "en"
                 log_debug("Using default working hours: 9:00-17:00")
 
-            events_json = self.fetch_all_events(agent, run_context, start_date=start_date, end_date=end_date)
+            events_json = self.fetch_all_events(start_date=start_date, end_date=end_date)
             events_data = json.loads(events_json)
 
             if isinstance(events_data, dict) and "error" in events_data:
@@ -604,7 +587,7 @@ class GoogleCalendarTools(GoogleToolkit):
             return json.dumps({"error": f"An error occurred: {str(e)}"})
 
     @authenticate
-    def _get_working_hours(self, agent: Agent, run_context: RunContext) -> str:
+    def _get_working_hours(self) -> str:
         """Get working hours based on user's calendar settings and locale.
 
         Returns:
@@ -650,7 +633,7 @@ class GoogleCalendarTools(GoogleToolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def list_calendars(self, agent: Agent, run_context: RunContext) -> str:
+    def list_calendars(self) -> str:
         """
         List all available Google Calendars for the authenticated user.
 
@@ -686,7 +669,7 @@ class GoogleCalendarTools(GoogleToolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def get_event(self, agent: Agent, run_context: RunContext, event_id: str) -> str:
+    def get_event(self, event_id: str) -> str:
         """
         Get full details of a single Google Calendar event by its ID.
 
@@ -705,7 +688,7 @@ class GoogleCalendarTools(GoogleToolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def quick_add_event(self, agent: Agent, run_context: RunContext, text: str) -> str:
+    def quick_add_event(self, text: str) -> str:
         """
         Create a Google Calendar event from a natural language description.
         Examples: "Meeting with John tomorrow 3pm", "Lunch at noon on Friday"
@@ -728,8 +711,6 @@ class GoogleCalendarTools(GoogleToolkit):
     @authenticate
     def check_availability(
         self,
-        agent: Agent,
-        run_context: RunContext,
         start_date: str,
         end_date: str,
         attendee_emails: Optional[List[str]] = None,
@@ -803,8 +784,6 @@ class GoogleCalendarTools(GoogleToolkit):
     @authenticate
     def search_events(
         self,
-        agent: Agent,
-        run_context: RunContext,
         query: str,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
@@ -867,8 +846,6 @@ class GoogleCalendarTools(GoogleToolkit):
     @authenticate
     def move_event(
         self,
-        agent: Agent,
-        run_context: RunContext,
         event_id: str,
         destination_calendar_id: str,
         notify_attendees: Optional[bool] = False,
@@ -904,7 +881,7 @@ class GoogleCalendarTools(GoogleToolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def get_event_attendees(self, agent: Agent, run_context: RunContext, event_id: str) -> str:
+    def get_event_attendees(self, event_id: str) -> str:
         """
         Get the attendee list and their RSVP statuses for a Google Calendar event.
 
@@ -945,7 +922,7 @@ class GoogleCalendarTools(GoogleToolkit):
             return json.dumps({"error": f"An error occurred: {error}"})
 
     @authenticate
-    def respond_to_event(self, agent: Agent, run_context: RunContext, event_id: str, response: str) -> str:
+    def respond_to_event(self, event_id: str, response: str) -> str:
         """
         Set the authenticated user's attendance response for a Google Calendar event.
 
@@ -966,22 +943,21 @@ class GoogleCalendarTools(GoogleToolkit):
             # Get authenticated user's email (cached)
             if not self._user_email:
                 cal = service.calendarList().get(calendarId="primary").execute()
-                self._user_email = cal.get("id", "")
-            user_email = self._user_email
+                self._user_email = cal.get("id")
 
             event = service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
             attendees = event.get("attendees", [])
 
             found = False
             for attendee in attendees:
-                if attendee.get("email") == user_email:
+                if attendee.get("email") == self._user_email:
                     attendee["responseStatus"] = response
                     found = True
                     break
 
             if not found:
                 # User not in attendees — add them with the response
-                attendees.append({"email": user_email, "responseStatus": response})
+                attendees.append({"email": self._user_email, "responseStatus": response})
                 event["attendees"] = attendees
 
             updated_event = (
