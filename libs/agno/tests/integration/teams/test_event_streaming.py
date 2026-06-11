@@ -998,13 +998,22 @@ def test_intermediate_steps_with_member_agents_nested_team():
         TeamRunEvent.run_intermediate_content.value,
         RunEvent.run_content.value,
     }
+    # Tool call errors are optional - depends on external service availability
+    optional_error_events = {
+        TeamRunEvent.tool_call_error.value,
+        RunEvent.tool_call_error.value,
+    }
 
     actual_events = set(events.keys())
     # Check that all required events are present
     assert required_events.issubset(actual_events), f"Missing required events: {required_events - actual_events}"
     # Check that actual events are within the expected set (required + optional)
     all_expected = (
-        required_events | optional_reasoning_events | optional_member_tool_events | optional_intermediate_events
+        required_events
+        | optional_reasoning_events
+        | optional_member_tool_events
+        | optional_intermediate_events
+        | optional_error_events
     )
     unexpected_events = actual_events - all_expected
     assert not unexpected_events, f"Unexpected events: {unexpected_events}"
