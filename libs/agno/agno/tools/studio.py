@@ -19,10 +19,12 @@ Typical use:
 
 Semantics:
     * create_* persists a new component with a single published config.
-    * edit_* loads the component, applies the patch, and saves it as a draft:
-      - if the latest config is already a draft, it is updated in place;
-      - otherwise a new draft version is created.
-      Use publish_component() to promote the draft to published+current.
+    * edit_* loads the component, applies the patch, and saves it:
+      - with versions=True the edit is saved as a draft (an existing draft is
+        updated in place; otherwise a new draft version is created). Use
+        publish_component() to promote the draft to published+current.
+      - with versions=False (default) the edit is published immediately as the
+        new current version.
 
 Enable flags:
     * Default: only agent operations are exposed (agents=True, teams=False,
@@ -33,6 +35,8 @@ Enable flags:
     * Passing agents_list auto-enables teams and workflows (you can build them
       from those agents). Passing teams_list auto-enables workflows. Explicit
       False overrides the auto-enable.
+    * Versioning tools (list_versions, get_version, publish_component,
+      set_current_version, delete_version) are exposed only when versions=True.
 
 Persistence:
     * Studio saves ONLY the component it creates/edits. It does NOT cascade to
@@ -75,6 +79,14 @@ class StudioTool(Toolkit):
         teams_list: Same as ``agents_list`` but for teams.
         workflows_list: Same as ``agents_list`` but for workflows.
         default_model_id: Model id to use when a caller omits one.
+        agents: Expose agent operations. Defaults to True.
+        teams: Expose team operations. Defaults to False (see module docstring
+            for auto-enable rules).
+        workflows: Expose workflow operations. Defaults to False.
+        versions: Expose versioning tools (list_versions, get_version,
+            publish_component, set_current_version, delete_version). Defaults
+            to False; without versioning, edits publish immediately instead of
+            producing drafts.
     """
 
     def __init__(
@@ -88,6 +100,7 @@ class StudioTool(Toolkit):
         agents: Optional[bool] = None,
         teams: Optional[bool] = None,
         workflows: Optional[bool] = None,
+        versions: bool = False,
         **kwargs: Any,
     ):
         self.registry = registry
@@ -104,6 +117,7 @@ class StudioTool(Toolkit):
             has_agents_list=agents_list is not None,
             has_teams_list=teams_list is not None,
         )
+        self.enable_versions: bool = versions
 
         tools: List[Callable] = [
             # Discovery -- always available regardless of flags.
@@ -147,8 +161,8 @@ class StudioTool(Toolkit):
                 ]
             )
 
-        # Versioning works on any enabled component type.
-        if self.enable_agents or self.enable_teams or self.enable_workflows:
+        # Versioning works on any component type, but is opt-in.
+        if self.enable_versions:
             tools.extend(
                 [
                     self.list_versions,
@@ -198,7 +212,7 @@ class StudioTool(Toolkit):
                     (self.arun_workflow, "run_workflow"),
                 ]
             )
-        if self.enable_agents or self.enable_teams or self.enable_workflows:
+        if self.enable_versions:
             async_tools.extend(
                 [
                     (self.alist_versions, "list_versions"),
@@ -209,26 +223,43 @@ class StudioTool(Toolkit):
                 ]
             )
 
+        instruction_lines = [
+            "Compose agents, teams, and workflows from registry primitives.",
+            "Discovery: call list_tools/list_functions/list_models/list_dbs first. Tool and function names "
+            "are exact and case-sensitive -- do NOT guess.",
+            "Create: create_agent/create_team/create_workflow. When the user mentions specific "
+            "tools, you MUST include ALL of those names in tool_names; do not silently drop any.",
+            "Edit: ALWAYS call get_agent/get_team/get_workflow first to read the current state, "
+            "then call edit_agent/edit_team/edit_workflow with only the fields that change.",
+        ]
+        if self.enable_versions:
+            instruction_lines.extend(
+                [
+                    "Edits produce a draft. Call publish_component to promote the draft to published+current.",
+                    "Versioning: list_versions shows all config versions; set_current_version rolls "
+                    "back to a prior published version; delete_version removes a draft.",
+                ]
+            )
+        else:
+            instruction_lines.append("Edits are published immediately as the new current version.")
+        if self.enable_teams:
+            instruction_lines.append(
+                "Team rules: member_ids must be ids returned by create_agent or present in list_agents."
+            )
+        if self.enable_workflows:
+            instruction_lines.append(
+                "Workflow rules: each step_spec is a dict with 'name' and exactly one of "
+                "'agent_id', 'team_id', or 'function_name'. Use function_name values from list_functions."
+            )
+
+        # Toolkit instructions are only injected into the system message when
+        # add_instructions is set, so default it on.
+        kwargs.setdefault("add_instructions", True)
         super().__init__(
             name="studio",
             tools=tools,
             async_tools=async_tools,
-            instructions=(
-                "Compose agents, teams, and workflows from registry primitives.\n"
-                "Discovery: call list_tools/list_functions/list_models/list_dbs first. Tool and function names "
-                "are exact and case-sensitive -- do NOT guess.\n"
-                "Create: create_agent/create_team/create_workflow. When the user mentions specific "
-                "tools, you MUST include ALL of those names in tool_names; do not silently drop any.\n"
-                "Edit: ALWAYS call get_agent/get_team/get_workflow (or get_version) first to read "
-                "the current state, then call edit_agent/edit_team/edit_workflow with only the "
-                "fields that change. Edits produce a draft. Call publish_component to promote the "
-                "draft to published+current.\n"
-                "Versioning: list_versions shows all config versions; set_current_version rolls "
-                "back to a prior published version; delete_version removes a draft.\n"
-                "Team rules: member_ids must be ids returned by create_agent or present in list_agents.\n"
-                "Workflow rules: each step_spec is a dict with 'name' and exactly one of "
-                "'agent_id', 'team_id', or 'function_name'. Use function_name values from list_functions."
-            ),
+            instructions="\n".join(instruction_lines),
             **kwargs,
         )
 
@@ -319,10 +350,52 @@ class StudioTool(Toolkit):
                 return w
         return self._load_workflow_from_db(workflow_id)
 
-    def _load_agent_from_db(self, agent_id: str) -> Optional["Agent"]:
+    # Edit-base lookups: like _find_*, but DB components load from the latest
+    # draft when versioning is enabled, so successive partial edits accumulate
+    # instead of each resetting to the published config.
+
+    def _find_agent_for_edit(self, agent_id: str) -> Optional["Agent"]:
+        for a in self._iter_agents():
+            if getattr(a, "id", None) == agent_id or getattr(a, "name", None) == agent_id:
+                return a
+        return self._load_agent_from_db(agent_id, version=self._edit_base_version(agent_id))
+
+    def _find_team_for_edit(self, team_id: str) -> Optional["Team"]:
+        for t in self._iter_teams():
+            if getattr(t, "id", None) == team_id or getattr(t, "name", None) == team_id:
+                return t
+        return self._load_team_from_db(team_id, version=self._edit_base_version(team_id))
+
+    def _find_workflow_for_edit(self, workflow_id: str) -> Optional["Workflow"]:
+        for w in self._iter_workflows():
+            if getattr(w, "id", None) == workflow_id or getattr(w, "name", None) == workflow_id:
+                return w
+        return self._load_workflow_from_db(workflow_id, version=self._edit_base_version(workflow_id))
+
+    def _edit_base_version(self, component_id: str) -> Optional[int]:
+        """Version to base an edit on: the latest draft when versioning is
+        enabled, else None (the current published version)."""
+        if not self.enable_versions:
+            return None
+        return self._latest_draft_version(component_id)
+
+    def _latest_draft_version(self, component_id: str) -> Optional[int]:
+        if self.db is None:
+            return None
+        try:
+            configs = self.db.list_configs(component_id, include_config=False)
+        except Exception:
+            logger.debug(f"StudioTool: list_configs failed for {component_id}", exc_info=True)
+            return None
+        drafts: List[int] = [
+            c["version"] for c in configs if c.get("stage") == "draft" and isinstance(c.get("version"), int)
+        ]
+        return max(drafts) if drafts else None
+
+    def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict. Bypasses Agent.load() to
         avoid Agno's load_component_graph signature mismatch."""
-        config = self._load_config_from_db(agent_id)
+        config = self._load_config_from_db(agent_id, version=version)
         if config is None:
             return None
         from agno.agent.agent import Agent
@@ -336,8 +409,8 @@ class StudioTool(Toolkit):
             logger.warning("StudioTool: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
 
-    def _load_team_from_db(self, team_id: str) -> Optional["Team"]:
-        config = self._load_config_from_db(team_id)
+    def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
+        config = self._load_config_from_db(team_id, version=version)
         if config is None:
             return None
         from agno.team.team import Team
@@ -351,8 +424,8 @@ class StudioTool(Toolkit):
             logger.warning("StudioTool: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
 
-    def _load_workflow_from_db(self, workflow_id: str) -> Optional["Workflow"]:
-        config = self._load_config_from_db(workflow_id)
+    def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
+        config = self._load_config_from_db(workflow_id, version=version)
         if config is None:
             return None
         from agno.workflow.workflow import Workflow
@@ -366,11 +439,11 @@ class StudioTool(Toolkit):
             logger.warning("StudioTool: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
 
-    def _load_config_from_db(self, component_id: str) -> Optional[Dict[str, Any]]:
+    def _load_config_from_db(self, component_id: str, version: Optional[int] = None) -> Optional[Dict[str, Any]]:
         if self.db is None:
             return None
         try:
-            row = self.db.get_config(component_id=component_id)
+            row = self.db.get_config(component_id=component_id, version=version)
         except Exception:
             logger.warning("StudioTool: db.get_config failed for %s", component_id, exc_info=True)
             return None
@@ -606,7 +679,8 @@ class StudioTool(Toolkit):
                 "instructions": getattr(agent, "instructions", None),
                 "description": getattr(agent, "description", None),
                 "tools": _summarize_tools(getattr(agent, "tools", None)),
-            }
+            },
+            default=str,
         )
 
     def get_team(self, team_id: str) -> str:
@@ -627,7 +701,8 @@ class StudioTool(Toolkit):
                 "instructions": getattr(team, "instructions", None),
                 "description": getattr(team, "description", None),
                 "member_ids": [getattr(m, "id", None) for m in members] if not callable(members) else [],
-            }
+            },
+            default=str,
         )
 
     def get_workflow(self, workflow_id: str) -> str:
@@ -660,7 +735,8 @@ class StudioTool(Toolkit):
                 "name": getattr(wf, "name", None),
                 "description": getattr(wf, "description", None),
                 "steps": step_summaries,
-            }
+            },
+            default=str,
         )
 
     # ------------------------------------------------------------------
@@ -862,12 +938,12 @@ class StudioTool(Toolkit):
         tool_names: Optional[List[str]] = None,
         description: Optional[str] = None,
     ) -> str:
-        """Edit an agent. Produces a draft version.
+        """Edit an agent.
 
         Always call get_agent(agent_id) first to read the current state, then
-        pass only the fields that should change. If the latest config is a
-        draft it is updated in place; otherwise a new draft is created.
-        Use publish_component(agent_id) to promote the draft to published.
+        pass only the fields that should change. With versioning enabled the
+        edit is saved as a draft (use publish_component to promote it);
+        otherwise it is published immediately as the new current version.
 
         Args:
             agent_id (str): The id of the agent to edit.
@@ -878,7 +954,7 @@ class StudioTool(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
-        agent = self._find_agent(agent_id)
+        agent = self._find_agent_for_edit(agent_id)
         if agent is None:
             return json.dumps({"error": f"Agent not found: {agent_id}"})
 
@@ -899,9 +975,9 @@ class StudioTool(Toolkit):
             if tool_names is not None:
                 agent.tools = self._resolve_tools(tool_names) or None
 
-            version = self._upsert_draft(agent)
-            log_debug(f"StudioTool edited agent id={agent_id} draft_version={version}")
-            return json.dumps({"status": "edited", "id": agent_id, "draft_version": version, "stage": "draft"})
+            result = self._save_edit(agent)
+            log_debug(f"StudioTool edited agent id={agent_id} result={result}")
+            return json.dumps({"status": "edited", "id": agent_id, **result})
         except Exception as e:
             logger.exception("Failed to edit agent")
             return json.dumps({"error": str(e)})
@@ -914,9 +990,12 @@ class StudioTool(Toolkit):
         member_ids: Optional[List[str]] = None,
         description: Optional[str] = None,
     ) -> str:
-        """Edit a team. Produces a draft version.
+        """Edit a team.
 
-        Always call get_team(team_id) first to read the current state.
+        Always call get_team(team_id) first to read the current state, then
+        pass only the fields that should change. With versioning enabled the
+        edit is saved as a draft (use publish_component to promote it);
+        otherwise it is published immediately as the new current version.
 
         Args:
             team_id (str): The id of the team to edit.
@@ -927,7 +1006,7 @@ class StudioTool(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
-        team = self._find_team(team_id)
+        team = self._find_team_for_edit(team_id)
         if team is None:
             return json.dumps({"error": f"Team not found: {team_id}"})
 
@@ -953,9 +1032,9 @@ class StudioTool(Toolkit):
                     return json.dumps({"error": "A team must have at least one member"})
                 team.members = members
 
-            version = self._upsert_draft(team)
-            log_debug(f"StudioTool edited team id={team_id} draft_version={version}")
-            return json.dumps({"status": "edited", "id": team_id, "draft_version": version, "stage": "draft"})
+            result = self._save_edit(team)
+            log_debug(f"StudioTool edited team id={team_id} result={result}")
+            return json.dumps({"status": "edited", "id": team_id, **result})
         except Exception as e:
             logger.exception("Failed to edit team")
             return json.dumps({"error": str(e)})
@@ -966,9 +1045,12 @@ class StudioTool(Toolkit):
         description: Optional[str] = None,
         step_specs: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        """Edit a workflow. Produces a draft version.
+        """Edit a workflow.
 
-        Always call get_workflow(workflow_id) first to read the current state.
+        Always call get_workflow(workflow_id) first to read the current state,
+        then pass only the fields that should change. With versioning enabled
+        the edit is saved as a draft (use publish_component to promote it);
+        otherwise it is published immediately as the new current version.
 
         Args:
             workflow_id (str): The id of the workflow to edit.
@@ -978,7 +1060,7 @@ class StudioTool(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
-        wf = self._find_workflow(workflow_id)
+        wf = self._find_workflow_for_edit(workflow_id)
         if wf is None:
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
 
@@ -995,9 +1077,9 @@ class StudioTool(Toolkit):
                     return json.dumps({"error": err})
                 wf.steps = steps
 
-            version = self._upsert_draft(wf)
-            log_debug(f"StudioTool edited workflow id={workflow_id} draft_version={version}")
-            return json.dumps({"status": "edited", "id": workflow_id, "draft_version": version, "stage": "draft"})
+            result = self._save_edit(wf)
+            log_debug(f"StudioTool edited workflow id={workflow_id} result={result}")
+            return json.dumps({"status": "edited", "id": workflow_id, **result})
         except Exception as e:
             logger.exception("Failed to edit workflow")
             return json.dumps({"error": str(e)})
@@ -1015,6 +1097,8 @@ class StudioTool(Toolkit):
         if self.db is None:
             return json.dumps({"error": "StudioTool has no db configured."})
         try:
+            component = self.db.get_component(component_id) or {}
+            current_version = component.get("current_version")
             configs = self.db.list_configs(component_id, include_config=False)
             versions = [
                 {
@@ -1022,7 +1106,7 @@ class StudioTool(Toolkit):
                     "stage": c.get("stage"),
                     "label": c.get("label"),
                     "created_at": c.get("created_at"),
-                    "is_current": c.get("is_current", False),
+                    "is_current": current_version is not None and c.get("version") == current_version,
                 }
                 for c in configs
             ]
@@ -1069,11 +1153,13 @@ class StudioTool(Toolkit):
                 target = max(d.get("version", 0) for d in drafts)
 
             result = self.db.upsert_config(component_id=component_id, version=target, stage="published")
+            published_version = result.get("version", target)
+            self._sync_component_row(component_id, published_version)
             return json.dumps(
                 {
                     "status": "published",
                     "id": component_id,
-                    "version": result.get("version", target),
+                    "version": published_version,
                 }
             )
         except Exception as e:
@@ -1202,7 +1288,7 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Agent not found: {agent_id}"})
         try:
             response = agent.run(message)
-            return json.dumps({"id": agent_id, "content": getattr(response, "content", str(response))})
+            return json.dumps({"id": agent_id, "content": getattr(response, "content", None)}, default=str)
         except Exception as e:
             logger.exception("Failed to run agent")
             return json.dumps({"error": str(e)})
@@ -1219,7 +1305,7 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Team not found: {team_id}"})
         try:
             response = team.run(message)
-            return json.dumps({"id": team_id, "content": getattr(response, "content", str(response))})
+            return json.dumps({"id": team_id, "content": getattr(response, "content", None)}, default=str)
         except Exception as e:
             logger.exception("Failed to run team")
             return json.dumps({"error": str(e)})
@@ -1236,7 +1322,7 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
         try:
             response = wf.run(input=message)
-            return json.dumps({"id": workflow_id, "content": getattr(response, "content", str(response))})
+            return json.dumps({"id": workflow_id, "content": getattr(response, "content", None)}, default=str)
         except Exception as e:
             logger.exception("Failed to run workflow")
             return json.dumps({"error": str(e)})
@@ -1435,7 +1521,7 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Agent not found: {agent_id}"})
         try:
             response = await agent.arun(message)
-            return json.dumps({"id": agent_id, "content": getattr(response, "content", str(response))})
+            return json.dumps({"id": agent_id, "content": getattr(response, "content", None)}, default=str)
         except Exception as e:
             logger.exception("Failed to run agent")
             return json.dumps({"error": str(e)})
@@ -1452,7 +1538,7 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Team not found: {team_id}"})
         try:
             response = await team.arun(message)
-            return json.dumps({"id": team_id, "content": getattr(response, "content", str(response))})
+            return json.dumps({"id": team_id, "content": getattr(response, "content", None)}, default=str)
         except Exception as e:
             logger.exception("Failed to run team")
             return json.dumps({"error": str(e)})
@@ -1469,7 +1555,7 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
         try:
             response = await wf.arun(input=message)
-            return json.dumps({"id": workflow_id, "content": getattr(response, "content", str(response))})
+            return json.dumps({"id": workflow_id, "content": getattr(response, "content", None)}, default=str)
         except Exception as e:
             logger.exception("Failed to run workflow")
             return json.dumps({"error": str(e)})
@@ -1548,8 +1634,26 @@ class StudioTool(Toolkit):
                 return [], f"Step '{step_name}' must specify agent_id, team_id, or function_name"
         return steps, None
 
+    def _save_edit(self, component: Component) -> Dict[str, Any]:
+        """Persist an edited component.
+
+        With versioning enabled the edit is saved as a draft awaiting
+        publish_component; otherwise it is published immediately as the new
+        current version.
+        """
+        if self.enable_versions:
+            version = self._upsert_draft(component)
+            return {"draft_version": version, "stage": "draft"}
+        version = _persist_only(component, self.db)
+        return {"version": version, "stage": "published"}
+
     def _upsert_draft(self, component: Component) -> Optional[int]:
-        """Save a component as a draft. Updates the latest draft in place, else creates one."""
+        """Save a component as a draft. Updates the latest draft in place, else creates one.
+
+        The component row's name/description/metadata are NOT updated here --
+        draft-only changes must not leak into listings until the draft is
+        published (publish_component syncs the row).
+        """
         if self.db is None:
             raise ValueError("db is required for draft persistence")
 
@@ -1557,30 +1661,46 @@ class StudioTool(Toolkit):
         if component_id is None:
             raise ValueError("Component has no id")
 
-        self.db.upsert_component(
-            component_id=component_id,
-            component_type=_component_type(component),
-            name=getattr(component, "name", component_id),
-            description=getattr(component, "description", None),
-            metadata=getattr(component, "metadata", None),
-        )
+        if self.db.get_component(component_id) is None:
+            self.db.upsert_component(
+                component_id=component_id,
+                component_type=_component_type(component),
+                name=getattr(component, "name", component_id),
+                description=getattr(component, "description", None),
+                metadata=getattr(component, "metadata", None),
+            )
 
         # Reuse an existing draft if there is one; otherwise create a new draft version.
-        configs = self.db.list_configs(component_id, include_config=False)
-        latest_draft = max(
-            (c for c in configs if c.get("stage") == "draft"),
-            key=lambda c: c.get("version", 0),
-            default=None,
-        )
-        target_version = latest_draft.get("version") if latest_draft else None
-
         result = self.db.upsert_config(
             component_id=component_id,
-            version=target_version,
+            version=self._latest_draft_version(component_id),
             config=_component_to_dict(component),
             stage="draft",
         )
         return result.get("version")
+
+    def _sync_component_row(self, component_id: str, version: Optional[int]) -> None:
+        """Bring the component row's name/description/metadata in line with a
+        newly published config version."""
+        if self.db is None:
+            return
+        try:
+            from agno.db.base import ComponentType
+
+            component = self.db.get_component(component_id)
+            row = self.db.get_config(component_id=component_id, version=version)
+            config = row.get("config") if isinstance(row, dict) else None
+            if component is None or not isinstance(config, dict):
+                return
+            self.db.upsert_component(
+                component_id=component_id,
+                component_type=ComponentType(component["component_type"]),
+                name=config.get("name") or component.get("name"),
+                description=config.get("description"),
+                metadata=config.get("metadata"),
+            )
+        except Exception:
+            logger.debug(f"StudioTool: failed to sync component row for {component_id}", exc_info=True)
 
 
 # ----------------------------------------------------------------------

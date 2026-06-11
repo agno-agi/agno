@@ -5,7 +5,7 @@ agents backed by a local SQLite database. No AgentOS server, no REST, just
 in-process composition.
 
 Usage:
-    .venv/bin/python cookbook/05_agent_os/studio/standalone_studio_agent.py
+    .venvs/demo/bin/python cookbook/05_agent_os/studio/standalone_studio_agent.py
 """
 
 from pathlib import Path
@@ -27,14 +27,16 @@ db = SqliteDb(id="standalone-studio-db", db_file=str(DB_DIR / "standalone_studio
 registry = Registry(
     name="Standalone Studio Registry",
     tools=[DuckDuckGoTools(), CalculatorTools()],
-    models=[OpenAIResponses(id="gpt-5.5"), Claude(id="claude-sonnet-4-7")],
+    models=[OpenAIResponses(id="gpt-5.5"), Claude(id="claude-sonnet-4-6")],
     dbs=[db],
 )
 
 studio_agent = Agent(
     name="Studio",
     model=Claude(id="claude-sonnet-4-5"),
-    tools=[StudioTool(registry=registry, db=db, default_model_id="gpt-5.5")],
+    tools=[
+        StudioTool(registry=registry, db=db, default_model_id="gpt-5.5", versions=True)
+    ],
     instructions=[
         "You help the user compose agents, teams, and workflows from registry primitives.",
         "Before calling create_*, restate the exact tool names you plan to pass.",
@@ -48,7 +50,7 @@ studio_agent = Agent(
 
 if __name__ == "__main__":
     studio_agent.print_response(
-        "First, create an agent called 'math-tutor' that uses claude-sonnet-4-5 and the calculator "
+        "First, create an agent called 'math-tutor' that uses claude-sonnet-4-6 and the calculator "
         "toolkit with instructions 'Teach math step by step.' "
         "Then edit it to add this to its instructions: 'Explain each intermediate result before moving on.' "
         "Then list_versions for math-tutor so I can see the draft. "

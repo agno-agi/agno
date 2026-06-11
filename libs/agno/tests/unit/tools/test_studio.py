@@ -5,6 +5,7 @@ config persistence path is exercised, not mocked.
 """
 
 import json
+from datetime import datetime
 from typing import Any, Dict
 
 import pytest
@@ -42,6 +43,11 @@ def studio(registry, db):
     return StudioTool(registry=registry, db=db)
 
 
+@pytest.fixture
+def studio_versioned(registry, db):
+    return StudioTool(registry=registry, db=db, versions=True)
+
+
 def _loads(s: str) -> Dict[str, Any]:
     return json.loads(s)
 
@@ -51,8 +57,17 @@ def _loads(s: str) -> Dict[str, Any]:
 # ----------------------------------------------------------------------
 
 
+VERSIONING_TOOLS = {
+    "list_versions",
+    "get_version",
+    "publish_component",
+    "set_current_version",
+    "delete_version",
+}
+
+
 class TestInitialization:
-    def test_default_registers_agents_plus_discovery_and_versioning(self, studio):
+    def test_default_registers_agents_plus_discovery(self, studio):
         expected = {
             # Discovery (always)
             "list_models",
@@ -68,14 +83,37 @@ class TestInitialization:
             "edit_agent",
             "delete_agent",
             "run_agent",
-            # Versioning (available whenever any component type is enabled)
-            "list_versions",
-            "get_version",
-            "publish_component",
-            "set_current_version",
-            "delete_version",
         }
         assert expected == set(studio.functions.keys())
+
+    def test_versioning_tools_not_registered_by_default(self, studio):
+        assert studio.enable_versions is False
+        assert not VERSIONING_TOOLS & set(studio.functions.keys())
+        assert not VERSIONING_TOOLS & set(studio.async_functions.keys())
+
+    def test_versions_flag_registers_versioning_tools(self, studio_versioned):
+        assert studio_versioned.enable_versions is True
+        assert VERSIONING_TOOLS.issubset(set(studio_versioned.functions.keys()))
+        assert VERSIONING_TOOLS.issubset(set(studio_versioned.async_functions.keys()))
+
+    def test_instructions_reflect_versioning_flag(self, studio, studio_versioned):
+        assert "published immediately" in studio.instructions
+        assert "publish_component" not in studio.instructions
+        assert "publish_component" in studio_versioned.instructions
+        assert "published immediately" not in studio_versioned.instructions
+
+    def test_instructions_include_component_rules_only_when_enabled(self, registry, db):
+        default = StudioTool(registry=registry, db=db)
+        assert "Team rules" not in default.instructions
+        assert "Workflow rules" not in default.instructions
+
+        full = StudioTool(registry=registry, db=db, teams=True, workflows=True)
+        assert "Team rules" in full.instructions
+        assert "Workflow rules" in full.instructions
+
+    def test_add_instructions_defaults_on_and_respects_override(self, registry, db):
+        assert StudioTool(registry=registry, db=db).add_instructions is True
+        assert StudioTool(registry=registry, db=db, add_instructions=False).add_instructions is False
 
     def test_default_does_not_register_team_or_workflow_tools(self, studio):
         names = set(studio.functions.keys())
@@ -346,7 +384,7 @@ class TestCreateWorkflow:
 
 
 # ----------------------------------------------------------------------
-# Edit (draft lifecycle)
+# Edit: draft lifecycle with versions=True, immediate publish without
 # ----------------------------------------------------------------------
 
 
@@ -356,23 +394,34 @@ class TestEditAgent:
             studio.create_agent(name="tutor", instructions="orig", model_id="gpt-5.4", tool_names=["calculator"])
         )
 
-    def test_edit_produces_draft_v2(self, studio):
-        self._create(studio)
-        out = _loads(studio.edit_agent(agent_id="tutor", instructions="updated"))
+    def test_edit_produces_draft_v2(self, studio_versioned):
+        self._create(studio_versioned)
+        out = _loads(studio_versioned.edit_agent(agent_id="tutor", instructions="updated"))
         assert out["status"] == "edited"
         assert out["stage"] == "draft"
         assert out["draft_version"] == 2
 
-    def test_second_edit_updates_same_draft_in_place(self, studio):
-        self._create(studio)
-        studio.edit_agent(agent_id="tutor", instructions="updated once")
-        out = _loads(studio.edit_agent(agent_id="tutor", instructions="updated twice"))
+    def test_second_edit_updates_same_draft_in_place(self, studio_versioned):
+        self._create(studio_versioned)
+        studio_versioned.edit_agent(agent_id="tutor", instructions="updated once")
+        out = _loads(studio_versioned.edit_agent(agent_id="tutor", instructions="updated twice"))
         assert out["draft_version"] == 2  # same draft, no new version
 
-        versions = _loads(studio.list_versions("tutor"))
+        versions = _loads(studio_versioned.list_versions("tutor"))
         stages = [v["stage"] for v in versions["versions"]]
         assert stages.count("draft") == 1
         assert stages.count("published") == 1
+
+    def test_successive_partial_edits_accumulate_in_draft(self, studio_versioned):
+        # A second edit must build on the pending draft, not reset to the
+        # published config (which would silently discard the first edit).
+        self._create(studio_versioned)
+        studio_versioned.edit_agent(agent_id="tutor", instructions="new instructions")
+        out = _loads(studio_versioned.edit_agent(agent_id="tutor", description="new description"))
+
+        draft = _loads(studio_versioned.get_version("tutor", version=out["draft_version"]))
+        assert draft["config"]["instructions"] == "new instructions"
+        assert draft["config"]["description"] == "new description"
 
     def test_edit_unknown_agent_returns_error(self, studio):
         out = _loads(studio.edit_agent(agent_id="ghost", instructions="x"))
@@ -389,15 +438,39 @@ class TestEditAgent:
         assert "error" in out
 
 
+class TestEditWithoutVersioning:
+    """With versions=False (default), edits publish immediately -- no drafts."""
+
+    def test_edit_publishes_immediately(self, studio, db):
+        studio.create_agent(name="tutor", instructions="orig", model_id="gpt-5.4")
+        out = _loads(studio.edit_agent(agent_id="tutor", instructions="updated"))
+        assert out["status"] == "edited"
+        assert out["stage"] == "published"
+        assert out["version"] == 2
+
+        configs = db.list_configs("tutor")
+        assert [c["stage"] for c in configs] == ["published", "published"]
+
+        current = db.get_config("tutor")
+        assert current["version"] == 2
+
+    def test_second_edit_creates_new_published_version(self, studio, db):
+        studio.create_agent(name="tutor", instructions="orig", model_id="gpt-5.4")
+        studio.edit_agent(agent_id="tutor", instructions="edit1")
+        out = _loads(studio.edit_agent(agent_id="tutor", instructions="edit2"))
+        assert out["version"] == 3
+        assert db.get_config("tutor")["version"] == 3
+
+
 class TestEditTeam:
     def _setup(self, studio):
         studio.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
         studio.create_agent(name="a2", instructions="i", model_id="gpt-5.4")
         studio.create_team(name="squad", instructions="orig", member_ids=["a1"], model_id="gpt-5.4")
 
-    def test_edit_team_members(self, studio):
-        self._setup(studio)
-        out = _loads(studio.edit_team(team_id="squad", member_ids=["a1", "a2"]))
+    def test_edit_team_members(self, studio_versioned):
+        self._setup(studio_versioned)
+        out = _loads(studio_versioned.edit_team(team_id="squad", member_ids=["a1", "a2"]))
         assert out["status"] == "edited"
         assert out["stage"] == "draft"
 
@@ -416,6 +489,14 @@ class TestEditWorkflow:
         self._setup(studio)
         out = _loads(studio.edit_workflow(workflow_id="pipeline", description="updated"))
         assert out["status"] == "edited"
+        assert out["stage"] == "published"
+
+    def test_edit_workflow_produces_draft(self, studio_versioned):
+        self._setup(studio_versioned)
+        out = _loads(studio_versioned.edit_workflow(workflow_id="pipeline", description="updated"))
+        assert out["status"] == "edited"
+        assert out["stage"] == "draft"
+        assert out["draft_version"] == 2
 
     def test_edit_workflow_bad_step(self, studio):
         self._setup(studio)
@@ -433,60 +514,81 @@ class TestVersioning:
         studio.create_agent(name="tutor", instructions="orig", model_id="gpt-5.4", tool_names=["calculator"])
         studio.edit_agent(agent_id="tutor", instructions="updated")
 
-    def test_list_versions_returns_both(self, studio):
-        self._create_and_edit(studio)
-        result = _loads(studio.list_versions("tutor"))
+    def test_list_versions_returns_both(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
+        result = _loads(studio_versioned.list_versions("tutor"))
         assert result["count"] == 2
         stages = sorted(v["stage"] for v in result["versions"])
         assert stages == ["draft", "published"]
 
-    def test_get_version_returns_config(self, studio):
-        self._create_and_edit(studio)
-        result = _loads(studio.get_version("tutor", version=1))
+    def test_get_version_returns_config(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
+        result = _loads(studio_versioned.get_version("tutor", version=1))
         assert result.get("version") == 1
         assert result.get("stage") == "published"
 
-    def test_get_current_version_omits_version(self, studio):
-        self._create_and_edit(studio)
-        result = _loads(studio.get_version("tutor"))
-        assert result.get("version") is not None
+    def test_get_current_version_omits_version(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
+        # The published v1 is current; the pending draft v2 must not be returned.
+        result = _loads(studio_versioned.get_version("tutor"))
+        assert result.get("version") == 1
+        assert result.get("stage") == "published"
 
-    def test_publish_promotes_draft_to_current(self, studio):
-        self._create_and_edit(studio)
-        out = _loads(studio.publish_component("tutor"))
+    def test_list_versions_marks_current(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
+        by_version = {v["version"]: v for v in _loads(studio_versioned.list_versions("tutor"))["versions"]}
+        assert by_version[1]["is_current"] is True
+        assert by_version[2]["is_current"] is False
+
+        studio_versioned.publish_component("tutor")
+        by_version = {v["version"]: v for v in _loads(studio_versioned.list_versions("tutor"))["versions"]}
+        assert by_version[2]["is_current"] is True
+        assert by_version[1]["is_current"] is False
+
+    def test_draft_metadata_not_visible_until_publish(self, studio_versioned, db):
+        studio_versioned.create_agent(name="tutor", instructions="i", model_id="gpt-5.4", description="original")
+        studio_versioned.edit_agent(agent_id="tutor", description="draft-only")
+        assert db.get_component("tutor")["description"] == "original"
+
+        studio_versioned.publish_component("tutor")
+        assert db.get_component("tutor")["description"] == "draft-only"
+
+    def test_publish_promotes_draft_to_current(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
+        out = _loads(studio_versioned.publish_component("tutor"))
         assert out["status"] == "published"
         assert out["version"] == 2
 
-        versions = _loads(studio.list_versions("tutor"))
+        versions = _loads(studio_versioned.list_versions("tutor"))
         stages = [v["stage"] for v in versions["versions"]]
         assert stages.count("published") == 2
         assert stages.count("draft") == 0
 
-    def test_publish_without_draft_returns_error(self, studio):
-        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
-        out = _loads(studio.publish_component("tutor"))
+    def test_publish_without_draft_returns_error(self, studio_versioned):
+        studio_versioned.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        out = _loads(studio_versioned.publish_component("tutor"))
         assert "error" in out
 
-    def test_set_current_version_rollback(self, studio):
-        self._create_and_edit(studio)
-        studio.publish_component("tutor")  # v2 published & current
-        out = _loads(studio.set_current_version("tutor", 1))
+    def test_set_current_version_rollback(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
+        studio_versioned.publish_component("tutor")  # v2 published & current
+        out = _loads(studio_versioned.set_current_version("tutor", 1))
         assert out["status"] == "set_current"
         assert out["version"] == 1
 
-    def test_delete_draft_version(self, studio):
-        self._create_and_edit(studio)
-        out = _loads(studio.delete_version("tutor", 2))
+    def test_delete_draft_version(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
+        out = _loads(studio_versioned.delete_version("tutor", 2))
         assert out["status"] == "deleted"
 
-        versions = _loads(studio.list_versions("tutor"))
+        versions = _loads(studio_versioned.list_versions("tutor"))
         assert versions["count"] == 1
         assert versions["versions"][0]["version"] == 1
 
-    def test_delete_published_version_returns_error(self, studio):
-        self._create_and_edit(studio)
+    def test_delete_published_version_returns_error(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
         # v1 is published+current — DB should refuse to delete it
-        out = _loads(studio.delete_version("tutor", 1))
+        out = _loads(studio_versioned.delete_version("tutor", 1))
         assert "error" in out
 
 
@@ -552,7 +654,7 @@ class TestLookup:
     def test_edit_agent_copies_live_agent_without_mutating_it(self, studio, registry, db):
         studio.create_agent(name="shared", instructions="db", model_id="gpt-5.4")
         live = Agent(id="shared", name="Shared", model=OpenAIResponses(id="gpt-5.4"), instructions="live")
-        tool = StudioTool(registry=registry, db=db, agents_list=[live])
+        tool = StudioTool(registry=registry, db=db, agents_list=[live], versions=True)
 
         before = _loads(tool.get_agent("shared"))
         out = _loads(tool.edit_agent(agent_id="shared", instructions="updated-live"))
@@ -638,6 +740,42 @@ class TestEnableFlags:
 
 
 # ----------------------------------------------------------------------
+# Run serialization: non-JSON content must not crash run_* tools
+# ----------------------------------------------------------------------
+
+
+class _StubRunOutput:
+    def __init__(self):
+        self.content = datetime(2026, 1, 1)
+
+
+class _StubAgent:
+    id = "stub"
+    name = "Stub"
+
+    def run(self, message):
+        return _StubRunOutput()
+
+    async def arun(self, message):
+        return _StubRunOutput()
+
+
+class TestRunSerialization:
+    def test_run_agent_serializes_non_json_content(self, registry, db):
+        tool = StudioTool(registry=registry, db=db, agents_list=[_StubAgent()])
+        out = _loads(tool.run_agent("stub", "hi"))
+        assert "error" not in out
+        assert out["content"].startswith("2026-01-01")
+
+    @pytest.mark.asyncio
+    async def test_arun_agent_serializes_non_json_content(self, registry, db):
+        tool = StudioTool(registry=registry, db=db, agents_list=[_StubAgent()])
+        out = _loads(await tool.arun_agent("stub", "hi"))
+        assert "error" not in out
+        assert out["content"].startswith("2026-01-01")
+
+
+# ----------------------------------------------------------------------
 # Non-cascading persistence: code-defined members should NOT land in DB
 # ----------------------------------------------------------------------
 
@@ -681,26 +819,28 @@ class TestNoCascadePersistence:
 
 
 class TestLifecycle:
-    def test_full_lifecycle(self, studio, db):
+    def test_full_lifecycle(self, studio_versioned, db):
         # Create
-        out = _loads(studio.create_agent(name="lc", instructions="orig", model_id="gpt-5.4", tool_names=["calculator"]))
+        out = _loads(
+            studio_versioned.create_agent(name="lc", instructions="orig", model_id="gpt-5.4", tool_names=["calculator"])
+        )
         assert out["db_version"] == 1
 
         # Edit twice — should collapse into one draft
-        studio.edit_agent(agent_id="lc", instructions="edit1")
-        studio.edit_agent(agent_id="lc", instructions="edit2")
+        studio_versioned.edit_agent(agent_id="lc", instructions="edit1")
+        studio_versioned.edit_agent(agent_id="lc", instructions="edit2")
 
-        versions: list[Dict[str, Any]] = _loads(studio.list_versions("lc"))["versions"]
+        versions: list[Dict[str, Any]] = _loads(studio_versioned.list_versions("lc"))["versions"]
         assert len(versions) == 2
 
         # Publish draft
-        pub = _loads(studio.publish_component("lc"))
+        pub = _loads(studio_versioned.publish_component("lc"))
         assert pub["version"] == 2
 
         # Rollback
-        rb = _loads(studio.set_current_version("lc", 1))
+        rb = _loads(studio_versioned.set_current_version("lc", 1))
         assert rb["status"] == "set_current"
 
         # Delete
-        _loads(studio.delete_agent("lc"))
+        _loads(studio_versioned.delete_agent("lc"))
         assert db.get_component("lc") is None

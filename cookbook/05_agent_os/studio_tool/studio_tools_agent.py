@@ -6,7 +6,7 @@ components described by the user in natural language.
 
 Ask the studio agent things like:
     - "What models and tools do we have available?"
-    - "Create an agent named 'news' using claude-sonnet-4-5 with DuckDuckGoTools
+    - "Create an agent named 'news' using claude-sonnet-4-6 with DuckDuckGoTools
        that summarizes news headlines in 2-3 sentences."
     - "Create a team called 'research' with the news agent and the Greeter agent."
     - "Create a workflow called 'daily-briefing' that runs the news agent then the
@@ -41,7 +41,7 @@ registry = Registry(
     tools=[DuckDuckGoTools(), HackerNewsTools(), CalculatorTools()],
     models=[
         OpenAIResponses(id="gpt-5.5"),
-        Claude(id="claude-sonnet-4-7"),
+        Claude(id="claude-sonnet-4-6"),
     ],
     dbs=[db],
 )
@@ -73,6 +73,7 @@ studio_agent = Agent(
             db=db,
             agents_list=[greeter, reporter],
             default_model_id="gpt-5.5",
+            versions=True,
         ),
     ],
     instructions=[
