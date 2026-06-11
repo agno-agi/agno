@@ -1,26 +1,27 @@
 """
-Discord Workflow
-================
+Discord Gateway Workflow
+========================
 
-Two-step draft-and-edit workflow on Discord. A Drafter agent writes an
-initial response, then an Editor agent polishes it for clarity and
-conciseness before the final reply lands in the user's thread.
+Two-step draft-and-edit workflow with fluid chat. Mention the bot in a
+channel (or DM it) and a Drafter agent writes an initial response, then an
+Editor agent polishes it before the final reply lands in your thread.
 
 Key concepts:
   - ``Workflow`` with sequential ``Steps`` chains multiple agents.
-  - The workflow (not individual agents) is passed to the Discord interface.
+  - The workflow (not individual agents) is passed to the gateway interface.
   - Each step runs as a tool call from the workflow's perspective, so the
     live status inside the thread flips between ``Running tool: draft...``
     and ``Running tool: edit...`` before the final answer appears.
 
-Setup: Set DISCORD_PUBLIC_KEY, DISCORD_APP_ID, DISCORD_BOT_TOKEN env vars.
+Setup: Set DISCORD_BOT_TOKEN, enable the Message Content Intent under Bot
+settings, and install discord.py. No public URL or tunnel needed.
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
-from agno.os.interfaces.discord import Discord
+from agno.os.interfaces.discord import DiscordGateway
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
 from agno.workflow.workflow import Workflow
@@ -30,7 +31,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 
 workflow_db = SqliteDb(
-    session_table="discord_workflow_sessions", db_file="tmp/discord_workflow.db"
+    session_table="discord_workflow_sessions", db_file="tmp/discord_gw_workflow.db"
 )
 
 drafter = Agent(
@@ -75,7 +76,7 @@ discord_workflow = Workflow(
 
 agent_os = AgentOS(
     workflows=[discord_workflow],
-    interfaces=[Discord(workflow=discord_workflow)],
+    interfaces=[DiscordGateway(workflow=discord_workflow)],
 )
 app = agent_os.get_app()
 
@@ -90,4 +91,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="workflow:app", reload=True)
+    agent_os.serve(app="workflow:app", reload=False)

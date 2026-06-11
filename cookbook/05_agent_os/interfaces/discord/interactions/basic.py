@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
-from agno.os.interfaces.discord import Discord
+from agno.os.interfaces.discord import DiscordInteractions
 
 # ---------------------------------------------------------------------------
 # Create Example
@@ -47,7 +47,7 @@ discord_agent = Agent(
 
 agent_os = AgentOS(
     agents=[discord_agent],
-    interfaces=[Discord(agent=discord_agent)],
+    interfaces=[DiscordInteractions(agent=discord_agent)],
 )
 app = agent_os.get_app()
 

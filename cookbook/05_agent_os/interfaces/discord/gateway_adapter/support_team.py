@@ -1,10 +1,11 @@
 """
-Discord Support Team
-====================
+Discord Gateway Support Team
+============================
 
-A multi-agent team that routes support questions to the right specialist.
-Technical Support handles code and API questions; Documentation Specialist
-searches past Discord discussions and the web for existing answers.
+A multi-agent support team behind fluid chat. Mention the bot with a support
+question and the coordinator routes it: Technical Support handles code and
+API questions; Documentation Specialist searches past Discord discussions and
+the web for existing answers. Follow-ups continue in the same thread.
 
 Key concepts:
   - ``Team`` with a coordinator model routes questions to the best member.
@@ -12,16 +13,17 @@ Key concepts:
     channel messages for prior answers.
   - Both members use ``WebSearchTools`` for external documentation.
 
-Setup: Set DISCORD_PUBLIC_KEY, DISCORD_APP_ID, DISCORD_BOT_TOKEN env vars.
-Grant the bot **Read Message History** and **View Channels** so the
-Documentation Specialist can search past discussions.
+Setup: Set DISCORD_BOT_TOKEN, enable the Message Content Intent under Bot
+settings, and install discord.py. Grant the bot **Read Message History** and
+**View Channels** so the Documentation Specialist can search past
+discussions. No public URL or tunnel needed.
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
-from agno.os.interfaces.discord import Discord
+from agno.os.interfaces.discord import DiscordGateway
 from agno.team import Team
 from agno.tools.discord import DiscordTools
 from agno.tools.websearch import WebSearchTools
@@ -31,7 +33,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 team_db = SqliteDb(
-    session_table="discord_support_sessions", db_file="tmp/discord_support_team.db"
+    session_table="discord_support_sessions", db_file="tmp/discord_gw_support_team.db"
 )
 
 tech_support = Agent(
@@ -91,7 +93,7 @@ support_team = Team(
 
 agent_os = AgentOS(
     teams=[support_team],
-    interfaces=[Discord(team=support_team)],
+    interfaces=[DiscordGateway(team=support_team)],
 )
 app = agent_os.get_app()
 
@@ -106,4 +108,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="support_team:app", reload=True)
+    agent_os.serve(app="support_team:app", reload=False)

@@ -6,15 +6,14 @@ from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
+from agno.os.interfaces.discord.pipeline import DISCORD_API
 from agno.os.interfaces.discord.router import attach_routes
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
-DISCORD_API = "https://discord.com/api/v10"
 
-
-class Discord(BaseInterface):
+class DiscordInteractions(BaseInterface):
     type = "discord"
 
     router: APIRouter
@@ -33,6 +32,8 @@ class Discord(BaseInterface):
         command_description: str = "Ask the AI a question",
         auto_register_command: bool = True,
         reply_in_thread: bool = True,
+        user_install: bool = True,
+        ephemeral: bool = False,
     ):
         self.agent = agent
         self.team = team
@@ -46,9 +47,11 @@ class Discord(BaseInterface):
         self.command_description = command_description
         self.auto_register_command = auto_register_command
         self.reply_in_thread = reply_in_thread
+        self.user_install = user_install
+        self.ephemeral = ephemeral
 
         if not (self.agent or self.team or self.workflow):
-            raise ValueError("Discord requires an agent, team, or workflow")
+            raise ValueError("DiscordInteractions requires an agent, team, or workflow")
         if not self.public_key:
             raise ValueError("DISCORD_PUBLIC_KEY is not set. Set the env var or pass public_key.")
         if not self.application_id:
@@ -60,14 +63,8 @@ class Discord(BaseInterface):
                 "Set the env var, pass bot_token, or disable both flags."
             )
 
-    def _register_commands(self) -> None:
-        # Bulk overwrite with PUT so /ask and /new stay in sync on every restart
-        url = f"{DISCORD_API}/applications/{self.application_id}/commands"
-        headers = {
-            "Authorization": f"Bot {self.bot_token}",
-            "Content-Type": "application/json",
-        }
-        payload = [
+    def _build_command_payload(self) -> List[dict]:
+        payload: List[dict] = [
             {
                 "name": self.command_name,
                 "description": self.command_description,
@@ -84,6 +81,12 @@ class Discord(BaseInterface):
                         "type": 11,
                         "required": False,
                     },
+                    {
+                        "name": "ephemeral",
+                        "description": "Only you can see the reply",
+                        "type": 5,
+                        "required": False,
+                    },
                 ],
             },
             {
@@ -91,6 +94,22 @@ class Discord(BaseInterface):
                 "description": "Start a fresh conversation in this channel",
             },
         ]
+        if self.user_install:
+            # Installable to both servers (0) and user accounts (1); usable in
+            # guilds (0), bot DMs (1), and private channels / group DMs (2)
+            for command in payload:
+                command["integration_types"] = [0, 1]
+                command["contexts"] = [0, 1, 2]
+        return payload
+
+    def _register_commands(self) -> None:
+        # Bulk overwrite with PUT so /ask and /new stay in sync on every restart
+        url = f"{DISCORD_API}/applications/{self.application_id}/commands"
+        headers = {
+            "Authorization": f"Bot {self.bot_token}",
+            "Content-Type": "application/json",
+        }
+        payload = self._build_command_payload()
         try:
             with httpx.Client(timeout=10.0) as client:
                 resp = client.put(url, headers=headers, json=payload)
@@ -115,5 +134,6 @@ class Discord(BaseInterface):
             bot_token=self.bot_token,
             reply_in_thread=self.reply_in_thread,
             command_name=self.command_name,
+            ephemeral=self.ephemeral,
         )
         return self.router

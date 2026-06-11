@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
-from agno.os.interfaces.discord import Discord
+from agno.os.interfaces.discord import DiscordInteractions
 from agno.tools.discord import DiscordTools
 from agno.tools.websearch import WebSearchTools
 
@@ -67,7 +67,7 @@ research_assistant = Agent(
 
 agent_os = AgentOS(
     agents=[research_assistant],
-    interfaces=[Discord(agent=research_assistant)],
+    interfaces=[DiscordInteractions(agent=research_assistant)],
 )
 app = agent_os.get_app()
 

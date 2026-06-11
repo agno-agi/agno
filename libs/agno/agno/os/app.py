@@ -809,6 +809,12 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # Interface lifespans (e.g. DiscordGateway's background listener)
+            for interface in self.interfaces:
+                interface_lifespan = getattr(interface, "get_lifespan", None)
+                if interface_lifespan is not None:
+                    lifespans.append(interface_lifespan())
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -840,6 +846,12 @@ class AgentOS:
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # Interface lifespans (e.g. DiscordGateway's background listener)
+            for interface in self.interfaces:
+                interface_lifespan = getattr(interface, "get_lifespan", None)
+                if interface_lifespan is not None:
+                    lifespans.append(interface_lifespan())
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
