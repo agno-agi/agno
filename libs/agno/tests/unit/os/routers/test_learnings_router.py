@@ -191,28 +191,57 @@ class TestListLearningUsers:
 
 
 class TestCreateLearning:
-    def test_create_success(self, client, mock_db):
-        created = _make_learning(learning_id="new-id", content={"hello": "world"})
-        mock_db.get_learning_by_id = MagicMock(return_value=created)
+    def test_create_uses_deterministic_id_for_identity_keyed_type(self, client, mock_db):
+        created = _make_learning(learning_id="user_profile_user-1", content={"hello": "world"})
+        # existence check -> None (not present), then readback -> created
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
         resp = client.post(
             "/learnings",
             json={"learning_type": "user_profile", "content": {"hello": "world"}, "user_id": "user-1"},
         )
         assert resp.status_code == 201
-        body = resp.json()
-        assert body["learning_type"] == "user_profile"
-        assert body["content"] == {"hello": "world"}
-        assert mock_db.upsert_learning.called
+        assert resp.json()["learning_id"] == "user_profile_user-1"
+        # Persisted under the deterministic id (reconciles with the agent's store), not a uuid.
+        assert mock_db.upsert_learning.call_args[1]["id"] == "user_profile_user-1"
 
-    def test_create_missing_required_field(self, client):
+    def test_create_conflict_when_identity_record_exists(self, client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(learning_id="user_profile_user-1"))
+        resp = client.post(
+            "/learnings",
+            json={"learning_type": "user_profile", "content": {}, "user_id": "user-1"},
+        )
+        assert resp.status_code == 409
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_identity_type_missing_field_is_422(self, client, mock_db):
+        # user_profile is keyed by user_id; without it the id can't be derived -> reject.
+        resp = client.post("/learnings", json={"learning_type": "user_profile", "content": {}})
+        assert resp.status_code == 422
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_generated_id_for_non_identity_type(self, client, mock_db):
+        created = _make_learning(learning_id="generated", learning_type="decision_log")
+        mock_db.get_learning_by_id = MagicMock(return_value=created)
+        resp = client.post(
+            "/learnings",
+            json={"learning_type": "decision_log", "content": {"d": 1}, "user_id": "user-1"},
+        )
+        assert resp.status_code == 201
+        # decision_log uses a generated uuid; no existence pre-check (only the readback call).
+        assert mock_db.upsert_learning.called
+        upsert_id = mock_db.upsert_learning.call_args[1]["id"]
+        assert upsert_id not in ("decision_log_user-1",) and len(upsert_id) == 36
+
+    def test_create_missing_learning_type_is_422(self, client):
         resp = client.post("/learnings", json={"content": {}})
         assert resp.status_code == 422
 
     def test_create_failure_when_get_returns_none(self, client, mock_db):
-        mock_db.get_learning_by_id = MagicMock(return_value=None)
+        # identity record absent (None on existence) and readback also None -> 500
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, None])
         resp = client.post(
             "/learnings",
-            json={"learning_type": "user_profile", "content": {}},
+            json={"learning_type": "user_profile", "content": {}, "user_id": "user-1"},
         )
         assert resp.status_code == 500
 
@@ -391,7 +420,8 @@ class TestIDORScoping:
         assert kwargs["agent_id"] == "ag-1"
 
     def test_create_matching_user_id_allowed(self, jwt_client, mock_db):
-        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="user-A"))
+        # existence check -> None (not present), then readback -> created
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, _make_learning(user_id="user-A")])
         resp = jwt_client.post(
             "/learnings",
             json={"learning_type": "user_profile", "content": {}, "user_id": "user-A"},

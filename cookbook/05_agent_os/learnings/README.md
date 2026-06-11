@@ -73,3 +73,24 @@ through unscoped.
 - `workflow_id` is not exposed: workflows don't produce learnings directly —
   they go through their constituent agents/teams, which write `agent_id` or
   `team_id`.
+
+## Creating records (id derivation)
+
+The learning stores key their records by a deterministic id derived from the
+identity fields, not a random id. So `POST /learnings` derives the same id for
+the identity-keyed types, ensuring a record created via the API reconciles with
+what the agent reads and writes (no orphan, no duplicate):
+
+| `learning_type` | derived id |
+|---|---|
+| `user_profile` | `user_profile_{user_id}` |
+| `user_memory` | `memories_{user_id}` |
+| `session_context` | `session_context_{session_id}` |
+| `entity_memory` | `entity_{namespace}_{entity_type}_{entity_id}` |
+
+- Provide the required identity field(s) for these types, or the request is
+  rejected with `422`. If a record already exists for that identity, `POST`
+  returns `409` — use `PATCH` to update it.
+- Put the same identity fields inside `content` too (e.g. `user_id` for
+  `user_profile`), so the agent's store can deserialize the record.
+- Other types (e.g. `decision_log`) use a generated id, so a user can have many.

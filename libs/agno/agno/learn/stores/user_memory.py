@@ -28,12 +28,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import LearningMode, UserMemoryConfig
 from agno.learn.schemas import Memories
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import from_dict_safe, to_dict_safe
+from agno.learn.utils import build_learning_id, from_dict_safe, to_dict_safe
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -932,7 +932,7 @@ class UserMemoryStore(LearningStore):
 
     def _build_memories_id(self, user_id: str) -> str:
         """Build a unique memories ID."""
-        return f"memories_{user_id}"
+        return cast(str, build_learning_id("user_memory", user_id=user_id))
 
     def _memories_to_list(self, memories: Optional[Any]) -> List[dict]:
         """Convert memories to list of memory dicts for prompt."""
