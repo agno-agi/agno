@@ -33,10 +33,17 @@ Schemas:
 """
 
 from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from agno.learn.utils import _parse_json, _safe_get
 from agno.utils.log import log_debug
+
+
+def _utc_now_iso() -> str:
+    """UTC timestamp in ISO-8601 with a trailing Z (matches the rest of the learn module)."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 # =============================================================================
 # Helper for debug logging
@@ -134,9 +141,15 @@ class UserProfile:
             return None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dict. Works with subclasses."""
+        """Convert to dict, dropping the internal audit/identity fields.
+
+        agent_id/team_id/created_at/updated_at mirror the agno_learnings row columns; the
+        store routes the real values to those columns, so the in-content copies are always
+        null -- duplicated noise. user_id is not marked internal and is kept for round-trip.
+        """
         try:
-            return asdict(self)
+            internal = {f.name for f in fields(self) if f.metadata.get("internal")}
+            return {k: v for k, v in asdict(self).items() if k not in internal}
         except Exception as e:
             log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
             return {}
@@ -236,9 +249,12 @@ class Memories:
     def add_memory(self, content: str, **kwargs) -> str:
         """Add a new memory.
 
+        ``created_at`` and ``updated_at`` are stamped by the framework here -- the model
+        decides what to remember, we decide when it was recorded.
+
         Args:
             content: The memory text to add.
-            **kwargs: Additional fields (source, timestamp, etc.)
+            **kwargs: Additional fields to store on the entry (e.g. source, added_by_agent).
 
         Returns:
             The generated memory ID.
@@ -248,7 +264,10 @@ class Memories:
         memory_id = str(uuid.uuid4())[:8]
 
         if content and content.strip():
-            self.memories.append({"id": memory_id, "content": content.strip(), **kwargs})
+            now = _utc_now_iso()
+            self.memories.append(
+                {"id": memory_id, "content": content.strip(), "created_at": now, "updated_at": now, **kwargs}
+            )
 
         return memory_id
 
@@ -262,6 +281,8 @@ class Memories:
     def update_memory(self, memory_id: str, content: str, **kwargs) -> bool:
         """Update an existing memory.
 
+        Bumps ``updated_at`` (framework-owned) and preserves the original ``created_at``.
+
         Returns:
             True if memory was found and updated, False otherwise.
         """
@@ -269,6 +290,7 @@ class Memories:
             if isinstance(mem, dict) and mem.get("id") == memory_id:
                 mem["content"] = content.strip()
                 mem.update(kwargs)
+                mem["updated_at"] = _utc_now_iso()
                 return True
         return False
 
@@ -636,7 +658,10 @@ class EntityMemory:
         fact_id = str(uuid.uuid4())[:8]
 
         if content and content.strip():
-            self.facts.append({"id": fact_id, "content": content.strip(), **kwargs})
+            now = _utc_now_iso()
+            self.facts.append(
+                {"id": fact_id, "content": content.strip(), "created_at": now, "updated_at": now, **kwargs}
+            )
 
         return fact_id
 
@@ -656,7 +681,8 @@ class EntityMemory:
         event_id = str(uuid.uuid4())[:8]
 
         if content and content.strip():
-            event = {"id": event_id, "content": content.strip(), **kwargs}
+            now = _utc_now_iso()
+            event = {"id": event_id, "content": content.strip(), "created_at": now, "updated_at": now, **kwargs}
             if date:
                 event["date"] = date
             self.events.append(event)
@@ -679,8 +705,17 @@ class EntityMemory:
 
         rel_id = str(uuid.uuid4())[:8]
 
+        now = _utc_now_iso()
         self.relationships.append(
-            {"id": rel_id, "entity_id": related_entity_id, "relation": relation, "direction": direction, **kwargs}
+            {
+                "id": rel_id,
+                "entity_id": related_entity_id,
+                "relation": relation,
+                "direction": direction,
+                "created_at": now,
+                "updated_at": now,
+                **kwargs,
+            }
         )
 
         return rel_id
@@ -702,6 +737,7 @@ class EntityMemory:
             if isinstance(fact, dict) and fact.get("id") == fact_id:
                 fact["content"] = content.strip()
                 fact.update(kwargs)
+                fact["updated_at"] = _utc_now_iso()
                 return True
         return False
 

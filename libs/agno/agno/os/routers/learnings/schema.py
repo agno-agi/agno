@@ -49,3 +49,19 @@ class LearningUpdate(BaseModel):
 
     content: Optional[Dict[str, Any]] = Field(None, description="Replacement content payload")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Replacement metadata")
+
+
+class LearningUserStats(BaseModel):
+    """A user that owns learning records, with their most recent activity.
+
+    Used as a lightweight index for the per-user view: list users here, then drill into a
+    single user's records via ``GET /learnings?user_id=...``. No per-user count is returned
+    -- the user-scoped stores (``user_profile``, ``user_memory``) keep a single record per
+    user, so a record count would always be 1; the actual memory count lives in that
+    record's ``content``.
+    """
+
+    user_id: str = Field(..., description="The user ID")
+    last_learning_updated_at: Optional[int] = Field(
+        None, description="Most recent learning update for this user (Unix epoch seconds)"
+    )

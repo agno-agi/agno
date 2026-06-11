@@ -937,6 +937,22 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def get_learnings(
         self,
@@ -992,6 +1008,8 @@ class BaseDb(ABC):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List learning records with pagination, returning the page and total count.
 
@@ -1009,9 +1027,41 @@ class BaseDb(ABC):
                 ``user_id`` is None.
             limit: Page size.
             page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
 
         Returns:
             Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 
@@ -1693,6 +1743,22 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Async delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def get_learnings(
         self,
@@ -1748,6 +1814,8 @@ class AsyncBaseDb(ABC):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Async list learning records with pagination, returning the page and total count.
 
@@ -1765,9 +1833,41 @@ class AsyncBaseDb(ABC):
                 ``user_id`` is None.
             limit: Page size.
             page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
 
         Returns:
             Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 

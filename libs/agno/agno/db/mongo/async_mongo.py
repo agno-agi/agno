@@ -3221,6 +3221,22 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return 0
+
+            query: Dict[str, Any] = {"user_id": user_id}
+            if learning_type is not None:
+                query["learning_type"] = learning_type
+            result = await collection.delete_many(query)
+            return int(result.deleted_count or 0)
+
+        except Exception as e:
+            log_debug(f"Error deleting user learnings: {e}")
+            return 0
+
     async def get_learnings(
         self,
         learning_type: Optional[str] = None,
@@ -3318,6 +3334,8 @@ class AsyncMongoDb(AsyncBaseDb):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
@@ -3347,7 +3365,13 @@ class AsyncMongoDb(AsyncBaseDb):
 
             total_count = await collection.count_documents(query)
 
-            cursor = collection.find(query).sort("updated_at", -1).skip((page - 1) * limit).limit(limit)
+            sort_direction = 1 if sort_order == "asc" else -1
+            cursor = (
+                collection.find(query)
+                .sort(sort_by or "updated_at", sort_direction)
+                .skip((page - 1) * limit)
+                .limit(limit)
+            )
             results = await cursor.to_list(length=limit)
 
             learnings = []
@@ -3360,3 +3384,69 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error listing learnings: {e}")
             return [], 0
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return [], 0
+
+            # Exclude ownerless records: both explicit null and a missing user_id field
+            # (otherwise they group under _id: null and break LearningUserStats validation).
+            match_stage: Dict[str, Any] = {"user_id": {"$ne": None, "$exists": True}}
+            if learning_type is not None:
+                match_stage["learning_type"] = learning_type
+            if user_id is not None:
+                match_stage["user_id"] = user_id
+
+            # The grouped user_id is the "_id" field after $group.
+            sort_field = (
+                "_id"
+                if (sort_by or "last_learning_updated_at") == "user_id"
+                else (sort_by or "last_learning_updated_at")
+            )
+            sort_direction = 1 if sort_order == "asc" else -1
+
+            pipeline: List[Dict[str, Any]] = [
+                {"$match": match_stage},
+                {
+                    "$group": {
+                        "_id": "$user_id",
+                        "last_learning_updated_at": {"$max": "$updated_at"},
+                    }
+                },
+                {"$sort": {sort_field: sort_direction}},
+            ]
+
+            count_pipeline = pipeline + [{"$count": "total"}]
+            count_result = await self._aggregate_to_list(collection, count_pipeline, length=1)
+            total_count = count_result[0]["total"] if count_result else 0
+
+            if limit is not None:
+                if page is not None:
+                    pipeline.append({"$skip": (page - 1) * limit})
+                pipeline.append({"$limit": limit})
+
+            results = await self._aggregate_to_list(collection, pipeline, length=None)
+
+            formatted_results = [
+                {
+                    "user_id": result["_id"],
+                    "last_learning_updated_at": result["last_learning_updated_at"],
+                }
+                for result in results
+            ]
+
+            return formatted_results, int(total_count)
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e

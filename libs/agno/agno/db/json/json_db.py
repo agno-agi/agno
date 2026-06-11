@@ -1834,6 +1834,9 @@ class JsonDb(BaseDb):
     def delete_learning(self, id: str) -> bool:
         raise NotImplementedError("Learning methods not yet implemented for JsonDb")
 
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        raise NotImplementedError("Learning methods not yet implemented for JsonDb")
+
     def get_learnings(
         self,
         learning_type: Optional[str] = None,
@@ -1864,5 +1867,18 @@ class JsonDb(BaseDb):
         include_global: bool = False,
         limit: int = 100,
         page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError("Learning methods not yet implemented for JsonDb")
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Learning methods not yet implemented for JsonDb")
