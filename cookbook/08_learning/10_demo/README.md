@@ -70,8 +70,10 @@ Interactive docs are at `http://localhost:7777/docs`. For a client-side walkthro
 
 ## Start fresh
 
-Learnings live in the `agno_learnings` table and the `learning_demo_knowledge` vector table. Drop both and re-run `seed.py` to reset:
+Learnings live in the `ai.agno_learnings` table and the `ai.learning_demo_knowledge` vector table. Drop both and re-run `seed.py` to reset:
 
 ```bash
-docker exec pgvector psql -U ai -d ai -c 'DROP TABLE IF EXISTS agno_learnings, learning_demo_knowledge;'
+docker exec pgvector psql -U ai -d ai -c 'DROP TABLE IF EXISTS ai.agno_learnings, ai.learning_demo_knowledge;'
 ```
+
+Note: `agno_learnings` is shared by every cookbook example using this container, so this also clears learnings from other runs.
