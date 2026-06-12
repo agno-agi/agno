@@ -59,8 +59,10 @@ For a scoped (non-admin) caller:
   global / non-user-scoped record) or match the caller. A mismatch is rejected
   with `403`.
 - **Single record GET / PATCH / DELETE**: records with `user_id IS NULL`
-  remain accessible. Records owned by a different user return `404` (not
-  `403`) to avoid leaking which IDs exist.
+  (shared agent/team/session/entity learnings) remain **readable** by any
+  caller, but **mutating** them (PATCH/DELETE) is **admin-only** — a regular
+  user gets `403`. Records owned by a different user return `404` (not `403`)
+  to avoid leaking which IDs exist.
 
 With isolation disabled, or for admins, or without a JWT, the request passes
 through unscoped.

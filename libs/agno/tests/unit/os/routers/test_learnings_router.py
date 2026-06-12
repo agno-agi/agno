@@ -457,22 +457,24 @@ class TestIDORScoping:
         mock_db.upsert_learning.assert_not_called()
 
     def test_get_global_record_accessible(self, jwt_client, mock_db):
+        # Reads of null-owner (shared) records remain open to any authenticated caller.
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None, agent_id="ag-1"))
         resp = jwt_client.get("/learnings/lrn-1")
         assert resp.status_code == 200
         assert resp.json()["user_id"] is None
 
-    def test_patch_global_record_accessible(self, jwt_client, mock_db):
-        existing = _make_learning(user_id=None, agent_id="ag-1")
-        updated = _make_learning(user_id=None, agent_id="ag-1", content={"new": True})
-        mock_db.get_learning_by_id = MagicMock(side_effect=[existing, updated])
+    def test_patch_global_record_forbidden_for_non_admin(self, jwt_client, mock_db):
+        # Mutating a null-owner record is admin-only.
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None, agent_id="ag-1"))
         resp = jwt_client.patch("/learnings/lrn-1", json={"content": {"new": True}})
-        assert resp.status_code == 200
+        assert resp.status_code == 403
+        mock_db.upsert_learning.assert_not_called()
 
-    def test_delete_global_record_accessible(self, jwt_client, mock_db):
+    def test_delete_global_record_forbidden_for_non_admin(self, jwt_client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
         resp = jwt_client.delete("/learnings/lrn-1")
-        assert resp.status_code == 204
+        assert resp.status_code == 403
+        mock_db.delete_learning.assert_not_called()
 
     def test_get_other_users_record_returns_404(self, jwt_client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="user-B"))
@@ -581,6 +583,16 @@ class TestAdminAndUnscopedAccess:
         resp = admin_client.delete("/learnings/users/user-B")
         assert resp.status_code == 204
         mock_db.delete_user_learnings.assert_called_once_with("user-B", learning_type=None)
+
+    def test_admin_can_mutate_null_owner_record(self, admin_client, mock_db):
+        # Mutating a null-owner (shared) record is allowed for admins.
+        existing = _make_learning(user_id=None, agent_id="ag-1")
+        updated = _make_learning(user_id=None, agent_id="ag-1", content={"new": True})
+        mock_db.get_learning_by_id = MagicMock(side_effect=[existing, updated])
+        assert admin_client.patch("/learnings/lrn-1", json={"content": {"new": True}}).status_code == 200
+
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        assert admin_client.delete("/learnings/lrn-1").status_code == 204
 
     def test_isolation_off_is_unscoped(self, isolation_off_client, mock_db):
         # Even with a JWT subject, isolation-off means no per-user binding.

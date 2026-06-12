@@ -405,7 +405,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         description=(
             "Update a learning record. Only `content` and `metadata` may be modified; "
             "identity fields (user_id, agent_id, team_id, etc.) are immutable. "
-            "Provided fields fully replace the existing values."
+            "Provided fields fully replace the existing values. Records with no owner "
+            "(`user_id IS NULL` — shared agent/team/session/entity learnings) are readable by "
+            "any caller but may only be modified by an admin."
         ),
     )
     async def update_learning(
@@ -417,7 +419,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
     ) -> LearningResponse:
         db = await get_db(dbs, db_id, table)
         existing = await _fetch_learning(db, learning_id)
-        _enforce_user_scope(request, existing)
+        _enforce_user_scope(request, existing, mutating=True)
 
         updates = body.model_dump(exclude_unset=True)
         if not updates:
@@ -494,7 +496,11 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         status_code=204,
         operation_id="delete_learning",
         summary="Delete Learning",
-        description="Permanently delete a learning record by its ID.",
+        description=(
+            "Permanently delete a learning record by its ID. Records with no owner "
+            "(`user_id IS NULL` — shared agent/team/session/entity learnings) may only be "
+            "deleted by an admin."
+        ),
     )
     async def delete_learning(
         request: Request,
@@ -504,7 +510,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
     ) -> None:
         db = await get_db(dbs, db_id, table)
         existing = await _fetch_learning(db, learning_id)
-        _enforce_user_scope(request, existing)
+        _enforce_user_scope(request, existing, mutating=True)
 
         try:
             if isinstance(db, AsyncBaseDb):
@@ -538,20 +544,28 @@ async def _fetch_learning(db: Union[BaseDb, AsyncBaseDb, RemoteDb], learning_id:
     return record
 
 
-def _enforce_user_scope(request: Request, record: dict) -> None:
+def _enforce_user_scope(request: Request, record: dict, *, mutating: bool = False) -> None:
     """Block cross-user access without leaking existence.
 
     Scoping is the framework's opt-in ``user_isolation`` contract: admins and callers
     running with isolation disabled get ``None`` from ``get_scoped_user_id`` and have full
-    access. For a scoped (non-admin) caller, records with ``user_id IS NULL`` are global /
-    non-user-scoped (e.g. agent, team, session, or entity learnings) and remain accessible;
-    a record owned by a different user returns 404 (not 403) to avoid leaking which IDs exist.
+    access. For a scoped (non-admin) caller:
+
+    - Records with ``user_id IS NULL`` are non-user-scoped (global, agent, team, session, or
+      entity learnings, often produced during *other* users' activity). They remain readable
+      to any authenticated caller, but mutating them (``mutating=True``, i.e. PATCH/DELETE) is
+      admin-only -- a regular user must not overwrite or delete shared rows it doesn't own.
+    - A record owned by a different user returns 404 (not 403) to avoid leaking which IDs exist.
     """
     scoped_user_id = get_scoped_user_id(request)
     if scoped_user_id is None:
         return
     record_user_id = record.get("user_id")
     if record_user_id is None:
+        if mutating:
+            raise HTTPException(
+                status_code=403, detail="Only admins can modify learnings that have no owner (user_id is null)"
+            )
         return
     if record_user_id != scoped_user_id:
         raise HTTPException(status_code=404, detail="Learning not found")
