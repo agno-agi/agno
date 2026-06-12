@@ -21,9 +21,8 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.agui.handler import async_stream_agno_response_as_agui_events
-from agno.os.interfaces.agui.helpers import extract_agui_user_input, validate_agui_state
-from agno.os.interfaces.agui.media import extract_agui_media
+from agno.os.interfaces.agui.input import extract_media, extract_user_input, validate_state
+from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
@@ -38,13 +37,13 @@ async def run_entity(
     try:
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — entity manages history via session DB.
-        user_input = extract_agui_user_input(run_input.messages or [])
-        images, audio, videos, files = extract_agui_media(run_input.messages or [])
+        user_input = extract_user_input(run_input.messages or [])
+        images, audio, videos, files = extract_media(run_input.messages or [])
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         user_id = run_input.forwarded_props.get("user_id") if run_input.forwarded_props else None
-        session_state = validate_agui_state(run_input.state, run_input.thread_id)
+        session_state = validate_state(run_input.state, run_input.thread_id)
 
         if session_state is not None:
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))

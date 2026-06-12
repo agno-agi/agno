@@ -1,14 +1,43 @@
+"""Request parsing for AG-UI interface.
+
+Extracts user input, media, and state from AG-UI RunAgentInput requests.
+All functions here operate on the inbound request, preparing kwargs for agent.arun().
+"""
+
 import base64
 import urllib.request
-from typing import List, Optional, Tuple
+from dataclasses import asdict, is_dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 from ag_ui.core.types import Message as AGUIMessage
+from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_warning
 
 
-def extract_agui_media(
+def extract_user_input(messages: List[AGUIMessage]) -> str:
+    """Extract the last user message content from AG-UI messages.
+
+    AG-UI frontends send the full conversation history on every request.
+    The agent manages its own history via session DB, so we only need the
+    latest user message as input — matching the REST API pattern.
+    """
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content is not None:
+            if isinstance(msg.content, str):
+                return msg.content
+            if isinstance(msg.content, list):
+                text_parts = []
+                for part in msg.content:
+                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "\n".join(text_parts)
+    return ""
+
+
+def extract_media(
     messages: List[AGUIMessage],
 ) -> Tuple[List[Image], List[Audio], List[Video], List[File]]:
     """Extract media from the last user message.
@@ -77,6 +106,38 @@ def extract_agui_media(
         return images, audio, videos, files
 
     return images, audio, videos, files
+
+
+def validate_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
+    """Validate the given AGUI state is of the expected type (dict)."""
+    if state is None:
+        return None
+
+    if isinstance(state, dict):
+        return state
+
+    if isinstance(state, BaseModel):
+        try:
+            return state.model_dump()
+        except Exception:
+            pass
+
+    if is_dataclass(state):
+        try:
+            return asdict(state)  # type: ignore
+        except Exception:
+            pass
+
+    if hasattr(state, "to_dict") and callable(getattr(state, "to_dict")):
+        try:
+            result = state.to_dict()  # type: ignore
+            if isinstance(result, dict):
+                return result
+        except Exception:
+            pass
+
+    log_warning(f"AGUI state must be a dict, got {type(state).__name__}. State will be ignored. Thread: {thread_id}")
+    return None
 
 
 def _decode_base64(value: str) -> Optional[bytes]:

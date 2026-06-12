@@ -7,27 +7,49 @@ from agno.utils.log import log_warning
 
 
 @dataclass
-class EventBuffer:
-    """Buffer to manage event ordering constraints, relevant when mapping Agno responses to AG-UI events."""
+class StreamState:
+    """Per-stream state for AG-UI event translation.
 
-    active_tool_call_ids: Set[str]
-    ended_tool_call_ids: Set[str]
-    current_text_message_id: str = ""
-    next_text_message_id: str = ""
+    Tracks message lifecycle, tool calls, reasoning sessions, and state deltas.
+    All handlers receive this object and mutate it as events flow through.
+
+    Text Message Lifecycle:
+        CLOSED (initial)      OPEN                   CLOSED
+        text_message_id=""    text_message_id=X      text_message_id=X (persists!)
+        text_message_open=F   text_message_open=T    text_message_open=F
+
+    The text_message_id persists after close so tool calls can parent to it.
+    """
+
+    # Text message tracking
+    text_message_id: str = ""
+    text_message_open: bool = False
+
+    # Tool call tracking
+    active_tool_call_ids: Set[str] = field(default_factory=set)
+    ended_tool_call_ids: Set[str] = field(default_factory=set)
     pending_tool_calls_parent_id: str = ""
+
+    # Reasoning tracking
     reasoning_message_id: Optional[str] = None
     reasoning_step_count: int = 0
+
+    # State delta tracking
     _last_snapshot: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
-    def __init__(self):
-        self.active_tool_call_ids = set()
-        self.ended_tool_call_ids = set()
-        self.current_text_message_id = ""
-        self.next_text_message_id = str(uuid.uuid4())
-        self.pending_tool_calls_parent_id = ""
-        self.reasoning_message_id = None
-        self.reasoning_step_count = 0
-        self._last_snapshot = None
+    # Run context
+    thread_id: str = ""
+    run_id: str = ""
+    run_state: Optional[Dict[str, Any]] = None
+
+    def open_text_message(self) -> str:
+        self.text_message_id = str(uuid.uuid4())
+        self.text_message_open = True
+        return self.text_message_id
+
+    def close_text_message(self) -> None:
+        # ID persists for tool call parenting — only flag changes
+        self.text_message_open = False
 
     def start_tool_call(self, tool_call_id: str) -> None:
         self.active_tool_call_ids.add(tool_call_id)
@@ -36,15 +58,12 @@ class EventBuffer:
         self.active_tool_call_ids.discard(tool_call_id)
         self.ended_tool_call_ids.add(tool_call_id)
 
-    def start_text_message(self) -> str:
-        self.current_text_message_id = self.next_text_message_id
-        self.next_text_message_id = str(uuid.uuid4())
-        return self.current_text_message_id
-
     def get_parent_message_id_for_tool_call(self) -> str:
+        # pending_tool_calls_parent_id used for sequential tools after message close
         if self.pending_tool_calls_parent_id:
             return self.pending_tool_calls_parent_id
-        return self.current_text_message_id
+        # text_message_id persists after close
+        return self.text_message_id
 
     def set_pending_tool_calls_parent_id(self, parent_id: str) -> None:
         self.pending_tool_calls_parent_id = parent_id
@@ -57,11 +76,23 @@ class EventBuffer:
         self.reasoning_step_count = 0
         return self.reasoning_message_id
 
+    def ensure_reasoning_started(self) -> Tuple[str, bool]:
+        if self.reasoning_message_id is not None:
+            return self.reasoning_message_id, False
+        return self.start_reasoning(), True
+
+    def next_reasoning_step(self) -> int:
+        self.reasoning_step_count += 1
+        return self.reasoning_step_count
+
+    def end_reasoning(self) -> None:
+        self.reasoning_message_id = None
+        self.reasoning_step_count = 0
+
     def set_state_snapshot(self, state: Dict[str, Any]) -> None:
         self._last_snapshot = copy.deepcopy(state)
 
     def compute_state_delta(self, current_state: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
-        """Compute JSON Patch delta between last snapshot and current state."""
         if self._last_snapshot is None:
             return None
         try:
@@ -75,17 +106,3 @@ class EventBuffer:
         except Exception as e:
             log_warning(f"Failed to compute state delta: {e}")
             return None
-
-    def next_reasoning_step(self) -> int:
-        self.reasoning_step_count += 1
-        return self.reasoning_step_count
-
-    def ensure_reasoning_started(self) -> Tuple[str, bool]:
-        """Return the active reasoning session ID, starting one if needed."""
-        if self.reasoning_message_id is not None:
-            return self.reasoning_message_id, False
-        return self.start_reasoning(), True
-
-    def end_reasoning(self) -> None:
-        self.reasoning_message_id = None
-        self.reasoning_step_count = 0
