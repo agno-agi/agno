@@ -576,6 +576,10 @@ def get_team_router(
             None,
             description="JSON object with factory-specific parameters for dynamic team construction",
         ),
+        model: Optional[str] = Form(
+            None,
+            description="Override the team's model for this run, as '<provider>:<model_id>' (e.g. 'agno:openai/gpt-5.4'). If omitted, the model defined in code is used.",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
@@ -623,6 +627,7 @@ def get_team_router(
             # Per-run Agno API key (only applied to Agno gateway models). Read from a header
             # so it stays out of form data, logged kwargs, and the persisted session.
             agno_api_key=request.headers.get("X-Agno-Api-Key"),
+            model_override=model,
         )
 
         # Member HITL needs member runs embedded on the team run (member_responses).

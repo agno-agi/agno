@@ -1695,6 +1695,23 @@ def _apply_agno_api_key(entity: Any, agno_api_key: Optional[str]) -> None:
         entity.model = fresh_model
 
 
+def _apply_model_override(entity: Any, model_override: Optional[str]) -> None:
+    """Override the model for a single run, resolved from a "<provider>:<model_id>" string
+    (e.g. "agno:openai/gpt-5.4"). No-op when empty or for remote entities. Replaces the model
+    on the fresh per-request copy with a NEW instance, so it is isolation-safe (the registered
+    agent/team keeps its own model). A malformed string raises HTTP 400.
+    """
+    if not model_override:
+        return
+    if isinstance(entity, (Agent, Team)):
+        from agno.models.utils import get_model
+
+        try:
+            entity.model = get_model(model_override)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid model override {model_override!r}: {e}")
+
+
 async def resolve_agent(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]],
@@ -1706,6 +1723,7 @@ async def resolve_agent(
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
     agno_api_key: Optional[str] = None,
+    model_override: Optional[str] = None,
 ) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
@@ -1742,6 +1760,7 @@ async def resolve_agent(
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    _apply_model_override(agent, model_override)
     _apply_agno_api_key(agent, agno_api_key)
     return agent
 
@@ -1757,6 +1776,7 @@ async def resolve_team(
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
     agno_api_key: Optional[str] = None,
+    model_override: Optional[str] = None,
 ) -> Union[Team, RemoteTeam]:
     """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
@@ -1787,6 +1807,7 @@ async def resolve_team(
 
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
+    _apply_model_override(team, model_override)
     _apply_agno_api_key(team, agno_api_key)
     return team
 
