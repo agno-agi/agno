@@ -1,15 +1,3 @@
-"""Event handlers for AG-UI protocol translation.
-
-This module contains:
-1. HANDLERS dispatch table — maps Agno event types to handler functions
-2. Individual on_* handlers — translate Agno events to AG-UI events
-3. Response content extractors — used by handlers to extract text from chunks
-
-Adding a new event type:
-1. Write on_new_event(chunk, state) -> List[BaseEvent]
-2. Add entry to HANDLERS dict: RunEvent.new_event.value: on_new_event
-"""
-
 import copy
 import json
 import uuid
@@ -45,17 +33,12 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.utils.message import get_text_from_message
 
-# Handler signature: (chunk, state) -> List[BaseEvent]
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
 
 
-# =============================================================================
-# Response Content Extractors
-# =============================================================================
-
-
-def _extract_response_content(response: RunContentEvent) -> str:
-    """Extract text content from an agent response chunk."""
+def _extract_response_chunk_content(response: RunContentEvent) -> str:
+    # RunContentEvent can carry text in .messages (list) or .content (direct)
+    # AG-UI needs a plain string for TEXT_MESSAGE_CONTENT delta
     if hasattr(response, "messages") and response.messages:  # type: ignore
         for msg in reversed(response.messages):  # type: ignore
             if hasattr(msg, "role") and msg.role == "assistant" and hasattr(msg, "content") and msg.content:
@@ -63,12 +46,8 @@ def _extract_response_content(response: RunContentEvent) -> str:
     return get_text_from_message(response.content) if response.content is not None else ""
 
 
-def _extract_team_response_content(response: TeamRunContentEvent) -> str:
-    """Extract text content from a team response chunk.
-
-    Recursively folds in member responses so the AG-UI client sees a single
-    consolidated text instead of N separate member text deltas.
-    """
+def _extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
+    # Team responses nest member outputs — fold them into one text delta
     members_content = []
     if hasattr(response, "member_responses") and response.member_responses:  # type: ignore
         for member_resp in response.member_responses:  # type: ignore
@@ -121,9 +100,9 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
 
     event = getattr(chunk, "event", None)
     if event == RunEvent.run_content:
-        content = _extract_response_content(chunk)  # type: ignore
+        content = _extract_response_chunk_content(chunk)  # type: ignore
     elif event == TeamRunEvent.run_content:
-        content = _extract_team_response_content(chunk)  # type: ignore
+        content = _extract_team_response_chunk_content(chunk)  # type: ignore
     else:
         content = ""
 
@@ -411,11 +390,6 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     return events
 
 
-# =============================================================================
-# Dispatch Table
-# =============================================================================
-
-
 def _normalize_event(event: str) -> str:
     """Strip 'Team' prefix so agent and team events use the same handlers."""
     return event.removeprefix("Team")
@@ -442,11 +416,6 @@ _COMPLETION_EVENTS = frozenset(
         TeamRunEvent.run_paused.value,
     }
 )
-
-
-# =============================================================================
-# Public API
-# =============================================================================
 
 
 def is_completion_event(chunk: BaseRunOutputEvent) -> bool:

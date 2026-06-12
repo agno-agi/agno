@@ -1,9 +1,3 @@
-"""Stream adapters for AG-UI protocol.
-
-Provides sync and async iterators that transform Agno run streams into AG-UI events.
-This is the main entry point for event translation — router.py calls these functions.
-"""
-
 from collections.abc import Iterator
 from typing import Any, AsyncIterator, Dict, Optional, Union
 

@@ -1,9 +1,3 @@
-"""Request parsing for AG-UI interface.
-
-Extracts user input, media, and state from AG-UI RunAgentInput requests.
-All functions here operate on the inbound request, preparing kwargs for agent.arun().
-"""
-
 import base64
 import urllib.request
 from dataclasses import asdict, is_dataclass
