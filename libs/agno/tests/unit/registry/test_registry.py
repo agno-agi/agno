@@ -969,3 +969,192 @@ class TestGetSessionSummaryManager:
     def test_get_session_summary_manager_ids_empty(self, basic_registry):
         """Test session summary manager ids from empty registry."""
         assert basic_registry.get_session_summary_manager_ids() == set()
+
+
+# =============================================================================
+# add_* methods (dedup + cache invalidation)
+# =============================================================================
+
+
+def _model(model_id, provider="openai"):
+    """Build a lightweight model-like object for add_model tests."""
+    m = MagicMock()
+    m.id = model_id
+    m.provider = provider
+    # Make isinstance(m, Model) pass
+    from agno.models.base import Model
+
+    m.__class__ = type("MockModel", (Model,), {})
+    return m
+
+
+class TestAddModel:
+    """Tests for Registry.add_model()."""
+
+    def test_adds_model(self):
+        reg = Registry()
+        reg.add_model(_model("gpt-5.4"))
+        assert [(m.provider, m.id) for m in reg.models] == [("openai", "gpt-5.4")]
+
+    def test_dedupes_same_provider_and_id(self):
+        reg = Registry()
+        reg.add_model(_model("gpt-5.4"))
+        reg.add_model(_model("gpt-5.4"))  # distinct object, same provider+id
+        assert len(reg.models) == 1
+
+    def test_keeps_same_id_different_provider(self):
+        reg = Registry()
+        reg.add_model(_model("m", provider="openai"))
+        reg.add_model(_model("m", provider="azure"))
+        assert len(reg.models) == 2
+
+    def test_ignores_non_model(self):
+        reg = Registry()
+        reg.add_model("openai:gpt-5.4")
+        reg.add_model(None)
+        assert reg.models == []
+
+
+class TestAddTool:
+    """Tests for Registry.add_tool()."""
+
+    def test_adds_tool(self):
+        reg = Registry()
+
+        def my_tool():
+            pass
+
+        reg.add_tool(my_tool)
+        assert reg.tools == [my_tool]
+
+    def test_dedupes_same_object(self):
+        reg = Registry()
+        tk = Toolkit(name="tk", tools=[])
+        reg.add_tool(tk)
+        reg.add_tool(tk)
+        assert reg.tools.count(tk) == 1
+
+    def test_keeps_distinct_tools_sharing_a_name(self):
+        reg = Registry()
+        tk1 = Toolkit(name="same", tools=[])
+        tk2 = Toolkit(name="same", tools=[])
+        reg.add_tool(tk1)
+        reg.add_tool(tk2)
+        assert tk1 in reg.tools and tk2 in reg.tools
+
+    def test_invalidates_entrypoint_lookup_cache(self):
+        reg = Registry()
+
+        def tool_a():
+            pass
+
+        reg.add_tool(tool_a)
+        # Prime the cached property
+        assert "tool_a" in reg._entrypoint_lookup
+
+        def tool_b():
+            pass
+
+        reg.add_tool(tool_b)
+        # Cache must have been invalidated and rebuilt with tool_b
+        assert "tool_b" in reg._entrypoint_lookup
+
+
+class TestAddDbAndVectorDb:
+    """Tests for Registry.add_db() and add_vector_db()."""
+
+    def test_add_db_dedupes_by_id(self):
+        from agno.db.base import BaseDb
+
+        db1 = MagicMock(spec=BaseDb)
+        db1.id = "db-1"
+        db2 = MagicMock(spec=BaseDb)
+        db2.id = "db-1"  # same id, distinct instance
+        reg = Registry()
+        reg.add_db(db1)
+        reg.add_db(db2)
+        assert len(reg.dbs) == 1
+
+    def test_add_db_ignores_non_db(self):
+        reg = Registry()
+        reg.add_db(object())
+        reg.add_db(None)
+        assert reg.dbs == []
+
+    def test_add_vector_db_dedupes_by_name(self):
+        from agno.vectordb.base import VectorDb
+
+        v1 = MagicMock(spec=VectorDb)
+        v1.id = None
+        v1.name = "vec"
+        v2 = MagicMock(spec=VectorDb)
+        v2.id = None
+        v2.name = "vec"
+        reg = Registry()
+        reg.add_vector_db(v1)
+        reg.add_vector_db(v2)
+        assert len(reg.vector_dbs) == 1
+
+
+class TestEntrypointLookupCollisionWarning:
+    """The entrypoint lookup warns when distinct tools collide on a name."""
+
+    def test_warns_on_distinct_tools_sharing_a_name(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def entrypoint_a():
+            pass
+
+        def entrypoint_b():
+            pass
+
+        reg = Registry(
+            tools=[
+                Function(name="search", entrypoint=entrypoint_a),
+                Function(name="search", entrypoint=entrypoint_b),
+            ]
+        )
+        # Build the lookup
+        _ = reg._entrypoint_lookup
+
+        assert warnings, "expected a warning for the ambiguous tool name"
+        assert "search" in warnings[0]
+
+    def test_no_warning_when_same_entrypoint_repeats(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def entrypoint_a():
+            pass
+
+        reg = Registry(
+            tools=[
+                Function(name="search", entrypoint=entrypoint_a),
+                Function(name="search", entrypoint=entrypoint_a),  # same entrypoint object
+            ]
+        )
+        _ = reg._entrypoint_lookup
+
+        assert warnings == []
+
+    def test_no_warning_for_unique_names(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def tool_a():
+            pass
+
+        def tool_b():
+            pass
+
+        reg = Registry(tools=[tool_a, tool_b])
+        _ = reg._entrypoint_lookup
+
+        assert warnings == []
