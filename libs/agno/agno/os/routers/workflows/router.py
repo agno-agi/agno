@@ -532,37 +532,18 @@ async def handle_workflow_continue_via_websocket(
                 )
                 return
 
-        # TODO: acontinue_run() does not support background/websocket like arun() does.
-        # arun() delegates to _arun_background_stream() which threads a WebSocketHandler
-        # through _aexecute_stream() and all _handle_event() calls. acontinue_run() and
-        # _acontinue_execute_stream() were never built with this support. To fix properly:
-        #   1. Add background/websocket params to acontinue_run (+ overloads)
-        #   2. Add websocket_handler param to _acontinue_execute_stream
-        #   3. Thread websocket_handler through all _handle_event() calls in both
-        #      _continue_execute_stream and _acontinue_execute_stream
-        #   4. Add _acontinue_run_background_stream() mirroring _arun_background_stream()
-        # For now, iterate the stream in a background task and forward events over the
-        # WebSocket directly. This bypasses _handle_event's event buffering and websocket
-        # manager broadcasting, so reconnecting clients won't receive these events.
-        async def _drive_continue_stream():
-            try:
-                response_stream = await workflow.acontinue_run(  # type: ignore
-                    run_response=existing_run,
-                    session_id=session_id,
-                    stream=True,
-                    stream_events=True,
-                )
-                async for event in response_stream:
-                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                    await websocket.send_text(json.dumps(event_dict, default=json_serializer))
-            except Exception as e:
-                logger.error(f"Error in continue stream: {e}")
-                try:
-                    await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
-                except Exception:
-                    pass
-
-        asyncio.create_task(_drive_continue_stream())
+        # Continue workflow in background with WebSocket streaming.
+        # Events are broadcast via WebSocketHandler through _handle_event calls,
+        # which also handles event buffering and websocket manager broadcasting.
+        await workflow.acontinue_run(  # type: ignore
+            run_response=existing_run,
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+            background=True,
+            websocket=websocket,
+            enable_websocket=True,
+        )
 
     except (InputCheckError, OutputCheckError) as e:
         await websocket.send_text(
@@ -623,14 +604,35 @@ async def workflow_response_streamer(
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
 
-        # If the workflow paused, yield the full WorkflowRunOutput as a final SSE event
-        # so the FE has step_requirements for the /continue request.
+        # If the workflow paused, yield WorkflowPausedEvent as the new clean
+        # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
+        # backwards compatibility with older clients.
         if isinstance(workflow, RemoteWorkflow):
             return
         _session = workflow.get_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
             if getattr(_last_run, "is_paused", False):
+                from agno.run.workflow import WorkflowPausedEvent
+
+                paused_event = WorkflowPausedEvent(
+                    run_id=_last_run.run_id or "",
+                    workflow_id=_last_run.workflow_id,
+                    workflow_name=_last_run.workflow_name,
+                    session_id=_last_run.session_id,
+                    status=_last_run.status.value if hasattr(_last_run.status, "value") else _last_run.status,
+                    paused_step_index=_last_run.paused_step_index,
+                    paused_step_name=_last_run.paused_step_name,
+                    pause_kind=_last_run.pause_kind,
+                    step_requirements=_last_run.step_requirements,
+                    step_results=_last_run.step_results,
+                    step_executor_runs=_last_run.step_executor_runs,
+                    content=_last_run.content,
+                    metadata=_last_run.metadata,
+                )
+                yield format_sse_event(paused_event)
+
+                # Legacy WorkflowRunOutput event for backwards compatibility
                 run_dict = _last_run.to_dict()
                 run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
@@ -747,11 +749,33 @@ async def workflow_continue_response_streamer(
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
 
-        # If the workflow re-paused, yield the full WorkflowRunOutput as a final SSE event
+        # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
+        # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
+        # backwards compatibility with older clients.
         _session = workflow.get_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
             if getattr(_last_run, "is_paused", False):
+                from agno.run.workflow import WorkflowPausedEvent
+
+                paused_event = WorkflowPausedEvent(
+                    run_id=_last_run.run_id or "",
+                    workflow_id=_last_run.workflow_id,
+                    workflow_name=_last_run.workflow_name,
+                    session_id=_last_run.session_id,
+                    status=_last_run.status.value if hasattr(_last_run.status, "value") else _last_run.status,
+                    paused_step_index=_last_run.paused_step_index,
+                    paused_step_name=_last_run.paused_step_name,
+                    pause_kind=_last_run.pause_kind,
+                    step_requirements=_last_run.step_requirements,
+                    step_results=_last_run.step_results,
+                    step_executor_runs=_last_run.step_executor_runs,
+                    content=_last_run.content,
+                    metadata=_last_run.metadata,
+                )
+                yield format_sse_event(paused_event)
+
+                # Legacy WorkflowRunOutput event for backwards compatibility
                 run_dict = _last_run.to_dict()
                 run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
