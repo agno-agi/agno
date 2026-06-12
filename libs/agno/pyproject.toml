@@ -466,6 +466,8 @@ module = [
   "bson.*",
   "brave.*",
   "browserbase.*",
+  "casbin.*",
+  "casbin_sqlalchemy_adapter.*",
   "cassio.*",
   "cerebras.*",
   "cerebras_cloud_sdk.*",

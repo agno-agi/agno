@@ -126,7 +126,7 @@ class DbAuditSink(AuditSink):
 
         if engine is None and db_url is None:
             raise ValueError("DbAuditSink needs either db_url or engine")
-        self._engine = engine if engine is not None else sa.create_engine(db_url)
+        self._engine = engine if engine is not None else sa.create_engine(db_url)  # type: ignore[arg-type]
         metadata = sa.MetaData()
         # change trail: role/assignment mutations with before/after
         self._table = sa.Table(
@@ -195,11 +195,7 @@ class DbAuditSink(AuditSink):
         import sqlalchemy as sa
 
         with self._engine.connect() as conn:
-            rows = (
-                conn.execute(sa.select(self._table).order_by(self._table.c.id.desc()).limit(limit))
-                .mappings()
-                .all()
-            )
+            rows = conn.execute(sa.select(self._table).order_by(self._table.c.id.desc()).limit(limit)).mappings().all()
         return [
             {
                 "ts": r["ts"],

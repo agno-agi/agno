@@ -26,7 +26,8 @@ Endpoints (default prefix ``/authz``):
     DELETE /authz/users/{subject}/roles/{role}   revoke a role
 """
 
-from typing import TYPE_CHECKING, List
+from enum import Enum
+from typing import TYPE_CHECKING, List, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -43,7 +44,9 @@ class AssignRoleRequest(BaseModel):
     role: str = Field(..., description="Role to grant the subject")
 
 
-def get_roles_router(store: "ManagedRoleStore", prefix: str = "/authz", tags: List[str] = ["Authorization"]) -> APIRouter:
+def get_roles_router(
+    store: "ManagedRoleStore", prefix: str = "/authz", tags: List[Union[str, Enum]] = ["Authorization"]
+) -> APIRouter:
     """Build the admin-only roles-management router bound to ``store``."""
 
     def require_admin(request: Request) -> str:

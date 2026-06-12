@@ -24,6 +24,8 @@ from agno.utils.log import log_debug, log_warning
 if TYPE_CHECKING:
     from jwt import PyJWK
 
+    from agno.os.authz.provider import AuthorizationProvider
+
 
 class TokenSource(str, Enum):
     """Enum for JWT token source options."""
@@ -617,7 +619,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.user_isolation = user_isolation
         # Lazily-built default provider for manual-setup deployments that don't
         # populate app.state.authorization_provider (see _resolve_provider).
-        self._fallback_provider = None
+        self._fallback_provider: Optional["AuthorizationProvider"] = None
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
