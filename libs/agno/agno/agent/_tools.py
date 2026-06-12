@@ -355,6 +355,7 @@ def parse_tools(
     strict = False
     if (
         output_schema is not None
+        and agent.parser_model is None
         and (agent.structured_outputs or (not agent.use_json_mode))
         and model.supports_native_structured_outputs
     ):

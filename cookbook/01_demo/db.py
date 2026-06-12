@@ -2,7 +2,7 @@
 Database
 ========
 
-Local SQLite for agent sessions + memory.
+Local SQLite for agent sessions.
 Stored at ``data/demo.db`` next to this cookbook (gitignored).
 """
 
@@ -18,5 +18,5 @@ Path(DB_FILE).parent.mkdir(parents=True, exist_ok=True)
 
 
 def get_db() -> SqliteDb:
-    """Local SQLite database for agent sessions + memory."""
+    """Local SQLite database for agent sessions."""
     return SqliteDb(id=DB_ID, db_file=DB_FILE)

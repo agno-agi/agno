@@ -688,3 +688,74 @@ def test_non_remote_content_hash_unchanged():
 
     # Identical (no remote_content on either) → identical hash, preserves dedup behavior.
     assert knowledge._build_content_hash(content_a) == knowledge._build_content_hash(content_b)
+
+
+def test_same_path_different_metadata_produces_different_hashes():
+    """Inserting the same document with different metadata and
+    upsert=False must not collapse onto the same content identity
+    """
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content1 = Content(path="./demo.pdf", metadata={"doc_id": 1, "collection_id": 1, "server_id": "10"})
+    content2 = Content(path="./demo.pdf", metadata={"doc_id": 1, "collection_id": 1, "server_id": "11"})
+
+    hash1 = knowledge._build_content_hash(content1)
+    hash2 = knowledge._build_content_hash(content2)
+
+    assert hash1 != hash2
+
+
+def test_same_path_same_metadata_produces_same_hash():
+    """Identical content + identical metadata must still dedup."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    metadata = {"doc_id": 1, "collection_id": 1, "server_id": "10"}
+    content1 = Content(path="./demo.pdf", metadata=dict(metadata))
+    content2 = Content(path="./demo.pdf", metadata=dict(metadata))
+
+    assert knowledge._build_content_hash(content1) == knowledge._build_content_hash(content2)
+
+
+def test_metadata_hash_independent_of_key_order():
+    """The same metadata declared in a different key order must hash identically."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content1 = Content(path="./demo.pdf", metadata={"doc_id": 1, "server_id": "10", "collection_id": 1})
+    content2 = Content(path="./demo.pdf", metadata={"server_id": "10", "collection_id": 1, "doc_id": 1})
+
+    assert knowledge._build_content_hash(content1) == knowledge._build_content_hash(content2)
+
+
+def test_path_hash_without_metadata_backward_compatible():
+    """A path with no metadata must hash the same as when no metadata segment is added."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_no_meta = Content(path="./demo.pdf")
+    content_empty_meta = Content(path="./demo.pdf", metadata={})
+
+    assert knowledge._build_content_hash(content_no_meta) == knowledge._build_content_hash(content_empty_meta)
+
+
+def test_url_hash_with_metadata_differs_from_without():
+    """Adding metadata to otherwise-identical URL content changes the hash."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_no_meta = Content(url="https://example.com/doc.pdf", name="Doc")
+    content_with_meta = Content(url="https://example.com/doc.pdf", name="Doc", metadata={"tenant": "a"})
+
+    assert knowledge._build_content_hash(content_no_meta) != knowledge._build_content_hash(content_with_meta)
+
+
+def test_document_content_hash_includes_metadata():
+    """Multi-page document hash also incorporates content metadata for uniqueness."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content1 = Content(url="https://example.com", metadata={"server_id": "10"})
+    content2 = Content(url="https://example.com", metadata={"server_id": "11"})
+
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    hash1 = knowledge._build_document_content_hash(doc, content1)
+    hash2 = knowledge._build_document_content_hash(doc, content2)
+
+    assert hash1 != hash2
