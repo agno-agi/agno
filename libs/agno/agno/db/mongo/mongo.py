@@ -2932,9 +2932,6 @@ class MongoDb(BaseDb):
     def delete_learning(self, id: str) -> bool:
         raise NotImplementedError("Learning methods not yet implemented for MongoDb")
 
-    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
-        raise NotImplementedError("Learning methods not yet implemented for MongoDb")
-
     def get_learnings(
         self,
         learning_type: Optional[str] = None,
@@ -2947,36 +2944,4 @@ class MongoDb(BaseDb):
         entity_type: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Learning methods not yet implemented for MongoDb")
-
-    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Learning methods not yet implemented for MongoDb")
-
-    def list_learnings(
-        self,
-        learning_type: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        namespace: Optional[str] = None,
-        entity_id: Optional[str] = None,
-        entity_type: Optional[str] = None,
-        include_global: bool = False,
-        limit: int = 100,
-        page: int = 1,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        raise NotImplementedError("Learning methods not yet implemented for MongoDb")
-
-    def get_learnings_user_stats(
-        self,
-        learning_type: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        user_id: Optional[str] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Learning methods not yet implemented for MongoDb")
