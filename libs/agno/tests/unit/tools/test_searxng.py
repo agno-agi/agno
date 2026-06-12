@@ -160,6 +160,16 @@ def test_searxng_initialization():
     )  # All 8 tools: search, image_search, it_search, map_search, music_search, news_search, science_search, video_search
 
 
+def test_searxng_default_engines_are_not_shared():
+    """Default engine lists should not leak mutations between instances."""
+    searxng_a = Searxng(host="http://localhost:53153")
+    searxng_b = Searxng(host="http://localhost:53153")
+
+    searxng_a.engines.append("google")
+
+    assert searxng_b.engines == []
+
+
 @pytest.mark.parametrize(
     "category,method_name",
     [

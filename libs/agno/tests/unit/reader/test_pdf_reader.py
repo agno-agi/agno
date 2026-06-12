@@ -301,6 +301,15 @@ def test_clean_page_numbers_untrustable(p_nr_format):
     assert not clean_content[0].endswith(p_nr_format["end"].format(page_nr=2))
 
 
+def test_clean_page_numbers_default_extra_content_is_not_shared():
+    """Calls without extra_content should each receive an independent empty list."""
+    first_content, _ = _clean_page_numbers(["6 first page"])
+    second_content, _ = _clean_page_numbers(["6 second page"])
+
+    assert first_content == ["6 first page"]
+    assert second_content == ["6 second page"]
+
+
 def _create_encrypted_pdf_with_empty_password() -> BytesIO:
     from pypdf import PdfWriter
 
