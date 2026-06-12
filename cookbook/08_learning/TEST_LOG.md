@@ -8,7 +8,7 @@ Changes in this pass:
 1. Unified all examples on `gpt-5.5` (was `gpt-5.2`, plus two `OpenAIChat`/`gpt-4o` stragglers in `09_decision_logs/`)
 2. Bumped the Claude quick test to `claude-sonnet-4-6`
 3. README: complete structure tree (was missing 4 folders), added Decision Log store section, added "View Learnings in AgentOS" section
-4. Added `10_demo/`: AgentOS demo with all five database-backed stores enabled, a seed script, and the Learning UI walkthrough
+4. Added `10_demo/`: AgentOS demo with all six learning stores enabled on Postgres + pgvector, a seed script, and the Learning UI walkthrough
 
 Verified in this pass:
 
@@ -16,7 +16,7 @@ Verified in this pass:
 
 **Status:** PASS
 
-**Description:** Imported the demo agent, confirmed all five stores initialize (user_profile, user_memory, session_context, entity_memory, decision_log), built the AgentOS app, and exercised GET /learnings, GET /learnings/users, and learning_type filtering with a FastAPI TestClient against SQLite.
+**Description:** Imported the demo agent against Postgres + pgvector, confirmed all six stores initialize (user_profile, user_memory, session_context, entity_memory, learned_knowledge, decision_log), built the AgentOS app, and exercised GET /learnings, GET /learnings/users, and learning_type filtering with a FastAPI TestClient.
 
 **Result:** App builds and the /learnings endpoints respond with paginated results.
 

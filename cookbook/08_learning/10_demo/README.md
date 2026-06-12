@@ -1,6 +1,6 @@
 # Learning Demo: AgentOS + the Learning UI
 
-A small AgentOS app that shows the learning system end to end: one agent with every database-backed learning store enabled, a seed script that populates them with real conversations, and the Learning pages at [os.agno.com](https://os.agno.com) to browse the results.
+A small AgentOS app that shows the learning system end to end: one agent with all six learning stores enabled, a seed script that populates them with real conversations, and the Learning pages at [os.agno.com](https://os.agno.com) to browse the results.
 
 ## What it shows
 
@@ -12,12 +12,12 @@ A small AgentOS app that shows the learning system end to end: one agent with ev
 | Entity Memories | `entity_memory` | Postgres Cluster, Marcus Lee, Northwind, Design System |
 | Decision Logs | `decision_log` | Recommendations the agent logged with reasoning |
 
-Learned Knowledge is not included because it requires a vector database. See [05_learned_knowledge](../05_learned_knowledge/) for that store.
+The sixth store, **Learned Knowledge**, lives in pgvector rather than the `agno_learnings` table, so it surfaces through the agent instead of a Learning page: Alice teaches the agent a Postgres upgrade rule, and the agent recalls it when Ben asks a related question in a different session. Watch for the `save_learning` and `search_learnings` tool calls in the seed output.
 
 ## Files
 
-- `agents.py`: The ops assistant with all five stores enabled on a SQLite database.
-- `seed.py`: Six scripted conversations across two users that populate every store.
+- `agents.py`: The ops assistant with all six stores enabled on Postgres + pgvector.
+- `seed.py`: Scripted conversations across two users that populate every store.
 - `run.py`: The AgentOS server exposing the `/learnings` CRUD endpoints.
 
 ## Run it
@@ -28,7 +28,13 @@ Learned Knowledge is not included because it requires a vector database. See [05
 export OPENAI_API_KEY="..."
 ```
 
-### 2. Seed the learning stores
+### 2. Start the pgvector container
+
+```bash
+./cookbook/scripts/run_pgvector.sh
+```
+
+### 3. Seed the learning stores
 
 ```bash
 .venvs/demo/bin/python cookbook/08_learning/10_demo/seed.py
@@ -36,13 +42,13 @@ export OPENAI_API_KEY="..."
 
 This runs the conversations through the agent. Extraction happens automatically, and the script prints everything the agent learned at the end.
 
-### 3. Start the AgentOS server
+### 4. Start the AgentOS server
 
 ```bash
 .venvs/demo/bin/python cookbook/08_learning/10_demo/run.py
 ```
 
-### 4. Connect from os.agno.com
+### 5. Connect from os.agno.com
 
 1. Open [os.agno.com](https://os.agno.com) and sign in
 2. **Add OS** -> **Local**, connect to `http://localhost:7777`
@@ -64,4 +70,8 @@ Interactive docs are at `http://localhost:7777/docs`. For a client-side walkthro
 
 ## Start fresh
 
-The demo stores everything in `tmp/learning_demo.db`. Delete it and re-run `seed.py` to reset.
+Learnings live in the `agno_learnings` table and the `learning_demo_knowledge` vector table. Drop both and re-run `seed.py` to reset:
+
+```bash
+docker exec pgvector psql -U ai -d ai -c 'DROP TABLE IF EXISTS agno_learnings, learning_demo_knowledge;'
+```

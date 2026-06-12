@@ -3,7 +3,11 @@ Learning Demo: Seed Data
 ========================
 Runs a few short conversations through the ops assistant so that every
 Learning page in AgentOS has data: user profiles, user memories, session
-context, entity memories, and decision logs.
+context, entity memories, and decision logs. It also seeds a learned
+knowledge insight that one user teaches and another benefits from.
+
+Requires the pgvector container:
+    ./cookbook/scripts/run_pgvector.sh
 
 Run:
     .venvs/demo/bin/python cookbook/08_learning/10_demo/seed.py
@@ -43,6 +47,13 @@ CONVERSATIONS = [
         "Should we use logical replication or pg_upgrade for the cutover? "
         "Recommend one and log your decision.",
     ),
+    (
+        ALICE,
+        "alice-postgres-upgrade",
+        "Save this for the team: when upgrading Postgres across major "
+        "versions, always rehearse the cutover on a clone restored from a "
+        "fresh backup before touching production.",
+    ),
     # Ben: a second user with different preferences and entities
     (
         BEN,
@@ -56,6 +67,13 @@ CONVERSATIONS = [
         "We are kicking off the Design System project this quarter and Sarah "
         "Kim will lead it. What should the first milestone be? Pick one and "
         "log your decision.",
+    ),
+    # Ben benefits from what Alice taught the agent
+    (
+        BEN,
+        "ben-postgres-question",
+        "We also need to upgrade Northwind's Postgres soon. Anything the "
+        "team has already learned about doing this safely?",
     ),
 ]
 
@@ -88,6 +106,7 @@ if __name__ == "__main__":
 
     lm.session_context_store.print(session_id="alice-postgres-upgrade")
     lm.decision_log_store.print(agent_id="ops-assistant", limit=10)
+    lm.learned_knowledge_store.print(query="postgres")
 
     print()
     print("Entities discovered:")

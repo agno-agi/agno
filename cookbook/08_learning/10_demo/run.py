@@ -4,6 +4,9 @@ Learning Demo: AgentOS Server
 Serves the ops assistant on an AgentOS instance, which exposes the
 /learnings CRUD endpoints and powers the Learning pages at os.agno.com.
 
+Requires the pgvector container:
+    ./cookbook/scripts/run_pgvector.sh
+
 Run seed.py first so the Learning pages have data:
     .venvs/demo/bin/python cookbook/08_learning/10_demo/seed.py
 
