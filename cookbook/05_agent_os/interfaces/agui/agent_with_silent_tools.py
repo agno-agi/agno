@@ -8,7 +8,7 @@ The frontend will receive the tool call and handle execution on the client side.
 """
 
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from agno.tools import tool
@@ -34,12 +34,12 @@ def generate_haiku(topic: str) -> str:
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         DuckDuckGoTools(),
         generate_haiku,
     ],
-    description="You are a helpful AI assistant with both backend and frontend capabilities. You can search the web, create beautiful haikus, modify the UI, ask for user confirmations, and create visualizations.",
+    description="You are a helpful AI assistant with backend and frontend tools. You can search the web and create haikus that render in the frontend.",
     instructions="""
     You are a versatile AI assistant with the following capabilities:
 

@@ -8,7 +8,7 @@ Demonstrates structured output.
 from typing import List
 
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
 from pydantic import BaseModel, Field
@@ -19,27 +19,17 @@ from pydantic import BaseModel, Field
 
 
 class MovieScript(BaseModel):
-    setting: str = Field(
-        ..., description="Provide a nice setting for a blockbuster movie."
-    )
-    ending: str = Field(
-        ...,
-        description="Ending of the movie. If not available, provide a happy ending.",
-    )
-    genre: str = Field(
-        ...,
-        description="Genre of the movie. If not available, select action, thriller or romantic comedy.",
-    )
-    name: str = Field(..., description="Give a name to this movie")
-    characters: List[str] = Field(..., description="Name of characters for this movie.")
-    storyline: str = Field(
-        ..., description="3 sentence storyline for the movie. Make it exciting!"
-    )
+    setting: str = Field(..., description="Setting for the movie.")
+    ending: str = Field(..., description="How the movie ends.")
+    genre: str = Field(..., description="Genre, e.g. action or thriller.")
+    name: str = Field(..., description="Name of the movie.")
+    characters: List[str] = Field(..., description="Main characters.")
+    storyline: str = Field(..., description="A 3-sentence storyline.")
 
 
 chat_agent = Agent(
     name="Output Schema Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     description="You write movie scripts.",
     markdown=True,
     output_schema=MovieScript,
