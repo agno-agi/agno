@@ -1,5 +1,5 @@
 agno[os]
-anthropic
+google-genai
 fastapi[standard]
 mcp
 openai
