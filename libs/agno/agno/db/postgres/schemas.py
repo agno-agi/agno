@@ -51,6 +51,7 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
@@ -69,6 +70,10 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": String, "nullable": True},
+    # Per-user knowledge ownership. See KnowledgeRow.user_id; reads scope on
+    # ``(user_id = :uid OR user_id IS NULL)`` so the listing endpoint
+    # (/knowledge/config) only surfaces the caller's content + shared rows.
+    "user_id": {"type": String, "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {

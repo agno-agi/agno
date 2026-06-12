@@ -163,6 +163,9 @@ class SlackContextProvider(ContextProvider):
     async def _aget_query_agent(self, run_context):
         return self._select_read_agent(run_context)
 
+    async def _aget_update_agent(self, run_context):
+        return self._ensure_write_agent()
+
     def _select_read_agent(self, run_context: RunContext | None) -> Agent:
         if self._has_action_token(run_context):
             return self._ensure_assisted_read_agent()

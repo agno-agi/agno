@@ -380,12 +380,12 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -403,13 +403,17 @@ class BaseDb(ABC):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
         raise NotImplementedError
 
     # --- Traces ---
@@ -1366,12 +1370,12 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -1389,13 +1393,17 @@ class AsyncBaseDb(ABC):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
         raise NotImplementedError
 
     # --- Traces ---

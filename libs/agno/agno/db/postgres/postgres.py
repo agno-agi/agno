@@ -2012,11 +2012,14 @@ class PostgresDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned
+                (NULL). Mirrors the ``get_knowledge_content`` scope.
         """
         try:
             table = self._get_table(table_type="knowledge")
@@ -2025,17 +2028,22 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Exception deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                returns the row if it is owned by ``user_id`` OR is unowned
+                (NULL). Otherwise returns None.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -2047,6 +2055,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2064,6 +2074,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2073,6 +2084,8 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter. When set, returns
+                rows owned by this user plus shared rows (``user_id IS NULL``).
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -2091,6 +2104,10 @@ class PostgresDb(BaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Owner scoping: "rows I own, plus shared rows (NULL owner)".
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -2149,6 +2166,7 @@ class PostgresDb(BaseDb):
                     "created_at": "created_at",
                     "updated_at": "updated_at",
                     "external_id": "external_id",
+                    "user_id": "user_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
@@ -2270,11 +2288,12 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = self._get_table(table_type="evals")
@@ -2283,6 +2302,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt)
 
                 if result.rowcount == 0:
@@ -2295,13 +2316,14 @@ class PostgresDb(BaseDb):
             raise e
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2318,6 +2340,8 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2345,6 +2369,7 @@ class PostgresDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2360,6 +2385,7 @@ class PostgresDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
@@ -2379,6 +2405,8 @@ class PostgresDb(BaseDb):
                 stmt = select(table)
 
                 # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
@@ -2428,13 +2456,14 @@ class PostgresDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
@@ -2455,9 +2484,11 @@ class PostgresDb(BaseDb):
                     .where(table.c.run_id == eval_run_id)
                     .values(name=sanitized_name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
             if not eval_run_raw or not deserialize:
                 return eval_run_raw
 
@@ -2465,6 +2496,26 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
+            raise e
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Culture methods --

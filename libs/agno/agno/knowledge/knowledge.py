@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import json
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -2298,9 +2299,9 @@ class Knowledge(RemoteKnowledge):
         """
         Build the content hash from the content.
 
-        For URLs and paths, includes the name and description in the hash if provided
-        to ensure unique content with the same URL/path but different names/descriptions
-        get different hashes.
+        For URLs and paths, includes the name, description and metadata in the hash if
+        provided to ensure unique content with the same URL/path but different
+        names/descriptions/metadata get different hashes.
 
         Hash format:
         - URL with name and description: hash("{name}:{description}:{url}")
@@ -2308,12 +2309,18 @@ class Knowledge(RemoteKnowledge):
         - URL with description only: hash("{description}:{url}")
         - URL without name/description: hash("{url}") (backward compatible)
         - Same logic applies to paths
+        - When metadata is provided, a deterministic representation of it is appended
+          so the same content inserted with different metadata produces distinct hashes
+          (this allows `upsert=False` inserts of the same document with different
+          metadata to coexist instead of collapsing onto each other).
         """
         hash_parts = []
         if content.name:
             hash_parts.append(content.name)
         if content.description:
             hash_parts.append(content.description)
+        if content.metadata:
+            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
 
         remote_identity = self._build_remote_content_identity(content.remote_content)
         if remote_identity:
@@ -2381,6 +2388,8 @@ class Knowledge(RemoteKnowledge):
             hash_parts.append(content.name)
         if content.description:
             hash_parts.append(content.description)
+        if content.metadata:
+            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
 
         # Use document's own URL if available (set by WebsiteReader)
         doc_url = document.meta_data.get("url") if document.meta_data else None

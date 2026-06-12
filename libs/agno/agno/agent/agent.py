@@ -47,7 +47,6 @@ from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
-from agno.models.response import ToolExecution
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (

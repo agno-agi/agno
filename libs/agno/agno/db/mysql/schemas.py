@@ -52,6 +52,7 @@ EVAL_TABLE_SCHEMA = {
     "evaluated_component_name": {"type": lambda: String(255), "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 KNOWLEDGE_TABLE_SCHEMA = {
@@ -68,6 +69,9 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status": {"type": lambda: String(50), "nullable": True},
     "status_message": {"type": Text, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
+    # Per-user knowledge ownership; reads scope on
+    # ``(user_id = :uid OR user_id IS NULL)``.
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {
