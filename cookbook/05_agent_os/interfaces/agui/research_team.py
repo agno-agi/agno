@@ -7,9 +7,9 @@ Demonstrates research team.
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.os.app import AgentOS
-from agno.os.interfaces.agui.agui import AGUI
-from agno.team.team import Team
+from agno.os import AgentOS
+from agno.os.interfaces.agui import AGUI
+from agno.team import Team
 from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
