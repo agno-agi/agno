@@ -2087,14 +2087,17 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database."""
         try:
             collection = await self._get_collection(table_type="evals")
             if collection is None:
                 return
 
-            result = await collection.delete_many({"run_id": {"$in": eval_run_ids}})
+            query: Dict[str, Any] = {"run_id": {"$in": eval_run_ids}}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.delete_many(query)
 
             if result.deleted_count == 0:
                 log_debug(f"No eval runs found with IDs: {eval_run_ids}")
@@ -2120,13 +2123,14 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2141,7 +2145,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
-            eval_run_raw = await collection.find_one({"run_id": eval_run_id})
+            query: Dict[str, Any] = {"run_id": eval_run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            eval_run_raw = await collection.find_one(query)
 
             if not eval_run_raw:
                 return None
@@ -2168,6 +2175,7 @@ class AsyncMongoDb(AsyncBaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2180,6 +2188,7 @@ class AsyncMongoDb(AsyncBaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -2206,6 +2215,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 query["workflow_id"] = workflow_id
             if model_id is not None:
                 query["model_id"] = model_id
+            if user_id is not None:
+                query["user_id"] = user_id
             if eval_type is not None and len(eval_type) > 0:
                 query["eval_type"] = {"$in": eval_type}
             if filter_type is not None:
@@ -2250,7 +2261,7 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in the database.
 
@@ -2258,6 +2269,7 @@ class AsyncMongoDb(AsyncBaseDb):
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2272,8 +2284,13 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
+            query: Dict[str, Any] = {"run_id": eval_run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
             result = await collection.find_one_and_update(
-                {"run_id": eval_run_id}, {"$set": {"name": name, "updated_at": int(time.time())}}
+                query,
+                {"$set": {"name": name, "updated_at": int(time.time())}},
+                return_document=ReturnDocument.AFTER,
             )
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
@@ -2285,6 +2302,24 @@ class AsyncMongoDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
+            raise e
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            collection = await self._get_collection(table_type="evals")
+            if collection is None:
+                return
+
+            await collection.update_one({"run_id": eval_run_id}, {"$set": {"user_id": user_id}})
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # --- Traces ---
