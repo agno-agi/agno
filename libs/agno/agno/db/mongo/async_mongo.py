@@ -3221,6 +3221,23 @@ class AsyncMongoDb(AsyncBaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return False
+            # No upsert: only an existing row is updated, never inserted.
+            result = await collection.update_one(
+                {"learning_id": id},
+                {"$set": {"content": content, "metadata": metadata, "updated_at": int(time.time())}},
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
     async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
         try:
             collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)

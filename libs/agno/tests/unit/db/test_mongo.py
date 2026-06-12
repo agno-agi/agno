@@ -60,6 +60,23 @@ class TestSyncMongoLearnings:
             assert db.delete_user_learnings("u1") == 3
         assert coll.delete_many.call_args[0][0] == {"user_id": "u1"}
 
+    def test_update_learning_is_update_only(self):
+        db = _db()
+        coll = MagicMock()
+        # matched -> True (existing row updated); never passes upsert=True (no insert)
+        coll.update_one.return_value = MagicMock(matched_count=1)
+        with patch.object(db, "_get_collection", return_value=coll):
+            assert db.update_learning("a", content={"x": 1}, metadata={"m": 1}) is True
+        assert coll.update_one.call_args[0][0] == {"learning_id": "a"}
+        assert "upsert" not in coll.update_one.call_args[1]
+
+    def test_update_learning_returns_false_when_no_row_matches(self):
+        db = _db()
+        coll = MagicMock()
+        coll.update_one.return_value = MagicMock(matched_count=0)
+        with patch.object(db, "_get_collection", return_value=coll):
+            assert db.update_learning("missing", content={"x": 1}) is False
+
     def test_get_learnings_user_stats_groups_by_user(self):
         db = _db()
         coll = MagicMock()

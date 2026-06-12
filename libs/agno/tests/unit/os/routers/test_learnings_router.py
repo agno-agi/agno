@@ -40,6 +40,7 @@ def mock_db():
     db.get_learnings_user_stats = MagicMock(return_value=([], 0))
     db.get_learning_by_id = MagicMock(return_value=None)
     db.upsert_learning = MagicMock(return_value=None)
+    db.update_learning = MagicMock(return_value=True)
     db.delete_learning = MagicMock(return_value=True)
     db.delete_user_learnings = MagicMock(return_value=3)
     return db
@@ -275,15 +276,15 @@ class TestUpdateLearning:
     def test_update_replaces_content(self, client, mock_db):
         existing = _make_learning(content={"old": True})
         updated = _make_learning(content={"new": True})
+        # fetch (scope) then re-read (response)
         mock_db.get_learning_by_id = MagicMock(side_effect=[existing, updated])
         resp = client.patch("/learnings/lrn-1", json={"content": {"new": True}})
         assert resp.status_code == 200
         assert resp.json()["content"] == {"new": True}
-        upsert_kwargs = mock_db.upsert_learning.call_args[1]
-        assert upsert_kwargs["content"] == {"new": True}
-        # Identity field is preserved from existing
-        assert upsert_kwargs["user_id"] == existing["user_id"]
-        assert upsert_kwargs["learning_type"] == existing["learning_type"]
+        # update-only: no upsert (no insert) -> no resurrection/destruction
+        mock_db.upsert_learning.assert_not_called()
+        assert mock_db.update_learning.call_args[0][0] == "lrn-1"
+        assert mock_db.update_learning.call_args[1]["content"] == {"new": True}
 
     def test_update_not_found(self, client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=None)
@@ -295,36 +296,40 @@ class TestUpdateLearning:
         mock_db.get_learning_by_id = MagicMock(return_value=existing)
         resp = client.patch("/learnings/lrn-1", json={})
         assert resp.status_code == 200
-        mock_db.upsert_learning.assert_not_called()
+        mock_db.update_learning.assert_not_called()
 
     def test_update_rejects_null_content(self, client, mock_db):
-        # content is NOT NULL in the underlying schema; explicit null would silently
-        # fail at the DB level (the upsert swallows exceptions), so the router must reject it.
+        # content is NOT NULL in the underlying schema; reject an explicit null.
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning())
         resp = client.patch("/learnings/lrn-1", json={"content": None})
         assert resp.status_code == 422
-        mock_db.upsert_learning.assert_not_called()
+        mock_db.update_learning.assert_not_called()
 
-    def test_update_detects_concurrent_delete_and_rolls_back(self, client, mock_db):
-        # Simulate: fetch returns existing, DELETE happens elsewhere, upsert re-inserts
-        # the row (created_at advances because the INSERT branch ran), follow-up fetch
-        # returns the freshly-created row. Router must detect this and 404 + clean up.
-        existing = _make_learning(created_at=1000)
-        recreated = _make_learning(created_at=5000)
-        mock_db.get_learning_by_id = MagicMock(side_effect=[existing, recreated])
+    def test_update_concurrent_delete_returns_404_without_destroying(self, client, mock_db):
+        # The row is deleted between our fetch and the update. update_learning never inserts,
+        # so it matches nothing -> 404. Crucially the router must NOT delete anything (the old
+        # TOCTOU guard used to delete the row, destroying a concurrent agent re-create).
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning())
+        mock_db.update_learning = MagicMock(return_value=False)  # no row matched
         resp = client.patch("/learnings/lrn-1", json={"content": {"x": 1}})
         assert resp.status_code == 404
-        mock_db.delete_learning.assert_called_once_with("lrn-1")
+        mock_db.delete_learning.assert_not_called()
 
-    def test_update_metadata_only_preserves_content(self, client, mock_db):
+    def test_update_metadata_only_replaces_content_from_fetch(self, client, mock_db):
         existing = _make_learning(content={"keep": "this"})
         updated = _make_learning(content={"keep": "this"}, metadata={"new": "meta"})
         mock_db.get_learning_by_id = MagicMock(side_effect=[existing, updated])
         resp = client.patch("/learnings/lrn-1", json={"metadata": {"new": "meta"}})
         assert resp.status_code == 200
-        upsert_kwargs = mock_db.upsert_learning.call_args[1]
-        assert upsert_kwargs["content"] == {"keep": "this"}
-        assert upsert_kwargs["metadata"] == {"new": "meta"}
+        kwargs = mock_db.update_learning.call_args[1]
+        assert kwargs["content"] == {"keep": "this"}
+        assert kwargs["metadata"] == {"new": "meta"}
+
+    def test_update_db_error_returns_500(self, client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning())
+        mock_db.update_learning = MagicMock(side_effect=RuntimeError("boom"))
+        resp = client.patch("/learnings/lrn-1", json={"content": {"x": 1}})
+        assert resp.status_code == 500
 
 
 class TestDeleteLearning:
@@ -468,7 +473,7 @@ class TestIDORScoping:
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None, agent_id="ag-1"))
         resp = jwt_client.patch("/learnings/lrn-1", json={"content": {"new": True}})
         assert resp.status_code == 403
-        mock_db.upsert_learning.assert_not_called()
+        mock_db.update_learning.assert_not_called()
 
     def test_delete_global_record_forbidden_for_non_admin(self, jwt_client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))

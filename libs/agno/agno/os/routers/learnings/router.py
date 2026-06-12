@@ -446,61 +446,26 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         new_content = updates["content"] if "content" in updates else existing.get("content") or {}
         new_metadata = updates["metadata"] if "metadata" in updates else existing.get("metadata")
 
+        # Update-only (never insert). The learning stores key records by a deterministic id
+        # shared with this endpoint, so the agent is a live concurrent writer to the same row.
+        # An upsert here would silently re-create a row the agent just deleted (and an old TOCTOU
+        # guard "rolled that back" by deleting the row, destroying the agent's and the caller's
+        # writes). A plain UPDATE avoids all of that: a vanished row simply isn't matched -> 404,
+        # and a concurrent agent re-create resolves as last-write-wins, never data loss.
         try:
             if isinstance(db, AsyncBaseDb):
-                await db.upsert_learning(
-                    id=learning_id,
-                    learning_type=existing["learning_type"],
-                    content=new_content,
-                    user_id=existing.get("user_id"),
-                    agent_id=existing.get("agent_id"),
-                    team_id=existing.get("team_id"),
-                    session_id=existing.get("session_id"),
-                    namespace=existing.get("namespace"),
-                    entity_id=existing.get("entity_id"),
-                    entity_type=existing.get("entity_type"),
-                    metadata=new_metadata,
-                )
-                updated = await db.get_learning_by_id(learning_id)
+                matched = await db.update_learning(learning_id, content=new_content, metadata=new_metadata)
             else:
-                sync_db = cast(BaseDb, db)
-                sync_db.upsert_learning(
-                    id=learning_id,
-                    learning_type=existing["learning_type"],
-                    content=new_content,
-                    user_id=existing.get("user_id"),
-                    agent_id=existing.get("agent_id"),
-                    team_id=existing.get("team_id"),
-                    session_id=existing.get("session_id"),
-                    namespace=existing.get("namespace"),
-                    entity_id=existing.get("entity_id"),
-                    entity_type=existing.get("entity_type"),
-                    metadata=new_metadata,
-                )
-                updated = sync_db.get_learning_by_id(learning_id)
+                matched = cast(BaseDb, db).update_learning(learning_id, content=new_content, metadata=new_metadata)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to update learning: {e}")
 
-        if updated is None:
-            raise HTTPException(status_code=500, detail="Failed to update learning")
-
-        # TOCTOU guard: if the row was deleted between our fetch and the upsert,
-        # the upsert silently re-created it via INSERT instead of UPDATE. The SQL
-        # adapters preserve created_at on ON CONFLICT DO UPDATE (only content/
-        # metadata/updated_at are set), so a created_at delta is the signature of
-        # an unintended re-creation. Roll it back and report 404.
-        if existing.get("created_at") is not None and updated.get("created_at") != existing.get("created_at"):
-            try:
-                if isinstance(db, AsyncBaseDb):
-                    await db.delete_learning(learning_id)
-                else:
-                    cast(BaseDb, db).delete_learning(learning_id)
-            except Exception:
-                pass
+        if not matched:
             raise HTTPException(status_code=404, detail="Learning not found")
 
+        updated = await _fetch_learning(db, learning_id)  # re-read for the response
         return LearningResponse.model_validate(updated)
 
     @router.delete(

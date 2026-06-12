@@ -937,6 +937,25 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Update an existing learning record in place. Does NOT insert.
+
+        Unlike ``upsert_learning`` this only touches an existing row (sets content/metadata/
+        updated_at; never inserts and never changes created_at or identity fields). It exists
+        so PATCH can be a true update: a row deleted out from under the caller simply isn't
+        matched, instead of being silently re-created (which would also let a concurrent agent
+        write get clobbered/destroyed).
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a row was updated, False if no row with that id exists.
+        """
+        raise NotImplementedError
+
     def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
         """Delete every learning record owned by a user.
 
@@ -1738,6 +1757,27 @@ class AsyncBaseDb(ABC):
 
         Returns:
             True if deleted, False otherwise.
+        """
+        raise NotImplementedError
+
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Async update an existing learning record in place. Does NOT insert.
+
+        Unlike ``upsert_learning`` this only touches an existing row (sets content/metadata/
+        updated_at; never inserts and never changes created_at or identity fields). It exists
+        so PATCH can be a true update: a row deleted out from under the caller simply isn't
+        matched, instead of being silently re-created (which would also let a concurrent agent
+        write get clobbered/destroyed).
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a row was updated, False if no row with that id exists.
         """
         raise NotImplementedError
 
