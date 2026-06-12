@@ -129,6 +129,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 )
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list learnings: {e}")
 
         total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
         return PaginatedResponse(
@@ -248,6 +250,10 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 created = sync_db.get_learning_by_id(learning_id)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except HTTPException:
+            raise  # e.g. the 409 conflict above
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create learning: {e}")
 
         if created is None:
             raise HTTPException(status_code=500, detail="Failed to create learning")
@@ -369,6 +375,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 cast(BaseDb, db).delete_user_learnings(user_id, learning_type=learning_type)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except Exception as e:
+            # Don't report a destructive bulk delete as a success (204) when it failed.
+            raise HTTPException(status_code=500, detail=f"Failed to delete user learnings: {e}")
 
     @router.get(
         "/learnings/{learning_id}",
@@ -457,6 +466,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                 updated = sync_db.get_learning_by_id(learning_id)
         except NotImplementedError:
             raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to update learning: {e}")
 
         if updated is None:
             raise HTTPException(status_code=500, detail="Failed to update learning")
@@ -519,6 +530,9 @@ async def _fetch_learning(db: Union[BaseDb, AsyncBaseDb, RemoteDb], learning_id:
             record = cast(BaseDb, db).get_learning_by_id(learning_id)
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+    except Exception as e:
+        # A DB error is not "not found" -- surface it rather than emit a misleading 404.
+        raise HTTPException(status_code=500, detail=f"Failed to fetch learning: {e}")
     if record is None:
         raise HTTPException(status_code=404, detail="Learning not found")
     return record
