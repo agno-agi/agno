@@ -76,11 +76,23 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         entity_type: Optional[str] = Query(None, description="Filter by entity type"),
         limit: int = Query(100, ge=1, le=1000, description="Page size"),
         page: int = Query(1, ge=1, description="1-indexed page number"),
-        sort_by: Optional[str] = Query(None, description="Field to sort by (defaults to updated_at)"),
+        sort_by: Optional[str] = Query(
+            None,
+            description=(
+                "Field to sort by, e.g. `created_at` or `updated_at` (the default). "
+                "An unrecognised field is ignored (the default ordering is used)."
+            ),
+        ),
         sort_order: Optional[SortOrder] = Query(SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(None, description="Database ID to query"),
         table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
     ) -> PaginatedResponse[LearningResponse]:
+        # Scoping note: this router calls get_scoped_user_id + get_db directly rather than the
+        # shared resolve_db_and_scope helper. That helper returns the user_id to *silently* thread
+        # onto a read; these endpoints instead enforce a stricter contract -- an explicit user_id
+        # that mismatches the caller is rejected with 403 (list/create/users), single records leak
+        # nothing via 404 (get/patch/delete), and list adds include_global -- none of which the
+        # helper expresses. Keeping the calls explicit here is intentional.
         include_global = False
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:

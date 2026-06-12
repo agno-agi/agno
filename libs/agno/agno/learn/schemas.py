@@ -41,7 +41,14 @@ from agno.utils.log import log_debug
 
 
 def _utc_now_iso() -> str:
-    """UTC timestamp in ISO-8601 with a trailing Z (matches the rest of the learn module)."""
+    """UTC timestamp in ISO-8601 with a trailing Z (matches the rest of the learn module).
+
+    Note on time formats: these per-entry timestamps live *inside* ``content`` (on each
+    memory / fact / event / relationship) and are ISO-8601 strings. They are deliberately
+    distinct from the row-level ``created_at`` / ``updated_at`` columns of the
+    ``agno_learnings`` table, which are Unix-epoch integers. A consumer reading both the
+    record columns and the in-content entries should expect the two different formats.
+    """
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
