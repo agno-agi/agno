@@ -29,6 +29,8 @@ from agno.os.config import (
     KnowledgeDatabaseConfig,
     KnowledgeDomainConfig,
     KnowledgeInstanceConfig,
+    LearningConfig,
+    LearningDomainConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -48,6 +50,7 @@ from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
+from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
@@ -59,6 +62,7 @@ from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
+    collect_components_from_os,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -360,6 +364,9 @@ class AgentOS:
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
+
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
 
@@ -415,6 +422,9 @@ class AgentOS:
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
+
         if self.enable_mcp_server:
             from agno.os.mcp import get_mcp_server
 
@@ -428,6 +438,7 @@ class AgentOS:
             get_home_router(self),
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
@@ -731,6 +742,30 @@ class AgentOS:
         for team in self._teams:
             _register(team, "team")
 
+    def _populate_registry_components(self) -> None:
+        """Auto-populate the registry with components found in agents, teams and workflows.
+
+        Recursively walks every agent, team and workflow (including nested teams,
+        workflow steps and branch/route steps) and collects the models, tools,
+        databases and vector databases they reference. This keeps the registry,
+        and therefore ``GET /registry``, consistent with what is actually wired
+        into the AgentOS without requiring components to be declared twice.
+
+        The registry owns deduplication and cache invalidation (see
+        ``Registry.add_*``): models/dbs/vector dbs dedupe by id/name, tools by
+        object identity. User-provided registry components and instances shared
+        across many agents are never duplicated, and user objects are only
+        referenced, never mutated. The walk degrades gracefully: a malformed node
+        is skipped rather than failing AgentOS construction.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+
+        try:
+            collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
+        except Exception as e:
+            log_debug(f"Registry auto-population skipped: {e}")
+
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 
@@ -853,9 +888,13 @@ class AgentOS:
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
+
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
@@ -1282,6 +1321,7 @@ class AgentOS:
             "session_table_name": db.session_table_name,
             "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
+            "learnings_table_name": db.learnings_table_name,
             "metrics_table_name": db.metrics_table_name,
             "evals_table_name": db.eval_table_name,
             "knowledge_table_name": db.knowledge_table_name,
@@ -1424,6 +1464,28 @@ class AgentOS:
                 )
 
         return memory_config
+
+    def _get_learning_config(self) -> LearningConfig:
+        learning_config = self.config.learning if self.config and self.config.learning else LearningConfig()
+
+        if learning_config.dbs is None:
+            learning_config.dbs = []
+
+        dbs_with_specific_config = [db.db_id for db in learning_config.dbs]
+
+        for db_id, dbs in self.dbs.items():
+            if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.learnings_table_name for db in dbs))
+                learning_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=LearningDomainConfig(display_name=db_id),
+                        tables=unique_tables,
+                    )
+                )
+
+        return learning_config
 
     def _get_knowledge_config(self) -> KnowledgeConfig:
         knowledge_config = self.config.knowledge if self.config and self.config.knowledge else KnowledgeConfig()
