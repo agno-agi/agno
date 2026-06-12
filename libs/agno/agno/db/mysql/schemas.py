@@ -68,6 +68,9 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status": {"type": lambda: String(50), "nullable": True},
     "status_message": {"type": Text, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
+    # Per-user knowledge ownership; reads scope on
+    # ``(user_id = :uid OR user_id IS NULL)``.
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {
