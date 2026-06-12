@@ -4293,7 +4293,6 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -4309,7 +4308,6 @@ class SqliteDb(BaseDb):
             user_id: Associated user ID.
             agent_id: Associated agent ID.
             team_id: Associated team ID.
-            workflow_id: Associated workflow ID.
             session_id: Associated session ID.
             namespace: Namespace for scoping ('user', 'global', or custom).
             entity_id: Associated entity ID (for entity-specific learnings).
@@ -4331,7 +4329,6 @@ class SqliteDb(BaseDb):
                     user_id=user_id,
                     agent_id=agent_id,
                     team_id=team_id,
-                    workflow_id=workflow_id,
                     session_id=session_id,
                     entity_id=entity_id,
                     entity_type=entity_type,
