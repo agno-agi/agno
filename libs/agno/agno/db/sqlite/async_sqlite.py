@@ -2026,11 +2026,12 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = await self._get_table(table_type="evals")
@@ -2039,6 +2040,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 if result.rowcount == 0:  # type: ignore
                     log_debug(f"No eval runs found with IDs: {eval_run_ids}")
@@ -2050,13 +2053,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise e
 
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2073,6 +2077,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = (await sess.execute(stmt)).fetchone()
                 if result is None:
                     return None
@@ -2100,6 +2106,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2112,6 +2119,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -2134,6 +2142,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = select(table)
 
                 # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
@@ -2182,7 +2192,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise e
 
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
@@ -2190,6 +2200,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2208,9 +2219,11 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
-            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
@@ -2221,6 +2234,26 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            table = await self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Migrations --
