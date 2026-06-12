@@ -8,7 +8,7 @@ A small AgentOS app that shows the learning system end to end: one agent with al
 |---------------|-------|-------------|
 | User Profiles | `user_profile` | Alice (engineering lead) and Ben (founder) |
 | User Memories | `user_memory` | Preferences like "short, direct answers" |
-| Session Context | `session_context` | Goal, plan, and progress for the Postgres upgrade |
+| Session Context | `session_context` | A running summary of Alice's upgrade session |
 | Entity Memories | `entity_memory` | Postgres Cluster, Marcus Lee, Northwind, Design System |
 | Decision Logs | `decision_log` | Recommendations the agent logged with reasoning |
 

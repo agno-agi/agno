@@ -5,7 +5,7 @@ A single ops assistant with every learning store enabled:
 
 - User Profile: structured fields (name, role, preferences)
 - User Memory: unstructured observations about the user
-- Session Context: goal, plan, and progress per session
+- Session Context: a running summary of each session
 - Entity Memory: facts, events, and relationships about external things
 - Learned Knowledge: insights that transfer across users (pgvector)
 - Decision Log: significant decisions with reasoning
@@ -19,10 +19,7 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.learn import (
-    DecisionLogConfig,
     LearningMachine,
-    LearningMode,
-    SessionContextConfig,
 )
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
@@ -52,10 +49,10 @@ learning = LearningMachine(
     knowledge=knowledge,
     user_profile=True,
     user_memory=True,
-    session_context=SessionContextConfig(enable_planning=True),
+    session_context=True,
     entity_memory=True,
     learned_knowledge=True,
-    decision_log=DecisionLogConfig(mode=LearningMode.AGENTIC),
+    decision_log=True,
 )
 
 # ---------------------------------------------------------------------------
