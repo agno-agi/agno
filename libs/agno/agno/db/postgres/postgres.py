@@ -4542,8 +4542,8 @@ class PostgresDb(BaseDb):
                 return result.rowcount or 0
 
         except Exception as e:
-            log_debug(f"Error deleting user learnings: {e}")
-            return 0
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
 
     def get_learnings(
         self,
@@ -4623,8 +4623,8 @@ class PostgresDb(BaseDb):
                 result = sess.execute(select(table).where(table.c.learning_id == id)).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
-            log_debug(f"Error getting learning by id: {e}")
-            return None
+            log_error(f"Error getting learning by id: {e}")
+            raise e
 
     def list_learnings(
         self,
@@ -4678,8 +4678,8 @@ class PostgresDb(BaseDb):
                 return [dict(row._mapping) for row in result], int(total_count)
 
         except Exception as e:
-            log_debug(f"Error listing learnings: {e}")
-            return [], 0
+            log_error(f"Error listing learnings: {e}")
+            raise e
 
     def get_learnings_user_stats(
         self,

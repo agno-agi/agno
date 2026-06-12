@@ -96,6 +96,12 @@ class TestListLearnings:
         resp = client.get("/learnings")
         assert resp.status_code == 501
 
+    def test_db_error_returns_500(self, client, mock_db):
+        # A DB error must surface as 500, not a misleading empty 200 page.
+        mock_db.list_learnings.side_effect = RuntimeError("boom")
+        resp = client.get("/learnings")
+        assert resp.status_code == 500
+
     def test_default_sort_passed_through(self, client, mock_db):
         client.get("/learnings")
         kwargs = mock_db.list_learnings.call_args[1]
@@ -258,6 +264,12 @@ class TestGetLearning:
         resp = client.get("/learnings/nope")
         assert resp.status_code == 404
 
+    def test_db_error_returns_500_not_404(self, client, mock_db):
+        # A DB error is not "not found" -- surface it as 500, not a misleading 404.
+        mock_db.get_learning_by_id = MagicMock(side_effect=RuntimeError("boom"))
+        resp = client.get("/learnings/lrn-1")
+        assert resp.status_code == 500
+
 
 class TestUpdateLearning:
     def test_update_replaces_content(self, client, mock_db):
@@ -355,6 +367,12 @@ class TestDeleteLearningUser:
         mock_db.delete_user_learnings.side_effect = NotImplementedError
         resp = client.delete("/learnings/users/user-1")
         assert resp.status_code == 501
+
+    def test_db_error_returns_500_not_false_204(self, client, mock_db):
+        # The destructive bulk delete must NOT report success when the DB call fails.
+        mock_db.delete_user_learnings.side_effect = RuntimeError("boom")
+        resp = client.delete("/learnings/users/user-1")
+        assert resp.status_code == 500
 
 
 class TestIDORScoping:
