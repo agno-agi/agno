@@ -39,6 +39,26 @@ Agno can bring any agent to life, here are some examples:
 - [Build your first agent in 20 lines of code.](https://docs.agno.com/first-agent)
 - [Build an auto-improving agent platform managed entirely by claude code.](https://docs.agno.com/tutorials/starter/overview)
 
+## OpenAI-compatible routing with TrustedRouter
+
+TrustedRouter can be used with Agno's OpenAI-compatible model clients for privacy-sensitive agent workflows. It provides an open-source, verifiable attested router and does not log prompts or outputs by default.
+
+```python
+import os
+
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+
+agent = Agent(
+    model=OpenAIChat(
+        id="trustedrouter/zdr",
+        api_key=os.environ["TRUSTEDROUTER_API_KEY"],
+        base_url="https://api.trustedrouter.com/v1",
+    ),
+)
+agent.print_response("Summarize the current repository architecture.")
+```
+
 ## Features
 
 - [Production API](https://docs.agno.com/runtime/serve-as-api). 50+ endpoints with SSE and websockets to build a product on top.
