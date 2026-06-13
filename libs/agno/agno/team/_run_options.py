@@ -84,6 +84,7 @@ def resolve_run_options(
     Reads from ``team`` but does not mutate it.
     """
     from agno.team._utils import _get_effective_filters
+    from agno.utils.log import log_debug
     from agno.utils.merge_dict import merge_dictionaries
 
     # stream: call-site > team.stream > False
@@ -119,14 +120,19 @@ def resolve_run_options(
         add_session_state_to_context if add_session_state_to_context is not None else team.add_session_state_to_context
     )
 
-    # dependencies: call-site > team.dependencies
+    # dependencies: merge call-site with team.dependencies (call-site wins on conflicts)
     # Defensive copy to prevent dependency resolution from mutating team defaults
-    if dependencies is not None:
+    resolved_deps: Optional[Dict[str, Any]] = None
+    if dependencies is not None and team.dependencies is not None:
+        resolved_deps = team.dependencies.copy()
+        overlapping = set(team.dependencies) & set(dependencies)
+        if overlapping:
+            log_debug(f"Run-level dependencies override team-level keys: {sorted(overlapping)}")
+        merge_dictionaries(resolved_deps, dependencies)
+    elif dependencies is not None:
         resolved_deps = dependencies.copy()
     elif team.dependencies is not None:
         resolved_deps = team.dependencies.copy()
-    else:
-        resolved_deps = None
 
     # knowledge_filters: delegate to existing _get_effective_filters()
     resolved_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None

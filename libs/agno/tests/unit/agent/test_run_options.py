@@ -100,10 +100,26 @@ class TestCallSiteOverrides:
         assert opts.add_dependencies_to_context is True
         assert opts.add_session_state_to_context is True
 
-    def test_dependencies_override(self):
+    def test_dependencies_merge(self):
+        # Run-level dependencies merge with agent-level (non-overlapping keys are kept).
         agent = _make_agent(dependencies={"a": 1})
         opts = resolve_run_options(agent, dependencies={"b": 2})
-        assert opts.dependencies == {"b": 2}
+        assert opts.dependencies == {"a": 1, "b": 2}
+
+    def test_dependencies_merge_run_level_wins_on_conflict(self):
+        agent = _make_agent(dependencies={"a": 1, "shared": "agent"})
+        opts = resolve_run_options(agent, dependencies={"shared": "run", "b": 2})
+        assert opts.dependencies == {"a": 1, "shared": "run", "b": 2}
+
+    def test_dependencies_merge_preserves_agent_callable(self):
+        # Infrastructure callables configured at the agent level survive a run that
+        # only passes request data (the issue #8382 scenario).
+        def infra(run_context=None):
+            return "infra"
+
+        agent = _make_agent(dependencies={"infra": infra})
+        opts = resolve_run_options(agent, dependencies={"order_id": "123"})
+        assert opts.dependencies == {"infra": infra, "order_id": "123"}
 
     def test_output_schema_override(self):
         from pydantic import BaseModel

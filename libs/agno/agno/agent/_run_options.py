@@ -86,6 +86,7 @@ def resolve_run_options(
     Reads from ``agent`` but does not mutate it.
     """
     from agno.agent._utils import get_effective_filters
+    from agno.utils.log import log_debug
     from agno.utils.merge_dict import merge_dictionaries
 
     # stream: call-site > agent.stream > False
@@ -123,14 +124,19 @@ def resolve_run_options(
         add_session_state_to_context if add_session_state_to_context is not None else agent.add_session_state_to_context
     )
 
-    # dependencies: call-site > agent.dependencies
+    # dependencies: merge call-site with agent.dependencies (call-site wins on conflicts)
     # Defensive copy to prevent dependency resolution from mutating agent defaults
-    if dependencies is not None:
+    resolved_deps: Optional[Dict[str, Any]] = None
+    if dependencies is not None and agent.dependencies is not None:
+        resolved_deps = agent.dependencies.copy()
+        overlapping = set(agent.dependencies) & set(dependencies)
+        if overlapping:
+            log_debug(f"Run-level dependencies override agent-level keys: {sorted(overlapping)}")
+        merge_dictionaries(resolved_deps, dependencies)
+    elif dependencies is not None:
         resolved_deps = dependencies.copy()
     elif agent.dependencies is not None:
         resolved_deps = agent.dependencies.copy()
-    else:
-        resolved_deps = None
 
     # knowledge_filters: delegate to existing get_effective_filters()
     resolved_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
