@@ -138,6 +138,7 @@ memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
+tensorlake = ["tensorlake"]
 parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
@@ -285,6 +286,7 @@ tools = [
   "agno[mem0]",
   "agno[memori]",
   "agno[google_bigquery]",
+  "agno[tensorlake]",
   "agno[psycopg]",
   "agno[redshift]",
   "agno[reportlab]",
@@ -564,6 +566,7 @@ module = [
   "starlette.*",
   "streamlit.*",
   "tavily.*",
+  "tensorlake.*",
   "telebot.*",
   "textract.*",
   "timeout_decorator.*",
