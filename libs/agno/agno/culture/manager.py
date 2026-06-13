@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, ca
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.models.base import Model
+from agno.models.defaults import DEFAULT_OPENAI_MODEL_ID
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.tools.function import Function
@@ -91,7 +92,7 @@ class CultureManager:
                     "Agno uses `openai` as the default model provider. Please provide a `model` or install `openai`."
                 )
                 exit(1)
-            self.model = OpenAIChat(id="gpt-4o")
+            self.model = OpenAIChat(id=DEFAULT_OPENAI_MODEL_ID)
         return self.model
 
     def set_log_level(self):
