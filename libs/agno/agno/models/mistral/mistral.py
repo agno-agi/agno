@@ -50,6 +50,10 @@ class MistralChat(Model):
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
     random_seed: Optional[int] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    stop: Optional[Union[str, List[str]]] = None
+    n: Optional[int] = None
     safe_mode: bool = False
     safe_prompt: bool = False
     request_params: Optional[Dict[str, Any]] = None
@@ -122,6 +126,14 @@ class MistralChat(Model):
             _request_params["top_p"] = self.top_p
         if self.random_seed:
             _request_params["random_seed"] = self.random_seed
+        if self.frequency_penalty:
+            _request_params["frequency_penalty"] = self.frequency_penalty
+        if self.presence_penalty:
+            _request_params["presence_penalty"] = self.presence_penalty
+        if self.stop:
+            _request_params["stop"] = self.stop
+        if self.n:
+            _request_params["n"] = self.n
         if self.safe_mode:
             _request_params["safe_mode"] = self.safe_mode
         if self.safe_prompt:
@@ -152,6 +164,10 @@ class MistralChat(Model):
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
                 "random_seed": self.random_seed,
+                "frequency_penalty": self.frequency_penalty,
+                "presence_penalty": self.presence_penalty,
+                "stop": self.stop,
+                "n": self.n,
                 "safe_mode": self.safe_mode,
                 "safe_prompt": self.safe_prompt,
             }
