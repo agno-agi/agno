@@ -145,7 +145,7 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             json_schema_for_items = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             return {"type": "array", "items": json_schema_for_items}
         elif type_origin is dict:
-            # Handle both key and value types for dictionaries
+            # Dict[K, V] with type args — use typed additionalProperties
             key_schema = get_json_schema_for_arg(type_args[0]) if type_args else {"type": "string"}
             value_schema = get_json_schema_for_arg(type_args[1]) if len(type_args) > 1 else {"type": "string"}
             return {"type": "object", "propertyNames": key_schema, "additionalProperties": value_schema}
@@ -181,12 +181,15 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
             if (
                 field_schema
                 and "anyOf" in field_schema
-                and any(schema["type"] == "null" for schema in field_schema["anyOf"])
+                and any(schema.get("type") == "null" for schema in field_schema["anyOf"])
             ):
-                field_schema["type"] = next(
-                    schema["type"] for schema in field_schema["anyOf"] if schema["type"] != "null"
+                non_null_type = next(
+                    (schema["type"] for schema in field_schema["anyOf"] if schema.get("type") not in (None, "null")),
+                    None,
                 )
-                field_schema.pop("anyOf")
+                if non_null_type is not None:
+                    field_schema["type"] = non_null_type
+                    field_schema.pop("anyOf")
             else:
                 required.append(field_name)
 
@@ -198,6 +201,10 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         if required:
             arg_json_schema["required"] = required
         return arg_json_schema
+
+    # Bare dict means "arbitrary key-value pairs" — allow any properties
+    if type_hint is dict:
+        return {"type": "object", "additionalProperties": True}
 
     json_schema: Dict[str, Any] = {"type": get_json_type_for_py_type(type_hint.__name__)}
     if json_schema["type"] == "object":
