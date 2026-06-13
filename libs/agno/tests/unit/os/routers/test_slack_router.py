@@ -889,3 +889,70 @@ class TestHITLFlow:
         mock_open.assert_awaited_once_with(mock_client, "C123", "111.222", "U123", "T123", "plan", 100)
         assert continued["called"] is True
         stream.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "decided,expected_status",
+        [("approve", "approved"), ("deny", "rejected")],
+    )
+    async def test_submit_required_approval_resolves_db_record(self, decided: str, expected_status: str):
+        # A tool marked approval_type="required" pauses with a "pending" DB row.
+        # Resolving it on Slack must write that row to approved/rejected — the
+        # resume path itself bypasses the DB approval gate, so without this the
+        # row is orphaned at "pending" forever. Mirrors the AgentOS approvals router.
+        requirement = _make_requirement(approval_type="required", approval_id="appr-1")
+        entity = AsyncMock()
+        entity.aget_run_output = AsyncMock(return_value=Mock(active_requirements=[requirement]))
+
+        db = Mock()
+        db.update_approval = Mock(return_value={"id": "appr-1", "status": expected_status})
+        entity.db = db
+
+        continued = {"called": False}
+
+        async def _continue_run(*args: Any, **kwargs: Any):
+            continued["called"] = True
+            yield Mock(
+                event=RunEvent.run_content.value,
+                content="resumed",
+                images=None,
+                videos=None,
+                audio=None,
+                files=None,
+                tool=None,
+            )
+
+        entity.acontinue_run = _continue_run
+        handler = HITLHandler(
+            slack_tools=make_slack_mock(token="xoxb-test"),
+            ssl=None,
+            entity=entity,
+            entity_id="agent-1",
+            entity_name="Test Agent",
+            entity_type="agent",
+            task_display_mode="plan",
+            buffer_size=100,
+        )
+        mock_client = make_async_client_mock()
+        mock_client.chat_delete = AsyncMock()
+        stream = make_stream_mock()
+        payload = _make_submit_payload(
+            blocks=[{"type": "section", "block_id": row_block_id("r1", "confirmation", decided=decided)}]
+        )
+
+        with (
+            patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.hitl.open_chat_stream", new=AsyncMock(return_value=stream)),
+        ):
+            await handler.handle_submit(payload)
+
+        # DB record resolved with status + who + when, guarded by expected_status="pending".
+        db.update_approval.assert_called_once()
+        call = db.update_approval.call_args
+        assert call.args[0] == "appr-1"
+        assert call.kwargs["expected_status"] == "pending"
+        assert call.kwargs["status"] == expected_status
+        assert call.kwargs["resolved_by"] == "U123"
+        assert "resolved_at" in call.kwargs
+        # The run still resumes after the record is resolved.
+        assert continued["called"] is True
