@@ -1075,12 +1075,16 @@ class SurrealDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1101,6 +1105,9 @@ class SurrealDb(BaseDb):
         if ending_date is not None:
             ending_datetime = datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc)
             where = where.and_("date", ending_datetime, "<=")
+
+        if user_id is not None:
+            where = where.and_("user_id", user_id)
 
         where_clause, where_vars = where.build()
 
@@ -1138,6 +1145,11 @@ class SurrealDb(BaseDb):
                     transformed["updated_at"] = int(transformed["updated_at"].timestamp())
                 if isinstance(transformed.get("date"), datetime):
                     transformed["date"] = int(transformed["date"].timestamp())
+
+                # Map the sentinel empty-string user_id back to None so API
+                # consumers don't have to know about the storage detail.
+                if transformed.get("user_id") == "":
+                    transformed["user_id"] = None
 
                 transformed_results.append(transformed)
 
@@ -1196,8 +1208,10 @@ class SurrealDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             results = []  # Initialize before the if block
             if metrics_records:

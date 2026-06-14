@@ -1628,8 +1628,10 @@ class MongoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 results = bulk_upsert_metrics(collection, metrics_records)
@@ -1644,14 +1646,23 @@ class MongoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
+        """
         try:
             collection = self._get_collection(table_type="metrics")
             if collection is None:
                 return [], None
 
-            query = {}
+            query: Dict[str, Any] = {}
             if starting_date:
                 query["date"] = {"$gte": starting_date.isoformat()}
             if ending_date:
@@ -1659,6 +1670,8 @@ class MongoDb(BaseDb):
                     query["date"]["$lte"] = ending_date.isoformat()
                 else:
                     query["date"] = {"$lte": ending_date.isoformat()}
+            if user_id is not None:
+                query["user_id"] = user_id
 
             records = list(collection.find(query))
             if not records:
@@ -1667,7 +1680,17 @@ class MongoDb(BaseDb):
             # Get the latest updated_at
             latest_updated_at = max(record.get("updated_at", 0) for record in records)
 
-            return records, latest_updated_at
+            # Map the sentinel empty-string user_id back to None so API
+            # consumers don't have to know about the storage detail. Also
+            # strip MongoDB's internal _id.
+            cleaned: List[dict] = []
+            for record in records:
+                row = dict(record)
+                row.pop("_id", None)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")

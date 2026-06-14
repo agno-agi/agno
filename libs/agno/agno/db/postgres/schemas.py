@@ -89,13 +89,19 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": String, "nullable": False},
+    # Owner of this metric bucket. Stored as an empty string for "no owner"
+    # (RBAC off / pre-isolation deployments / system runs) so the unique
+    # constraint behaves predictably — Postgres treats multiple NULLs as
+    # distinct, which would break uniqueness on the per-user bucket.
+    # ``get_metrics`` maps ``""`` back to ``None`` for API consumers.
+    "user_id": {"type": String, "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
-            "name": "uq_metrics_date_period",
-            "columns": ["date", "aggregation_period"],
+            "name": "uq_metrics_user_date_period",
+            "columns": ["user_id", "date", "aggregation_period"],
         }
     ],
 }

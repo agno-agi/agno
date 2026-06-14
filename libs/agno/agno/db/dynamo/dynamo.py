@@ -1253,8 +1253,10 @@ class DynamoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             # Store metrics in DynamoDB
             if metrics_records:
@@ -1624,6 +1626,7 @@ class DynamoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Any], Optional[int]]:
         """
         Get metrics from the database.
@@ -1631,6 +1634,9 @@ class DynamoDb(BaseDb):
         Args:
             starting_date: The starting date to filter metrics by.
             ending_date: The ending date to filter metrics by.
+            user_id: When provided, returns only that user's per-user bucket.
+                When ``None``, returns ALL buckets including the empty-string
+                unowned bucket.
 
         Returns:
             Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the total count.
@@ -1677,8 +1683,16 @@ class DynamoDb(BaseDb):
             metrics_data = []
             for item in items:
                 metric_data = deserialize_from_dynamodb_item(item)
-                if metric_data:
-                    metrics_data.append(metric_data)
+                if not metric_data:
+                    continue
+                # Post-filter by user_id (DynamoDB scan can't OR-NULL on a
+                # non-key attribute cheaply; user_id isn't an index here).
+                if user_id is not None and metric_data.get("user_id") != user_id:
+                    continue
+                # Map the sentinel empty-string user_id back to None.
+                if metric_data.get("user_id") == "":
+                    metric_data["user_id"] = None
+                metrics_data.append(metric_data)
 
             return metrics_data, len(metrics_data)
 

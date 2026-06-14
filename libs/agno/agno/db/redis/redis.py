@@ -1154,17 +1154,20 @@ class RedisDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Iterate and upsert each.
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                    # Preserve created_at across re-runs.
+                    existing_record = self._get_record("metrics", metrics_record["id"])
+                    if existing_record:
+                        metrics_record["created_at"] = existing_record.get(
+                            "created_at", metrics_record["created_at"]
+                        )
 
-                # Check if a record already exists for this date and aggregation period
-                existing_record = self._get_record("metrics", metrics_record["id"])
-                if existing_record:
-                    # Update the existing record while preserving created_at
-                    metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
-
-                success = self._store_record("metrics", metrics_record["id"], metrics_record)
-                if success:
-                    results.append(metrics_record)
+                    success = self._store_record("metrics", metrics_record["id"], metrics_record)
+                    if success:
+                        results.append(metrics_record)
 
             log_debug("Updated metrics calculations")
 
@@ -1178,12 +1181,16 @@ class RedisDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter by.
             ending_date (Optional[date]): The ending date to filter by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the list of metrics and the latest updated_at.
@@ -1206,12 +1213,23 @@ class RedisDb(BaseDb):
                     filtered_metrics.append(metric)
                 all_metrics = filtered_metrics
 
+            # Filter by user_id if requested.
+            if user_id is not None:
+                all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
+
             # Get latest updated_at
             latest_updated_at = None
             if all_metrics:
                 latest_updated_at = max(metric.get("updated_at", 0) for metric in all_metrics)
 
-            return all_metrics, latest_updated_at
+            # Map the sentinel empty-string user_id back to None.
+            cleaned: List[dict] = []
+            for metric in all_metrics:
+                row = dict(metric)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
