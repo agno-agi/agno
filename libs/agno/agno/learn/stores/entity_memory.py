@@ -1650,8 +1650,18 @@ class EntityMemoryStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.get: namespace='user' requires user_id")
+            return None
 
         try:
+            if effective_namespace == "user":
+                scoped_id = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+                db = cast(BaseDb, self.db)
+                result_by_id = db.get_learning_by_id(scoped_id)
+                if result_by_id and result_by_id.get("content"):
+                    return self.schema.from_dict(result_by_id["content"])
+
             result = self.db.get_learning(
                 learning_type=self.learning_type,
                 entity_id=entity_id,
@@ -1681,9 +1691,19 @@ class EntityMemoryStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.aget: namespace='user' requires user_id")
+            return None
 
         try:
             if isinstance(self.db, AsyncBaseDb):
+                if effective_namespace == "user":
+                    scoped_id = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+                    async_db = cast(AsyncBaseDb, self.db)
+                    result_by_id = await async_db.get_learning_by_id(scoped_id)
+                    if result_by_id and result_by_id.get("content"):
+                        return self.schema.from_dict(result_by_id["content"])
+
                 result = await self.db.get_learning(
                     learning_type=self.learning_type,
                     entity_id=entity_id,
@@ -1692,6 +1712,13 @@ class EntityMemoryStore(LearningStore):
                     user_id=user_id if effective_namespace == "user" else None,
                 )
             else:
+                if effective_namespace == "user":
+                    scoped_id = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+                    db = cast(BaseDb, self.db)
+                    result_by_id = db.get_learning_by_id(scoped_id)
+                    if result_by_id and result_by_id.get("content"):
+                        return self.schema.from_dict(result_by_id["content"])
+
                 result = self.db.get_learning(
                     learning_type=self.learning_type,
                     entity_id=entity_id,
@@ -1737,6 +1764,9 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.search: namespace='user' requires user_id")
+            return []
 
         try:
             results = self.db.get_learnings(
@@ -1780,6 +1810,9 @@ class EntityMemoryStore(LearningStore):
             return []
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.asearch: namespace='user' requires user_id")
+            return []
 
         try:
             if isinstance(self.db, AsyncBaseDb):
@@ -1941,7 +1974,7 @@ class EntityMemoryStore(LearningStore):
             )
 
             self.db.upsert_learning(
-                id=self._build_entity_db_id(entity_id, entity_type, effective_namespace),
+                id=self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id),
                 learning_type=self.learning_type,
                 entity_id=entity_id,
                 entity_type=entity_type,
@@ -2013,7 +2046,7 @@ class EntityMemoryStore(LearningStore):
 
             if isinstance(self.db, AsyncBaseDb):
                 await self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity_id, entity_type, effective_namespace),
+                    id=self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id),
                     learning_type=self.learning_type,
                     entity_id=entity_id,
                     entity_type=entity_type,
@@ -2025,7 +2058,7 @@ class EntityMemoryStore(LearningStore):
                 )
             else:
                 self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity_id, entity_type, effective_namespace),
+                    id=self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id),
                     learning_type=self.learning_type,
                     entity_id=entity_id,
                     entity_type=entity_type,
@@ -2563,7 +2596,7 @@ class EntityMemoryStore(LearningStore):
                 return False
 
             self.db.upsert_learning(
-                id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id),
                 learning_type=self.learning_type,
                 entity_id=entity.entity_id,
                 entity_type=entity.entity_type,
@@ -2601,7 +2634,9 @@ class EntityMemoryStore(LearningStore):
 
             if isinstance(self.db, AsyncBaseDb):
                 await self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=self._build_entity_db_id(
+                        entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id
+                    ),
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -2613,7 +2648,9 @@ class EntityMemoryStore(LearningStore):
                 )
             else:
                 self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=self._build_entity_db_id(
+                        entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id
+                    ),
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3094,11 +3131,14 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: str,
+        user_id: Optional[str] = None,
     ) -> str:
         """Build unique DB ID for entity."""
         return cast(
             str,
-            build_learning_id("entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace),
+            build_learning_id(
+                "entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace, user_id=user_id
+            ),
         )
 
     def _format_entity_basic(self, entity: Any) -> str:
