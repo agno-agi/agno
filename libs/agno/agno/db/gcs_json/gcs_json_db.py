@@ -949,23 +949,49 @@ class GcsJsonDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
+    # -- Knowledge methods --
+    # GCS-backed JSON storage filters in Python: a row is visible if its
+    # ``user_id`` matches the caller OR is unset (None / missing).
+
+    @staticmethod
+    def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = item.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
+        """Delete knowledge content by ID.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
-            knowledge_items = [item for item in knowledge_items if item.get("id") != id]
+            knowledge_items = [
+                item
+                for item in knowledge_items
+                if not (item.get("id") == id and self._knowledge_item_is_visible(item, user_id))
+            ]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
         except Exception as e:
             log_warning(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
+        """Get knowledge content by ID.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
             for item in knowledge_items:
-                if item.get("id") == id:
+                if item.get("id") == id and self._knowledge_item_is_visible(item, user_id):
                     return KnowledgeRow.model_validate(item)
 
             return None
@@ -980,6 +1006,7 @@ class GcsJsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the GCS JSON file.
 
@@ -989,6 +1016,7 @@ class GcsJsonDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -999,6 +1027,12 @@ class GcsJsonDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
+
+            # Owner scoping: drop rows the caller isn't allowed to see.
+            if user_id is not None:
+                knowledge_items = [
+                    item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)
+                ]
 
             total_count = len(knowledge_items)
 
@@ -1901,3 +1935,207 @@ class GcsJsonDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for GcsJsonDb")
+
+    # -- Schedule methods --
+    # GCS-backed JSON: read-modify-write the underlying object. The poller
+    # pair (``claim_due_schedule`` / ``release_schedule``) reads-modifies-
+    # writes the schedules object — GCS gives last-write-wins, so concurrent
+    # claims from different processes can step on each other. The lock-state
+    # predicate (locked_by, locked_at) lets a stale-lock recover, but for
+    # serious multi-worker setups use a real DB.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            for s in self._read_json_file(self.schedules_table_name):
+                if s.get("id") == schedule_id and (user_id is None or s.get("user_id") == user_id):
+                    return s
+            return None
+        except Exception as e:
+            log_warning(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            for s in self._read_json_file(self.schedules_table_name):
+                if s.get("name") == name and (user_id is None or s.get("user_id") == user_id):
+                    return s
+            return None
+        except Exception as e:
+            log_warning(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            items = list(self._read_json_file(self.schedules_table_name))
+            if enabled is not None:
+                items = [s for s in items if s.get("enabled") == enabled]
+            if user_id is not None:
+                items = [s for s in items if s.get("user_id") == user_id]
+            total_count = len(items)
+            items.sort(key=lambda s: s.get("created_at") or 0, reverse=True)
+            offset = (page - 1) * limit
+            return items[offset : offset + limit], total_count
+        except Exception as e:
+            log_warning(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            items = list(self._read_json_file(self.schedules_table_name, create_table_if_not_found=True))
+            items.append(schedule_data)
+            self._write_json_file(self.schedules_table_name, items)
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            kwargs["updated_at"] = int(time.time())
+            items = list(self._read_json_file(self.schedules_table_name))
+            updated = False
+            for s in items:
+                if s.get("id") == schedule_id and (user_id is None or s.get("user_id") == user_id):
+                    s.update(kwargs)
+                    updated = True
+                    break
+            if not updated:
+                return None
+            self._write_json_file(self.schedules_table_name, items)
+            return self.get_schedule(schedule_id, user_id=user_id)
+        except Exception as e:
+            log_warning(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
+        try:
+            items = list(self._read_json_file(self.schedules_table_name))
+            before = len(items)
+            items = [
+                s
+                for s in items
+                if not (s.get("id") == schedule_id and (user_id is None or s.get("user_id") == user_id))
+            ]
+            deleted = len(items) < before
+            if deleted:
+                self._write_json_file(self.schedules_table_name, items)
+                runs = list(self._read_json_file(self.schedule_runs_table_name))
+                runs = [
+                    r
+                    for r in runs
+                    if not (
+                        r.get("schedule_id") == schedule_id
+                        and (user_id is None or r.get("user_id") == user_id)
+                    )
+                ]
+                self._write_json_file(self.schedule_runs_table_name, runs)
+            return deleted
+        except Exception as e:
+            log_warning(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            now = int(time.time())
+            stale = now - lock_grace_seconds
+            items = list(self._read_json_file(self.schedules_table_name))
+            candidates = [
+                s
+                for s in items
+                if s.get("enabled")
+                and (s.get("next_run_at") or 0) <= now
+                and (s.get("locked_by") is None or (s.get("locked_at") or 0) <= stale)
+            ]
+            if not candidates:
+                return None
+            candidates.sort(key=lambda s: s.get("next_run_at") or 0)
+            chosen = candidates[0]
+            chosen["locked_by"] = worker_id
+            chosen["locked_at"] = now
+            self._write_json_file(self.schedules_table_name, items)
+            return dict(chosen)
+        except Exception as e:
+            log_warning(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            items = list(self._read_json_file(self.schedules_table_name))
+            for s in items:
+                if s.get("id") == schedule_id:
+                    s["locked_by"] = None
+                    s["locked_at"] = None
+                    s["updated_at"] = int(time.time())
+                    if next_run_at is not None:
+                        s["next_run_at"] = next_run_at
+                    self._write_json_file(self.schedules_table_name, items)
+                    return True
+            return False
+        except Exception as e:
+            log_warning(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            items = list(self._read_json_file(self.schedule_runs_table_name, create_table_if_not_found=True))
+            items.append(run_data)
+            self._write_json_file(self.schedule_runs_table_name, items)
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            items = list(self._read_json_file(self.schedule_runs_table_name))
+            updated = False
+            for r in items:
+                if r.get("id") == schedule_run_id:
+                    r.update(kwargs)
+                    updated = True
+                    break
+            if not updated:
+                return None
+            self._write_json_file(self.schedule_runs_table_name, items)
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_warning(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            for r in self._read_json_file(self.schedule_runs_table_name):
+                if r.get("id") == run_id and (user_id is None or r.get("user_id") == user_id):
+                    return r
+            return None
+        except Exception as e:
+            log_warning(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            items = [
+                r
+                for r in self._read_json_file(self.schedule_runs_table_name)
+                if r.get("schedule_id") == schedule_id and (user_id is None or r.get("user_id") == user_id)
+            ]
+            total_count = len(items)
+            items.sort(key=lambda r: r.get("created_at") or 0, reverse=True)
+            offset = (page - 1) * limit
+            return items[offset : offset + limit], total_count
+        except Exception as e:
+            log_warning(f"Error getting schedule runs: {e}")
+            return [], 0

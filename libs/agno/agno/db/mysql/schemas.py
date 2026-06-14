@@ -98,6 +98,66 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
+SCHEDULE_TABLE_SCHEMA = {
+    "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "name": {"type": lambda: String(255), "nullable": False, "index": True},
+    "description": {"type": Text, "nullable": True},
+    "method": {"type": lambda: String(16), "nullable": False},
+    "endpoint": {"type": lambda: String(512), "nullable": False},
+    "payload": {"type": JSON, "nullable": True},
+    "cron_expr": {"type": lambda: String(64), "nullable": False},
+    "timezone": {"type": lambda: String(64), "nullable": False},
+    "timeout_seconds": {"type": BigInteger, "nullable": False},
+    "max_retries": {"type": BigInteger, "nullable": False},
+    "retry_delay_seconds": {"type": BigInteger, "nullable": False},
+    "enabled": {"type": Boolean, "nullable": False, "default": True},
+    "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
+    "locked_by": {"type": lambda: String(128), "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},
+    # Owner for user_isolation. ``None`` = system-created (executor, migrations,
+    # legacy rows). The poller's ``claim_due_schedule`` deliberately ignores
+    # this column so it can fire schedules across all users.
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        # Poller queries on (enabled, next_run_at).
+        {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+        # User-facing list endpoint covering index for "my active schedules".
+        {"name": "user_enabled_next_run_at", "columns": ["user_id", "enabled", "next_run_at"]},
+    ],
+}
+
+
+def _get_schedule_runs_table_schema(schedules_table_name: str = "agno_schedules") -> dict[str, Any]:
+    """Schedule runs table schema with FK to the schedules table."""
+    return {
+        "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+        "schedule_id": {
+            "type": lambda: String(128),
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{schedules_table_name}.id",
+            "ondelete": "CASCADE",
+        },
+        "attempt": {"type": BigInteger, "nullable": False},
+        "triggered_at": {"type": BigInteger, "nullable": True},
+        "completed_at": {"type": BigInteger, "nullable": True},
+        "status": {"type": lambda: String(32), "nullable": False, "index": True},
+        "status_code": {"type": BigInteger, "nullable": True},
+        "run_id": {"type": lambda: String(128), "nullable": True},
+        "session_id": {"type": lambda: String(128), "nullable": True},
+        "error": {"type": Text, "nullable": True},
+        "input": {"type": JSON, "nullable": True},
+        "output": {"type": JSON, "nullable": True},
+        "requirements": {"type": JSON, "nullable": True},
+        # Denormalised from agno_schedules.user_id so the runs router can
+        # scope by owner without a JOIN to schedules.
+        "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    }
+
+
 CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
     "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
     "name": {"type": lambda: String(255), "nullable": False, "index": True},
@@ -167,7 +227,10 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces", db_schema: st
 
 
 def get_table_schema_definition(
-    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+    table_type: str,
+    traces_table_name: str = "agno_traces",
+    db_schema: str = "agno",
+    schedules_table_name: str = "agno_schedules",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -176,6 +239,7 @@ def get_table_schema_definition(
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
         db_schema (str): The database schema name (used for spans foreign key).
+        schedules_table_name (str): The name of the schedules table (used for schedule_runs FK).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -183,6 +247,9 @@ def get_table_schema_definition(
     # Handle spans table specially to resolve the foreign key reference
     if table_type == "spans":
         return _get_span_table_schema(traces_table_name, db_schema)
+
+    if table_type == "schedule_runs":
+        return _get_schedule_runs_table_schema(schedules_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
@@ -193,6 +260,7 @@ def get_table_schema_definition(
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
+        "schedules": SCHEDULE_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

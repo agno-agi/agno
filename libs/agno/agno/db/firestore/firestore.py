@@ -207,6 +207,25 @@ class FirestoreDb(BaseDb):
             )
             return self.spans_collection
 
+        if table_type == "schedules":
+            self.schedules_collection = self._get_or_create_collection(
+                collection_name=self.schedules_table_name,
+                collection_type="schedules",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
+            return self.schedules_collection
+
+        if table_type == "schedule_runs":
+            # Ensure schedules collection exists first (runs reference schedules).
+            if create_collection_if_not_found:
+                self._get_collection("schedules", create_collection_if_not_found=True)
+            self.schedule_runs_collection = self._get_or_create_collection(
+                collection_name=self.schedule_runs_table_name,
+                collection_type="schedule_runs",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
+            return self.schedule_runs_collection
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_collection(
@@ -1492,31 +1511,52 @@ class FirestoreDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    # -- Knowledge methods --
+    # Firestore lacks a native OR predicate across "user_id == X OR user_id
+    # IS NULL", so we post-filter in Python. A row is visible if its
+    # ``user_id`` matches the caller OR is unset (None / missing). When
+    # ``user_id=None`` the predicate is dropped (admin / RBAC-off view).
+
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
-            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
+            docs = list(collection_ref.where(filter=FieldFilter("id", "==", id)).stream())
 
             for doc in docs:
+                if user_id is not None:
+                    data = doc.to_dict() or {}
+                    owner = data.get("user_id")
+                    if owner is not None and owner != user_id:
+                        continue
                 doc.reference.delete()
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1530,7 +1570,10 @@ class FirestoreDb(BaseDb):
 
             for doc in docs:
                 data = doc.to_dict()
-                return KnowledgeRow.model_validate(data)
+                row = KnowledgeRow.model_validate(data)
+                if not self._knowledge_row_is_visible(row, user_id):
+                    return None
+                return row
 
             return None
 
@@ -1545,6 +1588,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1554,6 +1598,7 @@ class FirestoreDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1575,8 +1620,12 @@ class FirestoreDb(BaseDb):
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
 
-            # Apply pagination
-            query = apply_pagination(query, limit, page)
+            # We have to post-filter for user_id (Firestore lacks an OR
+            # predicate that can target both ``== uid`` and ``IS NULL``), so
+            # defer pagination until after the filter — otherwise pagination
+            # would slice the unfiltered set.
+            if user_id is None:
+                query = apply_pagination(query, limit, page)
 
             docs = query.stream()
             records = []
@@ -1584,7 +1633,14 @@ class FirestoreDb(BaseDb):
                 records.append(doc.to_dict())
 
             knowledge_rows = [KnowledgeRow.model_validate(record) for record in records]
-            total_count = len(knowledge_rows)  # Simplified count
+            if user_id is not None:
+                knowledge_rows = [r for r in knowledge_rows if self._knowledge_row_is_visible(r, user_id)]
+                total_count = len(knowledge_rows)
+                if limit:
+                    start = (page - 1) * limit if (page and page > 1) else 0
+                    knowledge_rows = knowledge_rows[start : start + limit]
+            else:
+                total_count = len(knowledge_rows)
 
             return knowledge_rows, total_count
 
@@ -2516,3 +2572,242 @@ class FirestoreDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for FirestoreDb")
+
+    # -- Schedule methods --
+    # User-facing reads/updates/deletes carry an optional ``user_id`` filter
+    # so routes can scope by owner. The executor pair (``claim_due_schedule``
+    # / ``release_schedule``) intentionally has no user_id.
+    #
+    # Firestore's claim uses a transaction: read a candidate inside the txn,
+    # re-check the lock predicate against the freshly-read state, then write.
+    # If two workers race, the loser's commit retries; we cap retries so we
+    # don't spin forever.
+    @staticmethod
+    def _schedule_doc_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = doc.get("user_id")
+        return owner is None or owner == user_id
+
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            collection_ref = self._get_collection(table_type="schedules")
+            for doc in collection_ref.where(filter=FieldFilter("id", "==", schedule_id)).stream():
+                data = doc.to_dict() or {}
+                if not self._schedule_doc_is_visible(data, user_id):
+                    return None
+                return data
+            return None
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            collection_ref = self._get_collection(table_type="schedules")
+            for doc in collection_ref.where(filter=FieldFilter("name", "==", name)).stream():
+                data = doc.to_dict() or {}
+                if self._schedule_doc_is_visible(data, user_id):
+                    return data
+            return None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection_ref = self._get_collection(table_type="schedules")
+            query = collection_ref
+            if enabled is not None:
+                query = query.where(filter=FieldFilter("enabled", "==", enabled))
+            # We have to post-filter for user_id because Firestore lacks an OR
+            # predicate across "user_id == X" + "user_id IS NULL". Defer
+            # pagination until after the filter.
+            docs = [d.to_dict() or {} for d in query.stream()]
+            if user_id is not None:
+                docs = [s for s in docs if self._schedule_doc_is_visible(s, user_id)]
+            total_count = len(docs)
+            docs.sort(key=lambda s: s.get("created_at") or 0, reverse=True)
+            offset = (page - 1) * limit
+            return docs[offset : offset + limit], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection_ref = self._get_collection(table_type="schedules", create_collection_if_not_found=True)
+            collection_ref.document(schedule_data["id"]).set(schedule_data)
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            collection_ref = self._get_collection(table_type="schedules")
+            doc_ref = collection_ref.document(schedule_id)
+            snap = doc_ref.get()
+            if not snap.exists:
+                return None
+            data = snap.to_dict() or {}
+            if user_id is not None and not self._schedule_doc_is_visible(data, user_id):
+                return None
+            kwargs["updated_at"] = int(time.time())
+            doc_ref.update(kwargs)
+            return self.get_schedule(schedule_id, user_id=user_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
+        try:
+            collection_ref = self._get_collection(table_type="schedules")
+            doc_ref = collection_ref.document(schedule_id)
+            snap = doc_ref.get()
+            if not snap.exists:
+                return False
+            data = snap.to_dict() or {}
+            if user_id is not None and not self._schedule_doc_is_visible(data, user_id):
+                return False
+            # Cascade-delete schedule_runs under the same scope.
+            runs_ref = self._get_collection(table_type="schedule_runs")
+            for run_doc in runs_ref.where(filter=FieldFilter("schedule_id", "==", schedule_id)).stream():
+                run_data = run_doc.to_dict() or {}
+                if user_id is not None and run_data.get("user_id") != user_id:
+                    continue
+                run_doc.reference.delete()
+            doc_ref.delete()
+            return True
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            from google.cloud.firestore import transactional  # type: ignore[import-untyped]
+
+            collection_ref = self._get_collection(table_type="schedules")
+            now = int(time.time())
+            stale = now - lock_grace_seconds
+            # Find candidates ordered by due time. We re-check the predicate
+            # inside the transaction so a stale read doesn't cause double-claim.
+            query = (
+                collection_ref
+                .where(filter=FieldFilter("enabled", "==", True))
+                .where(filter=FieldFilter("next_run_at", "<=", now))
+                .order_by("next_run_at")
+                .limit(10)
+            )
+            candidates = [d for d in query.stream()]
+
+            db = self.client
+
+            @transactional
+            def _try_claim(tx, doc_ref):
+                snap = doc_ref.get(transaction=tx)
+                if not snap.exists:
+                    return None
+                fresh = snap.to_dict() or {}
+                if not (
+                    fresh.get("enabled")
+                    and (fresh.get("next_run_at") or 0) <= now
+                    and (fresh.get("locked_by") is None or (fresh.get("locked_at") or 0) <= stale)
+                ):
+                    return None
+                tx.update(doc_ref, {"locked_by": worker_id, "locked_at": now})
+                fresh["locked_by"] = worker_id
+                fresh["locked_at"] = now
+                return fresh
+
+            for cand_snap in candidates:
+                result = _try_claim(db.transaction(), cand_snap.reference)
+                if result is not None:
+                    return result
+            return None
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            collection_ref = self._get_collection(table_type="schedules")
+            doc_ref = collection_ref.document(schedule_id)
+            updates: Dict[str, Any] = {
+                "locked_by": None,
+                "locked_at": None,
+                "updated_at": int(time.time()),
+            }
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            doc_ref.update(updates)
+            return True
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection_ref = self._get_collection(
+                table_type="schedule_runs", create_collection_if_not_found=True
+            )
+            collection_ref.document(run_data["id"]).set(run_data)
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection_ref = self._get_collection(table_type="schedule_runs")
+            doc_ref = collection_ref.document(schedule_run_id)
+            if not doc_ref.get().exists:
+                return None
+            doc_ref.update(kwargs)
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            collection_ref = self._get_collection(table_type="schedule_runs")
+            snap = collection_ref.document(run_id).get()
+            if not snap.exists:
+                return None
+            data = snap.to_dict() or {}
+            if user_id is not None and data.get("user_id") != user_id:
+                return None
+            return data
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection_ref = self._get_collection(table_type="schedule_runs")
+            query = collection_ref.where(filter=FieldFilter("schedule_id", "==", schedule_id))
+            docs = [d.to_dict() or {} for d in query.stream()]
+            if user_id is not None:
+                docs = [r for r in docs if r.get("user_id") == user_id]
+            total_count = len(docs)
+            docs.sort(key=lambda r: r.get("created_at") or 0, reverse=True)
+            offset = (page - 1) * limit
+            return docs[offset : offset + limit], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0

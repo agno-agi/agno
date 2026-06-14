@@ -414,6 +414,54 @@ SPAN_TABLE_SCHEMA = {
 }
 
 
+SCHEDULE_TABLE_SCHEMA = {
+    "TableName": "agno_schedules",
+    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "AttributeDefinitions": [
+        {"AttributeName": "id", "AttributeType": "S"},
+        {"AttributeName": "user_id", "AttributeType": "S"},
+        {"AttributeName": "next_run_at", "AttributeType": "N"},
+    ],
+    "GlobalSecondaryIndexes": [
+        # User-facing list endpoint queries by owner ordered by recency.
+        {
+            "IndexName": "user_id-next_run_at-index",
+            "KeySchema": [
+                {"AttributeName": "user_id", "KeyType": "HASH"},
+                {"AttributeName": "next_run_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
+SCHEDULE_RUNS_TABLE_SCHEMA = {
+    "TableName": "agno_schedule_runs",
+    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+    "AttributeDefinitions": [
+        {"AttributeName": "id", "AttributeType": "S"},
+        {"AttributeName": "schedule_id", "AttributeType": "S"},
+        {"AttributeName": "created_at", "AttributeType": "N"},
+    ],
+    "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "schedule_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "schedule_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
+
 def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -433,6 +481,8 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
+        "schedules": SCHEDULE_TABLE_SCHEMA,
+        "schedule_runs": SCHEDULE_RUNS_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})

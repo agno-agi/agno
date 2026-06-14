@@ -34,6 +34,7 @@ from agno.utils.string import generate_id
 
 try:
     from redis import Redis, RedisCluster
+    from redis.exceptions import WatchError
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -1218,27 +1219,47 @@ class RedisDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    # -- Knowledge methods --
+    # Redis stores records as serialized dicts; we filter in Python. A row
+    # is visible if its ``user_id`` matches the caller OR is unset. When the
+    # caller passes ``user_id=None`` we skip the check entirely.
+
+    @staticmethod
+    def _knowledge_doc_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = doc.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
         """
         try:
+            if user_id is not None:
+                existing = self._get_record("knowledge", id)
+                if existing is not None and not self._knowledge_doc_is_visible(existing, user_id):
+                    log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
+                    return
             self._delete_record("knowledge", id)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1249,6 +1270,8 @@ class RedisDb(BaseDb):
         try:
             document_raw = self._get_record("knowledge", id)
             if document_raw is None:
+                return None
+            if not self._knowledge_doc_is_visible(document_raw, user_id):
                 return None
 
             return KnowledgeRow.model_validate(document_raw)
@@ -1264,6 +1287,7 @@ class RedisDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1273,6 +1297,7 @@ class RedisDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1288,6 +1313,10 @@ class RedisDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 all_documents = [doc for doc in all_documents if doc.get("linked_to") == linked_to]
+
+            # Owner scoping: drop rows the caller isn't allowed to see.
+            if user_id is not None:
+                all_documents = [doc for doc in all_documents if self._knowledge_doc_is_visible(doc, user_id)]
 
             total_count = len(all_documents)
 
@@ -2251,3 +2280,235 @@ class RedisDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    # -- Schedule methods --
+    # User-facing reads/updates/deletes carry an optional ``user_id`` filter
+    # so routes can scope by owner. The executor pair (``claim_due_schedule``
+    # / ``release_schedule``) intentionally has no user_id.
+    #
+    # Redis records are individual JSON-string keys; we filter by user_id in
+    # Python after a SCAN. ``claim_due_schedule`` uses a WATCH/MULTI/EXEC
+    # optimistic transaction on the candidate key — if a concurrent worker
+    # mutates the key between our SELECT and SET, the EXEC returns None and
+    # we retry the next candidate.
+    @staticmethod
+    def _schedule_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        return doc.get("user_id") == user_id
+
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            row = self._get_record("schedules", schedule_id)
+            if row is None:
+                return None
+            if not self._schedule_is_visible(row, user_id):
+                return None
+            return row
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            for s in self._get_all_records("schedules"):
+                if s.get("name") == name and self._schedule_is_visible(s, user_id):
+                    return s
+            return None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            items = self._get_all_records("schedules")
+            if enabled is not None:
+                items = [s for s in items if s.get("enabled") == enabled]
+            if user_id is not None:
+                items = [s for s in items if self._schedule_is_visible(s, user_id)]
+            total_count = len(items)
+            items.sort(key=lambda s: s.get("created_at") or 0, reverse=True)
+            offset = (page - 1) * limit
+            return items[offset : offset + limit], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            self._store_record("schedules", schedule_data["id"], schedule_data)
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            current = self._get_record("schedules", schedule_id)
+            if current is None:
+                return None
+            if user_id is not None and not self._schedule_is_visible(current, user_id):
+                return None
+            current.update(kwargs)
+            current["updated_at"] = int(time.time())
+            self._store_record("schedules", schedule_id, current)
+            return self.get_schedule(schedule_id, user_id=user_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
+        try:
+            current = self._get_record("schedules", schedule_id)
+            if current is None:
+                return False
+            if user_id is not None and not self._schedule_is_visible(current, user_id):
+                return False
+            # Cascade-delete schedule_runs under the same scope.
+            for run in self._get_all_records("schedule_runs"):
+                if run.get("schedule_id") == schedule_id and (
+                    user_id is None or run.get("user_id") == user_id
+                ):
+                    self._delete_record("schedule_runs", run["id"])
+            return self._delete_record("schedules", schedule_id)
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            now = int(time.time())
+            stale = now - lock_grace_seconds
+            # Build the candidate set in due-time order.
+            candidates = [
+                s
+                for s in self._get_all_records("schedules")
+                if s.get("enabled")
+                and (s.get("next_run_at") or 0) <= now
+                and (s.get("locked_by") is None or (s.get("locked_at") or 0) <= stale)
+            ]
+            candidates.sort(key=lambda s: s.get("next_run_at") or 0)
+            # Try to claim each candidate with WATCH/MULTI/EXEC. If another
+            # worker grabbed it between our list and our SET, EXEC returns
+            # None — try the next one.
+            for cand in candidates:
+                schedule_id = cand["id"]
+                key = generate_redis_key(
+                    prefix=self.db_prefix, table_type="schedules", key_id=schedule_id
+                )
+                try:
+                    with self.redis_client.pipeline() as pipe:
+                        pipe.watch(key)
+                        raw = pipe.get(key)
+                        if raw is None:
+                            pipe.unwatch()
+                            continue
+                        fresh = deserialize_data(raw)  # type: ignore[arg-type]
+                        # Re-check the predicate on the fresh state we just
+                        # locked with WATCH.
+                        if not (
+                            fresh.get("enabled")
+                            and (fresh.get("next_run_at") or 0) <= now
+                            and (
+                                fresh.get("locked_by") is None
+                                or (fresh.get("locked_at") or 0) <= stale
+                            )
+                        ):
+                            pipe.unwatch()
+                            continue
+                        fresh["locked_by"] = worker_id
+                        fresh["locked_at"] = now
+                        pipe.multi()
+                        pipe.set(
+                            key,
+                            serialize_data(fresh),
+                            ex=self.expire,
+                        )
+                        if pipe.execute() is None:
+                            # Lost the optimistic race — try next.
+                            continue
+                        return fresh
+                except WatchError:
+                    continue
+            return None
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            current = self._get_record("schedules", schedule_id)
+            if current is None:
+                return False
+            current["locked_by"] = None
+            current["locked_at"] = None
+            current["updated_at"] = int(time.time())
+            if next_run_at is not None:
+                current["next_run_at"] = next_run_at
+            self._store_record("schedules", schedule_id, current)
+            return True
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            self._store_record("schedule_runs", run_data["id"], run_data)
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            current = self._get_record("schedule_runs", schedule_run_id)
+            if current is None:
+                return None
+            current.update(kwargs)
+            self._store_record("schedule_runs", schedule_run_id, current)
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            row = self._get_record("schedule_runs", run_id)
+            if row is None:
+                return None
+            if user_id is not None and row.get("user_id") != user_id:
+                return None
+            return row
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            items = [
+                r
+                for r in self._get_all_records("schedule_runs")
+                if r.get("schedule_id") == schedule_id
+                and (user_id is None or r.get("user_id") == user_id)
+            ]
+            total_count = len(items)
+            items.sort(key=lambda r: r.get("created_at") or 0, reverse=True)
+            offset = (page - 1) * limit
+            return items[offset : offset + limit], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0

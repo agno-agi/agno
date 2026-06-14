@@ -22,6 +22,8 @@ TableType = Literal[
     "knowledge",
     "memories",
     "metrics",
+    "schedules",
+    "schedule_runs",
     "sessions",
     "spans",
     "teams",
@@ -317,6 +319,20 @@ def get_schema(table_type: TableType, table_name: str) -> str:
             DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id;
             DEFINE INDEX idx_parent_span_id ON {table_name} FIELDS parent_span_id;
             DEFINE INDEX idx_start_time ON {table_name} FIELDS start_time;
+            """)
+    elif table_type == "schedules":
+        return dedent(f"""
+            {define_table}
+            DEFINE INDEX idx_enabled_next_run ON {table_name} FIELDS enabled, next_run_at;
+            DEFINE INDEX idx_user_id ON {table_name} FIELDS user_id;
+            DEFINE INDEX idx_name ON {table_name} FIELDS name;
+            """)
+    elif table_type == "schedule_runs":
+        return dedent(f"""
+            {define_table}
+            DEFINE INDEX idx_schedule_id ON {table_name} FIELDS schedule_id;
+            DEFINE INDEX idx_user_id ON {table_name} FIELDS user_id;
+            DEFINE INDEX idx_created_at ON {table_name} FIELDS created_at;
             """)
     else:
         return define_table

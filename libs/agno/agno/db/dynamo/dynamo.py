@@ -185,6 +185,12 @@ class DynamoDb(BaseDb):
             # Ensure traces table exists first (spans reference traces)
             self._get_table("traces", create_table_if_not_found=True)
             table_name = self.span_table_name
+        elif table_type == "schedules":
+            table_name = self.schedules_table_name
+        elif table_type == "schedule_runs":
+            # Ensure schedules table exists first (runs reference schedules).
+            self._get_table("schedules", create_table_if_not_found=True)
+            table_name = self.schedule_runs_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
@@ -1682,17 +1688,41 @@ class DynamoDb(BaseDb):
 
     # --- Knowledge methods ---
 
-    def delete_knowledge_content(self, id: str):
+    # -- Knowledge methods --
+    # DynamoDB has no SQL OR predicate, so we post-filter in Python: the row
+    # is visible if its ``user_id`` matches the caller OR is unowned (None /
+    # absent). When the caller passes ``user_id=None`` we skip the check
+    # entirely (admin / RBAC-off view sees everything).
+
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             table_name = self._get_table("knowledge")
+
+            if user_id is not None:
+                # No conditional delete with OR-NULL on the row's user_id, so
+                # read-then-delete. The race window is tolerable: ownership
+                # cannot change concurrently in any code path we ship.
+                existing = self.get_knowledge_content(id)
+                if existing is not None and not self._knowledge_row_is_visible(existing, user_id):
+                    log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
+                    return
 
             self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
 
@@ -1702,11 +1732,12 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete knowledge content {id}: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1716,10 +1747,13 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
 
             item = response.get("Item")
-            if item:
-                return deserialize_knowledge_row(item)
+            if not item:
+                return None
 
-            return None
+            row = deserialize_knowledge_row(item)
+            if not self._knowledge_row_is_visible(row, user_id):
+                return None
+            return row
 
         except Exception as e:
             log_error(f"Failed to get knowledge content {id}: {str(e)}")
@@ -1732,6 +1766,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1741,6 +1776,7 @@ class DynamoDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1772,6 +1808,10 @@ class DynamoDb(BaseDb):
                     knowledge_rows.append(knowledge_row)
                 except Exception as e:
                     log_error(f"Failed to deserialize knowledge row: {str(e)}")
+
+            # Owner scoping: drop rows the caller isn't allowed to see.
+            if user_id is not None:
+                knowledge_rows = [row for row in knowledge_rows if self._knowledge_row_is_visible(row, user_id)]
 
             # Apply linked_to filter if provided
             if linked_to is not None:
@@ -3011,3 +3051,276 @@ class DynamoDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for DynamoDb")
+
+    # -- Schedule methods --
+    # User-facing reads/updates/deletes carry an optional ``user_id`` filter
+    # so routes can scope by owner. The executor pair (``claim_due_schedule``
+    # / ``release_schedule``) intentionally has no user_id.
+    #
+    # DynamoDB scopes the claim with a ConditionExpression on UpdateItem —
+    # if two workers race for the same schedule, only one's conditional
+    # update succeeds; the other raises ConditionalCheckFailed and we move
+    # on. No need for a separate lock primitive.
+    @staticmethod
+    def _schedule_doc_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = doc.get("user_id")
+        return owner is None or owner == user_id
+
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table_name = self._get_table("schedules")
+            response = self.client.get_item(TableName=table_name, Key={"id": {"S": schedule_id}})
+            item = response.get("Item")
+            if not item:
+                return None
+            row = deserialize_from_dynamodb_item(item)
+            if not self._schedule_doc_is_visible(row, user_id):
+                return None
+            return row
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table_name = self._get_table("schedules")
+            # Name isn't a GSI key; full scan with a filter.
+            response = self.client.scan(
+                TableName=table_name,
+                FilterExpression="#n = :name",
+                ExpressionAttributeNames={"#n": "name"},
+                ExpressionAttributeValues={":name": {"S": name}},
+            )
+            for item in response.get("Items", []):
+                row = deserialize_from_dynamodb_item(item)
+                if self._schedule_doc_is_visible(row, user_id):
+                    return row
+            return None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table_name = self._get_table("schedules")
+            response = self.client.scan(TableName=table_name)
+            items = response.get("Items", [])
+            while "LastEvaluatedKey" in response:
+                response = self.client.scan(
+                    TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                items.extend(response.get("Items", []))
+            rows = [deserialize_from_dynamodb_item(it) for it in items]
+            if enabled is not None:
+                rows = [s for s in rows if s.get("enabled") == enabled]
+            if user_id is not None:
+                rows = [s for s in rows if self._schedule_doc_is_visible(s, user_id)]
+            total_count = len(rows)
+            rows.sort(key=lambda s: s.get("created_at") or 0, reverse=True)
+            offset = (page - 1) * limit
+            return rows[offset : offset + limit], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table_name = self._get_table("schedules", create_table_if_not_found=True)
+            self.client.put_item(TableName=table_name, Item=serialize_to_dynamo_item(schedule_data))
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            current = self.get_schedule(schedule_id)
+            if current is None:
+                return None
+            if user_id is not None and not self._schedule_doc_is_visible(current, user_id):
+                return None
+            current.update(kwargs)
+            current["updated_at"] = int(time.time())
+            table_name = self._get_table("schedules")
+            self.client.put_item(TableName=table_name, Item=serialize_to_dynamo_item(current))
+            return self.get_schedule(schedule_id, user_id=user_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
+        try:
+            if user_id is not None:
+                current = self.get_schedule(schedule_id)
+                if current is None or not self._schedule_doc_is_visible(current, user_id):
+                    return False
+            # Cascade-delete schedule_runs.
+            runs_table = self._get_table("schedule_runs")
+            runs_response = self.client.query(
+                TableName=runs_table,
+                IndexName="schedule_id-created_at-index",
+                KeyConditionExpression="schedule_id = :sid",
+                ExpressionAttributeValues={":sid": {"S": schedule_id}},
+            )
+            for item in runs_response.get("Items", []):
+                run = deserialize_from_dynamodb_item(item)
+                if user_id is not None and run.get("user_id") != user_id:
+                    continue
+                self.client.delete_item(TableName=runs_table, Key={"id": {"S": run["id"]}})
+            schedules_table = self._get_table("schedules")
+            self.client.delete_item(TableName=schedules_table, Key={"id": {"S": schedule_id}})
+            return True
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            from botocore.exceptions import ClientError
+
+            table_name = self._get_table("schedules")
+            now = int(time.time())
+            stale = now - lock_grace_seconds
+            # 1. List candidates with a scan + filter.
+            response = self.client.scan(TableName=table_name)
+            items = response.get("Items", [])
+            while "LastEvaluatedKey" in response:
+                response = self.client.scan(
+                    TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"]
+                )
+                items.extend(response.get("Items", []))
+            candidates = [
+                deserialize_from_dynamodb_item(it)
+                for it in items
+            ]
+            candidates = [
+                s
+                for s in candidates
+                if s.get("enabled")
+                and (s.get("next_run_at") or 0) <= now
+                and (s.get("locked_by") is None or (s.get("locked_at") or 0) <= stale)
+            ]
+            candidates.sort(key=lambda s: s.get("next_run_at") or 0)
+            # 2. Conditional UpdateItem on each candidate. If two workers race,
+            #    only one's ConditionExpression matches; the loser gets
+            #    ConditionalCheckFailedException and we move to the next.
+            for cand in candidates:
+                try:
+                    self.client.update_item(
+                        TableName=table_name,
+                        Key={"id": {"S": cand["id"]}},
+                        UpdateExpression="SET locked_by = :worker, locked_at = :now",
+                        ConditionExpression=(
+                            "(attribute_not_exists(locked_by) OR locked_by = :null "
+                            "OR locked_at <= :stale)"
+                        ),
+                        ExpressionAttributeValues={
+                            ":worker": {"S": worker_id},
+                            ":now": {"N": str(now)},
+                            ":null": {"NULL": True},
+                            ":stale": {"N": str(stale)},
+                        },
+                    )
+                    cand["locked_by"] = worker_id
+                    cand["locked_at"] = now
+                    return cand
+                except ClientError as e:
+                    if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                        continue
+                    raise
+            return None
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table_name = self._get_table("schedules")
+            update_expr_parts = ["locked_by = :null", "locked_at = :null", "updated_at = :now"]
+            values: Dict[str, Any] = {":null": {"NULL": True}, ":now": {"N": str(int(time.time()))}}
+            if next_run_at is not None:
+                update_expr_parts.append("next_run_at = :nra")
+                values[":nra"] = {"N": str(next_run_at)}
+            self.client.update_item(
+                TableName=table_name,
+                Key={"id": {"S": schedule_id}},
+                UpdateExpression="SET " + ", ".join(update_expr_parts),
+                ExpressionAttributeValues=values,
+            )
+            return True
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table_name = self._get_table("schedule_runs", create_table_if_not_found=True)
+            self.client.put_item(TableName=table_name, Item=serialize_to_dynamo_item(run_data))
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            current = self.get_schedule_run(schedule_run_id)
+            if current is None:
+                return None
+            current.update(kwargs)
+            table_name = self._get_table("schedule_runs")
+            self.client.put_item(TableName=table_name, Item=serialize_to_dynamo_item(current))
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table_name = self._get_table("schedule_runs")
+            response = self.client.get_item(TableName=table_name, Key={"id": {"S": run_id}})
+            item = response.get("Item")
+            if not item:
+                return None
+            row = deserialize_from_dynamodb_item(item)
+            if user_id is not None and row.get("user_id") != user_id:
+                return None
+            return row
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table_name = self._get_table("schedule_runs")
+            response = self.client.query(
+                TableName=table_name,
+                IndexName="schedule_id-created_at-index",
+                KeyConditionExpression="schedule_id = :sid",
+                ExpressionAttributeValues={":sid": {"S": schedule_id}},
+                ScanIndexForward=False,
+            )
+            rows = [deserialize_from_dynamodb_item(it) for it in response.get("Items", [])]
+            if user_id is not None:
+                rows = [r for r in rows if r.get("user_id") == user_id]
+            total_count = len(rows)
+            offset = (page - 1) * limit
+            return rows[offset : offset + limit], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
