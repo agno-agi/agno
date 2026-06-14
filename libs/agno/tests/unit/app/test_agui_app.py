@@ -944,6 +944,77 @@ async def test_tool_call_without_result():
 
 
 @pytest.mark.asyncio
+async def test_agent_run_paused_external_execution_emits_tool_events():
+    """Test that an Agent RunPausedEvent with tools_awaiting_external_execution emits
+    synthetic TOOL_CALL_START/ARGS/END events for the AG-UI client to act on."""
+    from agno.models.response import ToolExecution
+    from agno.run.agent import RunPausedEvent
+
+    async def mock_stream_paused():
+        tool = ToolExecution(
+            tool_call_id="ext_1",
+            tool_name="send_notification",
+            tool_args={"message": "hello"},
+            external_execution_required=True,
+        )
+        yield RunPausedEvent(tools=[tool])
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_paused(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.TOOL_CALL_START in event_types
+    assert EventType.TOOL_CALL_ARGS in event_types
+    assert EventType.TOOL_CALL_END in event_types
+
+    start_event = next(e for e in events if e.type == EventType.TOOL_CALL_START)
+    assert start_event.tool_call_id == "ext_1"
+    assert start_event.tool_call_name == "send_notification"
+
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_team_run_paused_external_execution_emits_tool_events():
+    """Regression test: a Team RunPausedEvent must also surface
+    tools_awaiting_external_execution as synthetic TOOL_CALL_START/ARGS/END events.
+
+    Previously this branch was gated on `isinstance(chunk, agno.run.agent.RunPausedEvent)`,
+    which is never True for `agno.run.team.RunPausedEvent` (a sibling class, not a subclass
+    of the agent-side event), so this entire branch silently never fired for Team runs.
+    """
+    from agno.models.response import ToolExecution
+    from agno.run.team import RunPausedEvent as TeamRunPausedEvent
+
+    async def mock_stream_paused():
+        tool = ToolExecution(
+            tool_call_id="ext_team_1",
+            tool_name="send_notification",
+            tool_args={"message": "hello"},
+            external_execution_required=True,
+        )
+        yield TeamRunPausedEvent(tools=[tool])
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_paused(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+    assert EventType.TOOL_CALL_START in event_types, (
+        "Team RunPausedEvent should emit TOOL_CALL_START for external execution tools"
+    )
+    assert EventType.TOOL_CALL_ARGS in event_types
+    assert EventType.TOOL_CALL_END in event_types
+
+    start_event = next(e for e in events if e.type == EventType.TOOL_CALL_START)
+    assert start_event.tool_call_id == "ext_team_1"
+    assert start_event.tool_call_name == "send_notification"
+
+    assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
 async def test_mixed_content_and_tools_complex():
     """Complex test with interleaved content and tool calls (comprehensive scenario)"""
     from agno.models.response import ToolExecution

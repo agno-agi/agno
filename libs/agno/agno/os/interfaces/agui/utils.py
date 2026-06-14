@@ -36,7 +36,7 @@ from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEve
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
 from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
 from agno.run.agent import ReasoningStepEvent as AgentReasoningStepEvent
-from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
+from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
@@ -556,8 +556,12 @@ def _create_completion_events(
         events_to_emit.append(end_message_event)
 
     # Emit external execution tools
-    if isinstance(chunk, RunPausedEvent):
-        external_tools = chunk.tools_awaiting_external_execution
+    is_paused = chunk.event in (RunEvent.run_paused, TeamRunEvent.run_paused)
+    if is_paused:
+        # Both agno.run.agent.RunPausedEvent and agno.run.team.RunPausedEvent expose `tools`,
+        # but only the agent-side class also has a `tools_awaiting_external_execution`
+        # property, so compute it directly from `tools` to cover both.
+        external_tools = [t for t in (getattr(chunk, "tools", None) or []) if t.external_execution_required]
         if external_tools:
             # First, emit an assistant message for external tool calls
             assistant_message_id = str(uuid.uuid4())
