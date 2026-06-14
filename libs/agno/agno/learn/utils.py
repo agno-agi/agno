@@ -13,6 +13,49 @@ from typing import Any, Dict, List, Optional, Type, TypeVar
 
 T = TypeVar("T")
 
+# Default sharing namespace used by the learning stores when none is configured/provided.
+DEFAULT_LEARNING_NAMESPACE = "global"
+
+# Learning types whose records are keyed by a deterministic id derived from their identity
+# fields (see build_learning_id). Anything creating these must use that id, or the record
+# won't reconcile with the agent's store. Other types (e.g. decision_log) use a generated id.
+IDENTITY_KEYED_LEARNING_TYPES = frozenset({"user_profile", "user_memory", "session_context", "entity_memory"})
+
+
+def build_learning_id(
+    learning_type: str,
+    *,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    namespace: Optional[str] = None,
+) -> Optional[str]:
+    """Deterministic primary key for the framework's identity-keyed learning stores.
+
+    The learning stores key each record in ``agno_learnings`` by an id derived from its
+    identity fields -- NOT a random uuid. So anything else writing to that table (e.g. the
+    REST create endpoint) must compute the same id, otherwise the record won't reconcile
+    with what the agent reads/writes and duplicate rows appear.
+
+    This is the single source of truth: the stores' ``_build_*_id`` helpers delegate here.
+
+    Returns ``None`` for learning types that do not use a deterministic id (e.g.
+    ``decision_log``, which keys each entry by its own uuid) or when the identity fields
+    required for the id are missing -- callers should fall back to a generated id then.
+    """
+    if learning_type == "user_profile":
+        return f"user_profile_{user_id}" if user_id else None
+    if learning_type == "user_memory":
+        return f"memories_{user_id}" if user_id else None
+    if learning_type == "session_context":
+        return f"session_context_{session_id}" if session_id else None
+    if learning_type == "entity_memory":
+        if entity_id and entity_type:
+            return f"entity_{namespace or DEFAULT_LEARNING_NAMESPACE}_{entity_type}_{entity_id}"
+        return None
+    return None
+
 
 def _safe_get(data: Any, key: str, default: Any = None) -> Any:
     """Safely get a key from dict-like data.

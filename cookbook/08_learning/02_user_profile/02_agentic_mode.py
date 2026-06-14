@@ -22,7 +22,7 @@ from agno.models.openai import OpenAIResponses
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions=(
         "You are a helpful assistant. "
