@@ -941,6 +941,41 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Update an existing learning record in place. Does NOT insert.
+
+        Unlike ``upsert_learning`` this only touches an existing row (sets content/metadata/
+        updated_at; never inserts and never changes created_at or identity fields). It exists
+        so PATCH can be a true update: a row deleted out from under the caller simply isn't
+        matched, instead of being silently re-created (which would also let a concurrent agent
+        write get clobbered/destroyed).
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a row was updated, False if no row with that id exists.
+        """
+        raise NotImplementedError
+
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     def get_learnings(
         self,
@@ -969,6 +1004,87 @@ class BaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single learning record by its primary key.
+
+        Args:
+            id: The learning ID.
+
+        Returns:
+            The learning record dict, or None if not found.
+        """
+        raise NotImplementedError
+
+    def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List learning records with pagination, returning the page and total count.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            include_global: When True and ``user_id`` is set, also include records where
+                ``user_id IS NULL`` (global / non-user-scoped). Has no effect when
+                ``user_id`` is None.
+            limit: Page size.
+            page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 
@@ -1652,6 +1768,43 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Async update an existing learning record in place. Does NOT insert.
+
+        Unlike ``upsert_learning`` this only touches an existing row (sets content/metadata/
+        updated_at; never inserts and never changes created_at or identity fields). It exists
+        so PATCH can be a true update: a row deleted out from under the caller simply isn't
+        matched, instead of being silently re-created (which would also let a concurrent agent
+        write get clobbered/destroyed).
+
+        Args:
+            id: The learning ID to update.
+            content: Replacement content.
+            metadata: Replacement metadata.
+
+        Returns:
+            True if a row was updated, False if no row with that id exists.
+        """
+        raise NotImplementedError
+
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        """Async delete every learning record owned by a user.
+
+        Removes all rows where ``user_id`` matches. Records with no owner
+        (``user_id IS NULL``) are not affected.
+
+        Args:
+            user_id: The user whose learnings should be deleted.
+            learning_type: When provided, restrict deletion to this single learning type;
+                otherwise all of the user's learnings are removed.
+
+        Returns:
+            The number of records deleted.
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def get_learnings(
         self,
@@ -1680,6 +1833,87 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Async retrieve a single learning record by its primary key.
+
+        Args:
+            id: The learning ID.
+
+        Returns:
+            The learning record dict, or None if not found.
+        """
+        raise NotImplementedError
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list learning records with pagination, returning the page and total count.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            include_global: When True and ``user_id`` is set, also include records where
+                ``user_id IS NULL`` (global / non-user-scoped). Has no effect when
+                ``user_id`` is None.
+            limit: Page size.
+            page: 1-indexed page number.
+            sort_by: Field to sort by (defaults to ``updated_at``).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list the users that own learning records, with per-user counts.
+
+        Groups the learnings table by ``user_id`` (excluding records with no owner) so a
+        client can present a list of users before drilling into a single user's profile
+        and memories. Mirrors ``get_user_memory_stats``.
+
+        Args:
+            learning_type: Restrict the grouping to a single learning type (e.g.
+                ``'user_profile'`` or ``'user_memory'``).
+            limit: Page size.
+            page: 1-indexed page number.
+            user_id: Restrict the result to a single user.
+            sort_by: Field to sort by -- ``user_id`` or ``last_learning_updated_at`` (the default).
+            sort_order: Sort order, ``'asc'`` or ``'desc'`` (defaults to ``desc``).
+
+        Returns:
+            Tuple of (user_stats, total_count) where each entry has the shape
+            ``{"user_id": str, "last_learning_updated_at": int}``.
         """
         raise NotImplementedError
 
