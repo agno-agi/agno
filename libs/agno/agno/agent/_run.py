@@ -37,12 +37,19 @@ from agno.exceptions import (
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
+from agno.metrics import swap_nested_run_metrics_sink
 from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
+from agno.run._nested_metrics import (
+    arun_stream_with_metrics_scope,
+    arun_with_metrics_scope,
+    report_run_to_parent,
+    run_stream_with_metrics_scope,
+)
 from agno.run.agent import (
     RunCancelledEvent,
     RunCompletedEvent,
@@ -1433,24 +1440,30 @@ def run_dispatch(
             pre_session=agent_session,
             **kwargs,
         )
-        return response_iterator
+        return run_stream_with_metrics_scope(response_iterator, run_response, sink=run_response.metrics)
     else:
-        response = _run(
-            agent,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            pre_session=agent_session,
-            **kwargs,
-        )
-        return response
+        response = run_response
+        parent_sink = swap_nested_run_metrics_sink(run_response.metrics)
+        try:
+            response = _run(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                pre_session=agent_session,
+                **kwargs,
+            )
+            return response
+        finally:
+            swap_nested_run_metrics_sink(parent_sink)
+            report_run_to_parent(parent_sink, response)
 
 
 async def _arun(
@@ -1944,6 +1957,12 @@ async def _arun_background(
             agent_session.upsert_run(run=run_response)
             await asave_session(agent, session=agent_session)
 
+            # Detached run — nested runs report into this run's metrics, never
+            # to an enclosing run that may complete before this task does
+            if run_response.metrics is None:
+                run_response.metrics = RunMetrics()
+            swap_nested_run_metrics_sink(run_response.metrics)
+
             # Execute the actual run — _arun handles everything including
             # session persistence and cleanup
             await _arun(
@@ -2034,6 +2053,11 @@ async def _arun_background_stream(
         from agno.os.utils import format_sse_event_with_index
 
         try:
+            # Detached run — nested runs report into this run's metrics, never
+            # to an enclosing run that may complete before this task does
+            if run_response.metrics is None:
+                run_response.metrics = RunMetrics()
+            swap_nested_run_metrics_sink(run_response.metrics)
             async for event in _arun_stream(
                 agent,
                 run_response=run_response,
@@ -2896,38 +2920,46 @@ def arun_dispatch(  # type: ignore
 
     # Pass the new run_response to _arun
     if opts.stream:
-        return _arun_stream(  # type: ignore
-            agent,
-            run_response=run_response,
-            run_context=run_context,
-            user_id=user_id,
-            response_format=response_format,
-            stream_events=opts.stream_events,
-            yield_run_output=opts.yield_run_output,
-            session_id=session_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            pre_session=_pre_session,
-            **kwargs,
-        )  # type: ignore[assignment]
+        return arun_stream_with_metrics_scope(  # type: ignore[return-value]
+            _arun_stream(  # type: ignore
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                session_id=session_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                pre_session=_pre_session,
+                **kwargs,
+            ),
+            run_response,
+            sink=run_response.metrics,
+        )
     else:
-        return _arun(  # type: ignore
-            agent,
-            run_response=run_response,
-            run_context=run_context,
-            user_id=user_id,
-            response_format=response_format,
-            session_id=session_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            pre_session=_pre_session,
-            **kwargs,
+        return arun_with_metrics_scope(  # type: ignore[return-value]
+            _arun(  # type: ignore
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                session_id=session_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                pre_session=_pre_session,
+                **kwargs,
+            ),
+            run_response,
+            sink=run_response.metrics,
         )
 
 
@@ -3143,6 +3175,9 @@ def continue_run_dispatch(
     # Reset the run state
     run_response.status = RunStatus.running
 
+    if run_response.metrics is None:
+        run_response.metrics = RunMetrics()
+
     if opts.stream:
         response_iterator = _continue_run_stream(
             agent,
@@ -3159,22 +3194,28 @@ def continue_run_dispatch(
             background_tasks=background_tasks,
             **kwargs,
         )
-        return response_iterator
+        return run_stream_with_metrics_scope(response_iterator, run_response, sink=run_response.metrics)
     else:
-        response = _continue_run(
-            agent,
-            run_response=run_response,
-            run_messages=run_messages,
-            run_context=run_context,
-            tools=_tools,
-            user_id=user_id,
-            session=agent_session,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
-        return response
+        response = run_response
+        parent_sink = swap_nested_run_metrics_sink(run_response.metrics)
+        try:
+            response = _continue_run(
+                agent,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                tools=_tools,
+                user_id=user_id,
+                session=agent_session,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            return response
+        finally:
+            swap_nested_run_metrics_sink(parent_sink)
+            report_run_to_parent(parent_sink, response)
 
 
 def _continue_run(
@@ -3837,37 +3878,55 @@ def acontinue_run_dispatch(  # type: ignore
                 **kwargs,
             )
 
+    if run_response is not None and run_response.metrics is None:
+        run_response.metrics = RunMetrics()
+
+    # A run continued by run_id only yields its resolved output when
+    # yield_run_output is set — force it so the metrics scope can adopt the
+    # output, and swallow it again unless the caller asked for it
+    resolve_run_output = run_response is None and run_id is not None
+
     if opts.stream:
-        return _acontinue_run_stream(
-            agent,
-            run_response=run_response,
-            run_context=run_context,
-            updated_tools=updated_tools,
-            requirements=requirements,
+        return arun_stream_with_metrics_scope(
+            _acontinue_run_stream(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                updated_tools=updated_tools,
+                requirements=requirements,
+                run_id=run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output or resolve_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ),
+            run_response,
+            sink=run_response.metrics if run_response is not None else None,
             run_id=run_id,
-            user_id=user_id,
-            session_id=session_id,
-            response_format=response_format,
-            stream_events=opts.stream_events,
-            yield_run_output=opts.yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
+            swallow_run_output=resolve_run_output and not opts.yield_run_output,
         )
     else:
-        return _acontinue_run(  # type: ignore
-            agent,
-            session_id=session_id,
-            run_response=run_response,
-            run_context=run_context,
-            updated_tools=updated_tools,
-            requirements=requirements,
-            run_id=run_id,
-            user_id=user_id,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
+        return arun_with_metrics_scope(  # type: ignore[return-value]
+            _acontinue_run(  # type: ignore
+                agent,
+                session_id=session_id,
+                run_response=run_response,
+                run_context=run_context,
+                updated_tools=updated_tools,
+                requirements=requirements,
+                run_id=run_id,
+                user_id=user_id,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ),
+            run_response,
+            sink=run_response.metrics if run_response is not None else None,
         )
 
 
@@ -3926,6 +3985,9 @@ async def _acontinue_run_background_stream(
         from agno.os.utils import format_sse_event_with_index
 
         try:
+            # Detached run — never report metrics to an enclosing run that may
+            # complete before this task does
+            swap_nested_run_metrics_sink(None)
             async for event in _acontinue_run_stream(
                 agent,
                 run_response=run_response,
@@ -4151,6 +4213,13 @@ async def _acontinue_run(
                     raise ValueError("Either run_response or run_id must be provided.")
 
                 run_response = cast(RunOutput, run_response)
+
+                # Install this run's metrics sink so nested runs inside resumed
+                # tools report here. The dispatch wrapper restores the previous
+                # sink when this run finishes.
+                if run_response.metrics is None:
+                    run_response.metrics = RunMetrics()
+                swap_nested_run_metrics_sink(run_response.metrics)
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
@@ -4552,6 +4621,13 @@ async def _acontinue_run_stream(
                     raise ValueError("Either run_response or run_id must be provided.")
 
                 run_response = cast(RunOutput, run_response)
+
+                # Install this run's metrics sink so nested runs inside resumed
+                # tools report here. The dispatch wrapper restores the previous
+                # sink when this run finishes.
+                if run_response.metrics is None:
+                    run_response.metrics = RunMetrics()
+                swap_nested_run_metrics_sink(run_response.metrics)
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
@@ -5129,8 +5205,11 @@ def cleanup_and_store(
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
 
-    # Calculate session metrics
-    update_session_metrics(agent, session=session, run_response=run_response)
+    # Calculate session metrics. Paused runs are skipped — the continued run
+    # accumulates the full run metrics exactly once when it finishes, so
+    # accumulating the partial metrics here would double count them.
+    if run_response.status != RunStatus.paused:
+        update_session_metrics(agent, session=session, run_response=run_response)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -5186,8 +5265,11 @@ async def acleanup_and_store(
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
 
-    # Calculate session metrics
-    update_session_metrics(agent, session=session, run_response=run_response)
+    # Calculate session metrics. Paused runs are skipped — the continued run
+    # accumulates the full run metrics exactly once when it finishes, so
+    # accumulating the partial metrics here would double count them.
+    if run_response.status != RunStatus.paused:
+        update_session_metrics(agent, session=session, run_response=run_response)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:

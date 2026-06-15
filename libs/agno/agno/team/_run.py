@@ -30,12 +30,22 @@ from agno.exceptions import (
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
+from agno.metrics import swap_nested_run_metrics_sink
 from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
+from agno.run._nested_metrics import (
+    arun_stream_with_metrics_scope,
+    arun_with_metrics_scope,
+    ashielded_stream,
+    report_run_to_parent,
+    run_stream_with_metrics_scope,
+    shielded_metrics_sink,
+    shielded_stream,
+)
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
@@ -2003,38 +2013,49 @@ def run_dispatch(
         raise
 
     if opts.stream:
-        return _run_stream(
-            team,
-            run_response=run_response,
-            run_context=run_context,
-            session=team_session,
-            user_id=user_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            response_format=response_format,
-            stream_events=opts.stream_events,
-            yield_run_output=opts.yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )  # type: ignore
+        return run_stream_with_metrics_scope(  # type: ignore[return-value]
+            _run_stream(  # type: ignore
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ),
+            run_response,
+            sink=run_response.metrics,
+        )
 
     else:
-        return _run(
-            team,
-            run_response=run_response,
-            run_context=run_context,
-            session=team_session,
-            user_id=user_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
-        )
+        response = run_response
+        parent_sink = swap_nested_run_metrics_sink(run_response.metrics)
+        try:
+            response = _run(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            return response
+        finally:
+            swap_nested_run_metrics_sink(parent_sink)
+            report_run_to_parent(parent_sink, response)
 
 
 async def _arun_tasks(
@@ -3372,6 +3393,12 @@ async def _arun_background(
             team_session.upsert_run(run_response=run_response)
             await asave_session(team, session=team_session)
 
+            # Detached run — nested runs report into this run's metrics, never
+            # to an enclosing run that may complete before this task does
+            if run_response.metrics is None:
+                run_response.metrics = RunMetrics()
+            swap_nested_run_metrics_sink(run_response.metrics)
+
             # Execute the actual run — _arun handles everything including
             # session persistence and cleanup
             await _arun(
@@ -3459,6 +3486,11 @@ async def _arun_background_stream(
         from agno.os.utils import format_sse_event_with_index
 
         try:
+            # Detached run — nested runs report into this run's metrics, never
+            # to an enclosing run that may complete before this task does
+            if run_response.metrics is None:
+                run_response.metrics = RunMetrics()
+            swap_nested_run_metrics_sink(run_response.metrics)
             async for event in _arun_stream(
                 team,
                 run_response=run_response,
@@ -4237,36 +4269,44 @@ def arun_dispatch(  # type: ignore
         )
 
     if opts.stream:
-        return _arun_stream(
-            team,  # type: ignore
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            response_format=response_format,
-            stream_events=opts.stream_events,
-            yield_run_output=opts.yield_run_output,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
+        return arun_stream_with_metrics_scope(  # type: ignore[return-value]
+            _arun_stream(
+                team,  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ),
+            run_response,
+            sink=run_response.metrics,
         )
     else:
-        return _arun(
-            team,  # type: ignore
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            response_format=response_format,
-            debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            **kwargs,
+        return arun_with_metrics_scope(  # type: ignore[return-value]
+            _arun(
+                team,  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                session_id=session_id,
+                user_id=user_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                response_format=response_format,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ),
+            run_response,
+            sink=run_response.metrics,
         )
 
 
@@ -4419,8 +4459,11 @@ def _cleanup_and_store(
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
 
-    # Calculate session metrics
-    update_session_metrics(team, session=session, run_response=run_response)
+    # Calculate session metrics. Paused runs are skipped — the continued run
+    # accumulates the full run metrics exactly once when it finishes, so
+    # accumulating the partial metrics here would double count them.
+    if run_response.status != RunStatus.paused:
+        update_session_metrics(team, session=session, run_response=run_response)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -4468,8 +4511,11 @@ async def _acleanup_and_store(
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
 
-    # Calculate session metrics
-    update_session_metrics(team, session=session, run_response=run_response)
+    # Calculate session metrics. Paused runs are skipped — the continued run
+    # accumulates the full run metrics exactly once when it finishes, so
+    # accumulating the partial metrics here would double count them.
+    if run_response.status != RunStatus.paused:
+        update_session_metrics(team, session=session, run_response=run_response)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -5138,6 +5184,8 @@ def _route_requirements_to_members(
     Returns:
         List of member result strings.
     """
+    import copy
+
     from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
@@ -5197,19 +5245,23 @@ def _route_requirements_to_members(
                 updated_map = {t.tool_call_id: t for t in updated_tools}
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
-            member_response = member.continue_run(
-                run_response=member_run_output,  # type: ignore[arg-type]
-                session_id=session.session_id,
-                **member_continue_kwargs,
-            )
+            # Member metrics are aggregated through member_responses, so the
+            # member run must not also report to the ambient metrics sink
+            with shielded_metrics_sink():
+                member_response = member.continue_run(
+                    run_response=member_run_output,  # type: ignore[arg-type]
+                    session_id=session.session_id,
+                    **member_continue_kwargs,
+                )
         else:
             # Fallback: use run_id (requires DB or cached session)
-            member_response = member.continue_run(  # type: ignore[arg-type]
-                run_id=member_run_id,
-                requirements=reqs,
-                session_id=session.session_id,
-                **member_continue_kwargs,
-            )
+            with shielded_metrics_sink():
+                member_response = member.continue_run(  # type: ignore[arg-type]
+                    run_id=member_run_id,
+                    requirements=reqs,
+                    session_id=session.session_id,
+                    **member_continue_kwargs,
+                )
 
         # Check if member is still paused (chained HITL)
         if getattr(member_response, "is_paused", False):
@@ -5218,8 +5270,18 @@ def _route_requirements_to_members(
             _propagate_member_pause(run_response, member, member_response)
         else:
             # Update the member's run in the team session so its status is persisted
-            # (member agents skip save_session when team_id is set)
-            session.upsert_run(member_response)
+            # (member agents skip save_session when team_id is set). Persist a
+            # shallow copy of the member run — save_session scrubs member_responses on
+            # stored runs, which must not reach the response attached to the team run's
+            # member_responses
+            session.upsert_run(copy.copy(member_response))
+
+            # Re-attach the member run to member_responses so session metrics and
+            # upward reports include it. After a process restart the paused member
+            # output is resolved from session.runs and is no longer present there.
+            existing_member_run_ids = {getattr(r, "run_id", None) for r in (run_response.member_responses or [])}
+            if getattr(member_response, "run_id", None) not in existing_member_run_ids:
+                run_response.add_member_run(member_response)
 
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
@@ -5253,6 +5315,8 @@ def _route_requirements_to_members_stream(
     Yields:
         Member streaming events (RunOutputEvent, TeamRunOutputEvent).
     """
+    import copy
+
     from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
@@ -5305,23 +5369,29 @@ def _route_requirements_to_members_stream(
                 updated_map = {t.tool_call_id: t for t in updated_tools}
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
-            member_response_stream = member.continue_run(  # type: ignore[call-overload]
-                run_response=member_run_output,  # type: ignore[arg-type]
-                session_id=session.session_id,
-                stream=True,
-                stream_events=stream_events or team.stream_member_events,
-                yield_run_output=True,
-                **member_continue_kwargs,
+            # Member metrics are aggregated through member_responses, so the
+            # member run must not also report to the ambient metrics sink
+            member_response_stream = shielded_stream(
+                member.continue_run(  # type: ignore[call-overload]
+                    run_response=member_run_output,  # type: ignore[arg-type]
+                    session_id=session.session_id,
+                    stream=True,
+                    stream_events=stream_events or team.stream_member_events,
+                    yield_run_output=True,
+                    **member_continue_kwargs,
+                )
             )
         else:
-            member_response_stream = member.continue_run(  # type: ignore[call-overload]
-                run_id=member_run_id,
-                requirements=reqs,
-                session_id=session.session_id,
-                stream=True,
-                stream_events=stream_events or team.stream_member_events,
-                yield_run_output=True,
-                **member_continue_kwargs,
+            member_response_stream = shielded_stream(
+                member.continue_run(  # type: ignore[call-overload]
+                    run_id=member_run_id,
+                    requirements=reqs,
+                    session_id=session.session_id,
+                    stream=True,
+                    stream_events=stream_events or team.stream_member_events,
+                    yield_run_output=True,
+                    **member_continue_kwargs,
+                )
             )
 
         # Iterate the member's streaming response — yield intermediate events,
@@ -5354,7 +5424,18 @@ def _route_requirements_to_members_stream(
 
             _propagate_member_pause(run_response, member, member_response)
         else:
-            session.upsert_run(member_response)
+            # Persist a shallow copy of the member run — save_session scrubs
+            # member_responses on stored runs, which must not reach the response
+            # attached to the team run's member_responses
+            session.upsert_run(copy.copy(member_response))
+
+            # Re-attach the member run to member_responses so session metrics and
+            # upward reports include it. After a process restart the paused member
+            # output is resolved from session.runs and is no longer present there.
+            existing_member_run_ids = {getattr(r, "run_id", None) for r in (run_response.member_responses or [])}
+            if getattr(member_response, "run_id", None) not in existing_member_run_ids:
+                run_response.add_member_run(member_response)
+
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
@@ -5376,6 +5457,8 @@ async def _aroute_requirements_to_members(
     Returns:
         List of member result strings.
     """
+    import copy
+
     from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
@@ -5429,18 +5512,22 @@ async def _aroute_requirements_to_members(
                 updated_map = {t.tool_call_id: t for t in updated_tools}
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
-            member_response = await member.acontinue_run(  # type: ignore[misc]
-                run_response=member_run_output,  # type: ignore[arg-type]
-                session_id=session.session_id,
-                **member_continue_kwargs,
-            )
+            # Member metrics are aggregated through member_responses, so the
+            # member run must not also report to the ambient metrics sink
+            with shielded_metrics_sink():
+                member_response = await member.acontinue_run(  # type: ignore[misc]
+                    run_response=member_run_output,  # type: ignore[arg-type]
+                    session_id=session.session_id,
+                    **member_continue_kwargs,
+                )
         else:
-            member_response = await member.acontinue_run(  # type: ignore[misc]
-                run_id=member_run_id,
-                requirements=reqs,
-                session_id=session.session_id,
-                **member_continue_kwargs,
-            )
+            with shielded_metrics_sink():
+                member_response = await member.acontinue_run(  # type: ignore[misc]
+                    run_id=member_run_id,
+                    requirements=reqs,
+                    session_id=session.session_id,
+                    **member_continue_kwargs,
+                )
 
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
@@ -5453,8 +5540,18 @@ async def _aroute_requirements_to_members(
             return None
         else:
             # Update the member's run in the team session so its status is persisted
-            # (member agents skip save_session when team_id is set, so we do it here)
-            session.upsert_run(member_response)
+            # (member agents skip save_session when team_id is set, so we do it here). Persist a
+            # shallow copy of the member run — save_session scrubs member_responses on
+            # stored runs, which must not reach the response attached to the team run's
+            # member_responses
+            session.upsert_run(copy.copy(member_response))
+
+            # Re-attach the member run to member_responses so session metrics and
+            # upward reports include it. After a process restart the paused member
+            # output is resolved from session.runs and is no longer present there.
+            existing_member_run_ids = {getattr(r, "run_id", None) for r in (run_response.member_responses or [])}
+            if getattr(member_response, "run_id", None) not in existing_member_run_ids:
+                run_response.add_member_run(member_response)
 
             content = getattr(member_response, "content", None) or "Task completed"
             return f"[{member.name or member_id}]: {content}"
@@ -5496,6 +5593,8 @@ async def _aroute_requirements_to_members_stream(
     Yields:
         Member streaming events (RunOutputEvent, TeamRunOutputEvent).
     """
+    import copy
+
     from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
@@ -5548,23 +5647,29 @@ async def _aroute_requirements_to_members_stream(
                 updated_map = {t.tool_call_id: t for t in updated_tools}
                 member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
 
-            member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
-                run_response=member_run_output,  # type: ignore[arg-type]
-                session_id=session.session_id,
-                stream=True,
-                stream_events=stream_events or team.stream_member_events,
-                yield_run_output=True,
-                **member_continue_kwargs,
+            # Member metrics are aggregated through member_responses, so the
+            # member run must not also report to the ambient metrics sink
+            member_response_stream = ashielded_stream(
+                member.acontinue_run(  # type: ignore[call-overload]
+                    run_response=member_run_output,  # type: ignore[arg-type]
+                    session_id=session.session_id,
+                    stream=True,
+                    stream_events=stream_events or team.stream_member_events,
+                    yield_run_output=True,
+                    **member_continue_kwargs,
+                )
             )
         else:
-            member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
-                run_id=member_run_id,
-                requirements=reqs,
-                session_id=session.session_id,
-                stream=True,
-                stream_events=stream_events or team.stream_member_events,
-                yield_run_output=True,
-                **member_continue_kwargs,
+            member_response_stream = ashielded_stream(
+                member.acontinue_run(  # type: ignore[call-overload]
+                    run_id=member_run_id,
+                    requirements=reqs,
+                    session_id=session.session_id,
+                    stream=True,
+                    stream_events=stream_events or team.stream_member_events,
+                    yield_run_output=True,
+                    **member_continue_kwargs,
+                )
             )
 
         # Iterate the member's async streaming response — yield intermediate events,
@@ -5597,7 +5702,18 @@ async def _aroute_requirements_to_members_stream(
 
             _propagate_member_pause(run_response, member, member_response)
         else:
-            session.upsert_run(member_response)
+            # Persist a shallow copy of the member run — save_session scrubs
+            # member_responses on stored runs, which must not reach the response
+            # attached to the team run's member_responses
+            session.upsert_run(copy.copy(member_response))
+
+            # Re-attach the member run to member_responses so session metrics and
+            # upward reports include it. After a process restart the paused member
+            # output is resolved from session.runs and is no longer present there.
+            existing_member_run_ids = {getattr(r, "run_id", None) for r in (run_response.member_responses or [])}
+            if getattr(member_response, "run_id", None) not in existing_member_run_ids:
+                run_response.add_member_run(member_response)
+
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
@@ -6332,6 +6448,13 @@ def _continue_run(
 
     register_run(run_response.run_id)  # type: ignore
 
+    # Install this run's metrics sink so nested runs inside resumed tools report
+    # here. The public continue_run scope restores the previous sink when this
+    # run finishes.
+    if run_response.metrics is None:
+        run_response.metrics = RunMetrics()
+    swap_nested_run_metrics_sink(run_response.metrics)
+
     # Emit RunContinued event (matching streaming variant behaviour)
     handle_event(
         create_team_run_continued_event(run_response),
@@ -6514,6 +6637,14 @@ def _continue_run_stream(
     from agno.utils.events import create_team_run_continued_event
 
     register_run(run_response.run_id)  # type: ignore
+
+    # Install this run's metrics sink so nested runs inside resumed tools report
+    # here. These generator frames run after the dispatch-scope install has been
+    # restored, so the sink must be re-installed from inside them; the public
+    # continue_run scope restores the previous sink between yields.
+    if run_response.metrics is None:
+        run_response.metrics = RunMetrics()
+    swap_nested_run_metrics_sink(run_response.metrics)
 
     try:
         num_attempts = team.retries + 1
@@ -6824,6 +6955,9 @@ async def _acontinue_run_background_stream(
         from agno.os.utils import format_sse_event_with_index
 
         try:
+            # Detached run — never report metrics to an enclosing run that may
+            # complete before this task does
+            swap_nested_run_metrics_sink(None)
             async for event in _acontinue_run_stream(
                 team,
                 run_response=run_response,
@@ -7103,6 +7237,13 @@ async def _acontinue_run(
 
                 if run_response.status == RunStatus.cancelled:
                     raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+
+                # Install this run's metrics sink so nested runs inside resumed
+                # tools report here. The public acontinue_run scope restores the
+                # previous sink when this run finishes.
+                if run_response.metrics is None:
+                    run_response.metrics = RunMetrics()
+                swap_nested_run_metrics_sink(run_response.metrics)
 
                 # Save old requirements before overwriting — needed for member-level approval fields
                 old_requirements = run_response.requirements
@@ -7469,6 +7610,13 @@ async def _acontinue_run_stream(
 
                 if run_response.status == RunStatus.cancelled:
                     raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+
+                # Install this run's metrics sink so nested runs inside resumed
+                # tools report here. The public acontinue_run scope restores the
+                # previous sink between yields.
+                if run_response.metrics is None:
+                    run_response.metrics = RunMetrics()
+                swap_nested_run_metrics_sink(run_response.metrics)
 
                 # Save old requirements before overwriting — needed for member-level approval fields
                 old_requirements = run_response.requirements

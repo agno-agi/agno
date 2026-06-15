@@ -28,6 +28,7 @@ from typing import (
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.run._nested_metrics import shielded_metrics_sink
 from agno.run.base import RunContext
 from agno.run.messages import RunMessages
 from agno.tools import Toolkit
@@ -206,53 +207,57 @@ class ReasoningManager:
         run_metrics = self.config.run_metrics
 
         try:
-            if model_type == "deepseek":
-                from agno.reasoning.deepseek import get_deepseek_reasoning
+            # Shield the ambient metrics sink — the helpers below accumulate the
+            # reasoning run's metrics explicitly via accumulate_eval_metrics, so
+            # the nested run must not also report to it
+            with shielded_metrics_sink():
+                if model_type == "deepseek":
+                    from agno.reasoning.deepseek import get_deepseek_reasoning
 
-                log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                reasoning_message = get_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
+                    reasoning_message = get_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "anthropic":
-                from agno.reasoning.anthropic import get_anthropic_reasoning
+                elif model_type == "anthropic":
+                    from agno.reasoning.anthropic import get_anthropic_reasoning
 
-                log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
-                reasoning_message = get_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
+                    reasoning_message = get_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "openai":
-                from agno.reasoning.openai import get_openai_reasoning
+                elif model_type == "openai":
+                    from agno.reasoning.openai import get_openai_reasoning
 
-                log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                reasoning_message = get_openai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
+                    reasoning_message = get_openai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "groq":
-                from agno.reasoning.groq import get_groq_reasoning
+                elif model_type == "groq":
+                    from agno.reasoning.groq import get_groq_reasoning
 
-                log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                reasoning_message = get_groq_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
+                    reasoning_message = get_groq_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "ollama":
-                from agno.reasoning.ollama import get_ollama_reasoning
+                elif model_type == "ollama":
+                    from agno.reasoning.ollama import get_ollama_reasoning
 
-                log_debug("Starting Ollama Reasoning", center=True, symbol="=")
-                reasoning_message = get_ollama_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ollama_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "ai_foundry":
-                from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
+                elif model_type == "ai_foundry":
+                    from agno.reasoning.azure_ai_foundry import get_ai_foundry_reasoning
 
-                log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
-                reasoning_message = get_ai_foundry_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
+                    reasoning_message = get_ai_foundry_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "gemini":
-                from agno.reasoning.gemini import get_gemini_reasoning
+                elif model_type == "gemini":
+                    from agno.reasoning.gemini import get_gemini_reasoning
 
-                log_debug("Starting Gemini Reasoning", center=True, symbol="=")
-                reasoning_message = get_gemini_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Gemini Reasoning", center=True, symbol="=")
+                    reasoning_message = get_gemini_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "vertexai":
-                from agno.reasoning.vertexai import get_vertexai_reasoning
+                elif model_type == "vertexai":
+                    from agno.reasoning.vertexai import get_vertexai_reasoning
 
-                log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
-                reasoning_message = get_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
+                    reasoning_message = get_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
         except Exception as e:
             log_error(f"Reasoning error: {str(e)}")
@@ -282,53 +287,65 @@ class ReasoningManager:
         run_metrics = self.config.run_metrics
 
         try:
-            if model_type == "deepseek":
-                from agno.reasoning.deepseek import aget_deepseek_reasoning
+            # Shield the ambient metrics sink — the helpers below accumulate the
+            # reasoning run's metrics explicitly via accumulate_eval_metrics, so
+            # the nested run must not also report to it
+            with shielded_metrics_sink():
+                if model_type == "deepseek":
+                    from agno.reasoning.deepseek import aget_deepseek_reasoning
 
-                log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_deepseek_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting DeepSeek Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_deepseek_reasoning(
+                        reasoning_agent, messages, run_metrics=run_metrics
+                    )
 
-            elif model_type == "anthropic":
-                from agno.reasoning.anthropic import aget_anthropic_reasoning
+                elif model_type == "anthropic":
+                    from agno.reasoning.anthropic import aget_anthropic_reasoning
 
-                log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_anthropic_reasoning(
+                        reasoning_agent, messages, run_metrics=run_metrics
+                    )
 
-            elif model_type == "openai":
-                from agno.reasoning.openai import aget_openai_reasoning
+                elif model_type == "openai":
+                    from agno.reasoning.openai import aget_openai_reasoning
 
-                log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_openai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_openai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "groq":
-                from agno.reasoning.groq import aget_groq_reasoning
+                elif model_type == "groq":
+                    from agno.reasoning.groq import aget_groq_reasoning
 
-                log_debug("Starting Groq Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_groq_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Groq Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_groq_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "ollama":
-                from agno.reasoning.ollama import aget_ollama_reasoning
+                elif model_type == "ollama":
+                    from agno.reasoning.ollama import aget_ollama_reasoning
 
-                log_debug("Starting Ollama Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_ollama_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Ollama Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_ollama_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "ai_foundry":
-                from agno.reasoning.azure_ai_foundry import aget_ai_foundry_reasoning
+                elif model_type == "ai_foundry":
+                    from agno.reasoning.azure_ai_foundry import aget_ai_foundry_reasoning
 
-                log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_ai_foundry_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Azure AI Foundry Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_ai_foundry_reasoning(
+                        reasoning_agent, messages, run_metrics=run_metrics
+                    )
 
-            elif model_type == "gemini":
-                from agno.reasoning.gemini import aget_gemini_reasoning
+                elif model_type == "gemini":
+                    from agno.reasoning.gemini import aget_gemini_reasoning
 
-                log_debug("Starting Gemini Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_gemini_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting Gemini Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_gemini_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "vertexai":
-                from agno.reasoning.vertexai import aget_vertexai_reasoning
+                elif model_type == "vertexai":
+                    from agno.reasoning.vertexai import aget_vertexai_reasoning
 
-                log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
-                reasoning_message = await aget_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
+                    log_debug("Starting VertexAI Reasoning", center=True, symbol="=")
+                    reasoning_message = await aget_vertexai_reasoning(
+                        reasoning_agent, messages, run_metrics=run_metrics
+                    )
 
         except Exception as e:
             log_error(f"Reasoning error: {str(e)}")
@@ -368,6 +385,7 @@ class ReasoningManager:
             return
 
         reasoning_agent = self._get_reasoning_agent(model)
+        run_metrics = self.config.run_metrics
 
         # Currently only DeepSeek and Anthropic support streaming
         if model_type == "deepseek":
@@ -375,7 +393,9 @@ class ReasoningManager:
 
             log_debug("Starting DeepSeek Reasoning (streaming)", center=True, symbol="=")
             final_message: Optional[Message] = None
-            for reasoning_delta, message in get_deepseek_reasoning_stream(reasoning_agent, messages):
+            for reasoning_delta, message in get_deepseek_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -399,7 +419,9 @@ class ReasoningManager:
 
             log_debug("Starting Anthropic Claude Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            for reasoning_delta, message in get_anthropic_reasoning_stream(reasoning_agent, messages):
+            for reasoning_delta, message in get_anthropic_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -423,7 +445,9 @@ class ReasoningManager:
 
             log_debug("Starting Gemini Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            for reasoning_delta, message in get_gemini_reasoning_stream(reasoning_agent, messages):
+            for reasoning_delta, message in get_gemini_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -447,7 +471,9 @@ class ReasoningManager:
 
             log_debug("Starting OpenAI Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            for reasoning_delta, message in get_openai_reasoning_stream(reasoning_agent, messages):
+            for reasoning_delta, message in get_openai_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -471,7 +497,9 @@ class ReasoningManager:
 
             log_debug("Starting VertexAI Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            for reasoning_delta, message in get_vertexai_reasoning_stream(reasoning_agent, messages):
+            for reasoning_delta, message in get_vertexai_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -495,7 +523,9 @@ class ReasoningManager:
 
             log_debug("Starting Azure AI Foundry Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            for reasoning_delta, message in get_ai_foundry_reasoning_stream(reasoning_agent, messages):
+            for reasoning_delta, message in get_ai_foundry_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -519,7 +549,9 @@ class ReasoningManager:
 
             log_debug("Starting Groq Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            for reasoning_delta, message in get_groq_reasoning_stream(reasoning_agent, messages):
+            for reasoning_delta, message in get_groq_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -543,7 +575,9 @@ class ReasoningManager:
 
             log_debug("Starting Ollama Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            for reasoning_delta, message in get_ollama_reasoning_stream(reasoning_agent, messages):
+            for reasoning_delta, message in get_ollama_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -584,6 +618,7 @@ class ReasoningManager:
             return
 
         reasoning_agent = self._get_reasoning_agent(model)
+        run_metrics = self.config.run_metrics
 
         # Currently only DeepSeek and Anthropic support streaming
         if model_type == "deepseek":
@@ -591,7 +626,9 @@ class ReasoningManager:
 
             log_debug("Starting DeepSeek Reasoning (streaming)", center=True, symbol="=")
             final_message: Optional[Message] = None
-            async for reasoning_delta, message in aget_deepseek_reasoning_stream(reasoning_agent, messages):
+            async for reasoning_delta, message in aget_deepseek_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -615,7 +652,9 @@ class ReasoningManager:
 
             log_debug("Starting Anthropic Claude Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            async for reasoning_delta, message in aget_anthropic_reasoning_stream(reasoning_agent, messages):
+            async for reasoning_delta, message in aget_anthropic_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -639,7 +678,9 @@ class ReasoningManager:
 
             log_debug("Starting Gemini Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            async for reasoning_delta, message in aget_gemini_reasoning_stream(reasoning_agent, messages):
+            async for reasoning_delta, message in aget_gemini_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -663,7 +704,9 @@ class ReasoningManager:
 
             log_debug("Starting OpenAI Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            async for reasoning_delta, message in aget_openai_reasoning_stream(reasoning_agent, messages):
+            async for reasoning_delta, message in aget_openai_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -687,7 +730,9 @@ class ReasoningManager:
 
             log_debug("Starting VertexAI Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            async for reasoning_delta, message in aget_vertexai_reasoning_stream(reasoning_agent, messages):
+            async for reasoning_delta, message in aget_vertexai_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -711,7 +756,9 @@ class ReasoningManager:
 
             log_debug("Starting Azure AI Foundry Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            async for reasoning_delta, message in aget_ai_foundry_reasoning_stream(reasoning_agent, messages):
+            async for reasoning_delta, message in aget_ai_foundry_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -735,7 +782,9 @@ class ReasoningManager:
 
             log_debug("Starting Groq Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            async for reasoning_delta, message in aget_groq_reasoning_stream(reasoning_agent, messages):
+            async for reasoning_delta, message in aget_groq_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -759,7 +808,9 @@ class ReasoningManager:
 
             log_debug("Starting Ollama Reasoning (streaming)", center=True, symbol="=")
             final_message = None
-            async for reasoning_delta, message in aget_ollama_reasoning_stream(reasoning_agent, messages):
+            async for reasoning_delta, message in aget_ollama_reasoning_stream(
+                reasoning_agent, messages, run_metrics=run_metrics
+            ):
                 if reasoning_delta is not None:
                     yield (reasoning_delta, None)
                 if message is not None:
@@ -830,7 +881,10 @@ class ReasoningManager:
         while next_action == NextAction.CONTINUE and step_count < self.config.max_steps:
             log_debug(f"Step {step_count}", center=True, symbol="=")
             try:
-                reasoning_agent_response: RunOutput = reasoning_agent.run(input=run_messages.get_input_messages())
+                # Shield the ambient metrics sink — reasoning metrics are accumulated
+                # explicitly below, so the nested run must not also report to it
+                with shielded_metrics_sink():
+                    reasoning_agent_response: RunOutput = reasoning_agent.run(input=run_messages.get_input_messages())
 
                 # Accumulate reasoning model metrics
                 if self.config.run_metrics is not None:
@@ -943,9 +997,12 @@ class ReasoningManager:
             log_debug(f"Step {step_count}", center=True, symbol="=")
             step_count += 1
             try:
-                reasoning_agent_response: RunOutput = await reasoning_agent.arun(  # type: ignore[misc]
-                    input=run_messages.get_input_messages()
-                )
+                # Shield the ambient metrics sink — reasoning metrics are accumulated
+                # explicitly below, so the nested run must not also report to it
+                with shielded_metrics_sink():
+                    reasoning_agent_response: RunOutput = await reasoning_agent.arun(  # type: ignore[misc]
+                        input=run_messages.get_input_messages()
+                    )
 
                 # Accumulate reasoning model metrics
                 if self.config.run_metrics is not None:

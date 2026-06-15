@@ -1,3 +1,5 @@
+import threading
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from dataclasses import fields as dc_fields
 from enum import Enum
@@ -771,6 +773,65 @@ def accumulate_eval_metrics(
         run_metrics.additional_metrics["eval_duration"] = existing + eval_metrics.duration
 
 
+def accumulate_run_metrics(
+    run_metrics: RunMetrics,
+    other_metrics: RunMetrics,
+) -> None:
+    """Accumulate another run's metrics into run_metrics in place.
+
+    Sums token counts and cost, and merges per-model details by (provider, id).
+    Timing fields (timer, duration, time_to_first_token) are left untouched —
+    a nested run's wall time is already part of the parent's wall time.
+    """
+    metrics = run_metrics
+
+    # Accumulate top-level token counts
+    metrics.input_tokens += other_metrics.input_tokens
+    metrics.output_tokens += other_metrics.output_tokens
+    metrics.total_tokens += other_metrics.total_tokens
+    metrics.audio_input_tokens += other_metrics.audio_input_tokens
+    metrics.audio_output_tokens += other_metrics.audio_output_tokens
+    metrics.audio_total_tokens += other_metrics.audio_total_tokens
+    metrics.cache_read_tokens += other_metrics.cache_read_tokens
+    metrics.cache_write_tokens += other_metrics.cache_write_tokens
+    metrics.reasoning_tokens += other_metrics.reasoning_tokens
+
+    # Accumulate cost
+    if other_metrics.cost is not None:
+        metrics.cost = (metrics.cost or 0) + other_metrics.cost
+
+    # Merge per-model details
+    if other_metrics.details:
+        if metrics.details is None:
+            metrics.details = {}
+        for model_type, model_metrics_list in other_metrics.details.items():
+            if model_type not in metrics.details:
+                metrics.details[model_type] = []
+            for mm in model_metrics_list:
+                found = False
+                for existing in metrics.details[model_type]:
+                    if existing.provider == mm.provider and existing.id == mm.id:
+                        existing.accumulate(mm)
+                        found = True
+                        break
+                if not found:
+                    metrics.details[model_type].append(ModelMetrics.from_dict(mm.to_dict()))
+
+    # Merge additional_metrics (sum numeric values, keep latest for others)
+    if other_metrics.additional_metrics:
+        if metrics.additional_metrics is None:
+            metrics.additional_metrics = {}
+        for k, v in other_metrics.additional_metrics.items():
+            if (
+                k in metrics.additional_metrics
+                and isinstance(v, (int, float))
+                and isinstance(metrics.additional_metrics[k], (int, float))
+            ):
+                metrics.additional_metrics[k] += v
+            else:
+                metrics.additional_metrics[k] = v
+
+
 def merge_background_metrics(
     run_metrics: Optional[RunMetrics],
     background_metrics: "Sequence[Optional[RunMetrics]]",
@@ -788,51 +849,38 @@ def merge_background_metrics(
     for bg_metrics in background_metrics:
         if bg_metrics is None:
             continue
+        accumulate_run_metrics(run_metrics, bg_metrics)
 
-        metrics = run_metrics
 
-        # Accumulate top-level token counts
-        metrics.input_tokens += bg_metrics.input_tokens
-        metrics.output_tokens += bg_metrics.output_tokens
-        metrics.total_tokens += bg_metrics.total_tokens
-        metrics.audio_input_tokens += bg_metrics.audio_input_tokens
-        metrics.audio_output_tokens += bg_metrics.audio_output_tokens
-        metrics.audio_total_tokens += bg_metrics.audio_total_tokens
-        metrics.cache_read_tokens += bg_metrics.cache_read_tokens
-        metrics.cache_write_tokens += bg_metrics.cache_write_tokens
-        metrics.reasoning_tokens += bg_metrics.reasoning_tokens
+# ---------------------------------------------------------------------------
+# Nested-run metrics propagation
+# ---------------------------------------------------------------------------
 
-        # Accumulate cost
-        if bg_metrics.cost is not None:
-            metrics.cost = (metrics.cost or 0) + bg_metrics.cost
+_nested_run_metrics_sink: ContextVar[Optional[RunMetrics]] = ContextVar("_nested_run_metrics_sink", default=None)
 
-        # Merge per-model details
-        if bg_metrics.details:
-            if metrics.details is None:
-                metrics.details = {}
-            for model_type, model_metrics_list in bg_metrics.details.items():
-                if model_type not in metrics.details:
-                    metrics.details[model_type] = []
-                for mm in model_metrics_list:
-                    found = False
-                    for existing in metrics.details[model_type]:
-                        if existing.provider == mm.provider and existing.id == mm.id:
-                            existing.accumulate(mm)
-                            found = True
-                            break
-                    if not found:
-                        metrics.details[model_type].append(ModelMetrics.from_dict(mm.to_dict()))
+# Guards concurrent in-place accumulation into a shared sink (e.g. parallel
+# tool calls completing nested runs at the same time).
+_nested_run_metrics_lock = threading.Lock()
 
-        # Merge additional_metrics (sum numeric values, keep latest for others)
-        if bg_metrics.additional_metrics:
-            if metrics.additional_metrics is None:
-                metrics.additional_metrics = {}
-            for k, v in bg_metrics.additional_metrics.items():
-                if (
-                    k in metrics.additional_metrics
-                    and isinstance(v, (int, float))
-                    and isinstance(metrics.additional_metrics[k], (int, float))
-                ):
-                    metrics.additional_metrics[k] += v
-                else:
-                    metrics.additional_metrics[k] = v
+
+def get_nested_run_metrics_sink() -> Optional[RunMetrics]:
+    """Return the metrics sink of the enclosing run, if any.
+
+    See agno.run._nested_metrics for how runs install and report to the sink.
+    """
+    return _nested_run_metrics_sink.get()
+
+
+def swap_nested_run_metrics_sink(sink: Optional[RunMetrics]) -> Optional[RunMetrics]:
+    """Set the current metrics sink and return the previous one."""
+    previous = _nested_run_metrics_sink.get()
+    _nested_run_metrics_sink.set(sink)
+    return previous
+
+
+def report_metrics_to_sink(sink: Optional[RunMetrics], metrics: Optional[RunMetrics]) -> None:
+    """Report a completed nested run's total metrics into a parent sink."""
+    if sink is None or metrics is None or sink is metrics:
+        return
+    with _nested_run_metrics_lock:
+        accumulate_run_metrics(sink, metrics)

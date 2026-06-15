@@ -32,10 +32,19 @@ from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
+from agno.metrics import swap_nested_run_metrics_sink
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
+from agno.run._nested_metrics import (
+    arun_stream_with_metrics_scope,
+    arun_with_metrics_scope,
+    has_token_metrics,
+    metrics_collection_sink,
+    report_run_to_parent,
+    run_stream_with_metrics_scope,
+)
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
@@ -1934,32 +1943,71 @@ class Workflow:
             else:
                 return len(self.steps)
 
+    def _attach_callable_workflow_metrics(
+        self, workflow_run_response: WorkflowRunOutput, collected_metrics: RunMetrics
+    ) -> None:
+        """Attach metrics collected from nested runs inside a callable workflow.
+
+        Callable workflows have no Step objects, so nested agent/team/workflow runs
+        started inside the callable are recorded as a single function step in the
+        workflow metrics.
+        """
+        if not has_token_metrics(collected_metrics):
+            return
+        executor_name = getattr(self.steps, "__name__", "workflow_function")
+        if workflow_run_response.metrics is None:
+            workflow_run_response.metrics = WorkflowMetrics(steps={})
+        workflow_run_response.metrics.steps[executor_name] = StepMetrics(
+            step_name=executor_name,
+            executor_type="function",
+            executor_name=executor_name,
+            metrics=collected_metrics,
+        )
+
     def _aggregate_workflow_metrics(
         self,
         step_results: List[Union[StepOutput, List[StepOutput]]],
         current_workflow_metrics: Optional[WorkflowMetrics] = None,
     ) -> WorkflowMetrics:
         """Aggregate metrics from all step responses into structured workflow metrics"""
-        steps_dict = {}
+        steps_dict: Dict[str, StepMetrics] = {}
 
         def process_step_output(step_output: StepOutput):
             """Process a single step output for metrics"""
 
-            # If this step has nested steps, process them recursively
-            if hasattr(step_output, "steps") and step_output.steps:
+            # Only collect metrics from steps that actually have metrics. Containers
+            # (parallel etc.) and nested workflows carry aggregates of their children,
+            # which are collected through the recursion below instead.
+            collected = (
+                step_output.step_name is not None
+                and step_output.metrics is not None
+                and step_output.executor_type in ["agent", "team", "function"]
+            )
+
+            # If this step has nested steps and was not collected itself, process
+            # them recursively — collecting both would count the children twice
+            if not collected and hasattr(step_output, "steps") and step_output.steps:
                 for nested_step in step_output.steps:
                     process_step_output(nested_step)
 
-            # Only collect metrics from steps that actually have metrics (actual agents/teams)
-            if (
-                step_output.step_name and step_output.metrics and step_output.executor_type in ["agent", "team"]
-            ):  # Only include actual executors
-                step_metrics = StepMetrics(
-                    step_name=step_output.step_name,
-                    executor_type=step_output.executor_type or "unknown",
-                    executor_name=step_output.executor_name or "unknown",
-                    metrics=step_output.metrics,
-                )
+            # Only include actual executors
+            if collected and step_output.step_name and step_output.metrics:
+                existing_step_metrics = steps_dict.get(step_output.step_name)
+                if existing_step_metrics is not None and existing_step_metrics.metrics is not None:
+                    # Same step executed more than once (e.g. loop iterations) — sum the metrics
+                    step_metrics = StepMetrics(
+                        step_name=step_output.step_name,
+                        executor_type=step_output.executor_type or "unknown",
+                        executor_name=step_output.executor_name or "unknown",
+                        metrics=existing_step_metrics.metrics + step_output.metrics,
+                    )
+                else:
+                    step_metrics = StepMetrics(
+                        step_name=step_output.step_name,
+                        executor_type=step_output.executor_type or "unknown",
+                        executor_name=step_output.executor_name or "unknown",
+                        metrics=step_output.metrics,
+                    )
                 steps_dict[step_output.step_name] = step_metrics
 
         # Process all step results
@@ -2037,23 +2085,32 @@ class Workflow:
 
         if callable(self.steps):
             try:
-                if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
-                    raise ValueError("Cannot use async function with synchronous execution")
-                elif isgeneratorfunction(self.steps):
-                    content = ""
-                    for chunk in self.steps(self, execution_input, **kwargs):
-                        # Check for cancellation while consuming generator
+                # Nested agent/team/workflow runs started inside the callable report
+                # their metrics into the collection sink
+                with metrics_collection_sink() as collected_metrics:
+                    if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
+                        raise ValueError("Cannot use async function with synchronous execution")
+                    elif isgeneratorfunction(self.steps):
+                        content = ""
+                        for chunk in self.steps(self, execution_input, **kwargs):
+                            # Check for cancellation while consuming generator
+                            raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            if (
+                                hasattr(chunk, "content")
+                                and chunk.content is not None
+                                and isinstance(chunk.content, str)
+                            ):
+                                content += chunk.content
+                            else:
+                                content += str(chunk)
+                        workflow_run_response.content = content
+                    else:
+                        # Execute the workflow with the custom executor
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
-                else:
-                    # Execute the workflow with the custom executor
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)  # type: ignore[arg-type]
-
+                        workflow_run_response.content = self._call_custom_function(
+                            self.steps, execution_input, **kwargs
+                        )  # type: ignore[arg-type]
+                self._attach_callable_workflow_metrics(workflow_run_response, collected_metrics)
                 workflow_run_response.status = RunStatus.completed
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
@@ -2388,22 +2445,32 @@ class Workflow:
 
         if callable(self.steps):
             try:
-                if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
-                    raise ValueError("Cannot use async function with synchronous execution")
-                elif isgeneratorfunction(self.steps):
-                    content = ""
-                    for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
+                # Nested agent/team/workflow runs started inside the callable report
+                # their metrics into the collection sink
+                with metrics_collection_sink() as collected_metrics:
+                    if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
+                        raise ValueError("Cannot use async function with synchronous execution")
+                    elif isgeneratorfunction(self.steps):
+                        content = ""
+                        for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
+                            raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            # Update the run_response with the content from the result
+                            if (
+                                hasattr(chunk, "content")
+                                and chunk.content is not None
+                                and isinstance(chunk.content, str)
+                            ):
+                                content += chunk.content
+                                yield chunk
+                            else:
+                                content += str(chunk)
+                        workflow_run_response.content = content
+                    else:
                         raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                        # Update the run_response with the content from the result
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                            yield chunk
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
-                else:
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
+                        workflow_run_response.content = self._call_custom_function(
+                            self.steps, execution_input, **kwargs
+                        )
+                self._attach_callable_workflow_metrics(workflow_run_response, collected_metrics)
                 workflow_run_response.status = RunStatus.completed
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -3059,31 +3126,45 @@ class Workflow:
             content = ""
 
             try:
-                if iscoroutinefunction(self.steps):  # type: ignore
-                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    workflow_run_response.content = await self._acall_custom_function(
-                        self.steps, execution_input, **kwargs
-                    )
-                elif isgeneratorfunction(self.steps):
-                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
-                elif isasyncgenfunction(self.steps):  # type: ignore
-                    async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-                    async for chunk in async_gen:
+                # Nested agent/team/workflow runs started inside the callable report
+                # their metrics into the collection sink
+                with metrics_collection_sink() as collected_metrics:
+                    if iscoroutinefunction(self.steps):  # type: ignore
                         await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
-                else:
-                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
+                        workflow_run_response.content = await self._acall_custom_function(
+                            self.steps, execution_input, **kwargs
+                        )
+                    elif isgeneratorfunction(self.steps):
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                            if (
+                                hasattr(chunk, "content")
+                                and chunk.content is not None
+                                and isinstance(chunk.content, str)
+                            ):
+                                content += chunk.content
+                            else:
+                                content += str(chunk)
+                        workflow_run_response.content = content
+                    elif isasyncgenfunction(self.steps):  # type: ignore
+                        async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                        async for chunk in async_gen:
+                            await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            if (
+                                hasattr(chunk, "content")
+                                and chunk.content is not None
+                                and isinstance(chunk.content, str)
+                            ):
+                                content += chunk.content
+                            else:
+                                content += str(chunk)
+                        workflow_run_response.content = content
+                    else:
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        workflow_run_response.content = self._call_custom_function(
+                            self.steps, execution_input, **kwargs
+                        )
+                self._attach_callable_workflow_metrics(workflow_run_response, collected_metrics)
                 workflow_run_response.status = RunStatus.completed
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
                 # Persistence happens below after the if/else; just mark cancelled and fall through
@@ -3426,35 +3507,47 @@ class Workflow:
 
         if callable(self.steps):
             try:
-                if iscoroutinefunction(self.steps):  # type: ignore
-                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    workflow_run_response.content = await self._acall_custom_function(
-                        self.steps, execution_input, **kwargs
-                    )
-                elif isgeneratorfunction(self.steps):
-                    content = ""
-                    for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                # Nested agent/team/workflow runs started inside the callable report
+                # their metrics into the collection sink
+                with metrics_collection_sink() as collected_metrics:
+                    if iscoroutinefunction(self.steps):  # type: ignore
                         await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                            yield chunk
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
-                elif isasyncgenfunction(self.steps):  # type: ignore
-                    content = ""
-                    async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
-                    async for chunk in async_gen:
+                        workflow_run_response.content = await self._acall_custom_function(
+                            self.steps, execution_input, **kwargs
+                        )
+                    elif isgeneratorfunction(self.steps):
+                        content = ""
+                        for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
+                            await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            if (
+                                hasattr(chunk, "content")
+                                and chunk.content is not None
+                                and isinstance(chunk.content, str)
+                            ):
+                                content += chunk.content
+                                yield chunk
+                            else:
+                                content += str(chunk)
+                        workflow_run_response.content = content
+                    elif isasyncgenfunction(self.steps):  # type: ignore
+                        content = ""
+                        async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                        async for chunk in async_gen:
+                            await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            if (
+                                hasattr(chunk, "content")
+                                and chunk.content is not None
+                                and isinstance(chunk.content, str)
+                            ):
+                                content += chunk.content
+                                yield chunk
+                            else:
+                                content += str(chunk)
+                        workflow_run_response.content = content
+                    else:
                         await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                        if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
-                            content += chunk.content
-                            yield chunk
-                        else:
-                            content += str(chunk)
-                    workflow_run_response.content = content
-                else:
-                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    workflow_run_response.content = self.steps(self, execution_input, **kwargs)
+                        workflow_run_response.content = self.steps(self, execution_input, **kwargs)
+                self._attach_callable_workflow_metrics(workflow_run_response, collected_metrics)
                 workflow_run_response.status = RunStatus.completed
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -4161,6 +4254,10 @@ class Workflow:
         async def execute_workflow_background():
             """Simple background execution"""
             try:
+                # Detached run — never report metrics to an enclosing run that may
+                # complete before this task does
+                swap_nested_run_metrics_sink(None)
+
                 # Update status to RUNNING and save
                 workflow_run_response.status = RunStatus.running
                 if self._has_async_db():
@@ -4294,6 +4391,10 @@ class Workflow:
         async def execute_workflow_background_stream():
             """Background execution with streaming and WebSocket broadcasting"""
             try:
+                # Detached run — never report metrics to an enclosing run that may
+                # complete before this task does
+                swap_nested_run_metrics_sink(None)
+
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
@@ -4462,6 +4563,10 @@ class Workflow:
             # that _handle_event just assigned.
 
             try:
+                # Detached run — never report metrics to an enclosing run that may
+                # complete before this task does
+                swap_nested_run_metrics_sink(None)
+
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
@@ -5822,24 +5927,37 @@ class Workflow:
             start_index = paused_step_index
 
         if stream:
-            return self._continue_execute_stream(
-                session=session,
-                execution_input=execution_input,
-                workflow_run_response=run_response,
-                run_context=run_context,
-                start_step_index=start_index,
-                stream_events=stream_events or False,
-                **kwargs,
+            # Steps report through StepOutput metrics, so the workflow shields the
+            # ambient sink (sink=None) and reports its aggregated step metrics upward.
+            return run_stream_with_metrics_scope(
+                self._continue_execute_stream(
+                    session=session,
+                    execution_input=execution_input,
+                    workflow_run_response=run_response,
+                    run_context=run_context,
+                    start_step_index=start_index,
+                    stream_events=stream_events or False,
+                    **kwargs,
+                ),
+                run_response,
+                sink=None,
             )
         else:
-            return self._continue_execute(
-                session=session,
-                execution_input=execution_input,
-                workflow_run_response=run_response,
-                run_context=run_context,
-                start_step_index=start_index,
-                **kwargs,
-            )
+            response = run_response
+            parent_sink = swap_nested_run_metrics_sink(None)
+            try:
+                response = self._continue_execute(
+                    session=session,
+                    execution_input=execution_input,
+                    workflow_run_response=run_response,
+                    run_context=run_context,
+                    start_step_index=start_index,
+                    **kwargs,
+                )
+                return response
+            finally:
+                swap_nested_run_metrics_sink(parent_sink)
+                report_run_to_parent(parent_sink, response)
 
     def _continue_execute(
         self,
@@ -7753,23 +7871,33 @@ class Workflow:
             start_index = paused_step_index
 
         if stream:
-            return self._acontinue_execute_stream(
-                session=session,
-                execution_input=execution_input,
-                workflow_run_response=run_response,
-                run_context=run_context,
-                start_step_index=start_index,
-                stream_events=stream_events or False,
-                **kwargs,
+            # Steps report through StepOutput metrics, so the workflow shields the
+            # ambient sink (sink=None) and reports its aggregated step metrics upward.
+            return arun_stream_with_metrics_scope(
+                self._acontinue_execute_stream(
+                    session=session,
+                    execution_input=execution_input,
+                    workflow_run_response=run_response,
+                    run_context=run_context,
+                    start_step_index=start_index,
+                    stream_events=stream_events or False,
+                    **kwargs,
+                ),
+                run_response,
+                sink=None,
             )
         else:
-            return await self._acontinue_execute(
-                session=session,
-                execution_input=execution_input,
-                workflow_run_response=run_response,
-                run_context=run_context,
-                start_step_index=start_index,
-                **kwargs,
+            return await arun_with_metrics_scope(
+                self._acontinue_execute(
+                    session=session,
+                    execution_input=execution_input,
+                    workflow_run_response=run_response,
+                    run_context=run_context,
+                    start_step_index=start_index,
+                    **kwargs,
+                ),
+                run_response,
+                sink=None,
             )
 
     async def _acontinue_execute(
@@ -9249,28 +9377,41 @@ class Workflow:
         workflow_run_response.metrics.start_timer()
 
         if stream:
-            return self._execute_stream(
-                session=workflow_session,
-                execution_input=inputs,  # type: ignore[arg-type]
-                workflow_run_response=workflow_run_response,
-                stream_events=stream_events,
-                run_context=run_context,
-                background_tasks=background_tasks,
-                add_dependencies_to_context=resolved["add_dependencies_to_context"],
-                add_session_state_to_context=resolved["add_session_state_to_context"],
-                **kwargs,
+            # Steps report through StepOutput metrics, so the workflow shields the
+            # ambient sink (sink=None) and reports its aggregated step metrics upward.
+            return run_stream_with_metrics_scope(
+                self._execute_stream(
+                    session=workflow_session,
+                    execution_input=inputs,  # type: ignore[arg-type]
+                    workflow_run_response=workflow_run_response,
+                    stream_events=stream_events,
+                    run_context=run_context,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                    add_session_state_to_context=resolved["add_session_state_to_context"],
+                    **kwargs,
+                ),
+                workflow_run_response,
+                sink=None,
             )
         else:
-            return self._execute(
-                session=workflow_session,
-                execution_input=inputs,  # type: ignore[arg-type]
-                workflow_run_response=workflow_run_response,
-                run_context=run_context,
-                background_tasks=background_tasks,
-                add_dependencies_to_context=resolved["add_dependencies_to_context"],
-                add_session_state_to_context=resolved["add_session_state_to_context"],
-                **kwargs,
-            )
+            response = workflow_run_response
+            parent_sink = swap_nested_run_metrics_sink(None)
+            try:
+                response = self._execute(
+                    session=workflow_session,
+                    execution_input=inputs,  # type: ignore[arg-type]
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                    add_session_state_to_context=resolved["add_session_state_to_context"],
+                    **kwargs,
+                )
+                return response
+            finally:
+                swap_nested_run_metrics_sink(parent_sink)
+                report_run_to_parent(parent_sink, response)
 
     @overload
     async def arun(
@@ -9513,35 +9654,45 @@ class Workflow:
         workflow_run_response.metrics.start_timer()
 
         if stream:
-            return self._aexecute_stream(  # type: ignore
-                execution_input=inputs,
-                workflow_run_response=workflow_run_response,
-                session_id=session_id,
-                user_id=user_id,
-                stream_events=stream_events,
-                websocket=websocket,
-                files=files,
-                session_state=session_state,
-                run_context=run_context,
-                background_tasks=background_tasks,
-                add_dependencies_to_context=resolved["add_dependencies_to_context"],
-                add_session_state_to_context=resolved["add_session_state_to_context"],
-                **kwargs,
+            # Steps report through StepOutput metrics, so the workflow shields the
+            # ambient sink (sink=None) and reports its aggregated step metrics upward.
+            return arun_stream_with_metrics_scope(  # type: ignore[return-value]
+                self._aexecute_stream(  # type: ignore
+                    execution_input=inputs,
+                    workflow_run_response=workflow_run_response,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream_events=stream_events,
+                    websocket=websocket,
+                    files=files,
+                    session_state=session_state,
+                    run_context=run_context,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                    add_session_state_to_context=resolved["add_session_state_to_context"],
+                    **kwargs,
+                ),
+                workflow_run_response,
+                sink=None,
             )
         else:
-            return self._aexecute(  # type: ignore
-                execution_input=inputs,
-                workflow_run_response=workflow_run_response,
-                session_id=session_id,
-                user_id=user_id,
-                websocket=websocket,
-                files=files,
-                session_state=session_state,
-                run_context=run_context,
-                background_tasks=background_tasks,
-                add_dependencies_to_context=resolved["add_dependencies_to_context"],
-                add_session_state_to_context=resolved["add_session_state_to_context"],
-                **kwargs,
+            return arun_with_metrics_scope(  # type: ignore[return-value]
+                self._aexecute(  # type: ignore
+                    execution_input=inputs,
+                    workflow_run_response=workflow_run_response,
+                    session_id=session_id,
+                    user_id=user_id,
+                    websocket=websocket,
+                    files=files,
+                    session_state=session_state,
+                    run_context=run_context,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                    add_session_state_to_context=resolved["add_session_state_to_context"],
+                    **kwargs,
+                ),
+                workflow_run_response,
+                sink=None,
             )
 
     def _prepare_steps(self):

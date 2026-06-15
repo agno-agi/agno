@@ -285,7 +285,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process."""
         try:
-            response = evaluator_agent.run(evaluation_input, stream=False)
+            # Shield the ambient metrics sink — eval metrics are accumulated
+            # explicitly below, so the nested run must not also report to it
+            from agno.run._nested_metrics import shielded_metrics_sink
+
+            with shielded_metrics_sink():
+                response = evaluator_agent.run(evaluation_input, stream=False)
 
             # Accumulate eval model metrics into the parent run_metrics
             if run_metrics is not None and response.metrics is not None:
@@ -318,7 +323,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
     ) -> Optional[AccuracyEvaluation]:
         """Orchestrate the evaluation process asynchronously."""
         try:
-            response = await evaluator_agent.arun(evaluation_input, stream=False)  # type: ignore[misc]
+            # Shield the ambient metrics sink — eval metrics are accumulated
+            # explicitly below, so the nested run must not also report to it
+            from agno.run._nested_metrics import shielded_metrics_sink
+
+            with shielded_metrics_sink():
+                response = await evaluator_agent.arun(evaluation_input, stream=False)  # type: ignore[misc]
 
             # Accumulate eval model metrics into the parent run_metrics
             if run_metrics is not None and response.metrics is not None:

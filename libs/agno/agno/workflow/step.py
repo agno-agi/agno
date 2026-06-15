@@ -18,6 +18,7 @@ from agno.models.message import Message
 from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
+from agno.run._nested_metrics import has_token_metrics, metrics_collection_sink, total_run_metrics
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
@@ -686,9 +687,13 @@ class Step:
             raise ValueError("No executor configured")
 
     def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[RunMetrics]:
-        """Extract metrics from agent or team response"""
+        """Extract metrics from agent or team response.
+
+        For team responses this includes member metrics, which live on
+        member_responses rather than the team's own run metrics.
+        """
         if hasattr(response, "metrics") and response.metrics:
-            return response.metrics
+            return total_run_metrics(response)
         return None
 
     def _call_custom_function(
@@ -769,74 +774,78 @@ class Step:
                 if self._executor_type == "function":
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
-                    if _is_generator_function(self.active_executor):
-                        content = ""
-                        final_response = None
-                        try:
-                            for chunk in self._call_custom_function(
-                                self.active_executor,
+                    # Nested agent/team/workflow runs started inside the function
+                    # report their metrics into the collection sink
+                    with metrics_collection_sink() as collected_metrics:
+                        if _is_generator_function(self.active_executor):
+                            content = ""
+                            final_response = None
+                            try:
+                                for chunk in self._call_custom_function(
+                                    self.active_executor,
+                                    step_input,
+                                    session_state_copy,  # type: ignore[arg-type]
+                                    run_context,
+                                ):  # type: ignore
+                                    if isinstance(chunk, (BaseRunOutputEvent)):
+                                        if (
+                                            isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
+                                            and chunk.content is not None
+                                        ):
+                                            # Its a regular chunk of content
+                                            if isinstance(chunk.content, str):
+                                                content += chunk.content
+                                            # Its the BaseModel object, set it as the content. Replace any previous content.
+                                            # There should be no previous str content at this point
+                                            elif isinstance(chunk.content, BaseModel):
+                                                content = chunk.content  # type: ignore[assignment]
+                                            else:
+                                                # Case when parse_response is False and the content is a dict
+                                                content += str(chunk.content)
+                                    elif isinstance(chunk, (RunOutput, TeamRunOutput)):
+                                        # This is the final response from the agent/team
+                                        content = chunk.content  # type: ignore[assignment]
+                                    # If the chunk is a StepOutput, use it as the final response
+                                    elif isinstance(chunk, StepOutput):
+                                        final_response = chunk
+                                        break
+                                    # Non Agent/Team data structure that was yielded
+                                    else:
+                                        content += str(chunk)
+
+                            except StopIteration as e:
+                                if hasattr(e, "value") and isinstance(e.value, StepOutput):
+                                    final_response = e.value
+
+                            # Merge session_state changes back
+                            if run_context is None and session_state is not None:
+                                merge_dictionaries(session_state, session_state_copy)
+
+                            if final_response is not None:
+                                response = final_response
+                            else:
+                                response = StepOutput(content=content)
+                        else:
+                            # Execute function with signature inspection for session_state support
+                            result = self._call_custom_function(
+                                self.active_executor,  # type: ignore[arg-type]
                                 step_input,
-                                session_state_copy,  # type: ignore[arg-type]
+                                session_state_copy,
                                 run_context,
-                            ):  # type: ignore
-                                if isinstance(chunk, (BaseRunOutputEvent)):
-                                    if (
-                                        isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
-                                        and chunk.content is not None
-                                    ):
-                                        # Its a regular chunk of content
-                                        if isinstance(chunk.content, str):
-                                            content += chunk.content
-                                        # Its the BaseModel object, set it as the content. Replace any previous content.
-                                        # There should be no previous str content at this point
-                                        elif isinstance(chunk.content, BaseModel):
-                                            content = chunk.content  # type: ignore[assignment]
-                                        else:
-                                            # Case when parse_response is False and the content is a dict
-                                            content += str(chunk.content)
-                                elif isinstance(chunk, (RunOutput, TeamRunOutput)):
-                                    # This is the final response from the agent/team
-                                    content = chunk.content  # type: ignore[assignment]
-                                # If the chunk is a StepOutput, use it as the final response
-                                elif isinstance(chunk, StepOutput):
-                                    final_response = chunk
-                                    break
-                                # Non Agent/Team data structure that was yielded
-                                else:
-                                    content += str(chunk)
+                            )
 
-                        except StopIteration as e:
-                            if hasattr(e, "value") and isinstance(e.value, StepOutput):
-                                final_response = e.value
+                            # Merge session_state changes back
+                            if run_context is None and session_state is not None:
+                                merge_dictionaries(session_state, session_state_copy)
 
-                        # Merge session_state changes back
-                        if run_context is None and session_state is not None:
-                            merge_dictionaries(session_state, session_state_copy)
-
-                        if final_response is not None:
-                            response = final_response
-                        else:
-                            response = StepOutput(content=content)
-                    else:
-                        # Execute function with signature inspection for session_state support
-                        result = self._call_custom_function(
-                            self.active_executor,  # type: ignore[arg-type]
-                            step_input,
-                            session_state_copy,
-                            run_context,
-                        )
-
-                        # Merge session_state changes back
-                        if run_context is None and session_state is not None:
-                            merge_dictionaries(session_state, session_state_copy)
-
-                        # If function returns StepOutput, use it directly
-                        if isinstance(result, StepOutput):
-                            response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            response = StepOutput(content=result.content)
-                        else:
-                            response = StepOutput(content=str(result))
+                            # If function returns StepOutput, use it directly
+                            if isinstance(result, StepOutput):
+                                response = result
+                            elif isinstance(result, (RunOutput, TeamRunOutput)):
+                                response = StepOutput(content=result.content)
+                            else:
+                                response = StepOutput(content=str(result))
+                    self._attach_function_step_metrics(response, collected_metrics)
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -1108,71 +1117,75 @@ class Step:
                     log_debug(f"Executing function executor for step: {self.name}")
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
-                    if _is_generator_function(self.active_executor):
-                        log_debug("Function returned iterable, streaming events")
-                        content = ""
-                        try:
-                            iterator = self._call_custom_function(
-                                self.active_executor,
+                    # Nested agent/team/workflow runs started inside the function
+                    # report their metrics into the collection sink
+                    with metrics_collection_sink() as collected_metrics:
+                        if _is_generator_function(self.active_executor):
+                            log_debug("Function returned iterable, streaming events")
+                            content = ""
+                            try:
+                                iterator = self._call_custom_function(
+                                    self.active_executor,
+                                    step_input,
+                                    session_state_copy,
+                                    run_context,
+                                )
+                                for event in iterator:  # type: ignore
+                                    if isinstance(event, (BaseRunOutputEvent)):
+                                        if (
+                                            isinstance(event, (RunContentEvent, TeamRunContentEvent))
+                                            and event.content is not None
+                                        ):
+                                            if isinstance(event.content, str):
+                                                content += event.content
+                                            elif isinstance(event.content, BaseModel):
+                                                content = event.content  # type: ignore[assignment]
+                                            else:
+                                                content = str(event.content)
+                                        # Only yield executor events if stream_executor_events is True
+                                        if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
+                                            enriched_event = self._enrich_event_with_context(
+                                                event, workflow_run_response, step_index
+                                            )
+                                            yield enriched_event  # type: ignore[misc]
+                                    elif isinstance(event, (RunOutput, TeamRunOutput)):
+                                        content = event.content  # type: ignore[assignment]
+                                    elif isinstance(event, StepOutput):
+                                        final_response = event
+                                        break
+                                    else:
+                                        content += str(event)
+
+                                # Merge session_state changes back
+                                if run_context is None and session_state is not None:
+                                    merge_dictionaries(session_state, session_state_copy)
+
+                                if not final_response:
+                                    final_response = StepOutput(content=content)
+                            except StopIteration as e:
+                                if hasattr(e, "value") and isinstance(e.value, StepOutput):
+                                    final_response = e.value
+
+                        else:
+                            result = self._call_custom_function(
+                                self.active_executor,  # type: ignore[arg-type]
                                 step_input,
                                 session_state_copy,
                                 run_context,
                             )
-                            for event in iterator:  # type: ignore
-                                if isinstance(event, (BaseRunOutputEvent)):
-                                    if (
-                                        isinstance(event, (RunContentEvent, TeamRunContentEvent))
-                                        and event.content is not None
-                                    ):
-                                        if isinstance(event.content, str):
-                                            content += event.content
-                                        elif isinstance(event.content, BaseModel):
-                                            content = event.content  # type: ignore[assignment]
-                                        else:
-                                            content = str(event.content)
-                                    # Only yield executor events if stream_executor_events is True
-                                    if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
-                                        enriched_event = self._enrich_event_with_context(
-                                            event, workflow_run_response, step_index
-                                        )
-                                        yield enriched_event  # type: ignore[misc]
-                                elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                    content = event.content  # type: ignore[assignment]
-                                elif isinstance(event, StepOutput):
-                                    final_response = event
-                                    break
-                                else:
-                                    content += str(event)
 
                             # Merge session_state changes back
                             if run_context is None and session_state is not None:
                                 merge_dictionaries(session_state, session_state_copy)
 
-                            if not final_response:
-                                final_response = StepOutput(content=content)
-                        except StopIteration as e:
-                            if hasattr(e, "value") and isinstance(e.value, StepOutput):
-                                final_response = e.value
-
-                    else:
-                        result = self._call_custom_function(
-                            self.active_executor,  # type: ignore[arg-type]
-                            step_input,
-                            session_state_copy,
-                            run_context,
-                        )
-
-                        # Merge session_state changes back
-                        if run_context is None and session_state is not None:
-                            merge_dictionaries(session_state, session_state_copy)
-
-                        if isinstance(result, StepOutput):
-                            final_response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            final_response = StepOutput(content=result.content)
-                        else:
-                            final_response = StepOutput(content=str(result))
-                        log_debug("Function returned non-iterable, created StepOutput")
+                            if isinstance(result, StepOutput):
+                                final_response = result
+                            elif isinstance(result, (RunOutput, TeamRunOutput)):
+                                final_response = StepOutput(content=result.content)
+                            else:
+                                final_response = StepOutput(content=str(result))
+                            log_debug("Function returned non-iterable, created StepOutput")
+                    self._attach_function_step_metrics(final_response, collected_metrics)
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -1410,48 +1423,23 @@ class Step:
         for attempt in range(self.max_retries + 1):
             try:
                 if self._executor_type == "function":
-                    if _is_generator_function(self.active_executor) or _is_async_generator_function(
-                        self.active_executor
-                    ):
-                        content = ""
-                        final_response = None
-                        try:
-                            if _is_generator_function(self.active_executor):
-                                iterator = self._call_custom_function(
-                                    self.active_executor,
-                                    step_input,
-                                    session_state_copy,
-                                    run_context,
-                                )
-                                for chunk in iterator:  # type: ignore
-                                    if isinstance(chunk, (BaseRunOutputEvent)):
-                                        if (
-                                            isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
-                                            and chunk.content is not None
-                                        ):
-                                            if isinstance(chunk.content, str):
-                                                content += chunk.content
-                                            elif isinstance(chunk.content, BaseModel):
-                                                content = chunk.content  # type: ignore[assignment]
-                                            else:
-                                                content = str(chunk.content)
-                                    elif isinstance(chunk, (RunOutput, TeamRunOutput)):
-                                        content = chunk.content  # type: ignore[assignment]
-                                    elif isinstance(chunk, StepOutput):
-                                        final_response = chunk
-                                        break
-                                    else:
-                                        content += str(chunk)
-
-                            else:
-                                if _is_async_generator_function(self.active_executor):
-                                    iterator = await self._acall_custom_function(
+                    # Nested agent/team/workflow runs started inside the function
+                    # report their metrics into the collection sink
+                    with metrics_collection_sink() as collected_metrics:
+                        if _is_generator_function(self.active_executor) or _is_async_generator_function(
+                            self.active_executor
+                        ):
+                            content = ""
+                            final_response = None
+                            try:
+                                if _is_generator_function(self.active_executor):
+                                    iterator = self._call_custom_function(
                                         self.active_executor,
                                         step_input,
                                         session_state_copy,
                                         run_context,
                                     )
-                                    async for chunk in iterator:  # type: ignore
+                                    for chunk in iterator:  # type: ignore
                                         if isinstance(chunk, (BaseRunOutputEvent)):
                                             if (
                                                 isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
@@ -1471,45 +1459,74 @@ class Step:
                                         else:
                                             content += str(chunk)
 
-                        except StopIteration as e:
-                            if hasattr(e, "value") and isinstance(e.value, StepOutput):
-                                final_response = e.value
+                                else:
+                                    if _is_async_generator_function(self.active_executor):
+                                        iterator = await self._acall_custom_function(
+                                            self.active_executor,
+                                            step_input,
+                                            session_state_copy,
+                                            run_context,
+                                        )
+                                        async for chunk in iterator:  # type: ignore
+                                            if isinstance(chunk, (BaseRunOutputEvent)):
+                                                if (
+                                                    isinstance(chunk, (RunContentEvent, TeamRunContentEvent))
+                                                    and chunk.content is not None
+                                                ):
+                                                    if isinstance(chunk.content, str):
+                                                        content += chunk.content
+                                                    elif isinstance(chunk.content, BaseModel):
+                                                        content = chunk.content  # type: ignore[assignment]
+                                                    else:
+                                                        content = str(chunk.content)
+                                            elif isinstance(chunk, (RunOutput, TeamRunOutput)):
+                                                content = chunk.content  # type: ignore[assignment]
+                                            elif isinstance(chunk, StepOutput):
+                                                final_response = chunk
+                                                break
+                                            else:
+                                                content += str(chunk)
 
-                        # Merge session_state changes back
-                        if run_context is None and session_state is not None:
-                            merge_dictionaries(session_state, session_state_copy)
+                            except StopIteration as e:
+                                if hasattr(e, "value") and isinstance(e.value, StepOutput):
+                                    final_response = e.value
 
-                        if final_response is not None:
-                            response = final_response
+                            # Merge session_state changes back
+                            if run_context is None and session_state is not None:
+                                merge_dictionaries(session_state, session_state_copy)
+
+                            if final_response is not None:
+                                response = final_response
+                            else:
+                                response = StepOutput(content=content)
                         else:
-                            response = StepOutput(content=content)
-                    else:
-                        if _is_async_callable(self.active_executor):
-                            result = await self._acall_custom_function(
-                                self.active_executor,
-                                step_input,
-                                session_state_copy,
-                                run_context,
-                            )
-                        else:
-                            result = self._call_custom_function(
-                                self.active_executor,  # type: ignore[arg-type]
-                                step_input,
-                                session_state_copy,
-                                run_context,
-                            )
+                            if _is_async_callable(self.active_executor):
+                                result = await self._acall_custom_function(
+                                    self.active_executor,
+                                    step_input,
+                                    session_state_copy,
+                                    run_context,
+                                )
+                            else:
+                                result = self._call_custom_function(
+                                    self.active_executor,  # type: ignore[arg-type]
+                                    step_input,
+                                    session_state_copy,
+                                    run_context,
+                                )
 
-                        # Merge session_state changes back
-                        if run_context is None and session_state is not None:
-                            merge_dictionaries(session_state, session_state_copy)
+                            # Merge session_state changes back
+                            if run_context is None and session_state is not None:
+                                merge_dictionaries(session_state, session_state_copy)
 
-                        # If function returns StepOutput, use it directly
-                        if isinstance(result, StepOutput):
-                            response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            response = StepOutput(content=result.content)
-                        else:
-                            response = StepOutput(content=str(result))
+                            # If function returns StepOutput, use it directly
+                            if isinstance(result, StepOutput):
+                                response = result
+                            elif isinstance(result, (RunOutput, TeamRunOutput)):
+                                response = StepOutput(content=result.content)
+                            else:
+                                response = StepOutput(content=str(result))
+                    self._attach_function_step_metrics(response, collected_metrics)
 
                 else:
                     # For agents and teams, prepare message with context
@@ -1711,116 +1728,120 @@ class Step:
                 if self._executor_type == "function":
                     log_debug(f"Executing async function executor for step: {self.name}")
 
-                    # Check if the function is an async generator
-                    if _is_async_generator_function(self.active_executor):
-                        content = ""
-                        # It's an async generator - iterate over it
-                        iterator = await self._acall_custom_function(
-                            self.active_executor,
-                            step_input,
-                            session_state_copy,
-                            run_context,
-                        )
-                        async for event in iterator:  # type: ignore
-                            if isinstance(event, (BaseRunOutputEvent)):
-                                if (
-                                    isinstance(event, (RunContentEvent, TeamRunContentEvent))
-                                    and event.content is not None
-                                ):
-                                    if isinstance(event.content, str):
-                                        content += event.content
-                                    elif isinstance(event.content, BaseModel):
-                                        content = event.content  # type: ignore[assignment]
-                                    else:
-                                        content = str(event.content)
+                    # Nested agent/team/workflow runs started inside the function
+                    # report their metrics into the collection sink
+                    with metrics_collection_sink() as collected_metrics:
+                        # Check if the function is an async generator
+                        if _is_async_generator_function(self.active_executor):
+                            content = ""
+                            # It's an async generator - iterate over it
+                            iterator = await self._acall_custom_function(
+                                self.active_executor,
+                                step_input,
+                                session_state_copy,
+                                run_context,
+                            )
+                            async for event in iterator:  # type: ignore
+                                if isinstance(event, (BaseRunOutputEvent)):
+                                    if (
+                                        isinstance(event, (RunContentEvent, TeamRunContentEvent))
+                                        and event.content is not None
+                                    ):
+                                        if isinstance(event.content, str):
+                                            content += event.content
+                                        elif isinstance(event.content, BaseModel):
+                                            content = event.content  # type: ignore[assignment]
+                                        else:
+                                            content = str(event.content)
 
-                                # Only yield executor events if stream_executor_events is True
-                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
-                                    enriched_event = self._enrich_event_with_context(
-                                        event, workflow_run_response, step_index
-                                    )
-                                    yield enriched_event  # type: ignore[misc]
-                            elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                content = event.content  # type: ignore[assignment]
-                            elif isinstance(event, StepOutput):
-                                final_response = event
-                                break
-                            else:
-                                content += str(event)
-                        if not final_response:
-                            final_response = StepOutput(content=content)
-                    elif _is_async_callable(self.active_executor):
-                        # It's a regular async function - await it
-                        result = await self._acall_custom_function(
-                            self.active_executor,
-                            step_input,
-                            session_state_copy,
-                            run_context,
-                        )
-                        if isinstance(result, StepOutput):
-                            final_response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            final_response = StepOutput(content=result.content)
-                        else:
-                            final_response = StepOutput(content=str(result))
-                    elif _is_generator_function(self.active_executor):
-                        content = ""
-                        # It's a regular generator function - iterate over it
-                        iterator = self._call_custom_function(
-                            self.active_executor,
-                            step_input,
-                            session_state_copy,
-                            run_context,
-                        )
-                        for event in iterator:  # type: ignore
-                            if isinstance(event, (BaseRunOutputEvent)):
-                                if (
-                                    isinstance(event, (RunContentEvent, TeamRunContentEvent))
-                                    and event.content is not None
-                                ):
-                                    if isinstance(event.content, str):
-                                        content += event.content
-                                    elif isinstance(event.content, BaseModel):
-                                        content = event.content  # type: ignore[assignment]
-                                    else:
-                                        content = str(event.content)
-
-                                # Only yield executor events if stream_executor_events is True
-                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
-                                    enriched_event = self._enrich_event_with_context(
-                                        event, workflow_run_response, step_index
-                                    )
-                                    yield enriched_event  # type: ignore[misc]
-                            elif isinstance(event, (RunOutput, TeamRunOutput)):
-                                content = event.content  # type: ignore[assignment]
-                            elif isinstance(event, StepOutput):
-                                final_response = event
-                                break
-                            else:
-                                if isinstance(content, str):
-                                    content += str(event)
+                                    # Only yield executor events if stream_executor_events is True
+                                    if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
+                                        enriched_event = self._enrich_event_with_context(
+                                            event, workflow_run_response, step_index
+                                        )
+                                        yield enriched_event  # type: ignore[misc]
+                                elif isinstance(event, (RunOutput, TeamRunOutput)):
+                                    content = event.content  # type: ignore[assignment]
+                                elif isinstance(event, StepOutput):
+                                    final_response = event
+                                    break
                                 else:
-                                    content = str(event)
-                        if not final_response:
-                            final_response = StepOutput(content=content)
-                    else:
-                        # It's a regular function - call it directly
-                        result = self._call_custom_function(
-                            self.active_executor,  # type: ignore[arg-type]
-                            step_input,
-                            session_state_copy,
-                            run_context,
-                        )
-                        if isinstance(result, StepOutput):
-                            final_response = result
-                        elif isinstance(result, (RunOutput, TeamRunOutput)):
-                            final_response = StepOutput(content=result.content)
-                        else:
-                            final_response = StepOutput(content=str(result))
+                                    content += str(event)
+                            if not final_response:
+                                final_response = StepOutput(content=content)
+                        elif _is_async_callable(self.active_executor):
+                            # It's a regular async function - await it
+                            result = await self._acall_custom_function(
+                                self.active_executor,
+                                step_input,
+                                session_state_copy,
+                                run_context,
+                            )
+                            if isinstance(result, StepOutput):
+                                final_response = result
+                            elif isinstance(result, (RunOutput, TeamRunOutput)):
+                                final_response = StepOutput(content=result.content)
+                            else:
+                                final_response = StepOutput(content=str(result))
+                        elif _is_generator_function(self.active_executor):
+                            content = ""
+                            # It's a regular generator function - iterate over it
+                            iterator = self._call_custom_function(
+                                self.active_executor,
+                                step_input,
+                                session_state_copy,
+                                run_context,
+                            )
+                            for event in iterator:  # type: ignore
+                                if isinstance(event, (BaseRunOutputEvent)):
+                                    if (
+                                        isinstance(event, (RunContentEvent, TeamRunContentEvent))
+                                        and event.content is not None
+                                    ):
+                                        if isinstance(event.content, str):
+                                            content += event.content
+                                        elif isinstance(event.content, BaseModel):
+                                            content = event.content  # type: ignore[assignment]
+                                        else:
+                                            content = str(event.content)
 
-                    # Merge session_state changes back
-                    if run_context is None and session_state is not None:
-                        merge_dictionaries(session_state, session_state_copy)
+                                    # Only yield executor events if stream_executor_events is True
+                                    if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
+                                        enriched_event = self._enrich_event_with_context(
+                                            event, workflow_run_response, step_index
+                                        )
+                                        yield enriched_event  # type: ignore[misc]
+                                elif isinstance(event, (RunOutput, TeamRunOutput)):
+                                    content = event.content  # type: ignore[assignment]
+                                elif isinstance(event, StepOutput):
+                                    final_response = event
+                                    break
+                                else:
+                                    if isinstance(content, str):
+                                        content += str(event)
+                                    else:
+                                        content = str(event)
+                            if not final_response:
+                                final_response = StepOutput(content=content)
+                        else:
+                            # It's a regular function - call it directly
+                            result = self._call_custom_function(
+                                self.active_executor,  # type: ignore[arg-type]
+                                step_input,
+                                session_state_copy,
+                                run_context,
+                            )
+                            if isinstance(result, StepOutput):
+                                final_response = result
+                            elif isinstance(result, (RunOutput, TeamRunOutput)):
+                                final_response = StepOutput(content=result.content)
+                            else:
+                                final_response = StepOutput(content=str(result))
+
+                        # Merge session_state changes back
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
+                    self._attach_function_step_metrics(final_response, collected_metrics)
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
@@ -2300,6 +2321,21 @@ class Step:
                     if isinstance(s, StepOutput):
                         nested_steps.append(s)
         return nested_steps
+
+    @staticmethod
+    def _attach_function_step_metrics(step_output: Optional[StepOutput], collected_metrics: RunMetrics) -> None:
+        """Attach metrics collected from nested runs inside a custom function step.
+
+        Nested agent/team/workflow runs started inside the function report into the
+        collection sink; their totals land on the StepOutput so workflow metrics
+        aggregation picks them up. Explicit user-set metrics take precedence.
+        """
+        if step_output is None or not has_token_metrics(collected_metrics):
+            return
+        if step_output.metrics is None:
+            step_output.metrics = collected_metrics
+        else:
+            log_debug("StepOutput already has metrics set, skipping collected nested-run metrics")
 
     @staticmethod
     def _aggregate_workflow_metrics(workflow_metrics: Any) -> Optional[RunMetrics]:

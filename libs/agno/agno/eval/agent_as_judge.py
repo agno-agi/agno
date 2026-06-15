@@ -289,7 +289,12 @@ class AgentAsJudgeEval(BaseEval):
                 </output>
             """)
 
-            response = evaluator_agent.run(prompt, stream=False)
+            # Shield the ambient metrics sink — eval metrics are accumulated
+            # explicitly below, so the nested run must not also report to it
+            from agno.run._nested_metrics import shielded_metrics_sink
+
+            with shielded_metrics_sink():
+                response = evaluator_agent.run(prompt, stream=False)
 
             # Accumulate eval model metrics into the parent run_metrics
             if run_metrics is not None and response.metrics is not None:
@@ -354,7 +359,12 @@ class AgentAsJudgeEval(BaseEval):
                 </output>
             """)
 
-            response = await evaluator_agent.arun(prompt, stream=False)  # type: ignore[misc]
+            # Shield the ambient metrics sink — eval metrics are accumulated
+            # explicitly below, so the nested run must not also report to it
+            from agno.run._nested_metrics import shielded_metrics_sink
+
+            with shielded_metrics_sink():
+                response = await evaluator_agent.arun(prompt, stream=False)  # type: ignore[misc]
 
             # Accumulate eval model metrics into the parent run_metrics
             if run_metrics is not None and response.metrics is not None:

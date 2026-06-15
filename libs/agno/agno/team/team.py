@@ -16,6 +16,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    cast,
     overload,
 )
 
@@ -31,7 +32,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
 from agno.memory import MemoryManager
-from agno.metrics import SessionMetrics
+from agno.metrics import SessionMetrics, swap_nested_run_metrics_sink
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
@@ -39,6 +40,12 @@ from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
+from agno.run._nested_metrics import (
+    arun_stream_with_metrics_scope,
+    arun_with_metrics_scope,
+    report_run_to_parent,
+    run_stream_with_metrics_scope,
+)
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.team import (
     TeamRunEvent,
@@ -1020,22 +1027,49 @@ class Team:
         yield_run_output: bool = False,
         **kwargs,
     ) -> Union[TeamRunOutput, Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
-        return _run.continue_run_dispatch(
-            self,
-            run_response=run_response,
+        if run_response is not None and run_response.metrics is None:
+            run_response.metrics = RunMetrics()
+        sink = run_response.metrics if run_response is not None else None
+        # A run continued by run_id only yields its resolved output when
+        # yield_run_output is set — force it so the metrics scope can adopt the
+        # output, and swallow it again unless the caller asked for it
+        resolve_run_output = run_response is None and run_id is not None
+
+        result = None
+        parent_sink = swap_nested_run_metrics_sink(sink)
+        try:
+            result = _run.continue_run_dispatch(
+                self,
+                run_response=run_response,
+                run_id=run_id,
+                requirements=requirements,
+                stream=stream,
+                stream_events=stream_events,
+                user_id=user_id,
+                session_id=session_id,
+                run_context=run_context,
+                knowledge_filters=knowledge_filters,
+                dependencies=dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
+                yield_run_output=yield_run_output or resolve_run_output,
+                **kwargs,
+            )
+        finally:
+            swap_nested_run_metrics_sink(parent_sink)
+            # A dispatch that raises still reports the partial run, matching the
+            # dispatch-level scopes. Streams report through the scope wrapper below.
+            if result is None:
+                report_run_to_parent(parent_sink, run_response)
+        if isinstance(result, TeamRunOutput):
+            report_run_to_parent(parent_sink, result)
+            return result
+        return run_stream_with_metrics_scope(
+            result,
+            run_response,
+            sink=sink,
             run_id=run_id,
-            requirements=requirements,
-            stream=stream,
-            stream_events=stream_events,
-            user_id=user_id,
-            session_id=session_id,
-            run_context=run_context,
-            knowledge_filters=knowledge_filters,
-            dependencies=dependencies,
-            metadata=metadata,
-            debug_mode=debug_mode,
-            yield_run_output=yield_run_output,
-            **kwargs,
+            swallow_run_output=resolve_run_output and not yield_run_output,
         )
 
     @overload
@@ -1093,7 +1127,15 @@ class Team:
         background: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
-        return _run.acontinue_run_dispatch(
+        if run_response is not None and run_response.metrics is None:
+            run_response.metrics = RunMetrics()
+        sink = run_response.metrics if run_response is not None else None
+        # A run continued by run_id only yields its resolved output when
+        # yield_run_output is set — force it so the metrics scope can adopt the
+        # output, and swallow it again unless the caller asked for it
+        resolve_run_output = run_response is None and run_id is not None
+
+        result = _run.acontinue_run_dispatch(
             self,
             run_response=run_response,
             run_id=run_id,
@@ -1107,9 +1149,23 @@ class Team:
             dependencies=dependencies,
             metadata=metadata,
             debug_mode=debug_mode,
-            yield_run_output=yield_run_output,
+            yield_run_output=yield_run_output or resolve_run_output,
             background=background,
             **kwargs,
+        )
+        if background:
+            # Detached run — the background producer shields its own metrics sink
+            return result
+        if hasattr(result, "__anext__"):
+            return arun_stream_with_metrics_scope(
+                cast(AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]], result),
+                run_response,
+                sink=sink,
+                run_id=run_id,
+                swallow_run_output=resolve_run_output and not yield_run_output,
+            )
+        return arun_with_metrics_scope(  # type: ignore[return-value]
+            cast(Coroutine[Any, Any, TeamRunOutput], result), run_response, sink=sink
         )
 
     def _handle_model_response_chunk(

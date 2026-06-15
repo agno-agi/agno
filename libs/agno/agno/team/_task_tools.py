@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.team import Team
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from typing import (
     Any,
     AsyncIterator,
@@ -24,6 +24,7 @@ from agno.agent import Agent
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
+from agno.run._nested_metrics import ashielded_stream, shielded_metrics_sink, shielded_stream
 from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
@@ -389,7 +390,10 @@ def _get_task_management_tools(
                 from agno.agent._run import scrub_run_output_for_storage
 
                 scrub_run_output_for_storage(member_agent, run_response=member_run_response)  # type: ignore[arg-type]
-            session.upsert_run(member_run_response)
+            # Add a shallow copy of the member run to the team session — save_session
+            # scrubs member_responses on stored runs, which must not reach the response
+            # attached to the team run's member_responses
+            session.upsert_run(copy(member_run_response))
 
         if run_context.session_state is not None and member_session_state_copy is not None and not skip_session_merge:
             merge_dictionaries(run_context.session_state, member_session_state_copy)
@@ -446,27 +450,31 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_stream = member_agent.run(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
-                    stream=True,
-                    stream_events=stream_events or team.stream_member_events,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    metadata=run_context.metadata,
-                    add_session_state_to_context=add_session_state_to_context,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    run_id=member_run_id,
-                    yield_run_output=True,
+                # Member metrics are aggregated through member_responses, so the
+                # member run must not also report to the ambient metrics sink
+                member_stream = shielded_stream(
+                    member_agent.run(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=_images,
+                        videos=_videos,
+                        audio=_audio,
+                        files=_files,
+                        stream=True,
+                        stream_events=stream_events or team.stream_member_events,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        metadata=run_context.metadata,
+                        add_session_state_to_context=add_session_state_to_context,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        run_id=member_run_id,
+                        yield_run_output=True,
+                    )
                 )
                 draining_after_cancel = False
                 for event in member_stream:
@@ -498,26 +506,29 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_run_response = member_agent.run(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    run_id=member_run_id,
-                )
+                # Member metrics are aggregated through member_responses, so the
+                # member run must not also report to the ambient metrics sink
+                with shielded_metrics_sink():
+                    member_run_response = member_agent.run(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=_images,
+                        videos=_videos,
+                        audio=_audio,
+                        files=_files,
+                        stream=False,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        run_id=member_run_id,
+                    )
                 check_if_run_cancelled(member_run_response)
                 if run_response.run_id is not None:
                     raise_if_cancelled(run_response.run_id)
@@ -625,27 +636,31 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     await aregister_member_run(run_response.run_id, member_run_id)
-                member_stream = member_agent.arun(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
-                    stream=True,
-                    stream_events=stream_events or team.stream_member_events,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    metadata=run_context.metadata,
-                    add_session_state_to_context=add_session_state_to_context,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    run_id=member_run_id,
-                    yield_run_output=True,
+                # Member metrics are aggregated through member_responses, so the
+                # member run must not also report to the ambient metrics sink
+                member_stream = ashielded_stream(
+                    member_agent.arun(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=_images,
+                        videos=_videos,
+                        audio=_audio,
+                        files=_files,
+                        stream=True,
+                        stream_events=stream_events or team.stream_member_events,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        metadata=run_context.metadata,
+                        add_session_state_to_context=add_session_state_to_context,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        run_id=member_run_id,
+                        yield_run_output=True,
+                    )
                 )
                 draining_after_cancel = False
                 async for event in member_stream:
@@ -677,26 +692,29 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     await aregister_member_run(run_response.run_id, member_run_id)
-                member_run_response = await member_agent.arun(  # type: ignore[misc]
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=_images,
-                    videos=_videos,
-                    audio=_audio,
-                    files=_files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    run_id=member_run_id,
-                )
+                # Member metrics are aggregated through member_responses, so the
+                # member run must not also report to the ambient metrics sink
+                with shielded_metrics_sink():
+                    member_run_response = await member_agent.arun(  # type: ignore[misc]
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=_images,
+                        videos=_videos,
+                        audio=_audio,
+                        files=_files,
+                        stream=False,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        run_id=member_run_id,
+                    )
                 check_if_run_cancelled(member_run_response)
                 if run_response.run_id is not None:
                     raise_if_cancelled(run_response.run_id)
@@ -814,26 +832,29 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_run_response = member_agent.run(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=thread_images,
-                    videos=thread_videos,
-                    audio=thread_audio,
-                    files=thread_files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    run_id=member_run_id,
-                )
+                # Member metrics are aggregated through member_responses, so the
+                # member run must not also report to the ambient metrics sink
+                with shielded_metrics_sink():
+                    member_run_response = member_agent.run(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=thread_images,
+                        videos=thread_videos,
+                        audio=thread_audio,
+                        files=thread_files,
+                        stream=False,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        run_id=member_run_id,
+                    )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_agent_task, None)
             except RunCancelledException:
                 raise
@@ -1020,26 +1041,29 @@ def _get_task_management_tools(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     await aregister_member_run(run_response.run_id, member_run_id)
-                member_run_response = await member_agent.arun(
-                    input=member_agent_task if not history else history,
-                    user_id=user_id,
-                    session_id=session.session_id,
-                    session_state=member_session_state_copy,
-                    images=task_images,
-                    videos=task_videos,
-                    audio=task_audio,
-                    files=task_files,
-                    stream=False,
-                    debug_mode=debug_mode,
-                    dependencies=run_context.dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    metadata=run_context.metadata,
-                    knowledge_filters=run_context.knowledge_filters
-                    if not member_agent.knowledge_filters and member_agent.knowledge
-                    else None,
-                    run_id=member_run_id,
-                )
+                # Member metrics are aggregated through member_responses, so the
+                # member run must not also report to the ambient metrics sink
+                with shielded_metrics_sink():
+                    member_run_response = await member_agent.arun(
+                        input=member_agent_task if not history else history,
+                        user_id=user_id,
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,
+                        images=task_images,
+                        videos=task_videos,
+                        audio=task_audio,
+                        files=task_files,
+                        stream=False,
+                        debug_mode=debug_mode,
+                        dependencies=run_context.dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_session_state_to_context=add_session_state_to_context,
+                        metadata=run_context.metadata,
+                        knowledge_filters=run_context.knowledge_filters
+                        if not member_agent.knowledge_filters and member_agent.knowledge
+                        else None,
+                        run_id=member_run_id,
+                    )
                 return (task_obj.id, member_run_response, member_session_state_copy, member_agent_task, None)
             except RunCancelledException:
                 raise

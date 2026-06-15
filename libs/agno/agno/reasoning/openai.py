@@ -115,6 +115,7 @@ async def aget_openai_reasoning(
 def get_openai_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
     messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from OpenAI model.
@@ -126,6 +127,7 @@ def get_openai_reasoning_stream(
         - During streaming: (reasoning_content_delta, None)
         - At the end: (None, final_message)
     """
+    from agno.run._nested_metrics import shielded_stream
     from agno.run.agent import RunEvent
 
     # Update system message role to "system"
@@ -136,7 +138,9 @@ def get_openai_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
+        # Reasoning metrics are accumulated explicitly below, so the reasoning
+        # run must not also report to the ambient metrics sink
+        for event in shielded_stream(reasoning_agent.run(input=messages, stream=True, stream_events=True)):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Check for reasoning_content attribute first (native reasoning)
@@ -148,6 +152,11 @@ def get_openai_reasoning_stream(
                         reasoning_content += event.content
                         yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
+                    # Accumulate reasoning agent metrics into the parent run_metrics
+                    if run_metrics is not None and hasattr(event, "metrics"):
+                        from agno.metrics import accumulate_eval_metrics
+
+                        accumulate_eval_metrics(event.metrics, run_metrics, prefix="reasoning")
                     # Check for reasoning_content at completion (OpenAIResponses with reasoning_summary)
                     if hasattr(event, "reasoning_content") and event.reasoning_content:
                         # If we haven't accumulated any reasoning content yet, use this
@@ -171,6 +180,7 @@ def get_openai_reasoning_stream(
 async def aget_openai_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
     messages: List[Message],
+    run_metrics: Optional["RunMetrics"] = None,
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
     Stream reasoning content from OpenAI model asynchronously.
@@ -182,6 +192,7 @@ async def aget_openai_reasoning_stream(
         - During streaming: (reasoning_content_delta, None)
         - At the end: (None, final_message)
     """
+    from agno.run._nested_metrics import ashielded_stream
     from agno.run.agent import RunEvent
 
     # Update system message role to "system"
@@ -192,7 +203,9 @@ async def aget_openai_reasoning_stream(
     reasoning_content: str = ""
 
     try:
-        async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
+        # Reasoning metrics are accumulated explicitly below, so the reasoning
+        # run must not also report to the ambient metrics sink
+        async for event in ashielded_stream(reasoning_agent.arun(input=messages, stream=True, stream_events=True)):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
                     # Check for reasoning_content attribute first (native reasoning)
@@ -204,6 +217,11 @@ async def aget_openai_reasoning_stream(
                         reasoning_content += event.content
                         yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
+                    # Accumulate reasoning agent metrics into the parent run_metrics
+                    if run_metrics is not None and hasattr(event, "metrics"):
+                        from agno.metrics import accumulate_eval_metrics
+
+                        accumulate_eval_metrics(event.metrics, run_metrics, prefix="reasoning")
                     # Check for reasoning_content at completion (OpenAIResponses with reasoning_summary)
                     if hasattr(event, "reasoning_content") and event.reasoning_content:
                         # If we haven't accumulated any reasoning content yet, use this
