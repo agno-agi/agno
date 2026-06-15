@@ -20,6 +20,12 @@ _PAUSE_LABELS = {
 }
 
 
+def format_pause_label(requirement: "RunRequirement") -> str:
+    """Format a human-readable label for a paused requirement."""
+    template = _PAUSE_LABELS.get(requirement.pause_type, "⏸ *Awaiting* `{tool}`…")
+    return template.format(tool=tool_name(requirement))
+
+
 async def finalize_pause(
     *,
     client: "AsyncWebClient",
@@ -46,7 +52,7 @@ async def finalize_pause(
         log_error(f"[HITL] stream.stop failed: run_id={run_id} err={slack_error_code(exc)!r} | {exc}")
 
     # Post "awaiting" indicator message
-    labels = [_PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
+    labels = [format_pause_label(r) for r in requirements]
     if not labels:
         return None
 

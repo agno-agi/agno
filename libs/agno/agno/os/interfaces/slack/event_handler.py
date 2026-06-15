@@ -8,8 +8,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
-from agno.os.interfaces.slack.types import tool_name
+from agno.os.interfaces.slack.pause import finalize_pause, format_pause_label, post_pause_card
 from agno.os.interfaces.slack.helpers import (
     BotNameResolver,
     build_run_metadata,
@@ -214,9 +213,6 @@ class SlackEventHandler:
             await self.set_status(ctx, "")
 
     async def _handle_paused_non_streaming(self, ctx: EventContext, response: Any) -> bool:
-        from agno.os.interfaces.slack.pause import _PAUSE_LABELS, post_pause_card
-        from agno.os.interfaces.slack.types import tool_name
-
         client = self._client()
         requirements = list(getattr(response, "active_requirements", None) or [])
         run_id = getattr(response, "run_id", None)
@@ -228,7 +224,7 @@ class SlackEventHandler:
         if content:
             await send_slack_message_async(client, channel=ctx.channel_id, message=content, thread_ts=ctx.thread_id)
 
-        pause_labels = [_PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
+        pause_labels = [format_pause_label(r) for r in requirements]
         awaiting_ts = None
         if pause_labels:
             try:
@@ -367,8 +363,6 @@ class SlackEventHandler:
             await self._handle_streaming_error(ctx, state, stream, e)
 
     async def _handle_paused_streaming(self, ctx: EventContext, state: StreamState, stream: Any) -> bool:
-        from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
-
         client = self._client()
         pause_run_id = getattr(state.paused_event, "run_id", None)
         requirements = list(getattr(state.paused_event, "active_requirements", None) or [])

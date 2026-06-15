@@ -87,7 +87,6 @@ def delete_user(username: str) -> str:
 
 # 3. User input (requires_user_input)
 @tool(
-    requires_confirmation=True,
     requires_user_input=True,
     user_input_fields=["email", "role"],
 )
@@ -133,7 +132,6 @@ def scale_service(service: str, replicas: int) -> str:
 # 5. Admin approval + user input (combined)
 @approval
 @tool(
-    requires_confirmation=True,
     requires_user_input=True,
     user_input_fields=["reason", "notify_team"],
 )
@@ -175,7 +173,6 @@ agent = Agent(
         "For deployments, confirm the service exists first.",
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
 agent_os = AgentOS(
