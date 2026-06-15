@@ -302,7 +302,9 @@ async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: 
     if not state.has_content() and state.stream_chars_sent == 0 and not state.task_cards:
         await stream.append(markdown_text="_Reviewing request…_")
 
-    return True
+    # Don't break early — let generator drain naturally to avoid GeneratorExit.
+    # The generator returns immediately after RunPausedEvent, so no extra events arrive.
+    return False
 
 
 # =============================================================================
