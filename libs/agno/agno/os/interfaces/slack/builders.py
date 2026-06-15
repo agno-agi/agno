@@ -18,11 +18,13 @@ from slack_sdk.models.blocks.block_elements import ButtonElement
 
 from agno.os.interfaces.slack.components import Card
 from agno.os.interfaces.slack.ids import (
+    ACTION_CHECK_STATUS,
     ACTION_EXTERNAL_RESULT,
     ACTION_REJECT_REASON,
     ACTION_ROW_APPROVE,
     ACTION_ROW_REJECT,
     ACTION_SUBMIT,
+    encode_admin_approval_button_value,
     encode_row_button_value,
     encode_submit_button_value,
     external_result_block_id,
@@ -191,9 +193,8 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
     # approval_type="required" tools need admin approval via dashboard, not Slack buttons
     te = requirement.tool_execution
     if te and getattr(te, "approval_type", None) == "required":
-        # Deep link to specific approval if ID available, else fall back to list
-        approval_id = getattr(te, "approval_id", None)
-        status_url = f"https://os.agno.com/approvals/{approval_id}" if approval_id else "https://os.agno.com/approvals"
+        approval_id = getattr(te, "approval_id", None) or ""
+        button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts)
         return Card(
             block_id=f"rowact:{req_id}:admin_approval",
             title=MarkdownTextObject(text=f"*{name}*"),
@@ -201,9 +202,9 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
             subtext=MarkdownTextObject(text="Awaiting admin approval"),
             actions=[
                 ButtonElement(
-                    action_id="check_status",
+                    action_id=ACTION_CHECK_STATUS,
                     text=PlainTextObject(text="Check Status", emoji=True),
-                    url=status_url,
+                    value=button_value,
                 ),
             ],
         )
@@ -227,6 +228,42 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
                 value=button_value,
             ),
         ],
+    )
+
+
+def build_admin_approval_status_card(
+    tool_name: str,
+    body_text: str,
+    status: str,
+    req_id: str,
+    approval_id: str,
+    run_id: str,
+    awaiting_ts: Optional[str] = None,
+) -> Card:
+    """Build card showing admin approval status after check."""
+    button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts)
+
+    # "approved" case handled by auto-continue in handle_check_status
+    if status == "rejected":
+        subtext = "Rejected by admin"
+        actions: List[ButtonElement] = []
+    else:
+        # Still pending
+        subtext = "Still pending approval"
+        actions = [
+            ButtonElement(
+                action_id=ACTION_CHECK_STATUS,
+                text=PlainTextObject(text="Check Again", emoji=True),
+                value=button_value,
+            ),
+        ]
+
+    return Card(
+        block_id=f"rowact:{req_id}:admin_approval",
+        title=MarkdownTextObject(text=f"*{tool_name}*"),
+        body=MarkdownTextObject(text=body_text),
+        subtext=MarkdownTextObject(text=subtext),
+        actions=actions,
     )
 
 

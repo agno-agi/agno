@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from ssl import SSLContext
@@ -236,6 +237,157 @@ class HITLHandler:
         result = select_confirmation_row(ctx, selected="deny", include_reason_input=True)
         blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts)
         await self.update_message(ctx.channel, ctx.card_ts, "Rejection pending", blocks)
+
+    async def handle_check_status(self, payload: Dict[str, Any]) -> None:
+        """Check approval status via API and update the card accordingly."""
+        from agno.os.interfaces.slack.builders import build_admin_approval_status_card
+        from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        button_value = actions[0].get("value") or ""
+        approval_id, req_id, run_id, awaiting_ts = decode_admin_approval_button_value(button_value)
+        if not approval_id or not req_id or not run_id:
+            return
+
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        msg_ts = message.get("ts")
+        thread_ts = message.get("thread_ts") or msg_ts
+        if not channel or not msg_ts:
+            return
+
+        # Get current card info from blocks
+        blocks = message.get("blocks") or []
+        tool_name_str = "Tool"
+        body_text = ""
+        for block in blocks:
+            if block.get("type") == "card":
+                title = block.get("title", {})
+                body = block.get("body", {})
+                tool_name_str = (title.get("text") or "Tool").strip("*")
+                body_text = body.get("text") or ""
+                break
+
+        # Query approval status from DB
+        db = getattr(self.entity, "db", None)
+        status = "pending"
+        if db and approval_id:
+            try:
+                fn = getattr(db, "get_approval", None)
+                if fn:
+                    if asyncio.iscoroutinefunction(fn):
+                        approval = await fn(approval_id)
+                    else:
+                        approval = fn(approval_id)
+                    if approval:
+                        status = approval.get("status", "pending")
+            except Exception as exc:
+                log_error(f"[HITL] Failed to get approval status: {exc}")
+
+        # If approved, auto-continue the run instead of showing a button
+        if status == "approved":
+            # Delete the "Awaiting approval" indicator message
+            await self.delete_awaiting_indicator(channel, awaiting_ts)
+
+            # Update card to show "Approved"
+            new_blocks = []
+            for block in blocks:
+                if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
+                    block = dict(block)
+                    block["subtext"] = {"type": "mrkdwn", "text": ":white_check_mark: Approved"}
+                    block["actions"] = []
+                    new_blocks.append(block)
+                else:
+                    new_blocks.append(block)
+
+            await self.update_message(channel, msg_ts, "Approved", new_blocks)
+
+            # Load requirements and confirm the one matching this approval_id
+            session_id = f"{self.entity_id}:{thread_ts}"
+            try:
+                run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
+                requirements = list(getattr(run_output, "active_requirements", None) or []) if run_output else []
+                for req in requirements:
+                    te = getattr(req, "tool_execution", None)
+                    if te and getattr(te, "approval_id", None) == approval_id:
+                        req.confirm()
+                        break
+            except Exception as exc:
+                log_error(f"[HITL] Failed to confirm requirement: {exc}")
+
+            # Open stream and continue the run directly
+            stream = await open_chat_stream(
+                self._client(),
+                channel,
+                thread_ts,
+                (payload.get("user") or {}).get("id") or "",
+                (payload.get("team") or {}).get("id") or "",
+                self.task_display_mode,
+                self.buffer_size,
+            )
+
+            # Resume the run
+            state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
+            try:
+                response_stream = self.entity.acontinue_run(  # type: ignore[union-attr]
+                    run_id=run_id,
+                    requirements=requirements,
+                    session_id=session_id,
+                    stream=True,
+                    stream_events=True,
+                )
+                async for chunk in response_stream:
+                    state.collect_media(chunk)
+                    ev = getattr(chunk, "event", None)
+                    if ev and await process_event(ev, chunk, state, stream):
+                        break
+                    if state.has_content():
+                        content = state.flush()
+                        if content and state.stream_chars_sent + len(content) <= _STREAM_CHAR_LIMIT:
+                            await stream.append(markdown_text=content)
+                            state.stream_chars_sent += len(content)
+            except Exception as exc:
+                log_error(f"[HITL] acontinue_run failed: {exc}")
+
+            # Complete or re-pause
+            from agno.os.interfaces.slack.types import SubmitContext
+
+            ctx = SubmitContext(
+                run_id=run_id,
+                session_id=session_id,
+                channel=channel,
+                thread_ts=thread_ts,
+                msg_ts=msg_ts,
+                awaiting_ts=awaiting_ts,
+                user_id=(payload.get("user") or {}).get("id") or "",
+                team_id=(payload.get("team") or {}).get("id") or "",
+                state_values={},
+            )
+            await self.complete_or_repause(ctx, stream, state)
+            return
+
+        # Build updated card for pending/rejected status
+        card = build_admin_approval_status_card(
+            tool_name=tool_name_str,
+            body_text=body_text,
+            status=status,
+            req_id=req_id,
+            approval_id=approval_id,
+            run_id=run_id,
+            awaiting_ts=awaiting_ts or thread_ts,
+        )
+
+        # Update the card in the message
+        new_blocks = []
+        for block in blocks:
+            if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
+                new_blocks.append(card.to_dict())
+            else:
+                new_blocks.append(block)
+
+        await self.update_message(channel, msg_ts, f"Status: {status}", new_blocks)
 
     async def _resolve_required_approvals(
         self,
