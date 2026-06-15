@@ -34,7 +34,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 def create_personal_assistant(user_id: str, session_id: str) -> Agent:
     """Create a personal assistant for a specific user."""
     return Agent(
-        model=OpenAIResponses(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.5"),
         db=db,
         instructions=(
             "You are a helpful personal assistant. "
