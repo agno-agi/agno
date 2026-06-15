@@ -452,6 +452,51 @@ def test_slack_read_surfaces_are_split_by_mode():
     assert "get_thread" in assisted_tools.functions
 
 
+def test_slack_bot_token_excludes_legacy_search_messages():
+    """Slack's legacy search.messages API is user-token-only and fails a bot
+    token with not_allowed_token_type, so a bot token (xoxb-) must not register
+    search_messages on either read surface."""
+    p = SlackContextProvider(token="xoxb-x")
+
+    assert "search_messages" not in p._ensure_bot_read_tools().functions
+    assert "search_messages" not in p._ensure_assisted_read_tools().functions
+
+
+def test_slack_user_token_keeps_legacy_search_messages():
+    """A user token (xoxp-) preserves search_messages on both read surfaces;
+    search_workspace stays assisted-read-only regardless of token type."""
+    p = SlackContextProvider(token="xoxp-x")
+
+    bot_tools = p._ensure_bot_read_tools()
+    assisted_tools = p._ensure_assisted_read_tools()
+
+    assert "search_messages" in bot_tools.functions
+    assert "search_messages" in assisted_tools.functions
+    assert "search_workspace" not in bot_tools.functions
+    assert "search_workspace" in assisted_tools.functions
+
+
+def test_slack_bot_read_instructions_do_not_lead_with_search(monkeypatch):
+    """The bot-token read agent must not be told to "search first" with the
+    user-token-only search_messages tool; it leads with deterministic reads."""
+    import agno.context.slack.provider as slack_provider
+
+    captured: dict[str, str] = {}
+
+    class _StubAgent:
+        def __init__(self, *, id: str, instructions: str, **kwargs):
+            captured[id] = instructions
+
+    monkeypatch.setattr(slack_provider, "Agent", _StubAgent)
+
+    p = SlackContextProvider(token="xoxb-x")
+    _ = p._ensure_bot_read_agent()
+
+    instructions = captured["slack-bot-read"]
+    assert "get_channel_history" in instructions
+    assert "Search first" not in instructions
+
+
 def test_slack_read_instructions_override_both_read_agents(monkeypatch):
     import agno.context.slack.provider as slack_provider
 
