@@ -48,8 +48,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Built-in MCP tools are tagged by domain so they can be scoped as a group.
-_BUILTIN_TOOL_TAGS = {"core", "session", "memory"}
+# Built-in MCP tools are tagged by domain so they can be scoped as a group. The canonical
+# tag set lives in agno/os/config.py next to the MCPServerConfig fields that consume it --
+# single source of truth so adding a new tag is a one-place change.
+from agno.os.config import MCP_BUILTIN_TAGS as _BUILTIN_TOOL_TAGS  # noqa: E402
 
 
 def _enabled_builtin_tags(config: "Optional[MCPServerConfig]") -> set:

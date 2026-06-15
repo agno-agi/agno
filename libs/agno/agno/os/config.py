@@ -1,8 +1,18 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Any, Callable, Dict, Generic, List, Optional, Set, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
+# the valid values for ``MCPServerConfig.include_tags`` / ``exclude_tags`` without reading
+# ``agno/os/mcp.py``. Keep in sync with the ``tags={...}`` argument on each
+# ``@register_builtin_tool(...)`` in that module.
+MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "memory"})
+
+# Type alias for ``include_tags`` / ``exclude_tags`` -- gives IDE autocomplete on the
+# string values while keeping the API stringly-typed (callers still pass ``{"core"}``).
+MCPBuiltinTag = Literal["core", "session", "memory"]
 
 
 class MCPServerConfig(BaseModel):
@@ -13,7 +23,8 @@ class MCPServerConfig(BaseModel):
     With no ``mcp_config`` provided the MCP server behaves exactly as before: all
     built-in tools are registered and no extra gate or middleware is added.
 
-    The built-in tools are tagged so they can be scoped as a group:
+    The built-in tools are tagged so they can be scoped as a group. See
+    ``MCP_BUILTIN_TAGS`` for the canonical set; current values:
       - ``"core"``    -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``
       - ``"session"`` -> session CRUD tools
       - ``"memory"``  -> memory CRUD tools
@@ -34,11 +45,14 @@ class MCPServerConfig(BaseModel):
     # Master switch for the ~19 built-in tools. Set to False to ship ONLY your own tools.
     enable_builtin_tools: bool = True
 
-    # Finer scoping over the built-ins via their tags ({"core", "session", "memory"}).
+    # Finer scoping over the built-ins via their tags (see ``MCP_BUILTIN_TAGS``).
     # When ``include_tags`` is set, only built-ins carrying one of those tags are registered.
     # ``exclude_tags`` is then subtracted. Both are ignored when ``enable_builtin_tools`` is False.
-    include_tags: Optional[Set[str]] = None
-    exclude_tags: Optional[Set[str]] = None
+    # Typed as ``MCPBuiltinTag`` (a ``Literal``) so the IDE autocompletes the values and pydantic
+    # rejects typos at construction with a message like "Input should be 'core', 'session' or
+    # 'memory'" -- otherwise an unknown tag would silently produce an empty server.
+    include_tags: Optional[Set[MCPBuiltinTag]] = None
+    exclude_tags: Optional[Set[MCPBuiltinTag]] = None
 
     # Per-call gate for the MCP server. Given the authenticated caller's user_id, return True
     # to allow the request and False to reject it with 401 -- before any tool or model runs.

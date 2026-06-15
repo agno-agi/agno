@@ -170,6 +170,26 @@ async def test_exclude_tags_drops_memory_builtins():
     assert not (names & MEMORY_TOOLS)
 
 
+def test_unknown_include_tag_is_rejected():
+    """A typo like ``{"sessions"}`` (plural) would silently produce an empty server. The
+    ``MCPBuiltinTag`` Literal makes pydantic reject it at construction."""
+    with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'memory'"):
+        MCPServerConfig(include_tags={"sessions"})
+
+
+def test_unknown_exclude_tag_is_rejected():
+    """Same protection on ``exclude_tags`` -- a typo would silently exclude nothing.
+    Tag matching is case-sensitive (``"Memory"`` is not ``"memory"``)."""
+    with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'memory'"):
+        MCPServerConfig(exclude_tags={"Memory"})
+
+
+def test_known_tags_are_accepted():
+    """Sanity: the typed fields don't fight the documented values."""
+    MCPServerConfig(include_tags={"core", "session", "memory"})
+    MCPServerConfig(exclude_tags={"core"})
+
+
 async def test_custom_tools_coexist_with_scoped_builtins():
     """Custom tools register alongside a scoped subset of the built-ins."""
 
