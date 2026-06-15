@@ -267,13 +267,17 @@ class GoogleToolkit(Toolkit):
             token_data = encrypt_dict(token_data, key=key)
 
         try:
-            db.upsert_auth_token({
-                "provider": "google",
-                "user_id": user_id,
-                "service": "google",
-                "token_data": token_data,
-                "granted_scopes": list(creds.scopes) if creds.scopes else (self._auth.scopes if self._auth else self.scopes),
-            })
+            db.upsert_auth_token(
+                {
+                    "provider": "google",
+                    "user_id": user_id,
+                    "service": "google",
+                    "token_data": token_data,
+                    "granted_scopes": list(creds.scopes)
+                    if creds.scopes
+                    else (self._auth.scopes if self._auth else self.scopes),
+                }
+            )
             log_debug(f"{self.google_service_name.title()} credentials saved to DB")
             return True
         except Exception as e:

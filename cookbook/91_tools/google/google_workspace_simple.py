@@ -39,4 +39,6 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    agent.print_response("List my recent emails and today's calendar events", stream=True)
+    agent.print_response(
+        "List my recent emails and today's calendar events", stream=True
+    )

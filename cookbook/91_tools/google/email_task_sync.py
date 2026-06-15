@@ -29,7 +29,11 @@ agent = Agent(
     tools=[
         GmailTools(
             auth=auth,
-            include_tools=["search_emails", "get_emails_by_thread", "mark_email_as_read"],
+            include_tools=[
+                "search_emails",
+                "get_emails_by_thread",
+                "mark_email_as_read",
+            ],
         ),
         GoogleTasksTools(auth=auth),
     ],

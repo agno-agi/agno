@@ -55,7 +55,10 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    print("Testing with DB token storage" + (" + encryption" if getenv("AGNO_ENCRYPTION_KEY") else ""))
+    print(
+        "Testing with DB token storage"
+        + (" + encryption" if getenv("AGNO_ENCRYPTION_KEY") else "")
+    )
     print()
     agent.print_response(
         "List my recent emails, today's calendar events, and any pending tasks",
