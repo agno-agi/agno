@@ -30,6 +30,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
+# The audit-trail read contract (shared by both trails — change and decision):
+# which fields a page can be sorted by / searched over, and the defaults. The
+# roles router validates request params against these, so they have one owner.
+AUDIT_SORT_FIELDS = ("created_at", "actor", "action", "target")
+AUDIT_SEARCH_FIELDS = ("actor", "action", "target")
+DEFAULT_AUDIT_SORT_FIELD = "created_at"
+DEFAULT_AUDIT_SORT_ORDER = "desc"
+
 
 @dataclass
 class AuditEvent:
@@ -41,7 +49,8 @@ class AuditEvent:
         actor: the principal who made the change (JWT ``sub`` of the admin), or
             None for changes made in code outside a request (treated as system).
         target: the role name (role changes) or subject id (assignment changes).
-        before: prior state (the role's scopes, or the subject's roles), or None.
+        before: prior state — the subject's roles (list of str) or a role's scope
+            entries (list of ``{"scope", "effect"}`` dicts) — or None.
         after: new state, or None (e.g. on removal).
         timestamp: epoch seconds when the change was recorded.
     """
@@ -49,14 +58,14 @@ class AuditEvent:
     action: str
     actor: Optional[str]
     target: str
-    before: Optional[List[str]] = None
-    after: Optional[List[str]] = None
+    before: Optional[List[Any]] = None
+    after: Optional[List[Any]] = None
     timestamp: int = 0
     metadata: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
-            "ts": self.timestamp,
+            "created_at": self.timestamp,
             "actor": self.actor,
             "action": self.action,
             "target": self.target,
@@ -121,11 +130,16 @@ class DbAuditSink(AuditSink):
         table_name: str = "authz_audit",
         decision_table_name: str = "authz_decisions",
         create_table: bool = True,
+        db: Optional[Any] = None,
     ):
         import sqlalchemy as sa
 
+        if db is not None and engine is None:
+            from agno.os.authz._db import engine_from_db
+
+            engine = engine_from_db(db)
         if engine is None and db_url is None:
-            raise ValueError("DbAuditSink needs either db_url or engine")
+            raise ValueError("DbAuditSink needs one of: db (an agno Db), engine, or db_url")
         self._engine = engine if engine is not None else sa.create_engine(db_url)  # type: ignore[arg-type]
         metadata = sa.MetaData()
         # change trail: role/assignment mutations with before/after
@@ -133,7 +147,7 @@ class DbAuditSink(AuditSink):
             table_name,
             metadata,
             sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-            sa.Column("ts", sa.Integer, nullable=False),
+            sa.Column("created_at", sa.Integer, nullable=False),
             sa.Column("actor", sa.String(255)),
             sa.Column("action", sa.String(255), nullable=False),
             sa.Column("target", sa.String(255), nullable=False),
@@ -145,7 +159,7 @@ class DbAuditSink(AuditSink):
             decision_table_name,
             metadata,
             sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-            sa.Column("ts", sa.Integer, nullable=False),
+            sa.Column("created_at", sa.Integer, nullable=False),
             sa.Column("actor", sa.String(255)),
             sa.Column("action", sa.String(255), nullable=False),  # access.allowed / access.denied
             sa.Column("target", sa.String(512), nullable=False),  # "METHOD /path"
@@ -166,7 +180,7 @@ class DbAuditSink(AuditSink):
         with self._engine.begin() as conn:
             conn.execute(
                 self._table.insert().values(
-                    ts=event.timestamp,
+                    created_at=event.timestamp,
                     actor=event.actor,
                     action=event.action,
                     target=event.target,
@@ -180,7 +194,7 @@ class DbAuditSink(AuditSink):
         with self._engine.begin() as conn:
             conn.execute(
                 self._decisions.insert().values(
-                    ts=event.timestamp,
+                    created_at=event.timestamp,
                     actor=event.actor,
                     action=event.action,
                     target=event.target,
@@ -190,41 +204,83 @@ class DbAuditSink(AuditSink):
                 )
             )
 
-    def read(self, limit: int = 100) -> List[dict]:
-        """Recent *change* events (newest first) as plain dicts."""
+    # Both trails read the same way: sortable, searchable pages over the columns
+    # the two tables share (AUDIT_SORT_FIELDS / AUDIT_SEARCH_FIELDS). Only the
+    # row shape differs, so read()/read_decisions() are thin mappers over these
+    # two helpers.
+    @staticmethod
+    def _search_clause(table, search: str):
         import sqlalchemy as sa
 
+        pattern = f"%{search}%"
+        return sa.or_(*(table.c[f].ilike(pattern) for f in AUDIT_SEARCH_FIELDS))
+
+    def _select_page(
+        self, table, limit: int, offset: int, search: Optional[str], sort_by: str, order: str
+    ) -> List[Any]:
+        import sqlalchemy as sa
+
+        if sort_by not in AUDIT_SORT_FIELDS:
+            raise ValueError(f"sort_by must be one of {AUDIT_SORT_FIELDS}, got {sort_by!r}")
+        stmt = sa.select(table)
+        if search:
+            stmt = stmt.where(self._search_clause(table, search))
+        # For time order, sort on id: it's monotonic and finer-grained than ts
+        # (second resolution). id also tie-breaks every other field.
+        cols = (table.c.id,) if sort_by == DEFAULT_AUDIT_SORT_FIELD else (table.c[sort_by], table.c.id)
+        order_by = [c.asc() if order == "asc" else c.desc() for c in cols]
         with self._engine.connect() as conn:
-            rows = conn.execute(sa.select(self._table).order_by(self._table.c.id.desc()).limit(limit)).mappings().all()
+            return list(conn.execute(stmt.order_by(*order_by).limit(limit).offset(offset)).mappings().all())
+
+    def _count(self, table, search: Optional[str]) -> int:
+        import sqlalchemy as sa
+
+        stmt = sa.select(sa.func.count()).select_from(table)
+        if search:
+            stmt = stmt.where(self._search_clause(table, search))
+        with self._engine.connect() as conn:
+            return int(conn.execute(stmt).scalar() or 0)
+
+    def read(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_AUDIT_SORT_FIELD,
+        order: str = DEFAULT_AUDIT_SORT_ORDER,
+    ) -> List[dict]:
+        """A page of *change* events as plain dicts (newest first by default;
+        ``sort_by`` one of :attr:`SORTABLE_FIELDS`, ``order`` asc|desc)."""
         return [
             {
-                "ts": r["ts"],
+                "created_at": r["created_at"],
                 "actor": r["actor"],
                 "action": r["action"],
                 "target": r["target"],
                 "before": json.loads(r["before"]) if r["before"] else None,
                 "after": json.loads(r["after"]) if r["after"] else None,
             }
-            for r in rows
+            for r in self._select_page(self._table, limit, offset, search, sort_by, order)
         ]
 
-    def read_decisions(self, limit: int = 100) -> List[dict]:
-        """Recent *decision* events (newest first) as plain dicts.
+    def read_decisions(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_AUDIT_SORT_FIELD,
+        order: str = DEFAULT_AUDIT_SORT_ORDER,
+    ) -> List[dict]:
+        """A page of *decision* events as plain dicts (newest first by default;
+        ``sort_by`` one of :attr:`SORTABLE_FIELDS`, ``order`` asc|desc).
+        ``target`` is ``METHOD /path``.
 
         ``metadata`` is reassembled to the same ``{required, token, scopes}`` shape
         the in-memory event carried, so readers don't care which table it came from.
         """
-        import sqlalchemy as sa
-
-        with self._engine.connect() as conn:
-            rows = (
-                conn.execute(sa.select(self._decisions).order_by(self._decisions.c.id.desc()).limit(limit))
-                .mappings()
-                .all()
-            )
         return [
             {
-                "ts": r["ts"],
+                "created_at": r["created_at"],
                 "actor": r["actor"],
                 "action": r["action"],
                 "target": r["target"],
@@ -234,5 +290,13 @@ class DbAuditSink(AuditSink):
                     "scopes": json.loads(r["scopes"]) if r["scopes"] else None,
                 },
             }
-            for r in rows
+            for r in self._select_page(self._decisions, limit, offset, search, sort_by, order)
         ]
+
+    def count(self, search: Optional[str] = None) -> int:
+        """Total number of change events (for pagination), honouring ``search``."""
+        return self._count(self._table, search)
+
+    def count_decisions(self, search: Optional[str] = None) -> int:
+        """Total number of decision events (for pagination), honouring ``search``."""
+        return self._count(self._decisions, search)

@@ -63,10 +63,12 @@ def test_store_emits_change_events_with_actor_and_diff():
         ("user.unassigned", "bob", "alice"),
         ("role.removed", "member", "alice"),
     ]
-    # before/after captured on the widen
+    # before/after captured on the widen — full entries (scope + effect) so an
+    # allow<->deny flip is visible in the trail.
     widen = sink.events[1]
-    assert widen.before == ["agents:read"]
-    assert set(widen.after) == {"agents:read", "agents:run"}
+    assert widen.before == [{"scope": "agents:read", "effect": "allow"}]
+    assert {e["scope"] for e in widen.after} == {"agents:read", "agents:run"}
+    assert all(e["effect"] == "allow" for e in widen.after)
     # assignment diff
     assign = sink.events[2]
     assert assign.before == [] and assign.after == ["member"]
@@ -131,8 +133,9 @@ def test_http_api_records_actor_from_jwt():
     app.include_router(get_roles_router(store))
     client = TestClient(app)
 
+    store.set_role_scopes("runner", ["agents:read"])  # role must exist before PUT /scopes
     sink.events.clear()
-    client.put("/authz/roles/runner", headers=_auth("alice"), json={"scopes": ["agents:*:run"]})
+    client.put("/authz/roles/runner/scopes", headers=_auth("alice"), json={"scopes": ["agents:*:run"]})
     client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "runner"})
     client.delete("/authz/users/bob/roles/runner", headers=_auth("alice"))
 
@@ -276,14 +279,16 @@ def test_decisions_endpoint_returns_trail_for_admin(tmp_path):
 
     client.get("/agents/research-agent", headers=_auth("bob", jti="dec-1"))  # allowed decision
 
-    # admin reads the decision trail
+    # admin reads the decision trail (paginated {data, meta})
     r = client.get("/authz/decisions", headers=_auth("alice"))
     assert r.status_code == 200
-    events = r.json()["events"]
+    body = r.json()
+    events = body["data"]
+    assert body["meta"]["total_count"] >= len(events)
     assert any(e["action"] == "access.allowed" and e["metadata"]["token"] == "dec-1" for e in events)
 
     # /authz/audit (changes) does NOT contain the access.* decisions
-    changes = client.get("/authz/audit", headers=_auth("alice")).json()["events"]
+    changes = client.get("/authz/audit", headers=_auth("alice")).json()["data"]
     assert all(not e["action"].startswith("access.") for e in changes)
 
     # non-admin and anonymous are blocked
@@ -316,16 +321,40 @@ def test_audit_endpoint_returns_trail(tmp_path):
     client = TestClient(app)
 
     # make a couple of changes over the API
-    client.put("/authz/roles/runner", headers=_auth("alice"), json={"scopes": ["agents:*:run"]})
+    client.post("/authz/roles", headers=_auth("alice"), json={"slug": "runner"})
+    client.put("/authz/roles/runner/scopes", headers=_auth("alice"), json={"scopes": ["agents:*:run"]})
     client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "runner"})
 
-    # admin can read the trail; newest first
+    # admin can read the trail; newest first, paginated {data, meta}
     r = client.get("/authz/audit", headers=_auth("alice"))
     assert r.status_code == 200
-    events = r.json()["events"]
+    body = r.json()
+    events = body["data"]
+    assert body["meta"]["page"] == 1 and body["meta"]["total_count"] == len(events)
     assert events[0]["action"] == "user.assigned" and events[0]["actor"] == "alice"
     assert events[0]["after"] == ["runner"]
     assert any(e["action"] == "role.set_scopes" and e["target"] == "runner" for e in events)
+
+    # page/limit slice the trail (page 2 with limit 1 = the second-newest event)
+    paged = client.get("/authz/audit?limit=1&page=2", headers=_auth("alice")).json()
+    assert len(paged["data"]) == 1
+    assert paged["data"][0]["action"] == events[1]["action"]
+    assert paged["meta"]["total_count"] == len(events) and paged["meta"]["page"] == 2
+
+    # search filters over actor/action/target (case-insensitive), counted in meta
+    found = client.get("/authz/audit?search=SET_SCOPES", headers=_auth("alice")).json()
+    assert found["data"] and all(e["action"] == "role.set_scopes" for e in found["data"])
+    assert found["meta"]["total_count"] == len(found["data"])
+    assert client.get("/authz/audit?search=zzz-no-match", headers=_auth("alice")).json()["data"] == []
+
+    # sort_order=asc flips to oldest first
+    asc = client.get("/authz/audit?sort_order=asc", headers=_auth("alice")).json()["data"]
+    assert [e["action"] for e in asc] == [e["action"] for e in reversed(events)]
+
+    # sort_by any sortable field; an unknown field is a 422, not a 500
+    by_action = client.get("/authz/audit?sort_by=action&sort_order=asc", headers=_auth("alice")).json()["data"]
+    assert [e["action"] for e in by_action] == sorted(e["action"] for e in events)
+    assert client.get("/authz/audit?sort_by=evil", headers=_auth("alice")).status_code == 422
 
     # non-admin and anonymous are blocked
     store.assign("bob", "runner")  # bob still isn't an admin

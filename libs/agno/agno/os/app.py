@@ -989,6 +989,11 @@ class AgentOS:
         user_isolation = False
         authorization_provider = None
         authz_audit = None
+        user_store = None
+        auto_provision_users = False
+        user_email_claim = "email"
+        user_name_claim = "name"
+        directory_error_fail_closed = False
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
@@ -1005,6 +1010,11 @@ class AgentOS:
             user_isolation = self.authorization_config.user_isolation
             authorization_provider = self.authorization_config.authorization_provider
             authz_audit = self.authorization_config.audit
+            user_store = self.authorization_config.user_store
+            auto_provision_users = self.authorization_config.auto_provision_users
+            user_email_claim = self.authorization_config.user_email_claim
+            user_name_claim = self.authorization_config.user_name_claim
+            directory_error_fail_closed = self.authorization_config.directory_error_fail_closed
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -1031,12 +1041,31 @@ class AgentOS:
         # Resolve the authorization provider. Defaults to the built-in
         # scope-based RBAC; a custom AuthorizationProvider can be supplied via
         # AuthorizationConfig to swap the decision engine (ReBAC/ABAC/external)
-        # without touching the request pipeline.
+        # without touching the request pipeline. You can also pass a LIST of
+        # providers to run several authz planes at once (e.g. token scopes for
+        # operators + a managed role store for end users) — a request is allowed
+        # if any of them allows it.
         from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
-        fastapi_app.state.authorization_provider = authorization_provider or ScopeAuthorizationProvider()
+        if isinstance(authorization_provider, str):
+            raise ValueError(
+                "authorization_provider must be an AuthorizationProvider (or a list of them), not a string."
+            )
+        if isinstance(authorization_provider, (list, tuple)):
+            from agno.os.authz._composite import CompositeAuthorizationProvider
+
+            fastapi_app.state.authorization_provider = CompositeAuthorizationProvider(list(authorization_provider))
+        else:
+            fastapi_app.state.authorization_provider = authorization_provider or ScopeAuthorizationProvider()
         # Optional decision-audit sink (records allow/deny at the route gate).
         fastapi_app.state.authz_audit = authz_audit
+        # Optional user directory (no-IdP). When present, the middleware denies
+        # disabled users and (optionally) auto-provisions from token claims.
+        fastapi_app.state.user_store = user_store
+        fastapi_app.state.user_auto_provision = auto_provision_users
+        fastapi_app.state.user_email_claim = user_email_claim
+        fastapi_app.state.user_name_claim = user_name_claim
+        fastapi_app.state.user_directory_fail_closed = directory_error_fail_closed
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms

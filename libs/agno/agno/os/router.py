@@ -356,6 +356,56 @@ def get_websocket_router(
                                 expected_audience = ws_audience or getattr(websocket.app.state, "agent_os_id", None)
                             payload = jwt_validator.validate_token(token, expected_audience)
                             claims = jwt_validator.extract_claims(payload)
+
+                            # User directory kill-switch: enforce the disabled flag
+                            # at WS connect, mirroring the HTTP middleware. A disabled
+                            # user is rejected even with a valid token. (HTTP enforces
+                            # this per-request; the WebSocket enforces it at connect.)
+                            user_store = getattr(getattr(websocket.app, "state", None), "user_store", None)
+                            ws_user_id = claims.get("user_id")
+                            if user_store is not None and ws_user_id:
+                                try:
+                                    if getattr(websocket.app.state, "user_auto_provision", False):
+                                        user_store.provision_from_claims(
+                                            ws_user_id,
+                                            payload,
+                                            email_claim=getattr(websocket.app.state, "user_email_claim", "email"),
+                                            name_claim=getattr(websocket.app.state, "user_name_claim", "name"),
+                                        )
+                                    ws_disabled = user_store.is_disabled(ws_user_id)
+                                except Exception as e:  # directory unreachable: honour configured policy
+                                    fail_closed = bool(
+                                        getattr(websocket.app.state, "user_directory_fail_closed", False)
+                                    )
+                                    logger.warning(
+                                        f"user directory check failed for {ws_user_id!r}: {e} "
+                                        f"(failing {'closed' if fail_closed else 'open'})"
+                                    )
+                                    if fail_closed:
+                                        await websocket.send_text(
+                                            json.dumps(
+                                                {
+                                                    "event": "auth_error",
+                                                    "error": "User directory unavailable",
+                                                    "error_type": "server_error",
+                                                }
+                                            )
+                                        )
+                                        continue
+                                    ws_disabled = False
+                                if ws_disabled:
+                                    logger.warning(f"Disabled user denied on WebSocket: {ws_user_id}")
+                                    await websocket.send_text(
+                                        json.dumps(
+                                            {
+                                                "event": "auth_error",
+                                                "error": "User is disabled",
+                                                "error_type": "user_disabled",
+                                            }
+                                        )
+                                    )
+                                    continue
+
                             await websocket_manager.authenticate_websocket(websocket)
 
                             # Store user context from JWT

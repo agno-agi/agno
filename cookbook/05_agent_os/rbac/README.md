@@ -356,8 +356,8 @@ Three tiers, pick the lowest that fits:
 | Tier | You write | Dependency |
 |------|-----------|------------|
 | Scopes (default) | scopes in the JWT | none |
-| Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[casbin]` (hidden) |
-| Raw provider | your own `AuthorizationProvider` (e.g. a Casbin model) | yours |
+| Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[roles]` |
+| Custom provider | your own `AuthorizationProvider` (map token claims to permissions however you like) | none |
 
 Each cookbook below runs the whole scenario for you and prints a plain
 `ALLOWED` / `BLOCKED` transcript that explains itself, then exits (no server, no
@@ -369,26 +369,33 @@ New to authorization? Read them in this order:
    decides what they can do. Shows a change taking effect instantly.
 2. `managed_roles_sessions.py` — roles protecting real data: who is allowed to
    delete a saved chat session (and who gets stopped before any data is touched).
-3. `casbin_runtime_policy.py` — turning a person's access on and off live, instantly.
-4. `casbin_provider.py` — advanced: swapping the rules engine for Casbin while
-   everything else stays the same. Most people won't need this.
+3. `managed_users.py` — the user directory: list users, give roles, and disable
+   someone instantly (blocked on their next request, even with a valid token).
+4. `manage_users_and_roles.py` — runs a real AgentOS server that serves the
+   `/authz` user + role management API (admin-only, with audit) for a frontend/
+   admin UI, with CORS and a seeded admin + users. Prints a ready-to-use admin token.
+   Pair it with `console.html` — a single-file test client (no build, no deps):
+   start the server, open the file in a browser, paste the printed token, and
+   click around users / roles / scopes / both audit trails.
+5. `idp_workos_auth0.py` — they already have a login service (WorkOS/Auth0): roles
+   ride the token, you only enforce, via a ~30-line custom `AuthorizationProvider`.
 
-### The three ways a company runs this
+### The two ways a company runs this
 
 A company either already has a login service (WorkOS/Okta/Auth0) or it doesn't,
-and either way we handle the "what are you allowed to do" part. The three setups,
-each with a runnable cookbook:
+and either way we handle the "what are you allowed to do" part:
 
 | # | Their situation | Who owns "who has which role" | Do we store users? | Cookbook |
 |---|---|---|---|---|
-| 1 | They have a login service; we only enforce | the login service (role on the token) | no | `idp_enforce_only.py` |
-| 2 | No login service; they want us to manage it | us (define + assign roles, manage over HTTP) | yes | `managed_roles_api.py` |
-| 3 | A mix of both at once | both — token role if present, else our list | for the non-IdP users | `casbin_external_idp.py` |
+| 1 | They have a login service; we only enforce | the login service (role on the token) | no | `idp_workos_auth0.py` |
+| 2 | No login service; they want us to manage it | us (define + assign roles, manage over HTTP) | yes | `manage_users_and_roles.py` (+ `managed_users.py`) |
 
-The same agent ends up protected the same way in all three; only where the role
-comes from changes.
+A mix of the two is possible without a separate cookbook: a custom
+`AuthorizationProvider` that uses the token's role when present and falls back to
+the managed store for users who don't have one.
 
-Install the optional extra first: `pip install "agno[casbin]"`.
+The managed-roles cookbooks need the optional extra: `pip install "agno[roles]"`.
+The enforce-only / custom-provider path (`idp_workos_auth0.py`) needs nothing extra.
 
 ## Additional Resources
 

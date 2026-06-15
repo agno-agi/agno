@@ -28,8 +28,29 @@ class AuthorizationConfig(BaseModel):
     # Pluggable authorization strategy. When None, AgentOS uses the built-in
     # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency).
     # Supply an AuthorizationProvider instance to swap in a different model
-    # (ReBAC/ABAC/Casbin/OpenFGA/Cerbos) without changing the request pipeline.
+    # (ReBAC/ABAC/managed roles/external) without changing the request pipeline.
+    # Or pass a LIST of providers to run several authz planes at once — a request
+    # is allowed if any of them allows it (e.g. [ScopeAuthorizationProvider(),
+    # roles.provider] for operators authorized by token scopes + end users
+    # authorized by a managed role store).
     authorization_provider: Optional[Any] = None
+    # Optional ManagedUserStore — the credential-less user directory for the
+    # no-IdP case. When set, AgentOS denies a disabled user at the enforcement
+    # point (revocation that outlives a valid token) and can auto-provision a
+    # directory row from token claims. Identity is still asserted by the JWT;
+    # this never stores credentials.
+    user_store: Optional[Any] = None
+    # Just-in-time provisioning: when True, the first valid token from a subject
+    # not yet in the directory creates a row from the token claims below.
+    auto_provision_users: bool = False
+    user_email_claim: str = "email"
+    user_name_claim: str = "name"
+    # How to treat a user-directory read that errors (e.g. the directory DB is
+    # unreachable) while checking the disabled flag. Default False = fail OPEN
+    # (let the request through; availability over the kill-switch). Set True to
+    # fail CLOSED (reject with 503) so a directory outage can't silently re-enable
+    # every disabled/compromised account.
+    directory_error_fail_closed: bool = False
     # Optional AuditSink. When set, AgentOS records each authorization decision
     # (allow/deny) at the route gate — principal, route, required scopes, and a
     # non-secret token reference — so you get an access trail, not just a change
