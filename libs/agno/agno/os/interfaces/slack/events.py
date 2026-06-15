@@ -286,19 +286,6 @@ async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: 
     state.paused_event = cast(Union["AgentRunPausedEvent", "TeamRunPausedEvent"], chunk)
     state.terminal_status = "in_progress"
 
-    from agno.os.interfaces.slack.types import tool_name
-
-    requirements = list(getattr(chunk, "active_requirements", None) or [])
-    for req in requirements:
-        req_id = getattr(req, "id", None) or ""
-        key = f"pause_req_{req_id}"
-        if key in state.task_cards:
-            continue
-        tool_label = tool_name(req)
-        # "complete" required — non-complete at stream.stop renders Slack error icon
-        state.track_task(key, tool_label, "complete")
-        await _emit_task(stream, key, tool_label, "complete")
-
     if not state.has_content() and state.stream_chars_sent == 0 and not state.task_cards:
         await stream.append(markdown_text="_Reviewing request…_")
 
