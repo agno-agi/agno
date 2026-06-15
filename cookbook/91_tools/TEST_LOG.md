@@ -1,5 +1,15 @@
 # Test Log
 
+### file_generation_tools.py (generate_code_file)
+
+**Status:** PASS
+
+**Description:** Added `generate_code_file` to `FileGenerationTools` so agents can emit source code as downloadable file artifacts for any language (Python, JS, TS, Go, Rust, Java, etc.). The tool maps a `language` (or the filename extension) to a file extension and a valid MIME type, falling back to `text/plain` for languages without a dedicated allowlisted MIME type. Added `example_code_generation()` to the cookbook (Python + TypeScript) and wired it into `__main__`.
+
+**Result:** Unit tests pass (`pytest libs/agno/tests/unit/tools/test_file_generation.py` — 45 passed, 2 skipped) covering Python (`.py`, `text/x-python`), TypeScript fallback (`.ts`, `text/plain`), unknown-language default (`.txt`), extension inference from filename, alias resolution (`py`/`c++`/`c#`/`bash`/`golang`), and the `enable_code_generation` toggle. Standalone check confirmed `File` artifacts construct without raising (MIME type stays within `File.valid_mime_types()`) and content round-trips for python/typescript/go/rust. Live agent run not executed (no OpenAI credentials / demo venv in this environment).
+
+---
+
 ### file_tools.py (Examples 6-8: exclude_patterns)
 
 **Status:** PASS

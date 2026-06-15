@@ -102,6 +102,88 @@ def test_generate_text_file():
         assert saved_path.read_text(encoding="utf-8") == "Hello there"
 
 
+def test_generate_code_file_python():
+    """Test code file generation for Python with a dedicated MIME type."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = FileGenerationTools(output_directory=tmp_dir)
+        code = "def main():\n    print('hi')\n"
+        result = tools.generate_code_file(code, language="python", filename="main")
+
+        file_artifact = _get_single_file(result)
+        assert file_artifact.filename == "main.py"
+        assert file_artifact.mime_type == "text/x-python"
+        assert file_artifact.file_type == "py"
+        assert file_artifact.content.decode("utf-8") == code
+
+        saved_path = Path(file_artifact.filepath)
+        assert saved_path.exists()
+        assert saved_path.read_text(encoding="utf-8") == code
+
+
+def test_generate_code_file_typescript_falls_back_to_plain_text():
+    """Languages without a dedicated valid MIME type use text/plain but keep the extension."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("export const x = 1\n", language="typescript", filename="index")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.filename == "index.ts"
+    assert file_artifact.file_type == "ts"
+    assert file_artifact.mime_type == "text/plain"
+
+
+def test_generate_code_file_unknown_language_defaults_to_txt():
+    """An unknown language with no filename extension defaults to a plain text file."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("some code", language="madeuplang")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.file_type == "txt"
+    assert file_artifact.mime_type == "text/plain"
+    assert file_artifact.filename.endswith(".txt")
+
+
+def test_generate_code_file_extension_inferred_from_filename():
+    """When language is omitted, the extension is taken from the filename."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("package main\n", filename="server.go")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.filename == "server.go"
+    assert file_artifact.file_type == "go"
+    assert file_artifact.mime_type == "text/plain"
+
+
+@pytest.mark.parametrize(
+    "alias,expected_ext",
+    [
+        ("py", "py"),
+        ("js", "js"),
+        ("ts", "ts"),
+        ("c++", "cpp"),
+        ("c#", "cs"),
+        ("bash", "sh"),
+        ("golang", "go"),
+    ],
+)
+def test_generate_code_file_language_aliases(alias, expected_ext):
+    """Common language aliases resolve to the right extension."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("code", language=alias, filename="snippet")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.file_type == expected_ext
+    assert file_artifact.filename == f"snippet.{expected_ext}"
+
+
+def test_code_generation_can_be_disabled():
+    """generate_code_file is registered only when enable_code_generation is True."""
+    enabled = FileGenerationTools(enable_code_generation=True)
+    assert "generate_code_file" in enabled.functions
+
+    disabled = FileGenerationTools(enable_code_generation=False)
+    assert "generate_code_file" not in disabled.functions
+
+
 def test_generate_pdf_file_when_unavailable():
     """Test PDF generation returns install message when reportlab is missing."""
     if PDF_AVAILABLE:
