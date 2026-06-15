@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from dataclasses import dataclass
 from ssl import SSLContext
@@ -244,9 +243,11 @@ class HITLHandler:
         decisions: List[Any],
         requirements: List[Any],
     ) -> None:
-        """Write approval resolution to DB for tools with approval_type='required'."""
+        """Resolve DB approval records for tools with approval_type='required'."""
+        from agno.run.approval import aresolve_approval
+
         db = getattr(self.entity, "db", None)
-        if not db or not hasattr(db, "update_approval"):
+        if db is None:
             return
 
         reqs_by_id = {r.id: r for r in requirements if r.id}
@@ -255,45 +256,32 @@ class HITLHandler:
         for decision in decisions:
             req = reqs_by_id.get(decision.requirement_id)
             te = getattr(req, "tool_execution", None) if req else None
-            if not te or getattr(te, "approval_type", None) != "required":
+            if te is None or getattr(te, "approval_type", None) != "required":
                 continue
 
             approval_id = getattr(te, "approval_id", None)
-            if not approval_id:
+            if approval_id is None:
                 continue
 
             status = "rejected" if decision.approved is False else "approved"
-            resolution_data = {
-                k: v for k, v in [
-                    ("note", decision.rejected_note),
-                    ("values", decision.input_values),
-                    ("result", decision.external_result),
-                    ("feedback", decision.feedback_selections),
-                ] if v is not None
-            } or None
+            resolution_data: Dict[str, Any] = {}
+            if decision.rejected_note:
+                resolution_data["note"] = decision.rejected_note
+            if decision.input_values is not None:
+                resolution_data["values"] = decision.input_values
+            if decision.external_result is not None:
+                resolution_data["result"] = decision.external_result
+            if decision.feedback_selections is not None:
+                resolution_data["feedback"] = decision.feedback_selections
 
-            try:
-                update_fn = db.update_approval
-                if asyncio.iscoroutinefunction(update_fn):
-                    await update_fn(
-                        approval_id,
-                        expected_status="pending",
-                        status=status,
-                        resolved_by=ctx.user_id,
-                        resolved_at=now,
-                        resolution_data=resolution_data,
-                    )
-                else:
-                    update_fn(
-                        approval_id,
-                        expected_status="pending",
-                        status=status,
-                        resolved_by=ctx.user_id,
-                        resolved_at=now,
-                        resolution_data=resolution_data,
-                    )
-            except Exception:
-                pass
+            await aresolve_approval(
+                db,
+                approval_id,
+                status=status,
+                resolved_by=ctx.user_id,
+                resolved_at=now,
+                resolution_data=resolution_data or None,
+            )
 
     async def handle_submit(self, payload: Dict[str, Any]) -> None:
         ctx = extract_submit_context(payload, self.entity_id)
