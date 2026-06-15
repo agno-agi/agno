@@ -53,7 +53,6 @@ from agno.tools.google.base import GoogleToolkit
 try:
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from googleapiclient.discovery import Resource
 except ImportError:
     raise ImportError(
         "`google-api-python-client` `google-auth-httplib2` `google-auth-oauthlib` not installed. Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
