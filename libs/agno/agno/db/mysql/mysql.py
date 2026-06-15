@@ -169,6 +169,7 @@ class MySQLDb(BaseDb):
             indexes: List[str] = []
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -203,6 +204,11 @@ class MySQLDb(BaseDb):
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
+
+            # Add multi-column (composite) indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
+                table.append_constraint(Index(idx_name, *idx_config["columns"]))
 
             if self.create_schema:
                 with self.Session() as sess, sess.begin():
@@ -3248,9 +3254,7 @@ class MySQLDb(BaseDb):
                 schedule = dict(row._mapping)
                 # Same-txn update is safe because we hold the row lock from SELECT.
                 result = sess.execute(
-                    table.update()
-                    .where(table.c.id == schedule["id"])
-                    .values(locked_by=worker_id, locked_at=now)
+                    table.update().where(table.c.id == schedule["id"]).values(locked_by=worker_id, locked_at=now)
                 )
                 if result.rowcount == 0:
                     return None
@@ -3335,13 +3339,7 @@ class MySQLDb(BaseDb):
                 total_count = sess.execute(count_stmt).scalar() or 0
 
                 offset = (page - 1) * limit
-                stmt = (
-                    select(table)
-                    .where(base_filter)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
