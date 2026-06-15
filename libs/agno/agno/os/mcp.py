@@ -42,8 +42,80 @@ from agno.session import AgentSession, TeamSession, WorkflowSession
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+    from agno.os.config import MCPServerConfig
 
 logger = logging.getLogger(__name__)
+
+# Built-in MCP tools are tagged by domain so they can be scoped as a group.
+_BUILTIN_TOOL_TAGS = {"core", "session", "memory"}
+
+
+def _enabled_builtin_tags(config: "Optional[MCPServerConfig]") -> set:
+    """Resolve which built-in tool tags should be registered, given the MCP config.
+
+    Returns the full set of built-in tags when no config is provided, preserving the
+    default behavior (all built-in tools registered).
+    """
+    if config is None:
+        return set(_BUILTIN_TOOL_TAGS)
+    if not config.enable_builtin_tools:
+        return set()
+    enabled = set(config.include_tags) if config.include_tags else set(_BUILTIN_TOOL_TAGS)
+    if config.exclude_tags:
+        enabled -= set(config.exclude_tags)
+    return enabled
+
+
+def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPServerConfig]"):
+    """Return a drop-in replacement for ``mcp.tool`` that scopes the built-in tools.
+
+    When a tool's tags are enabled by the config, the tool is registered as usual.
+    Otherwise the decorator is a no-op (the function is returned unregistered), so
+    scoping happens at registration time without depending on FastMCP tool-removal APIs.
+    """
+    enabled_tags = _enabled_builtin_tags(config)
+
+    def register(*args: Any, **kwargs: Any):
+        tags = kwargs.get("tags") or set()
+        if tags & enabled_tags:
+            return mcp.tool(*args, **kwargs)
+
+        def _skip(fn: Any) -> Any:
+            return fn
+
+        return _skip
+
+    return register
+
+
+def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPServerConfig]") -> None:
+    """Register any user-provided custom tools on the MCP server."""
+    if config is None or not config.tools:
+        return
+    for tool in config.tools:
+        _register_custom_tool(mcp, tool)
+
+
+def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
+    """Register a single custom tool, supporting plain callables and Agno tools/Functions."""
+    from fastmcp.tools import Tool
+
+    # Agno tool / Function: a callable ``entrypoint`` plus name/description metadata.
+    entrypoint = getattr(tool, "entrypoint", None)
+    if callable(entrypoint):
+        name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
+        description = getattr(tool, "description", None)
+        mcp.add_tool(Tool.from_function(entrypoint, name=name, description=description))
+        return
+
+    # Plain callable: name/description inferred from ``__name__``/docstring.
+    if callable(tool):
+        mcp.add_tool(Tool.from_function(tool))
+        return
+
+    raise TypeError(
+        f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
+    )
 
 
 def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
@@ -61,15 +133,25 @@ def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
     return caller_user_id
 
 
-def get_mcp_server(
+def build_mcp_server(
     os: "AgentOS",
-) -> StarletteWithLifespan:
-    """Attach MCP routes to the provided router."""
+) -> FastMCP:
+    """Build the FastMCP server for an AgentOS.
+
+    Registers the built-in tools (scoped by ``os.mcp_config``) and any custom tools.
+    Split out from :func:`get_mcp_server` so the tool surface can be exercised directly
+    by an in-memory MCP client in tests, without the HTTP/JWT layer.
+    """
+    mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
 
     # Create an MCP server
     mcp = FastMCP(os.name or "AgentOS")
 
-    @mcp.tool(
+    # Decorator used to register the built-in tools. Honors ``mcp_config`` scoping;
+    # behaves exactly like ``mcp.tool`` when no config (or default config) is provided.
+    register_builtin_tool = _builtin_tool_registrar(mcp, mcp_config)
+
+    @register_builtin_tool(
         name="get_agentos_config",
         description="Get the configuration of the AgentOS",
         tags={"core"},
@@ -101,21 +183,21 @@ def get_mcp_server(
 
     # ==================== Core Run Tools ====================
 
-    @mcp.tool(name="run_agent", description="Run an agent with a message", tags={"core"})  # type: ignore
+    @register_builtin_tool(name="run_agent", description="Run an agent with a message", tags={"core"})  # type: ignore
     async def run_agent(agent_id: str, message: str) -> RunOutput:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
         return await agent.arun(message)  # type: ignore[misc]
 
-    @mcp.tool(name="run_team", description="Run a team with a message", tags={"core"})  # type: ignore
+    @register_builtin_tool(name="run_team", description="Run a team with a message", tags={"core"})  # type: ignore
     async def run_team(team_id: str, message: str) -> TeamRunOutput:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
         return await team.arun(message)  # type: ignore[misc]
 
-    @mcp.tool(name="run_workflow", description="Run a workflow with a message", tags={"core"})  # type: ignore
+    @register_builtin_tool(name="run_workflow", description="Run a workflow with a message", tags={"core"})  # type: ignore
     async def run_workflow(workflow_id: str, message: str) -> WorkflowRunOutput:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
@@ -124,7 +206,7 @@ def get_mcp_server(
 
     # ==================== Session Management Tools ====================
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="get_sessions",
         description="Get paginated list of sessions with optional filtering by type, component, user, and name",
         tags={"session"},
@@ -193,7 +275,7 @@ def get_mcp_server(
             },
         }
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="get_session",
         description="Get detailed information about a specific session by ID",
         tags={"session"},
@@ -234,7 +316,7 @@ def get_mcp_server(
         else:
             return WorkflowSessionDetailSchema.from_session(session).model_dump()  # type: ignore
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="create_session",
         description="Create a new session for an agent, team, or workflow",
         tags={"session"},
@@ -333,7 +415,7 @@ def get_mcp_server(
         else:
             return WorkflowSessionDetailSchema.from_session(created_session).model_dump()  # type: ignore
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="get_session_runs",
         description="Get all runs for a specific session",
         tags={"session"},
@@ -393,7 +475,7 @@ def get_mcp_server(
 
         return run_responses
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="get_session_run",
         description="Get a specific run from a session",
         tags={"session"},
@@ -452,7 +534,7 @@ def get_mcp_server(
         else:
             return RunSchema.from_dict(target_run).model_dump()
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="rename_session",
         description="Rename an existing session",
         tags={"session"},
@@ -498,7 +580,7 @@ def get_mcp_server(
         else:
             return WorkflowSessionDetailSchema.from_session(session).model_dump()  # type: ignore
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="update_session",
         description="Update session properties like name, state, metadata, or summary",
         tags={"session"},
@@ -579,7 +661,7 @@ def get_mcp_server(
         else:
             return WorkflowSessionDetailSchema.from_session(updated_session).model_dump()  # type: ignore
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="delete_session",
         description="Delete a specific session and all its runs",
         tags={"session"},
@@ -605,7 +687,7 @@ def get_mcp_server(
 
         return "Session deleted successfully"
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="delete_sessions",
         description="Delete multiple sessions by their IDs",
         tags={"session"},
@@ -636,7 +718,7 @@ def get_mcp_server(
 
     # ==================== Memory Management Tools ====================
 
-    @mcp.tool(name="create_memory", description="Create a new user memory", tags={"memory"})  # type: ignore
+    @register_builtin_tool(name="create_memory", description="Create a new user memory", tags={"memory"})  # type: ignore
     async def create_memory(
         db_id: str,
         memory: str,
@@ -682,7 +764,7 @@ def get_mcp_server(
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="get_memory",
         description="Get a specific memory by ID",
         tags={"memory"},
@@ -710,7 +792,7 @@ def get_mcp_server(
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="get_memories",
         description="Get a paginated list of memories with optional filtering",
         tags={"memory"},
@@ -785,7 +867,7 @@ def get_mcp_server(
             },
         }
 
-    @mcp.tool(name="update_memory", description="Update an existing memory", tags={"memory"})  # type: ignore
+    @register_builtin_tool(name="update_memory", description="Update an existing memory", tags={"memory"})  # type: ignore
     async def update_memory(
         db_id: str,
         memory_id: str,
@@ -833,7 +915,7 @@ def get_mcp_server(
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @mcp.tool(name="delete_memory", description="Delete a specific memory by ID", tags={"memory"})  # type: ignore
+    @register_builtin_tool(name="delete_memory", description="Delete a specific memory by ID", tags={"memory"})  # type: ignore
     async def delete_memory(
         db_id: str,
         memory_id: str,
@@ -855,7 +937,7 @@ def get_mcp_server(
 
         return "Memory deleted successfully"
 
-    @mcp.tool(
+    @register_builtin_tool(
         name="delete_memories",
         description="Delete multiple memories by their IDs",
         tags={"memory"},
@@ -880,6 +962,23 @@ def get_mcp_server(
             db.delete_user_memories(memory_ids=memory_ids, user_id=user_id)
 
         return "Memories deleted successfully"
+
+    # Register any user-provided custom tools. These share the same server, mount (/mcp),
+    # lifespan, and JWT middleware as the built-in tools.
+    _register_custom_tools(mcp, mcp_config)
+
+    return mcp
+
+
+def get_mcp_server(
+    os: "AgentOS",
+) -> StarletteWithLifespan:
+    """Build the MCP HTTP app served at ``/mcp``.
+
+    Wraps :func:`build_mcp_server` with the Streamable HTTP transport and adds the JWT
+    middleware when authorization is enabled.
+    """
+    mcp = build_mcp_server(os)
 
     # Use http_app for Streamable HTTP transport (modern MCP standard)
     mcp_app = mcp.http_app(path="/mcp")

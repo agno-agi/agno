@@ -1,8 +1,38 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Dict, Generic, List, Optional, TypeVar
+from typing import Any, Dict, Generic, List, Optional, Set, TypeVar
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class MCPServerConfig(BaseModel):
+    """Configuration for the AgentOS MCP server (served at ``/mcp``).
+
+    Pair this with ``AgentOS(enable_mcp_server=True, mcp_config=...)`` to register
+    your own tools and/or scope the built-in tools. With no ``mcp_config`` provided
+    the MCP server behaves exactly as before: all built-in tools are registered.
+
+    The built-in tools are tagged so they can be scoped as a group:
+      - ``"core"``    -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``
+      - ``"session"`` -> session CRUD tools
+      - ``"memory"``  -> memory CRUD tools
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # Custom tools to register on the MCP server. Each entry may be a plain callable
+    # (name/description inferred from ``__name__``/docstring) or an Agno tool/``Function``
+    # (name/description taken from the tool, entrypoint used as the callable).
+    tools: Optional[List[Any]] = None
+
+    # Master switch for the ~19 built-in tools. Set to False to ship ONLY your own tools.
+    enable_builtin_tools: bool = True
+
+    # Finer scoping over the built-ins via their tags ({"core", "session", "memory"}).
+    # When ``include_tags`` is set, only built-ins carrying one of those tags are registered.
+    # ``exclude_tags`` is then subtracted. Both are ignored when ``enable_builtin_tools`` is False.
+    include_tags: Optional[Set[str]] = None
+    exclude_tags: Optional[Set[str]] = None
 
 
 class AuthorizationConfig(BaseModel):
