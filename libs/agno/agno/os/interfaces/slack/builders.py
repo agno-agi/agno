@@ -181,12 +181,24 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
     req_id = requirement.id or ""
     name = tool_name(requirement)
     args = tool_args(requirement)
-    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
+
     # Format args as bullet points in body (not subtitle which truncates)
     body_lines = [f"• {k}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
     body_text = "\n".join(body_lines) if body_lines else "_(no arguments)_"
     # Slack Block Kit section text has ~200 char limit; truncate to prevent silent card rejection
     body_text = truncate(body_text, 200)
+
+    # approval_type="required" tools need admin approval via dashboard, not Slack buttons
+    te = requirement.tool_execution
+    if te and getattr(te, "approval_type", None) == "required":
+        return Card(
+            block_id=f"rowact:{req_id}:admin_approval",
+            title=MarkdownTextObject(text=f"*{name}*"),
+            body=MarkdownTextObject(text=f"{body_text}\n\n_Awaiting admin approval_"),
+            actions=[],
+        )
+
+    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
     return Card(
         block_id=f"rowact:{req_id}:confirmation",
         title=MarkdownTextObject(text=f"*{name}*"),

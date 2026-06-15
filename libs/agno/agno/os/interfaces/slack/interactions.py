@@ -200,7 +200,7 @@ def confirmation_row_summary(blocks: List[Dict[str, Any]]) -> ConfirmationRowSum
         # Global submit button lives in an actions block with pause: prefix
         if block_type == "actions" and block_id.startswith("pause:"):
             has_global_submit = True
-        # Fresh confirmation row not yet decided
+        # Fresh confirmation row not yet decided (skip admin_approval — resolved via dashboard)
         if block_id.startswith("rowact:") and ":confirmation" in block_id:
             if ":selected:" not in block_id and ":decided:" not in block_id:
                 parts = block_id.split(":")
@@ -249,6 +249,10 @@ def parse_submit_payload(
     for requirement in requirements:
         kind = requirement.pause_type
         if kind == "confirmation":
+            # approval_type="required" tools are resolved via os.agno.com, not Slack
+            te = requirement.tool_execution
+            if te and getattr(te, "approval_type", None) == "required":
+                continue
             decisions.append(_parse_confirmation(requirement, blocks, errors, state))
         elif kind == "user_input":
             decisions.append(_parse_user_input(requirement, state, errors))
