@@ -639,7 +639,7 @@ class TestGetWorkflows:
 
         get_workflows(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.WORKFLOW)
+        mock_db.list_components.assert_called_once_with(component_type=ComponentType.WORKFLOW, user_id=None)
 
     def test_get_workflows_returns_empty_list_on_error(self, mock_db):
         """Test get_workflows returns empty list on error."""

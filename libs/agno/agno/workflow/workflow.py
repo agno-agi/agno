@@ -10688,6 +10688,7 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
 ) -> Optional["Workflow"]:
     """
     Get a Workflow by id from the database (new entities/configs schema).
@@ -10703,11 +10704,18 @@ def get_workflow_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the workflow when owned by this user.
 
     Returns:
         Workflow instance or None.
     """
     try:
+        from agno.utils.component_scope import component_owner_scope
+
+        # Scope to owner: a non-owner must not load another user's workflow component.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
         row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
@@ -10721,7 +10729,9 @@ def get_workflow_by_id(
         # Get links for this workflow version
         links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
 
-        workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry)
+        # Resolve DB-backed step executors under the same owner scope as the workflow.
+        with component_owner_scope(user_id):
+            workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry)
 
         # Ensure workflow.id is set to the component_id
         workflow.id = id
@@ -10736,15 +10746,23 @@ def get_workflow_by_id(
 def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
 ) -> List["Workflow"]:
     """
     Get all workflows from the database.
 
     Sets _version and _stage on each workflow from the component metadata.
+
+    Args:
+        db: Database to load workflows from
+        registry: Optional registry for rehydrating tools
+        user_id: If set, only load workflows owned by this user.
     """
     workflows: List[Workflow] = []
     try:
-        components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
+        from agno.utils.component_scope import component_owner_scope
+
+        components, _ = db.list_components(component_type=ComponentType.WORKFLOW, user_id=user_id)
         for component in components:
             try:
                 config = db.get_config(component_id=component["component_id"])
@@ -10754,7 +10772,9 @@ def get_workflows(
                         component_id = component["component_id"]
                         if "id" not in workflow_config:
                             workflow_config["id"] = component_id
-                        workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                        # Resolve DB-backed step executors under the workflow's owner scope.
+                        with component_owner_scope(user_id):
+                            workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
                         workflow.id = component_id
                         workflow._version = component.get("current_version")
                         workflow._stage = config.get("stage")

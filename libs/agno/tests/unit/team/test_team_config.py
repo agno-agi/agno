@@ -419,7 +419,7 @@ class TestTeamFromDict:
 
             team = Team.from_dict(config, db=mock_db)
 
-            mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, registry=None)
+            mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, registry=None, user_id=None)
             assert team.members == [mock_agent]
 
     def test_from_dict_roundtrip(self, team_with_settings):
@@ -878,7 +878,9 @@ class TestGetTeams:
 
         get_teams(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.TEAM, exclude_component_ids=None)
+        mock_db.list_components.assert_called_once_with(
+            component_type=ComponentType.TEAM, exclude_component_ids=None, user_id=None
+        )
 
     def test_get_teams_with_registry(self, mock_db):
         """Test get_teams passes registry to from_dict."""

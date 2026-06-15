@@ -711,6 +711,7 @@ class ComponentResponse(BaseModel):
     component_id: str
     component_type: ComponentType
     name: Optional[str] = None
+    user_id: Optional[str] = None
     description: Optional[str] = None
     current_version: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
