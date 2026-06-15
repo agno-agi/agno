@@ -1217,9 +1217,7 @@ class StepRequirement:
             try:
                 requirement.set_user_input(validate=True, **requirement.user_input)
             except ValueError as e:
-                raise ValueError(
-                    f"Invalid user_input for step '{requirement.step_name}': {e}"
-                ) from e
+                raise ValueError(f"Invalid user_input for step '{requirement.step_name}': {e}") from e
         return requirement
 
 
