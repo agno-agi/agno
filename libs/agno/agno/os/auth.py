@@ -309,7 +309,7 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
     """
     # Delegate to the active authorization provider. The default
     # ScopeAuthorizationProvider reproduces the original scope-matching
-    # behaviour; a custom provider (Casbin/ReBAC/ABAC/external) can decide from a
+    # behaviour; a custom provider (ReBAC/ABAC/external engine) can decide from a
     # different model. This is the per-resource gate that complements the route
     # gate in JWTMiddleware, both go through the same provider.
     provider = _resolve_authorization_provider(request)

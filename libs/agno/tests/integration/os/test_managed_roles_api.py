@@ -11,7 +11,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-pytest.importorskip("casbin")
+pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the native engine + SQLAlchemy
 
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402

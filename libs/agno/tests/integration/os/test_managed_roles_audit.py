@@ -1,7 +1,7 @@
 """Audit trail for managed-role changes.
 
-Casbin can't attribute who changed a policy (its management API never sees the
-actor), so change-audit lives at our layer. These tests verify that role and
+The policy engine can't attribute who changed a policy (it never sees the actor),
+so change-audit lives at our layer. These tests verify that role and
 assignment mutations emit append-only AuditEvents with the acting principal and
 the before/after, both via the store directly and through the admin HTTP API.
 """
@@ -12,7 +12,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-pytest.importorskip("casbin")
+pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the native engine + SQLAlchemy
 
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402

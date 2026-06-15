@@ -72,8 +72,9 @@ dev = [
 
 os = ["fastapi[standard]", "uvicorn", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "croniter>=1.3", "pytz>=2023.3"]
 whatsapp-crypto = ["cryptography>=41.0"]
-# Optional Casbin-backed authorization provider (managed roles, ABAC, DB-backed policy)
-casbin = ["casbin>=1.36", "casbin-sqlalchemy-adapter>=1.4"]
+# Optional extra for managed roles (persisted role store + DB-backed policy).
+# The policy engine is agno-native; persistence just needs SQLAlchemy.
+roles = ["sqlalchemy"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -466,8 +467,6 @@ module = [
   "bson.*",
   "brave.*",
   "browserbase.*",
-  "casbin.*",
-  "casbin_sqlalchemy_adapter.*",
   "cassio.*",
   "cerebras.*",
   "cerebras_cloud_sdk.*",

@@ -6,7 +6,7 @@ exactly — it delegates to :func:`agno.os.scopes.has_required_scopes` and
 request pipeline used before the provider seam existed. No external service, no
 new dependency: it runs against the scopes already in the JWT.
 
-Swapping to a different model (Casbin, OpenFGA, Cerbos, a bespoke ReBAC engine)
+Swapping to a different model (OpenFGA, Cerbos, a bespoke ReBAC engine)
 means implementing :class:`agno.os.authz.provider.AuthorizationProvider`
 instead of this class — the rest of the pipeline is unchanged.
 """

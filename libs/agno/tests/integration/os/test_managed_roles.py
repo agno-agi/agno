@@ -2,7 +2,7 @@
 
 Verifies the governance product surface end to end: roles defined in agno scope
 terms, runtime assign/revoke, persistence to a DB, and enforcement through the
-AgentOS request pipeline via the store's provider. No Casbin types appear in the
+AgentOS request pipeline via the store's provider. No engine types appear in the
 test body — the same as user code.
 """
 
@@ -12,7 +12,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
-pytest.importorskip("casbin")
+pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the native engine + SQLAlchemy
 
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
