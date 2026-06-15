@@ -448,7 +448,7 @@ def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.Monkey
         metadata={"call_meta": "override"},
         output_schema={"call_schema": "override"},
     )
-    assert override_context.dependencies == {"call_dep": "override"}
+    assert override_context.dependencies == {"agent_dep": "default", "call_dep": "override"}
     assert override_context.knowledge_filters == {"agent_filter": "default", "call_filter": "override"}
     assert override_context.metadata == {"call_meta": "override", "agent_meta": "default"}
     assert override_context.output_schema == {"call_schema": "override"}
@@ -541,7 +541,7 @@ async def test_arun_dispatch_respects_run_context_precedence(monkeypatch: pytest
         metadata={"call_meta": "override"},
         output_schema={"call_schema": "override"},
     )
-    assert override_context.dependencies == {"call_dep": "override"}
+    assert override_context.dependencies == {"agent_dep": "default", "call_dep": "override"}
     assert override_context.knowledge_filters == {"agent_filter": "default", "call_filter": "override"}
     assert override_context.metadata == {"call_meta": "override", "agent_meta": "default"}
     assert override_context.output_schema == {"call_schema": "override"}
@@ -624,7 +624,7 @@ def test_continue_run_dispatch_respects_run_context_precedence(monkeypatch: pyte
         knowledge_filters={"call_filter": "override"},
         metadata={"call_meta": "override"},
     )
-    assert override_context.dependencies == {"call_dep": "override"}
+    assert override_context.dependencies == {"agent_dep": "default", "call_dep": "override"}
     assert override_context.knowledge_filters == {"agent_filter": "default", "call_filter": "override"}
     assert override_context.metadata == {"call_meta": "override", "agent_meta": "default"}
 
@@ -706,7 +706,7 @@ async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatc
         knowledge_filters={"call_filter": "override"},
         metadata={"call_meta": "override"},
     )
-    assert override_context.dependencies == {"call_dep": "override"}
+    assert override_context.dependencies == {"agent_dep": "default", "call_dep": "override"}
     assert override_context.knowledge_filters == {"agent_filter": "default", "call_filter": "override"}
     assert override_context.metadata == {"call_meta": "override", "agent_meta": "default"}
 
