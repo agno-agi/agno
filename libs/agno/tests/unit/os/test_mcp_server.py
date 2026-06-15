@@ -392,3 +392,62 @@ async def test_custom_middleware_passthrough_runs():
         response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_MCP_HEADERS)
 
     assert response.headers.get("X-Passthrough") == "1"
+
+
+# ==================== Built-in transport security (DNS-rebinding) ====================
+
+
+def _headers(host: Optional[str] = None, origin: Optional[str] = None) -> dict:
+    headers = dict(_MCP_HEADERS)
+    if host is not None:
+        headers["Host"] = host
+    if origin is not None:
+        headers["Origin"] = origin
+    return headers
+
+
+def _security_os(**kwargs) -> AgentOS:
+    return AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        mcp_config=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False, **kwargs),
+    )
+
+
+async def test_transport_security_allows_localhost_by_default():
+    """With allowed_hosts set (even to []), localhost is allowed out of the box."""
+    async with _mcp_http_client(_security_os(allowed_hosts=[])) as client:
+        response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_headers(host="localhost:7777"))
+    assert response.status_code == 200
+
+
+async def test_transport_security_rejects_unknown_host():
+    """A rebound / unknown Host is rejected with 400 before the MCP machinery runs."""
+    async with _mcp_http_client(_security_os(allowed_hosts=[])) as client:
+        response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_headers(host="evil.example.com"))
+    assert response.status_code == 400
+    assert "invalid_host" in response.text
+
+
+async def test_transport_security_allows_configured_deploy_host():
+    """The configured deploy host is allowed alongside the localhost defaults."""
+    async with _mcp_http_client(_security_os(allowed_hosts=["myapp.com"])) as client:
+        response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_headers(host="myapp.com"))
+    assert response.status_code == 200
+
+
+async def test_transport_security_rejects_unknown_origin():
+    """A present-but-unknown Origin is rejected even when the Host is allowed."""
+    async with _mcp_http_client(_security_os(allowed_hosts=[])) as client:
+        response = await client.post(
+            "/mcp", json=_MCP_INIT_BODY, headers=_headers(host="localhost", origin="http://evil.example.com")
+        )
+    assert response.status_code == 400
+    assert "invalid_origin" in response.text
+
+
+async def test_no_transport_security_when_unset():
+    """Without allowed_hosts, no host validation is added (unchanged behavior)."""
+    async with _mcp_http_client(_security_os()) as client:
+        response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_headers(host="anything.example.com"))
+    assert response.status_code == 200
