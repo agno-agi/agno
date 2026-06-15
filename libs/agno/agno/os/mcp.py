@@ -1028,7 +1028,7 @@ def build_mcp_server(
 
 
 def _add_authorize_middleware(mcp_app: StarletteWithLifespan, authorize: Callable[[Optional[str]], bool]) -> None:
-    """Gate the MCP channel with a per-call ``authorize(user_id) -> bool`` predicate.
+    """Gate the MCP server with a per-call ``authorize(user_id) -> bool`` predicate.
 
     Runs after the JWT middleware (so ``request.state.user_id`` is the verified subject) and
     returns 401 before any tool or model runs when the predicate rejects the caller.
@@ -1041,7 +1041,7 @@ def _add_authorize_middleware(mcp_app: StarletteWithLifespan, authorize: Callabl
             user_id = getattr(getattr(request, "state", None), "user_id", None)
             if not authorize(user_id):
                 return JSONResponse(
-                    {"error": "unauthorized", "detail": "Not authorized for the MCP channel."},
+                    {"error": "unauthorized", "detail": "Not authorized for the MCP server."},
                     status_code=401,
                 )
             return await call_next(request)
@@ -1049,14 +1049,76 @@ def _add_authorize_middleware(mcp_app: StarletteWithLifespan, authorize: Callabl
     mcp_app.add_middleware(_MCPAuthorizeMiddleware)
 
 
+# Localhost defaults so a desktop / local MCP server is protected with zero extra config.
+_MCP_LOCALHOST_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def _mcp_request_hostname(host_header: str) -> str:
+    """Bare hostname from a Host header value, port stripped (keeps the ipv6 brackets)."""
+    value = host_header.strip()
+    if value.startswith("["):  # ipv6 literal, e.g. [::1]:7777
+        end = value.find("]")
+        return value[: end + 1] if end != -1 else value
+    return value.split(":", 1)[0]
+
+
+def _mcp_origin_hostname(origin: str) -> str:
+    """Bare hostname from an Origin header value (keeps ipv6 brackets to match the defaults)."""
+    from urllib.parse import urlparse
+
+    hostname = urlparse(origin).hostname or ""
+    return f"[{hostname}]" if ":" in hostname else hostname
+
+
+def _mcp_host_allowed(hostname: str, allowed: set) -> bool:
+    if hostname in allowed:
+        return True
+    return any(pattern.startswith("*.") and hostname.endswith(pattern[1:]) for pattern in allowed)
+
+
+def _add_transport_security_middleware(
+    mcp_app: StarletteWithLifespan,
+    allowed_hosts: List[str],
+    allowed_origins: Optional[List[str]],
+) -> None:
+    """Add built-in DNS-rebinding protection: validate the Host (and Origin when present).
+
+    Allowed hosts always include localhost, so a desktop / local MCP server works out of the box;
+    callers list only their deploy or tunnel host. Anything else is rejected with 400 before the
+    request reaches the MCP machinery.
+    """
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+
+    host_set = {_mcp_request_hostname(h) for h in list(allowed_hosts) + list(_MCP_LOCALHOST_HOSTS)}
+    origin_set = set(allowed_origins or [])
+
+    class _MCPTransportSecurityMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
+            host = _mcp_request_hostname(request.headers.get("host", ""))
+            if not _mcp_host_allowed(host, host_set):
+                return JSONResponse({"error": "invalid_host", "detail": "Host not allowed."}, status_code=400)
+            origin = request.headers.get("origin")
+            if (
+                origin is not None
+                and origin not in origin_set
+                and not _mcp_host_allowed(_mcp_origin_hostname(origin), host_set)
+            ):
+                return JSONResponse({"error": "invalid_origin", "detail": "Origin not allowed."}, status_code=400)
+            return await call_next(request)
+
+    mcp_app.add_middleware(_MCPTransportSecurityMiddleware)
+
+
 def get_mcp_server(
     os: "AgentOS",
 ) -> StarletteWithLifespan:
     """Build the MCP HTTP app served at ``/mcp``.
 
-    Wraps :func:`build_mcp_server` with the Streamable HTTP transport and layers on the
-    JWT middleware (when authorization is enabled), the optional ``authorize`` gate, and any
-    app-provided middleware from ``mcp_config``.
+    Wraps :func:`build_mcp_server` with the Streamable HTTP transport and layers on (from the
+    inside out) the JWT middleware (when authorization is enabled), the optional ``authorize``
+    gate, any app-provided middleware, and the built-in DNS-rebinding protection -- all from
+    ``mcp_config``.
     """
     mcp = build_mcp_server(os)
     mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
@@ -1065,8 +1127,8 @@ def get_mcp_server(
     mcp_app = mcp.http_app(path="/mcp")
 
     # Middleware runs in reverse registration order (last added is outermost / runs first).
-    # Target running order: app middleware -> JWT -> authorize gate -> tool, so the gate sees
-    # the verified identity and app middleware (e.g. DNS-rebinding) runs ahead of everything.
+    # Target running order: transport security -> app middleware -> JWT -> authorize gate -> tool,
+    # so a bad Host is rejected first and the gate sees the JWT-verified identity.
 
     # Innermost: per-call authorize gate.
     if mcp_config is not None and mcp_config.authorize is not None:
@@ -1085,10 +1147,14 @@ def get_mcp_server(
             verify_audience=os.authorization_config.verify_audience or False,
         )
 
-    # Outermost: app-provided middleware, preserving the order they were listed in.
+    # App-provided middleware, preserving the order they were listed in.
     if mcp_config is not None and mcp_config.middleware:
         for mw in reversed(mcp_config.middleware):
             cls, args, kwargs = mw
             mcp_app.add_middleware(cls, *args, **kwargs)
+
+    # Outermost: built-in DNS-rebinding protection (runs first, before auth and tools).
+    if mcp_config is not None and mcp_config.allowed_hosts is not None:
+        _add_transport_security_middleware(mcp_app, mcp_config.allowed_hosts, mcp_config.allowed_origins)
 
     return mcp_app

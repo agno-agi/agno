@@ -9,7 +9,7 @@ class MCPServerConfig(BaseModel):
     """Configuration for the AgentOS MCP server (served at ``/mcp``).
 
     Pair this with ``AgentOS(enable_mcp_server=True, mcp_config=...)`` to register
-    your own tools, scope the built-in tools, gate the channel, and add middleware.
+    your own tools, scope the built-in tools, gate the server, and add middleware.
     With no ``mcp_config`` provided the MCP server behaves exactly as before: all
     built-in tools are registered and no extra gate or middleware is added.
 
@@ -40,15 +40,27 @@ class MCPServerConfig(BaseModel):
     include_tags: Optional[Set[str]] = None
     exclude_tags: Optional[Set[str]] = None
 
-    # Per-call gate for the MCP channel. Given the authenticated caller's user_id (the JWT
+    # Per-call gate for the MCP server. Given the authenticated caller's user_id (the JWT
     # subject, or None when unauthenticated), return True to allow the request and False to
     # reject it with 401 -- before any tool or model runs. Runs after JWT verification.
-    # Example: ``authorize=lambda user_id: user_id in OWNER_IDS`` for an owner-only channel.
+    # Example: ``authorize=lambda user_id: user_id in OWNER_IDS`` for an owner-only server.
     authorize: Optional[Callable[[Optional[str]], bool]] = None
 
-    # Extra ASGI/Starlette middleware to add to the MCP app (e.g. DNS-rebinding protection).
-    # Provide ``starlette.middleware.Middleware`` instances; they run outermost, ahead of the
-    # JWT and ``authorize`` layers, in the order listed.
+    # Built-in DNS-rebinding protection. When ``allowed_hosts`` is set (even to an empty list),
+    # AgentOS validates the request Host -- and the Origin when one is present -- against these
+    # values plus localhost defaults, rejecting anything else with 400. This is what an always-on
+    # local MCP server needs so a malicious web page can't drive it via a rebound DNS name; you
+    # list only your deploy/tunnel host, localhost works out of the box. Left as None (default),
+    # no host validation is added -- unchanged behavior.
+    allowed_hosts: Optional[List[str]] = None
+    # Extra exact origins to allow (advanced). An Origin whose host is already in ``allowed_hosts``
+    # (or a localhost default) is allowed without listing it here; use this only to allow an Origin
+    # served from a different host.
+    allowed_origins: Optional[List[str]] = None
+
+    # Extra ASGI/Starlette middleware to add to the MCP app, for anything not covered above.
+    # Provide ``starlette.middleware.Middleware`` instances; they run ahead of the JWT and
+    # ``authorize`` layers, in the order listed.
     middleware: Optional[List[Any]] = None
 
 
