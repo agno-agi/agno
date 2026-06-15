@@ -249,17 +249,18 @@ class HITLHandler:
         button_value = actions[0].get("value") or ""
         approval_id, req_id, run_id, awaiting_ts = decode_admin_approval_button_value(button_value)
         if not approval_id or not req_id or not run_id:
+            log_error(f"[HITL] Invalid admin approval button value: {button_value!r}")
             return
 
-        channel = (payload.get("channel") or {}).get("id")
-        message = payload.get("message") or {}
-        msg_ts = message.get("ts")
+        channel = payload.get("channel", {}).get("id", "")
+        message = payload.get("message", {})
+        msg_ts = message.get("ts", "")
         thread_ts = message.get("thread_ts") or msg_ts
-        if not channel or not msg_ts:
+        if not channel or not msg_ts or not thread_ts:
+            log_error(f"[HITL] Missing Slack context: channel={channel}, msg_ts={msg_ts}, thread_ts={thread_ts}")
             return
 
-        # Get current card info from blocks
-        blocks = message.get("blocks") or []
+        blocks = message.get("blocks", [])
         tool_name_str = "Tool"
         body_text = ""
         for block in blocks:
@@ -317,43 +318,7 @@ class HITLHandler:
             except Exception as exc:
                 log_error(f"[HITL] Failed to confirm requirement: {exc}")
 
-            # Open stream and continue the run directly
-            stream = await open_chat_stream(
-                self._client(),
-                channel,
-                thread_ts,
-                (payload.get("user") or {}).get("id") or "",
-                (payload.get("team") or {}).get("id") or "",
-                self.task_display_mode,
-                self.buffer_size,
-            )
-
-            # Resume the run
-            state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
-            try:
-                response_stream = self.entity.acontinue_run(  # type: ignore[union-attr]
-                    run_id=run_id,
-                    requirements=requirements,
-                    session_id=session_id,
-                    stream=True,
-                    stream_events=True,
-                )
-                async for chunk in response_stream:
-                    state.collect_media(chunk)
-                    ev = getattr(chunk, "event", None)
-                    if ev and await process_event(ev, chunk, state, stream):
-                        break
-                    if state.has_content():
-                        content = state.flush()
-                        if content and state.stream_chars_sent + len(content) <= _STREAM_CHAR_LIMIT:
-                            await stream.append(markdown_text=content)
-                            state.stream_chars_sent += len(content)
-            except Exception as exc:
-                log_error(f"[HITL] acontinue_run failed: {exc}")
-
-            # Complete or re-pause
-            from agno.os.interfaces.slack.types import SubmitContext
-
+            # Build context and reuse existing stream_resumed_run
             ctx = SubmitContext(
                 run_id=run_id,
                 session_id=session_id,
@@ -365,6 +330,16 @@ class HITLHandler:
                 team_id=(payload.get("team") or {}).get("id") or "",
                 state_values={},
             )
+            stream = await open_chat_stream(
+                self._client(),
+                channel,
+                thread_ts,
+                ctx.user_id,
+                ctx.team_id,
+                self.task_display_mode,
+                self.buffer_size,
+            )
+            state = await self.stream_resumed_run(ctx, stream, requirements)
             await self.complete_or_repause(ctx, stream, state)
             return
 
