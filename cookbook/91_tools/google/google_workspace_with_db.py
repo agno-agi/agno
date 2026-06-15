@@ -26,7 +26,7 @@ from os import getenv
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuth
+from agno.tools.google.auth import AuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -35,7 +35,7 @@ from agno.tools.google.tasks import GoogleTasksTools
 
 db = PostgresDb(db_url="postgresql://agno:agno@localhost:5532/agno")
 
-auth = GoogleAuth(
+auth = AuthConfig(
     db=db,
     token_encryption_key=getenv("AGNO_ENCRYPTION_KEY"),
 )

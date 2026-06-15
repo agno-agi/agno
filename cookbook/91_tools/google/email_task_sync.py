@@ -17,11 +17,11 @@ Run:
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleAuth
+from agno.tools.google.auth import AuthConfig
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.tasks import GoogleTasksTools
 
-auth = GoogleAuth()
+auth = AuthConfig()
 
 agent = Agent(
     name="Email Task Sync",
