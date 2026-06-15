@@ -75,6 +75,8 @@ whatsapp-crypto = ["cryptography>=41.0"]
 # Optional extra for managed roles (persisted role store + DB-backed policy).
 # The policy engine is agno-native; persistence just needs SQLAlchemy.
 roles = ["sqlalchemy"]
+# Optional extra for fine-grained / relationship-based authorization (ReBAC) via OpenFGA.
+fga = ["openfga-sdk>=0.9"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -533,6 +535,7 @@ module = [
   "newspaper.*",
   "numpy.*",
   "ollama.*",
+  "openfga_sdk.*",
   "openpyxl.*",
   "openai.*",
   "cv2.*",

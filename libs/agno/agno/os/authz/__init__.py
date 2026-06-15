@@ -17,6 +17,7 @@ third-party policy engine in the default path.
 
 from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink, LoggingAuditSink
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, ScopeEntry
+from agno.os.authz.fga import FGAAuthorizationProvider, FGAClient
 from agno.os.authz.native_engine import NativePolicyEngine
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
@@ -31,6 +32,10 @@ __all__ = [
     "ScopeEntry",
     "EngineAuthorizationProvider",
     "NativePolicyEngine",
+    # Fine-grained / relationship-based authz (ReBAC). The provider + port are
+    # dependency-free; the OpenFGA adapter (OpenFGAClient) lives behind agno[fga].
+    "FGAAuthorizationProvider",
+    "FGAClient",
     "AuditEvent",
     "AuditSink",
     "LoggingAuditSink",
