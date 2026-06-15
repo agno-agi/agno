@@ -14,11 +14,13 @@
 
 **Status:** PASS
 
-**Description:** AgentOS exposing a single custom MCP tool (`ask_workspace`) routed through an
-agent, with the built-in tools disabled via `MCPServerConfig(enable_builtin_tools=False)`.
+**Description:** AgentOS exposing a single owner-only custom MCP tool (`ask_workspace`) routed
+through an agent: built-ins disabled via `MCPServerConfig(enable_builtin_tools=False)`, `user_id`
+injected into the tool (hidden from the client schema), and an `authorize` owner-gate.
 
-**Result:** App builds successfully; the MCP server at `/mcp` exposes only `ask_workspace`
-(verified with an in-memory FastMCP client). A live model call requires `OPENAI_API_KEY`.
+**Result:** App builds successfully; the MCP server at `/mcp` exposes only `ask_workspace`, the
+`user_id` arg is not in the client-facing schema, and the authorize middleware is wired (verified
+with an in-memory FastMCP client). A live model call requires `OPENAI_API_KEY`.
 
 ---
 

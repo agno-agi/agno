@@ -13,8 +13,8 @@ Examples for `mcp_demo` in AgentOS.
 ## Customizing the MCP server
 
 By default `enable_mcp_server=True` registers ~19 built-in tools (config, run_agent/team/workflow,
-session CRUD, memory CRUD). Pass `mcp_config=MCPServerConfig(...)` to register your own tools and/or
-scope the built-ins:
+session CRUD, memory CRUD). Pass `mcp_config=MCPServerConfig(...)` to register your own tools, scope
+the built-ins, gate the channel, and add middleware:
 
 ```python
 from agno.os import AgentOS
@@ -28,6 +28,8 @@ agent_os = AgentOS(
         enable_builtin_tools=False,  # ship ONLY your tools; or scope with:
         # include_tags={"core"},     # keep only tools tagged "core"
         # exclude_tags={"memory"},   # drop the "memory" tools
+        authorize=lambda user_id: user_id in OWNER_IDS,  # 401 non-owners before the model runs
+        # middleware=[Middleware(MyMiddleware)],          # extra ASGI middleware (e.g. DNS-rebinding)
     ),
 )
 ```
@@ -35,6 +37,16 @@ agent_os = AgentOS(
 Built-in tools are tagged `core` (config + run_*), `session`, and `memory`. With no `mcp_config`,
 all built-ins are registered (unchanged behavior). Custom tools share the same `/mcp` mount,
 lifespan, and JWT middleware as the built-ins.
+
+**Identity in custom tools.** Declare a `user_id` parameter on a custom tool and AgentOS fills it
+with the authenticated caller's id (the JWT subject), hidden from the client-facing schema so it
+can't be spoofed. Tools that need the full request can declare a FastMCP `Context` parameter, which
+FastMCP injects natively.
+
+**Gating + middleware.** `authorize=fn(user_id) -> bool` runs after JWT verification and returns 401
+before any tool or model runs — use it for an owner-only or allow-listed channel. `middleware=[...]`
+takes `starlette.middleware.Middleware` instances and runs outermost (ahead of the JWT and authorize
+layers), e.g. for DNS-rebinding protection on an always-on local server.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).
