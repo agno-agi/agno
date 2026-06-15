@@ -393,10 +393,10 @@ class HITLHandler:
         for decision in decisions:
             req = reqs_by_id.get(decision.requirement_id)
             tool_exec = getattr(req, "tool_execution", None) if req else None
-            if te is None or getattr(te, "approval_type", None) != "required":
+            if tool_exec is None or getattr(tool_exec, "approval_type", None) != "required":
                 continue
 
-            approval_id = getattr(te, "approval_id", None)
+            approval_id = getattr(tool_exec, "approval_id", None)
             if approval_id is None:
                 continue
 
