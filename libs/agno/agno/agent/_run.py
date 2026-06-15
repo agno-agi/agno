@@ -995,6 +995,12 @@ def _run_stream(
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # Set PAUSED status immediately if any tool is paused, BEFORE any more yields.
+                # This ensures _handle_run_cancellation respects the PAUSED state if the
+                # consumer closes the stream during subsequent yields (parser, followups, etc.)
+                if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    run_response.status = RunStatus.paused
+
                 # 7. Parse response with parser model if provided
                 for event in parse_response_with_parser_model_stream(
                     agent,  # type: ignore
@@ -1019,6 +1025,9 @@ def _run_stream(
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    # Set PAUSED status immediately so _handle_run_cancellation respects it
+                    # if the consumer closes the stream before handle_agent_run_paused_stream runs
+                    run_response.status = RunStatus.paused
                     yield from wait_for_thread_tasks_stream(
                         memory_future=memory_future,  # type: ignore
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
@@ -1810,6 +1819,13 @@ async def _arun(
 
                 return run_response
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                # PAUSED runs should not be treated as cancelled — HITL pause is a valid
+                # terminal state where we're awaiting user input, not a cancellation.
+                if run_response.status == RunStatus.paused:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        raise
+                    return run_response
+
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 if agent_session is not None:
                     if isinstance(cancel_exc, asyncio.CancelledError):
@@ -2385,6 +2401,12 @@ async def _arun_stream(
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # Set PAUSED status immediately if any tool is paused, BEFORE any more yields.
+                # This ensures _handle_run_cancellation respects the PAUSED state if the
+                # consumer closes the stream during subsequent yields (parser, followups, etc.)
+                if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    run_response.status = RunStatus.paused
+
                 # 10. Parse response with parser model if provided
                 async for event in aparse_response_with_parser_model_stream(
                     agent,
@@ -2417,6 +2439,9 @@ async def _arun_stream(
 
                 # Break out of the run function if a tool call is paused
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    # Set PAUSED status immediately so _handle_run_cancellation respects it
+                    # if the consumer closes the stream before ahandle_agent_run_paused_stream runs
+                    run_response.status = RunStatus.paused
                     async for item in await_for_thread_tasks_stream(
                         memory_task=memory_task,
                         cultural_knowledge_task=cultural_knowledge_task,
@@ -2603,6 +2628,15 @@ async def _arun_stream(
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                # PAUSED runs should not be treated as cancelled — HITL pause is a valid
+                # terminal state where we're awaiting user input, not a cancellation.
+                # GeneratorExit is raised when the Slack handler closes the generator after
+                # receiving the pause event, which is expected behavior.
+                if run_response.status == RunStatus.paused:
+                    if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                        raise
+                    break
+
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 # Build terminal events first so they are stored on the run
                 cancelled_event, completed_event = _build_cancel_terminal_events(
@@ -4336,6 +4370,13 @@ async def _acontinue_run(
 
                 return run_response
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                # PAUSED runs should not be treated as cancelled — HITL pause is a valid
+                # terminal state where we're awaiting user input, not a cancellation.
+                if run_response is not None and run_response.status == RunStatus.paused:
+                    if isinstance(cancel_exc, asyncio.CancelledError):
+                        raise
+                    return run_response
+
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -4664,6 +4705,12 @@ async def _acontinue_run_stream(
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # Set PAUSED status immediately if any tool is paused, BEFORE any more yields.
+                # This ensures _handle_run_cancellation respects the PAUSED state if the
+                # consumer closes the stream during subsequent yields (parser, followups, etc.)
+                if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                    run_response.status = RunStatus.paused
+
                 # Parse response with parser model if provided
                 async for event in aparse_response_with_parser_model_stream(
                     agent,
@@ -4851,6 +4898,13 @@ async def _acontinue_run_stream(
                 yield run_error
                 break
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                # PAUSED runs should not be treated as cancelled — HITL pause is a valid
+                # terminal state where we're awaiting user input, not a cancellation.
+                if run_response is not None and run_response.status == RunStatus.paused:
+                    if isinstance(cancel_exc, (asyncio.CancelledError, GeneratorExit)):
+                        raise
+                    break
+
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -5020,6 +5074,10 @@ def _handle_run_cancellation(
     run_messages: Optional["RunMessages"] = None,
 ) -> RunOutput:
     """Prepare a run response for cancellation: set status, preserve content and messages."""
+    # Don't overwrite PAUSED status — the run was already persisted with HITL state
+    if run_response.status == RunStatus.paused:
+        log_debug(f"Run {run_response.run_id} cancellation ignored — already PAUSED")
+        return run_response
     reason = _normalize_cancellation_reason(run_response, error)
     log_debug(f"Run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
@@ -5219,6 +5277,10 @@ def _persist_cancelled_run_in_background(
     run. Scheduling it on _background_tasks runs the write to completion outside that
     scope.
     """
+    # PAUSED runs should not be overwritten with CANCELLED — HITL pause is a valid
+    # terminal state where we're awaiting user input, not a cancellation.
+    if run_response.status == RunStatus.paused:
+        return
 
     async def _persist() -> None:
         try:
