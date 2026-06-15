@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import inspect
+import asyncio
 import time
 from dataclasses import dataclass
 from ssl import SSLContext
@@ -238,83 +238,62 @@ class HITLHandler:
         blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts)
         await self.update_message(ctx.channel, ctx.card_ts, "Rejection pending", blocks)
 
-    async def resolve_required_approvals(
+    async def _resolve_required_approvals(
         self,
         ctx: SubmitContext,
         decisions: List[Any],
         requirements: List[Any],
     ) -> None:
-        """Resolve the DB approval record for any tool marked ``approval_type="required"``.
-
-        Slack resumes a paused run with in-memory requirements
-        (``acontinue_run(run_id, requirements=...)``), and that path skips the
-        DB approval gate (see ``_acontinue_run`` in ``agno/agent/_run.py`` — the
-        gate only runs when ``requirements is None``). Without this, a
-        ``required`` approval row written at pause stays ``pending`` forever and
-        the audit trail is lost. Mirror the AgentOS approvals router
-        (``resolve_approval`` in ``agno/os/routers/approvals/router.py``): stamp
-        ``status`` + ``resolved_by`` + ``resolved_at`` so the record ends in the
-        same state on Slack as it does on the UI. No-op for non-``required``
-        tools (plain confirmations and ``audit`` records are untouched) and for
-        entities without an approvals-capable db (e.g. remote entities).
-        """
+        """Write approval resolution to DB for tools with approval_type='required'."""
         db = getattr(self.entity, "db", None)
-        update_fn = getattr(db, "update_approval", None)
-        if update_fn is None:
+        if not db or not hasattr(db, "update_approval"):
             return
 
-        requirements_by_id = {r.id: r for r in requirements if r.id}
+        reqs_by_id = {r.id: r for r in requirements if r.id}
         now = int(time.time())
 
         for decision in decisions:
-            req = requirements_by_id.get(decision.requirement_id)
-            te = getattr(req, "tool_execution", None) if req is not None else None
-            if te is None or getattr(te, "approval_type", None) != "required":
+            req = reqs_by_id.get(decision.requirement_id)
+            te = getattr(req, "tool_execution", None) if req else None
+            if not te or getattr(te, "approval_type", None) != "required":
                 continue
 
             approval_id = getattr(te, "approval_id", None)
-            if approval_id is None:
-                # The id is normally stamped onto the tool execution at pause; fall
-                # back to the run's pending record if it wasn't.
-                from agno.run.approval import _aget_approval_for_run
-
-                approval = await _aget_approval_for_run(db, ctx.run_id)
-                approval_id = approval.get("id") if approval else None
-            if approval_id is None:
-                log_error(
-                    f"[HITL] no approval record for required tool {getattr(te, 'tool_name', None)!r} "
-                    f"on run={ctx.run_id}; DB record left unresolved"
-                )
+            if not approval_id:
                 continue
 
             status = "rejected" if decision.approved is False else "approved"
-            resolution_data: Dict[str, Any] = {}
-            if decision.rejected_note:
-                resolution_data["note"] = decision.rejected_note
-            if decision.input_values is not None:
-                resolution_data["values"] = decision.input_values
-            if decision.external_result is not None:
-                resolution_data["result"] = decision.external_result
-            if decision.feedback_selections is not None:
-                resolution_data["feedback"] = decision.feedback_selections
-
-            kwargs: Dict[str, Any] = {
-                "status": status,
-                "resolved_by": ctx.user_id or None,
-                "resolved_at": now,
-            }
-            if resolution_data:
-                kwargs["resolution_data"] = resolution_data
+            resolution_data = {
+                k: v for k, v in [
+                    ("note", decision.rejected_note),
+                    ("values", decision.input_values),
+                    ("result", decision.external_result),
+                    ("feedback", decision.feedback_selections),
+                ] if v is not None
+            } or None
 
             try:
-                result = update_fn(approval_id, expected_status="pending", **kwargs)
-                if inspect.isawaitable(result):
-                    result = await result
-                if result is None:
-                    # Row missing or already resolved (e.g. double click) — benign.
-                    log_info(f"[HITL] approval {approval_id} already resolved or missing; skipping DB write")
-            except Exception as exc:
-                log_error(f"[HITL] update_approval failed for {approval_id} on run={ctx.run_id}: {exc}")
+                update_fn = db.update_approval
+                if asyncio.iscoroutinefunction(update_fn):
+                    await update_fn(
+                        approval_id,
+                        expected_status="pending",
+                        status=status,
+                        resolved_by=ctx.user_id,
+                        resolved_at=now,
+                        resolution_data=resolution_data,
+                    )
+                else:
+                    update_fn(
+                        approval_id,
+                        expected_status="pending",
+                        status=status,
+                        resolved_by=ctx.user_id,
+                        resolved_at=now,
+                        resolution_data=resolution_data,
+                    )
+            except Exception:
+                pass
 
     async def handle_submit(self, payload: Dict[str, Any]) -> None:
         ctx = extract_submit_context(payload, self.entity_id)
@@ -333,10 +312,7 @@ class HITLHandler:
         if decisions is None:
             return
 
-        # Resolve the DB approval record for any required tool before resuming —
-        # the resume path itself bypasses the DB gate, so this is what keeps the
-        # audit trail complete. See resolve_required_approvals.
-        await self.resolve_required_approvals(ctx, decisions, requirements)
+        await self._resolve_required_approvals(ctx, decisions, requirements)
 
         original_blocks = list((payload.get("message") or {}).get("blocks") or [])
         await self.freeze_form(ctx, original_blocks, requirements)
