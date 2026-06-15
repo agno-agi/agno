@@ -17,6 +17,7 @@ from slack_sdk.models.blocks.basic_components import MarkdownTextObject, Option,
 from slack_sdk.models.blocks.block_elements import ButtonElement
 
 from agno.os.interfaces.slack.components import Card
+from agno.os.interfaces.slack.interactions import confirmation_row_summary
 from agno.os.interfaces.slack.ids import (
     ACTION_CHECK_STATUS,
     ACTION_EXTERNAL_RESULT,
@@ -328,8 +329,6 @@ def select_confirmation_row(
     selected: str,
     include_reason_input: bool = False,
 ) -> RowTransformResult:
-    from agno.os.interfaces.slack.interactions import confirmation_row_summary
-
     updated: List[Dict[str, Any]] = []
     for block in ctx.blocks:
         block_id = block.get("block_id", "")
@@ -382,8 +381,6 @@ def append_submit_if_needed(
     run_id: str,
     awaiting_ts: Optional[str],
 ) -> List[Dict[str, Any]]:
-    from agno.os.interfaces.slack.interactions import confirmation_row_summary
-
     if not run_id:
         return blocks
     summary = confirmation_row_summary(blocks)

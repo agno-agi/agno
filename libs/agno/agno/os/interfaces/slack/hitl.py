@@ -11,9 +11,12 @@ from slack_sdk.web.async_client import AsyncWebClient
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.builders import (
     append_submit_if_needed,
+    build_admin_approval_status_card,
     response_blocks,
     select_confirmation_row,
 )
+from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
+from agno.run.approval import aresolve_approval
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import open_chat_stream, slack_error_code
 from agno.os.interfaces.slack.interactions import (
@@ -240,9 +243,6 @@ class HITLHandler:
 
     async def handle_check_status(self, payload: Dict[str, Any]) -> None:
         """Check approval status via API and update the card accordingly."""
-        from agno.os.interfaces.slack.builders import build_admin_approval_status_card
-        from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
-
         actions = payload.get("actions") or []
         if not actions:
             return
@@ -371,8 +371,6 @@ class HITLHandler:
         requirements: List[Any],
     ) -> None:
         """Resolve DB approval records for tools with approval_type='required'."""
-        from agno.run.approval import aresolve_approval
-
         db = getattr(self.entity, "db", None)
         if db is None:
             return
