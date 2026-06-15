@@ -1,6 +1,6 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Any, Dict, Generic, List, Optional, Set, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Optional, Set, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -9,8 +9,9 @@ class MCPServerConfig(BaseModel):
     """Configuration for the AgentOS MCP server (served at ``/mcp``).
 
     Pair this with ``AgentOS(enable_mcp_server=True, mcp_config=...)`` to register
-    your own tools and/or scope the built-in tools. With no ``mcp_config`` provided
-    the MCP server behaves exactly as before: all built-in tools are registered.
+    your own tools, scope the built-in tools, gate the channel, and add middleware.
+    With no ``mcp_config`` provided the MCP server behaves exactly as before: all
+    built-in tools are registered and no extra gate or middleware is added.
 
     The built-in tools are tagged so they can be scoped as a group:
       - ``"core"``    -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``
@@ -23,6 +24,11 @@ class MCPServerConfig(BaseModel):
     # Custom tools to register on the MCP server. Each entry may be a plain callable
     # (name/description inferred from ``__name__``/docstring) or an Agno tool/``Function``
     # (name/description taken from the tool, entrypoint used as the callable).
+    #
+    # Identity: a custom tool may declare a ``user_id`` parameter. AgentOS fills it with
+    # the authenticated caller's id (the JWT subject) and hides it from the client-facing
+    # schema, so clients cannot spoof it. Tools that need the full request can declare a
+    # FastMCP ``Context`` parameter, which FastMCP injects natively.
     tools: Optional[List[Any]] = None
 
     # Master switch for the ~19 built-in tools. Set to False to ship ONLY your own tools.
@@ -33,6 +39,17 @@ class MCPServerConfig(BaseModel):
     # ``exclude_tags`` is then subtracted. Both are ignored when ``enable_builtin_tools`` is False.
     include_tags: Optional[Set[str]] = None
     exclude_tags: Optional[Set[str]] = None
+
+    # Per-call gate for the MCP channel. Given the authenticated caller's user_id (the JWT
+    # subject, or None when unauthenticated), return True to allow the request and False to
+    # reject it with 401 -- before any tool or model runs. Runs after JWT verification.
+    # Example: ``authorize=lambda user_id: user_id in OWNER_IDS`` for an owner-only channel.
+    authorize: Optional[Callable[[Optional[str]], bool]] = None
+
+    # Extra ASGI/Starlette middleware to add to the MCP app (e.g. DNS-rebinding protection).
+    # Provide ``starlette.middleware.Middleware`` instances; they run outermost, ahead of the
+    # JWT and ``authorize`` layers, in the order listed.
+    middleware: Optional[List[Any]] = None
 
 
 class AuthorizationConfig(BaseModel):

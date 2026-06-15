@@ -1,7 +1,9 @@
 """Router for MCP interface providing Model Context Protocol endpoints."""
 
+import functools
+import inspect
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastmcp import FastMCP
@@ -105,17 +107,54 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        mcp.add_tool(Tool.from_function(entrypoint, name=name, description=description))
+        mcp.add_tool(Tool.from_function(_inject_user_id(entrypoint), name=name, description=description))
         return
 
     # Plain callable: name/description inferred from ``__name__``/docstring.
     if callable(tool):
-        mcp.add_tool(Tool.from_function(tool))
+        mcp.add_tool(Tool.from_function(_inject_user_id(tool)))
         return
 
     raise TypeError(
         f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
     )
+
+
+def _inject_user_id(fn: Callable) -> Callable:
+    """Inject the authenticated caller's user_id into a custom tool, hidden from clients.
+
+    If ``fn`` declares a ``user_id`` parameter, return a wrapper that fills it with the
+    resolved JWT subject at call time and drops it from the wrapper's signature -- so it
+    does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
+    Tools that do not declare ``user_id`` are returned unchanged.
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        return fn
+    if "user_id" not in sig.parameters:
+        return fn
+
+    visible_params = [p for name, p in sig.parameters.items() if name != "user_id"]
+    new_sig = sig.replace(parameters=visible_params)
+
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            kwargs["user_id"] = _resolve_user_id(None)
+            return await fn(*args, **kwargs)
+
+        async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+        return async_wrapper
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        kwargs["user_id"] = _resolve_user_id(None)
+        return fn(*args, **kwargs)
+
+    wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+    return wrapper
 
 
 def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
@@ -988,18 +1027,50 @@ def build_mcp_server(
     return mcp
 
 
+def _add_authorize_middleware(mcp_app: StarletteWithLifespan, authorize: Callable[[Optional[str]], bool]) -> None:
+    """Gate the MCP channel with a per-call ``authorize(user_id) -> bool`` predicate.
+
+    Runs after the JWT middleware (so ``request.state.user_id`` is the verified subject) and
+    returns 401 before any tool or model runs when the predicate rejects the caller.
+    """
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+
+    class _MCPAuthorizeMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
+            user_id = getattr(getattr(request, "state", None), "user_id", None)
+            if not authorize(user_id):
+                return JSONResponse(
+                    {"error": "unauthorized", "detail": "Not authorized for the MCP channel."},
+                    status_code=401,
+                )
+            return await call_next(request)
+
+    mcp_app.add_middleware(_MCPAuthorizeMiddleware)
+
+
 def get_mcp_server(
     os: "AgentOS",
 ) -> StarletteWithLifespan:
     """Build the MCP HTTP app served at ``/mcp``.
 
-    Wraps :func:`build_mcp_server` with the Streamable HTTP transport and adds the JWT
-    middleware when authorization is enabled.
+    Wraps :func:`build_mcp_server` with the Streamable HTTP transport and layers on the
+    JWT middleware (when authorization is enabled), the optional ``authorize`` gate, and any
+    app-provided middleware from ``mcp_config``.
     """
     mcp = build_mcp_server(os)
+    mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
 
     # Use http_app for Streamable HTTP transport (modern MCP standard)
     mcp_app = mcp.http_app(path="/mcp")
+
+    # Middleware runs in reverse registration order (last added is outermost / runs first).
+    # Target running order: app middleware -> JWT -> authorize gate -> tool, so the gate sees
+    # the verified identity and app middleware (e.g. DNS-rebinding) runs ahead of everything.
+
+    # Innermost: per-call authorize gate.
+    if mcp_config is not None and mcp_config.authorize is not None:
+        _add_authorize_middleware(mcp_app, mcp_config.authorize)
 
     # Add JWT middleware to MCP app if authorization is enabled
     if os.authorization and os.authorization_config:
@@ -1013,5 +1084,11 @@ def get_mcp_server(
             authorization=os.authorization,
             verify_audience=os.authorization_config.verify_audience or False,
         )
+
+    # Outermost: app-provided middleware, preserving the order they were listed in.
+    if mcp_config is not None and mcp_config.middleware:
+        for mw in reversed(mcp_config.middleware):
+            cls, args, kwargs = mw
+            mcp_app.add_middleware(cls, *args, **kwargs)
 
     return mcp_app
