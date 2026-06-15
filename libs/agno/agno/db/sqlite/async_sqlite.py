@@ -3959,3 +3959,55 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # --- Auth Tokens ---
+
+    async def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            effective_user_id = user_id or ""
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(
+                    select(table).where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                )
+                row = result.fetchone()
+                if not row:
+                    return None
+                return dict(row._mapping)
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    async def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            data["id"] = str(uuid4())
+            data["user_id"] = data.get("user_id") or ""
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = sqlite.insert(table).values(**data)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["provider", "user_id", "service"],
+                        set_={
+                            "token_data": stmt.excluded.token_data,
+                            "granted_scopes": stmt.excluded.granted_scopes,
+                            "updated_at": stmt.excluded.updated_at,
+                        },
+                    )
+                    await sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_debug(f"Error upserting auth token: {e}")
+            return None

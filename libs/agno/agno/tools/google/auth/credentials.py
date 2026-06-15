@@ -7,14 +7,14 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class GoogleAuth:
+class AuthConfig:
     """Shared auth config for Google toolkits with scope aggregation.
 
-    When multiple toolkits share the same GoogleAuth instance, their scopes
+    When multiple toolkits share the same AuthConfig instance, their scopes
     are combined so ONE OAuth consent covers all services.
 
     Example:
-        auth = GoogleAuth()
+        auth = AuthConfig()
         agent = Agent(tools=[
             GmailTools(auth=auth),           # registers Gmail scopes
             GoogleCalendarTools(auth=auth),  # registers Calendar scopes

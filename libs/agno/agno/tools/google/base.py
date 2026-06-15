@@ -6,7 +6,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth import GoogleAuth
+    from agno.tools.google.auth import AuthConfig
 
 
 class GoogleToolkit(Toolkit):
@@ -24,13 +24,11 @@ class GoogleToolkit(Toolkit):
         creds: Optional[Any] = None,
         token_path: Optional[str] = None,
         credentials_path: Optional[str] = None,
-        # New: unified auth config
-        auth: Optional["GoogleAuth"] = None,
+        # Unified auth config for scope aggregation + DB storage
+        auth: Optional["AuthConfig"] = None,
         # Legacy params (use auth= instead)
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        auth_config: Optional["GoogleAuth"] = None,
-        store_token_in_db: bool = False,
         oauth_port: Optional[int] = 0,
         login_hint: Optional[str] = None,
         **kwargs: Any,
@@ -44,8 +42,7 @@ class GoogleToolkit(Toolkit):
         self.credentials_path = credentials_path
         self.oauth_port = oauth_port
 
-        # Normalize auth config: auth= takes precedence over auth_config=
-        self._auth = auth or auth_config
+        self._auth = auth
 
         # Register scopes with shared auth for aggregation
         if self._auth:
@@ -55,8 +52,6 @@ class GoogleToolkit(Toolkit):
         self._legacy_service_account_path = service_account_path
         self._legacy_delegated_user = delegated_user
         self._legacy_login_hint = login_hint
-        self._legacy_store_token_in_db = store_token_in_db
-        self._db: Optional[Any] = None
 
     @property
     def service(self) -> Any:
