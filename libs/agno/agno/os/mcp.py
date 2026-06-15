@@ -184,25 +184,43 @@ def build_mcp_server(
     # ==================== Core Run Tools ====================
 
     @register_builtin_tool(name="run_agent", description="Run an agent with a message", tags={"core"})  # type: ignore
-    async def run_agent(agent_id: str, message: str) -> RunOutput:
+    async def run_agent(
+        agent_id: str,
+        message: str,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> RunOutput:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
-        return await agent.arun(message)  # type: ignore[misc]
+        user_id = _resolve_user_id(user_id)
+        return await agent.arun(message, user_id=user_id, session_id=session_id)  # type: ignore[misc]
 
     @register_builtin_tool(name="run_team", description="Run a team with a message", tags={"core"})  # type: ignore
-    async def run_team(team_id: str, message: str) -> TeamRunOutput:
+    async def run_team(
+        team_id: str,
+        message: str,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> TeamRunOutput:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
-        return await team.arun(message)  # type: ignore[misc]
+        user_id = _resolve_user_id(user_id)
+        return await team.arun(message, user_id=user_id, session_id=session_id)  # type: ignore[misc]
 
     @register_builtin_tool(name="run_workflow", description="Run a workflow with a message", tags={"core"})  # type: ignore
-    async def run_workflow(workflow_id: str, message: str) -> WorkflowRunOutput:
+    async def run_workflow(
+        workflow_id: str,
+        message: str,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> WorkflowRunOutput:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
-        return await workflow.arun(message)
+        user_id = _resolve_user_id(user_id)
+        return await workflow.arun(message, user_id=user_id, session_id=session_id)
 
     # ==================== Session Management Tools ====================
 
