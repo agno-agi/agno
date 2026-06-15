@@ -10,6 +10,18 @@
 
 ---
 
+### custom_mcp_tool_example.py
+
+**Status:** PASS
+
+**Description:** AgentOS exposing a single custom MCP tool (`ask_workspace`) routed through an
+agent, with the built-in tools disabled via `MCPServerConfig(enable_builtin_tools=False)`.
+
+**Result:** App builds successfully; the MCP server at `/mcp` exposes only `ask_workspace`
+(verified with an in-memory FastMCP client). A live model call requires `OPENAI_API_KEY`.
+
+---
+
 ### mcp_tools_advanced_example.py
 
 **Status:** PENDING
