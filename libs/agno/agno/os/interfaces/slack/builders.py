@@ -191,11 +191,21 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
     # approval_type="required" tools need admin approval via dashboard, not Slack buttons
     te = requirement.tool_execution
     if te and getattr(te, "approval_type", None) == "required":
+        # Deep link to specific approval if ID available, else fall back to list
+        approval_id = getattr(te, "approval_id", None)
+        status_url = f"https://os.agno.com/approvals/{approval_id}" if approval_id else "https://os.agno.com/approvals"
         return Card(
             block_id=f"rowact:{req_id}:admin_approval",
             title=MarkdownTextObject(text=f"*{name}*"),
-            body=MarkdownTextObject(text=f"{body_text}\n\n_Awaiting admin approval_"),
-            actions=[],
+            body=MarkdownTextObject(text=body_text),
+            subtext=MarkdownTextObject(text="Awaiting admin approval"),
+            actions=[
+                ButtonElement(
+                    action_id="check_status",
+                    text=PlainTextObject(text="Check Status", emoji=True),
+                    url=status_url,
+                ),
+            ],
         )
 
     button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
