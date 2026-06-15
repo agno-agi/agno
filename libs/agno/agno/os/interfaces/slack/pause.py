@@ -31,7 +31,7 @@ async def finalize_pause(
     requirements: List["RunRequirement"],
     log_prefix: str = "",
 ) -> Optional[str]:
-    # Build stop kwargs from accumulated state
+    # 1. Stop the stream with accumulated content
     stop_kwargs = {}
     if state.has_content():
         stop_kwargs["markdown_text"] = state.flush()
@@ -45,7 +45,7 @@ async def finalize_pause(
     except Exception as exc:
         log_error(f"[HITL] stream.stop failed: run_id={run_id} err={slack_error_code(exc)!r} | {exc}")
 
-    # Post "awaiting" indicator message
+    # 2. Post awaiting indicator
     labels = [PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
     if not labels:
         return None
@@ -58,7 +58,6 @@ async def finalize_pause(
         return None
 
 
-# Posts HITL card with approval buttons — separate message since chat_appendStream rejects Block Kit
 async def post_pause_card(
     client: "AsyncWebClient",
     paused_event: Any,

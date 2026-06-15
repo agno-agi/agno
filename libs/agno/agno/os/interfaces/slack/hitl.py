@@ -271,7 +271,7 @@ class HITLHandler:
                 body_text = body.get("text") or ""
                 break
 
-        # Query approval status from DB
+        # 1. Query approval status from DB
         db = getattr(self.entity, "db", None)
         status = "pending"
         if db and approval_id:
@@ -287,12 +287,10 @@ class HITLHandler:
             except Exception as exc:
                 log_error(f"[HITL] Failed to get approval status: {exc}")
 
-        # If approved, auto-continue the run instead of showing a button
+        # 2. If approved, resume the run
         if status == "approved":
-            # Delete the "Awaiting approval" indicator message
             await self.delete_awaiting_indicator(channel, awaiting_ts)
 
-            # Update card to show "Approved"
             new_blocks = []
             for block in blocks:
                 if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
@@ -302,10 +300,8 @@ class HITLHandler:
                     new_blocks.append(block)
                 else:
                     new_blocks.append(block)
-
             await self.update_message(channel, msg_ts, "Approved", new_blocks)
 
-            # Load requirements and confirm the one matching this approval_id
             session_id = f"{self.entity_id}:{thread_ts}"
             try:
                 run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
@@ -318,7 +314,6 @@ class HITLHandler:
             except Exception as exc:
                 log_error(f"[HITL] Failed to confirm requirement: {exc}")
 
-            # Build context and reuse existing stream_resumed_run
             ctx = SubmitContext(
                 run_id=run_id,
                 session_id=session_id,
@@ -343,7 +338,7 @@ class HITLHandler:
             await self.complete_or_repause(ctx, stream, state)
             return
 
-        # Build updated card for pending/rejected status
+        # 3. Still pending/rejected — update card status
         card = build_admin_approval_status_card(
             tool_name=tool_name_str,
             body_text=body_text,
@@ -354,7 +349,6 @@ class HITLHandler:
             awaiting_ts=awaiting_ts or thread_ts,
         )
 
-        # Update the card in the message
         new_blocks = []
         for block in blocks:
             if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
