@@ -13,12 +13,18 @@ import pytest
 
 pytest.importorskip("fastmcp")
 
-from fastmcp import Client  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+from typing import Optional  # noqa: E402
+
+import httpx  # noqa: E402
+from fastmcp import Client, Context  # noqa: E402
+from starlette.middleware import Middleware  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 
 import agno.os.mcp as mcp_mod  # noqa: E402
 from agno.agent import Agent  # noqa: E402
 from agno.os import AgentOS, MCPServerConfig  # noqa: E402
-from agno.os.mcp import _resolve_user_id, build_mcp_server  # noqa: E402
+from agno.os.mcp import _resolve_user_id, build_mcp_server, get_mcp_server  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
 from agno.run.team import TeamRunOutput  # noqa: E402
 from agno.run.workflow import WorkflowRunOutput  # noqa: E402
@@ -234,3 +240,155 @@ async def test_run_workflow_threads_resolved_identity(monkeypatch):
 
     assert captured["user_id"] == "jwt-alice"
     assert captured["session_id"] == "s-3"
+
+
+# ==================== Identity in custom tools ====================
+
+
+async def test_custom_tool_user_id_is_injected_and_hidden(monkeypatch):
+    """A custom tool that declares user_id gets the resolved subject, and clients can't see/set it."""
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: "jwt-owner")
+
+    async def ask(message: str, user_id: Optional[str] = None) -> str:
+        return f"{message}:{user_id}"
+
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        mcp_config=MCPServerConfig(tools=[ask], enable_builtin_tools=False),
+    )
+
+    async with Client(build_mcp_server(os)) as client:
+        schema = {t.name: t for t in await client.list_tools()}["ask"].inputSchema
+        props = schema.get("properties", {})
+        assert "message" in props
+        assert "user_id" not in props  # hidden from the client-facing schema
+        result = await client.call_tool("ask", {"message": "hi"})
+
+    assert result.data == "hi:jwt-owner"  # injected server-side
+
+
+async def test_custom_tool_without_user_id_is_unchanged():
+    """A tool that does not declare user_id is registered as-is (no injection)."""
+
+    def echo(text: str) -> str:
+        """Echo the text."""
+        return text
+
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        mcp_config=MCPServerConfig(tools=[echo], enable_builtin_tools=False),
+    )
+
+    async with Client(build_mcp_server(os)) as client:
+        props = {t.name: t for t in await client.list_tools()}["echo"].inputSchema.get("properties", {})
+        assert set(props) == {"text"}
+        result = await client.call_tool("echo", {"text": "abc"})
+
+    assert result.data == "abc"
+
+
+async def test_custom_tool_can_use_native_ctx():
+    """A custom tool can declare a FastMCP Context param; it is injected and hidden from clients."""
+
+    async def whoami(ctx: Context) -> str:
+        return f"ctx:{type(ctx).__name__}"
+
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        mcp_config=MCPServerConfig(tools=[whoami], enable_builtin_tools=False),
+    )
+
+    async with Client(build_mcp_server(os)) as client:
+        props = {t.name: t for t in await client.list_tools()}["whoami"].inputSchema.get("properties", {})
+        assert "ctx" not in props
+        result = await client.call_tool("whoami", {})
+
+    assert result.data == "ctx:Context"
+
+
+# ==================== Gating + middleware (HTTP layer) ====================
+
+# A minimal MCP initialize request — enough to reach (or be blocked before) the MCP machinery.
+_MCP_INIT_BODY = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-03-26",
+        "capabilities": {},
+        "clientInfo": {"name": "test", "version": "1"},
+    },
+}
+_MCP_HEADERS = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+
+
+async def _ok_tool(message: str) -> str:
+    return message
+
+
+@asynccontextmanager
+async def _mcp_http_client(os: AgentOS):
+    """Drive the full MCP HTTP app (JWT / authorize / middleware layers included)."""
+    app = get_mcp_server(os)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            yield client
+
+
+async def test_authorize_gate_rejects_unauthorized_caller():
+    """The authorize predicate 401s a non-authorized caller before the MCP machinery runs."""
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        mcp_config=MCPServerConfig(
+            tools=[_ok_tool],
+            enable_builtin_tools=False,
+            authorize=lambda user_id: user_id == "owner",  # no JWT here -> user_id is None -> rejected
+        ),
+    )
+    async with _mcp_http_client(os) as client:
+        response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_MCP_HEADERS)
+
+    assert response.status_code == 401
+    assert "unauthorized" in response.text.lower()
+
+
+async def test_authorize_gate_allows_authorized_caller():
+    """An allow-all authorize predicate lets the request through to the MCP machinery."""
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        mcp_config=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False, authorize=lambda user_id: True),
+    )
+    async with _mcp_http_client(os) as client:
+        response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_MCP_HEADERS)
+
+    assert response.status_code == 200
+
+
+async def test_custom_middleware_passthrough_runs():
+    """App-provided middleware is added to the MCP app and runs on every request."""
+
+    class HeaderMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
+            response = await call_next(request)
+            response.headers["X-Passthrough"] = "1"
+            return response
+
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        mcp_config=MCPServerConfig(
+            tools=[_ok_tool],
+            enable_builtin_tools=False,
+            middleware=[Middleware(HeaderMiddleware)],
+        ),
+    )
+    async with _mcp_http_client(os) as client:
+        response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_MCP_HEADERS)
+
+    assert response.headers.get("X-Passthrough") == "1"
