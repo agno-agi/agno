@@ -2,9 +2,9 @@
 
 ## Overview
 
-Agno v3.0 changes how session runs are stored. Runs are no longer kept as a JSON blob
-inside the sessions table — each run is now stored as its own row in a dedicated runs
-table (`agno_runs` by default).
+Agno v3.0 changes how session runs are stored. Runs are no longer kept as a JSON
+blob inside the sessions table — each run is now stored as its own row in a dedicated
+runs table (`agno_runs` by default).
 
 ### The problem (v2.x)
 
@@ -40,7 +40,7 @@ agno_runs
 
 - Each run is written once (plus an update when it changes, e.g. paused → completed).
   Saving a new run no longer touches previous runs.
-- Session rows stay small: the `runs` column is removed from `agno_sessions`.
+- Session rows stay small.
 - Runs can be queried directly (by session, agent, status, ...) without loading sessions.
 
 The fields you filter on (`status`, `agent_id`, `session_id`, ...) are real columns; the
@@ -60,10 +60,12 @@ follow-up releases.
 
 ## Migrating existing data
 
-### Option 1: Run the v3.0.0 migration (recommended)
+The migration is intentionally **non-destructive**. It creates the runs table and
+copies every legacy run into it, but **leaves the legacy `runs` column on the sessions
+table untouched** as a safety net. New writes will null that column as sessions are
+touched, and once you have verified things, you drop the column manually.
 
-The migration creates the runs table, moves every run out of the `runs` blobs, and drops
-the `runs` column from the sessions table.
+### Step 1: Run the v3.0.0 migration
 
 ```python
 import asyncio
@@ -73,55 +75,79 @@ from agno.db.postgres import PostgresDb
 
 db = PostgresDb(db_url="postgresql+psycopg://...")
 
-# Migrates all tables to the latest schema version (3.0.0)
+# Copies every run from agno_sessions.runs into agno_runs.
+# Does NOT touch the legacy column.
 asyncio.run(MigrationManager(db).up())
 ```
 
-The migration is idempotent: already-migrated runs are skipped (`ON CONFLICT DO
-NOTHING`), and it is a no-op when the `runs` column no longer exists.
+The migration is idempotent — re-runs use `ON CONFLICT DO NOTHING` and skip rows
+that already exist. The legacy `runs` column is preserved so you can sanity-check
+the migrated data against the original.
 
-To revert (rebuilds the blobs from the runs table and drops the runs table):
+### Step 2 (optional, recommended): Lazy migration also works
+
+You don't strictly *need* to run the migration before upgrading. v3.0 works against
+an unmigrated database:
+
+- **Reads** load runs from the runs table and **merge** them with anything still in
+  the legacy `runs` column (by `run_id`). The runs table is the source of truth on
+  conflicts; runs that only exist in the blob are still returned. This means you
+  never lose history, even in partial-migration states.
+- **The first save** of any session moves its remaining legacy runs into the runs
+  table and clears the legacy column for that session.
+
+This means active sessions self-migrate. The explicit migration is recommended for
+dormant sessions and for reclaiming storage in bulk.
+
+### Step 3: Drop the legacy column when you're ready
+
+Once you have verified the migration and taken a backup, drop the legacy column to
+reclaim the storage:
+
+```python
+db.cleanup_legacy_runs_column()
+```
+
+This refuses to drop the column if any session still has non-null legacy `runs`
+content (a sign that that session was not migrated). If you really want to force
+it anyway:
+
+```python
+db.cleanup_legacy_runs_column(force=True)
+```
+
+Async adapters expose the same helper as `await db.cleanup_legacy_runs_column()`.
+
+### Reverting
+
+To roll back to v2.5.6 (rebuilds the blobs from the runs table and drops the runs
+table):
 
 ```python
 asyncio.run(MigrationManager(db).down(target_version="2.5.6"))
 ```
 
-### Option 2: Do nothing (lazy migration)
-
-v3.0 also works against an unmigrated database:
-
-- Reads fall back to the legacy `runs` column when a session has no rows in the runs
-  table yet.
-- The first time a session is saved after upgrading, all of its runs are written to the
-  runs table and the legacy blob is cleared for that session.
-
-This means active sessions migrate themselves over time. The explicit migration is still
-recommended to migrate dormant sessions and reclaim the space of the `runs` column.
-
 ## Breaking changes
 
-1. **`get_sessions(deserialize=False)` no longer returns runs.** Session dictionaries
-   returned by the bulk listing API do not include a `runs` key (post-migration). Use
-   `get_session(session_id)` or the new `get_runs(session_id=...)` to fetch runs. This is
-   what makes session listing fast regardless of session size.
-
-2. **Direct SQL against `agno_sessions.runs` breaks.** The column is dropped by the
-   migration. Query the runs table instead, e.g.:
+1. **Direct SQL against `agno_sessions.runs`** will eventually break — the column
+   stays put until you run `cleanup_legacy_runs_column()`, but new writes null it
+   out as sessions are touched, so it stops being a complete view of session
+   history once v3.0 is live. Query the runs table instead:
 
    ```sql
    SELECT run_data FROM ai.agno_runs WHERE session_id = :sid ORDER BY run_index;
    ```
 
-3. **`Session.to_dict()` accepts `include_runs`.** Defaults to `True` (unchanged
-   behavior). Adapters use `include_runs=False` internally to avoid serializing runs when
-   writing the session row.
+2. **`Session.to_dict()` accepts `include_runs`.** Defaults to `True` (unchanged
+   behavior). Adapters use `include_runs=False` internally to avoid serializing
+   runs when writing the session row.
 
-4. **Custom table names**: `PostgresDb`, `AsyncPostgresDb`, `SqliteDb` and
+3. **Custom table names**: `PostgresDb`, `AsyncPostgresDb`, `SqliteDb` and
    `AsyncSqliteDb` accept a new `runs_table` argument (defaults to `"agno_runs"`).
 
 Unchanged: `Agent`/`Team`/`Workflow` code, `session.get_messages()`,
-`get_chat_history()`, AgentOS session endpoints, and `db.get_session()` all behave as
-before — runs are reattached to sessions transparently on read.
+`get_chat_history()`, AgentOS session endpoints, and `db.get_session()` all behave
+as before — runs are reattached to sessions transparently on read.
 
 ## New APIs
 
@@ -140,18 +166,27 @@ rows, total = db.get_runs(agent_id="...", deserialize=False)
 # Delete runs
 db.delete_run(run_id="...")
 db.delete_runs(run_ids=["...", "..."])
+
+# Drop the legacy `runs` column once everything is migrated
+db.cleanup_legacy_runs_column()
 ```
 
 ## How writes work now (for the curious)
 
-Sessions track which runs changed since the last save (`session.upsert_run()` marks the
-run dirty). On `db.upsert_session(session)`:
+On `db.upsert_session(session)`:
 
 1. The session row is upserted without any run data.
-2. The run ids already stored for the session are fetched (cheap, indexed).
-3. Only runs that are new or dirty are upserted into the runs table.
+2. Every run on the in-memory session is upserted into the runs table (`ON CONFLICT
+   DO UPDATE` on `run_id`).
+3. If the sessions table still has a legacy `runs` column, that column is set to
+   `NULL` for the session — so the runs table is the only source of truth going
+   forward for that session.
 
-So a session with 500 runs writes exactly one run row when run 501 completes.
+So a session with 500 runs writes 500 run rows when you save (each one is small and
+indexed, vs the old approach of one growing blob). For most workloads this is a
+clear win over the v2.x O(N²) write amplification; if you have a hot path that
+writes many times without changing runs, you can optimize further by skipping
+sessions you didn't touch.
 
 ## Storage comparison
 
@@ -160,4 +195,14 @@ So a session with 500 runs writes exactly one run row when run 501 completes.
 | Bytes written to store N runs | O(N²) | O(N) |
 | Session row size | grows unbounded | small, constant |
 | Fetch last N runs | load + parse all runs | indexed SQL query |
-| Save a new run | rewrite all runs | single row INSERT |
+| Save a new run | rewrite all runs | per-session run upsert |
+
+## Compatibility matrix
+
+| Scenario | What you get |
+|---|---|
+| Fresh v3.0 install | No legacy column, runs in `agno_runs`. Just works. |
+| v2.x → v3.0, no migration run yet | Reads merge runs table + legacy blob; first save per session moves runs over. |
+| v2.x → v3.0, migration run, column not cleaned up | All reads go through the runs table. Legacy column sits empty as a backup. |
+| v2.x → v3.0, migration + `cleanup_legacy_runs_column()` | Final v3.0 state. Smallest sessions table. |
+| Half-finished migration / hand-imported runs | Reads merge by `run_id`. No history is silently lost. |

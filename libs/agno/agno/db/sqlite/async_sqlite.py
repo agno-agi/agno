@@ -35,6 +35,7 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
 )
 from agno.run.agent import RunOutput
@@ -501,6 +502,54 @@ class AsyncSqliteDb(AsyncBaseDb):
             )
             await sess.execute(stmt)
 
+    async def cleanup_legacy_runs_column(self, force: bool = False) -> bool:
+        """Drop the legacy ``runs`` column from the sessions table.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` column on
+        the sessions table as a backup. Once you have verified the migration
+        and taken a backup, call this to reclaim the storage.
+
+        Args:
+            force: If True, drop the column even if some sessions still hold
+                non-null ``runs`` content (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if the column was dropped (or its content cleared on older
+            SQLite versions that don't support DROP COLUMN), False if there
+            was no legacy column to act on.
+        """
+        async with self.async_session_factory() as sess, sess.begin():
+            columns_info = (await sess.execute(text(f"PRAGMA table_info({self.session_table_name})"))).fetchall()
+            existing_columns = {col[1] for col in columns_info}
+            if "runs" not in existing_columns:
+                log_info(f"{self.session_table_name}.runs column does not exist, nothing to clean up")
+                return False
+
+            if not force:
+                pending = (
+                    await sess.execute(
+                        text(f"SELECT COUNT(*) FROM {self.session_table_name} WHERE runs IS NOT NULL")
+                    )
+                ).scalar() or 0
+                if pending > 0:
+                    raise RuntimeError(
+                        f"Refusing to drop {self.session_table_name}.runs: {pending} session(s) still have "
+                        "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                    )
+
+            try:
+                await sess.execute(text(f"ALTER TABLE {self.session_table_name} DROP COLUMN runs"))
+                log_info(f"Dropped legacy runs column from {self.session_table_name}")
+            except Exception:
+                # SQLite < 3.35 does not support DROP COLUMN; clear the column instead.
+                await sess.execute(text(f"UPDATE {self.session_table_name} SET runs = NULL"))
+                log_info(
+                    f"Could not drop runs column from {self.session_table_name} "
+                    "(SQLite < 3.35); cleared its content instead."
+                )
+            return True
+
     # -- Run methods --
     async def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
         """Get the raw run_data dicts for the given session, in insertion order."""
@@ -845,8 +894,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     runs_data = await self._get_session_runs_data(
                         sess=sess, runs_table=runs_table, session_id=session_id
                     )
-                    if runs_data or not session_raw.get("runs"):
-                        session_raw["runs"] = runs_data
+                    session_raw["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_raw.get("runs"))
 
                 if not session_raw or not deserialize:
                     return session_raw
@@ -957,8 +1005,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     )
                     for s in sessions_raw:
                         runs_data = runs_by_session.get(s["session_id"], [])
-                        if runs_data or not s.get("runs"):
-                            s["runs"] = runs_data
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
 
                 if not deserialize:
                     return sessions_raw, total_count

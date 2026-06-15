@@ -201,6 +201,51 @@ def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
     return rows
 
 
+def merge_runs_table_with_legacy_blob(
+    table_runs: List[Dict[str, Any]],
+    legacy_runs: Optional[List[Any]],
+) -> List[Dict[str, Any]]:
+    """Merge runs fetched from the runs table with the legacy ``runs`` JSON blob.
+
+    Used by adapter reads when a session may have its run history split across
+    the new ``agno_runs`` table and the legacy ``agno_sessions.runs`` column
+    (e.g. when the v3.0.0 migration has not yet been applied to that session).
+
+    The runs table is the source of truth: any run_id present in ``table_runs``
+    wins over its blob counterpart. Runs that only exist in the legacy blob are
+    appended after the table runs so no history is silently lost.
+
+    Args:
+        table_runs: Rows fetched from the runs table (already in insertion order).
+        legacy_runs: The raw value of the legacy ``runs`` column (may be a list,
+            a JSON-encoded string, or ``None``).
+
+    Returns:
+        Merged list of run dicts. Empty if both inputs are empty.
+    """
+    if isinstance(legacy_runs, str):
+        try:
+            legacy_runs = json.loads(legacy_runs)
+        except (json.JSONDecodeError, TypeError):
+            log_warning("Could not parse legacy runs blob during merge; ignoring it")
+            legacy_runs = None
+
+    if not legacy_runs:
+        return list(table_runs)
+
+    seen_run_ids = {run.get("run_id") for run in table_runs if isinstance(run, dict)}
+    merged = list(table_runs)
+    for run in legacy_runs:
+        if not isinstance(run, dict):
+            continue
+        run_id = run.get("run_id")
+        if run_id is None or run_id in seen_run_ids:
+            continue
+        merged.append(run)
+        seen_run_ids.add(run_id)
+    return merged
+
+
 async def resolve_session_type(
     db: Union["BaseDb", "AsyncBaseDb"],
     session_id: str,

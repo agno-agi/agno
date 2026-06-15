@@ -2,11 +2,15 @@
 
 Changes:
 - Create the runs table (one row per run, with the run payload as JSON)
-- Move every run stored in the sessions table `runs` column into the runs table
-- Drop the `runs` column from the sessions table
+- Copy every run stored in the sessions table `runs` column into the runs table
 
 This removes the unbounded growth of session rows: each run is now stored once,
 in its own row, instead of the whole run list being rewritten on every save.
+
+The legacy `runs` column on `agno_sessions` is intentionally NOT dropped by this
+migration — it stays in place as a backup. New writes will null it as sessions
+are touched. When you have verified the migration and taken a backup, drop the
+column manually by calling ``db.cleanup_legacy_runs_column()``.
 """
 
 import json
@@ -234,11 +238,11 @@ def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
                 sess.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
 
-        log_info(f"-- Moved {migrated_runs} runs from {table_name} into the runs table")
-
-        # Drop the legacy runs column
-        log_info(f"-- Dropping runs column from {table_name}")
-        sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN runs"))
+        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+        log_info(
+            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+        )
 
         return True
 
@@ -302,11 +306,11 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
                 await sess.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
 
-        log_info(f"-- Moved {migrated_runs} runs from {table_name} into the runs table")
-
-        # Drop the legacy runs column
-        log_info(f"-- Dropping runs column from {table_name}")
-        await sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN runs"))
+        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+        log_info(
+            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+        )
 
         return True
 
@@ -355,15 +359,11 @@ def _migrate_sqlite(db: BaseDb, table_name: str) -> bool:
                 sess.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
 
-        log_info(f"-- Moved {migrated_runs} runs from {table_name} into the runs table")
-
-        # Drop the legacy runs column. Not supported in SQLite < 3.35: clear the column instead.
-        try:
-            sess.execute(text(f"ALTER TABLE {table_name} DROP COLUMN runs"))
-            log_info(f"-- Dropped runs column from {table_name}")
-        except Exception:
-            sess.execute(text(f"UPDATE {table_name} SET runs = NULL"))
-            log_info(f"-- Could not drop runs column from {table_name}, cleared its content instead")
+        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+        log_info(
+            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+        )
 
         return True
 
@@ -409,15 +409,11 @@ async def _migrate_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
                 await sess.execute(insert_stmt, rows)
                 migrated_runs += len(rows)
 
-        log_info(f"-- Moved {migrated_runs} runs from {table_name} into the runs table")
-
-        # Drop the legacy runs column. Not supported in SQLite < 3.35: clear the column instead.
-        try:
-            await sess.execute(text(f"ALTER TABLE {table_name} DROP COLUMN runs"))
-            log_info(f"-- Dropped runs column from {table_name}")
-        except Exception:
-            await sess.execute(text(f"UPDATE {table_name} SET runs = NULL"))
-            log_info(f"-- Could not drop runs column from {table_name}, cleared its content instead")
+        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+        log_info(
+            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+        )
 
         return True
 

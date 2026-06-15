@@ -31,6 +31,7 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     json_serializer,
+    merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -681,6 +682,47 @@ class PostgresDb(BaseDb):
             )
             sess.execute(stmt)
 
+    def cleanup_legacy_runs_column(self, force: bool = False) -> bool:
+        """Drop the legacy ``runs`` column from the sessions table.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` column on
+        the sessions table as a backup. Once you have verified the migration
+        and taken a backup, call this to reclaim the storage.
+
+        Args:
+            force: If True, drop the column even if some sessions still hold
+                non-null ``runs`` content (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if the column was dropped, False if it did not exist.
+        """
+        with self.Session() as sess, sess.begin():
+            column_exists = sess.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = :table AND column_name = 'runs'"
+                ),
+                {"schema": self.db_schema, "table": self.session_table_name},
+            ).scalar() is not None
+            if not column_exists:
+                log_info(f"{self.session_table_name}.runs column does not exist, nothing to clean up")
+                return False
+
+            if not force:
+                pending = sess.execute(
+                    text(f'SELECT COUNT(*) FROM {self.db_schema}."{self.session_table_name}" WHERE runs IS NOT NULL')
+                ).scalar() or 0
+                if pending > 0:
+                    raise RuntimeError(
+                        f"Refusing to drop {self.session_table_name}.runs: {pending} session(s) still have "
+                        "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                    )
+
+            log_info(f"Dropping legacy runs column from {self.session_table_name}")
+            sess.execute(text(f'ALTER TABLE {self.db_schema}."{self.session_table_name}" DROP COLUMN runs'))
+            return True
+
     # -- Run methods --
     def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
         """Get the raw run_data dicts for the given session, in insertion order."""
@@ -1005,12 +1047,12 @@ class PostgresDb(BaseDb):
 
                 session = dict(result._mapping)
 
-                # Attach the runs stored in the runs table. If the session has no rows in the
-                # runs table, fall back to the legacy `runs` column content, if any.
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
                 if runs_table is not None:
                     runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
-                    if runs_data or not session.get("runs"):
-                        session["runs"] = runs_data
+                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
 
             if not deserialize:
                 return session
@@ -1122,8 +1164,7 @@ class PostgresDb(BaseDb):
                     )
                     for s in session:
                         runs_data = runs_by_session.get(s["session_id"], [])
-                        if runs_data or not s.get("runs"):
-                            s["runs"] = runs_data
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
 
                 if not deserialize:
                     return session, total_count
@@ -1195,12 +1236,12 @@ class PostgresDb(BaseDb):
 
                 session = dict(row._mapping)
 
-                # Attach the runs stored in the runs table. If the session has no rows in the
-                # runs table, fall back to the legacy `runs` column content, if any.
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
                 if runs_table is not None:
                     runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
-                    if runs_data or not session.get("runs"):
-                        session["runs"] = runs_data
+                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
 
             log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
