@@ -7,7 +7,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, normalize_user_id
 
 try:
     from hashlib import md5
@@ -42,7 +42,13 @@ try:
     from couchbase.options import ClusterOptions, QueryOptions, SearchOptions
     from couchbase.result import SearchResult
     from couchbase.scope import Scope
-    from couchbase.search import SearchRequest
+    from couchbase.search import (
+        ConjunctionQuery,
+        DisjunctionQuery,
+        SearchQuery,
+        SearchRequest,
+        TermQuery,
+    )
     from couchbase.vector_search import VectorQuery, VectorSearch
 except ImportError:
     raise ImportError("`couchbase` not installed. Please install using `pip install couchbase`")
@@ -52,6 +58,13 @@ class CouchbaseSearch(VectorDb):
     """
     Couchbase Vector Database implementation with FTS (Full Text Search) index support.
     """
+
+    # Owner of a chunk, stored as a first-class FTS-indexed field so the scope filter can prune by owner.
+    USER_ID_FIELD = "user_id"
+
+    # Sentinel stored in USER_ID_FIELD for the shared bucket (user_id=None), since
+    # FTS has no "field is missing" query so shared chunks are marked explicitly.
+    SHARED_USER_ID = "__shared__"
 
     def __init__(
         self,
@@ -270,6 +283,7 @@ class CouchbaseSearch(VectorDb):
 
             self._search_indexes_mng().upsert_index(self.search_index_definition)
             logger.info(f"Created FTS index '{self.search_index_name}'")
+            self._warn_if_index_omits_user_id()
 
             if self.wait_until_index_ready:
                 self._wait_for_index_ready()
@@ -299,14 +313,22 @@ class CouchbaseSearch(VectorDb):
         self._create_collection_and_scope()
         self._create_fts_index()
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Insert documents into the Couchbase bucket. Fails if any document already exists.
 
         Args:
             documents: List of documents to insert
             filters: Optional filters to apply to the documents
+            user_id: Owner of the chunks. None => shared / org-wide bucket.
         """
+        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents")
 
         docs_to_insert: Dict[str, Any] = {}
@@ -317,7 +339,7 @@ class CouchbaseSearch(VectorDb):
             if document.embedding is None:
                 raise ValueError(f"Failed to generate embedding for document: {document.name}")
             try:
-                doc_data = self.prepare_doc(content_hash, document)
+                doc_data = self.prepare_doc(content_hash, document, user_id=user_id)
                 if filters:
                     doc_data["filters"] = filters
                 # For insert_multi, the key of the dict is the document ID,
@@ -383,23 +405,43 @@ class CouchbaseSearch(VectorDb):
         """Check if upsert is available in Couchbase."""
         return True
 
-    def _upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def _upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Update existing documents or insert new ones into the Couchbase bucket.
         """
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        user_id = normalize_user_id(user_id)
+        # Scope the dedupe-delete to the caller's own chunks so re-upserting doesn't wipe another owner's chunk
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Update existing documents or insert new ones into the Couchbase bucket.
 
         Args:
             documents: List of documents to upsert
             filters: Optional filters to apply to the documents
+            user_id: Owner of the chunks. None => shared / org-wide bucket.
         """
+        user_id = normalize_user_id(user_id)
         logger.info(f"Upserting {len(documents)} documents")
+
+        # Scope the dedupe-delete to the caller's own chunks (see _upsert).
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
 
         docs_to_upsert: Dict[str, Any] = {}
         for document in documents:
@@ -410,7 +452,7 @@ class CouchbaseSearch(VectorDb):
                 if document.embedding is None:
                     raise ValueError(f"Failed to generate embedding for document: {document.name}")
 
-                doc_data = self.prepare_doc(content_hash, document)
+                doc_data = self.prepare_doc(content_hash, document, user_id=user_id)
                 if filters:
                     doc_data["filters"] = filters
                 # For upsert_multi, the key of the dict is the document ID,
@@ -464,33 +506,34 @@ class CouchbaseSearch(VectorDb):
             logger.warning("Some errors occurred during the upsert operation. Please check logs for details.")
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
+        """Search the Couchbase bucket for documents relevant to the query.
+
+        user_id scopes results to the caller's own chunks plus the shared
+        bucket; None applies no scope.
+        """
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
             filters = None
-        """Search the Couchbase bucket for documents relevant to the query."""
+        user_id = normalize_user_id(user_id)
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Failed to generate embedding for query: {query}")
             return []
 
         try:
-            # Implement vector search using Couchbase FTS
-            vector_search = VectorSearch.from_vector_query(
-                VectorQuery(field_name="embedding", vector=query_embedding, num_candidates=limit)
-            )
-            request = SearchRequest.create(vector_search)
-
-            # Prepare the options dictionary
-            options_dict = {"limit": limit, "fields": ["*"]}
-            if filters:
-                options_dict["raw"] = filters
+            # User scope (and any caller filters) ANDed in as a vector pre-filter.
+            request = self._build_search_request(query_embedding, limit, filters, user_id)
 
             search_args = {
                 "index": self.search_index_name,
                 "request": request,
-                "options": SearchOptions(**options_dict),  # Construct SearchOptions with the dictionary
+                "options": SearchOptions(limit=limit, fields=["*"]),
             }
 
             if self.is_global_level_index:
@@ -579,12 +622,13 @@ class CouchbaseSearch(VectorDb):
         except Exception:
             return False
 
-    def prepare_doc(self, content_hash: str, document: Document) -> Dict[str, Any]:
+    def prepare_doc(self, content_hash: str, document: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Prepare a document for insertion into Couchbase.
 
         Args:
             document: Document to prepare
+            user_id: Owner of the chunk. None => shared / org-wide bucket.
 
         Returns:
             Dictionary containing document data ready for insertion
@@ -597,9 +641,9 @@ class CouchbaseSearch(VectorDb):
 
         logger.debug(f"Preparing document: {document.name}")
 
-        # Clean content and generate ID
+        # Clean content and generate ID; the id folds in user_id so scoped rows get distinct keys
         cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode("utf-8")).hexdigest()
+        doc_id = self._doc_id(cleaned_content, user_id)
 
         return {
             "_id": doc_id,
@@ -609,7 +653,105 @@ class CouchbaseSearch(VectorDb):
             "embedding": document.embedding,
             "content_id": document.content_id,
             "content_hash": content_hash,
+            self.USER_ID_FIELD: user_id if user_id is not None else self.SHARED_USER_ID,
         }
+
+    def _doc_id(self, cleaned_content: str, user_id: Optional[str]) -> str:
+        """Deterministic document key, folding in the owner for scoped rows."""
+        if user_id is None:
+            return md5(cleaned_content.encode("utf-8")).hexdigest()
+        return md5(f"{cleaned_content}_{user_id}".encode("utf-8")).hexdigest()
+
+    def _definition_indexes_user_id(self) -> bool:
+        """Whether the supplied index definition appears to index user_id.
+
+        Returns True when we can't tell (string-name index, dynamic mapping) so we
+        only warn on a definition we're confident omits the field.
+        """
+        if self.search_index_definition is None:
+            return True
+        mapping = (getattr(self.search_index_definition, "params", None) or {}).get("mapping", {})
+        if mapping.get("default_mapping", {}).get("dynamic"):
+            return True
+        types = mapping.get("types", {})
+        if not types:
+            return True
+        for type_def in types.values():
+            if type_def.get("dynamic"):
+                return True
+            if self.USER_ID_FIELD in (type_def.get("properties") or {}):
+                return True
+        return False
+
+    def _warn_if_index_omits_user_id(self) -> None:
+        """Warn when the index can't prune by user_id, so scoped searches returning nothing are easier to diagnose."""
+        if not self._definition_indexes_user_id():
+            log_warning(
+                f"FTS index '{self.search_index_name}' does not index '{self.USER_ID_FIELD}': scoped searches will return no results"
+            )
+
+    def _user_scope_query(self, user_id: Optional[str]) -> Optional[SearchQuery]:
+        """Build the own-OR-shared FTS scope filter for a search; None means no scope."""
+        if user_id is None:
+            return None
+        return DisjunctionQuery(
+            TermQuery(user_id, field=self.USER_ID_FIELD),
+            TermQuery(self.SHARED_USER_ID, field=self.USER_ID_FIELD),
+        )
+
+    def _build_vector_prefilter(
+        self,
+        filters: Optional[Dict[str, Any]],
+        user_id: Optional[str],
+    ) -> Optional[SearchQuery]:
+        """Build the FTS pre-filter ANDing the caller filters with the own-OR-shared user scope.
+
+        Attached to the VectorQuery as a prefilter; returns None when there is nothing to constrain.
+        """
+        scope_query = self._user_scope_query(user_id)
+        filter_query = self._filters_to_query(filters)
+
+        sub_queries = [q for q in (filter_query, scope_query) if q is not None]
+        if not sub_queries:
+            return None
+        if len(sub_queries) == 1:
+            return sub_queries[0]
+        # Both caller filters AND the user scope must hold.
+        return ConjunctionQuery(*sub_queries)
+
+    def _build_search_request(
+        self,
+        query_embedding: List[float],
+        limit: int,
+        filters: Optional[Dict[str, Any]],
+        user_id: Optional[str],
+    ) -> SearchRequest:
+        """Assemble the vector SearchRequest with the user scope and caller filters ANDed in as a pre-filter."""
+        prefilter = self._build_vector_prefilter(filters, user_id)
+        vector_query = VectorQuery(
+            field_name="embedding",
+            vector=query_embedding,
+            num_candidates=limit,
+            prefilter=prefilter,
+        )
+        return SearchRequest.create(VectorSearch([vector_query]))
+
+    def _filters_to_query(self, filters: Optional[Dict[str, Any]]) -> Optional[SearchQuery]:
+        """Turn a caller filter dict into an FTS conjunction of term matches on filters.<key>."""
+        if not filters:
+            return None
+        term_queries: List[SearchQuery] = []
+        for key, value in filters.items():
+            if isinstance(value, (list, tuple)):
+                # Match any of the provided values for this field.
+                term_queries.append(DisjunctionQuery(*[TermQuery(str(v), field=f"filters.{key}") for v in value]))
+            else:
+                term_queries.append(TermQuery(str(value), field=f"filters.{key}"))
+        if not term_queries:
+            return None
+        if len(term_queries) == 1:
+            return term_queries[0]
+        return ConjunctionQuery(*term_queries)
 
     def get_count(self) -> int:
         """Get the count of documents in the Couchbase bucket."""
@@ -648,16 +790,24 @@ class CouchbaseSearch(VectorDb):
             logger.exception("Error checking document existence")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document exists in the bucket based on its content hash."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document exists in the bucket based on its content hash.
+
+        With user_id set the check is scoped to the caller's own chunks; None is the
+        unscoped existence gate matching any owner.
+        """
+        user_id = normalize_user_id(user_id)
         try:
             # Use N1QL query to check if document with given content_hash exists
-            query = f"SELECT content_hash FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE content_hash = $content_hash LIMIT 1"
+            named_parameters: Dict[str, Any] = {"content_hash": content_hash}
+            where_clause = "content_hash = $content_hash"
+            if user_id is not None:
+                where_clause += f" AND {self.USER_ID_FIELD} = $user_id"
+                named_parameters["user_id"] = user_id
+            query = f"SELECT content_hash FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE {where_clause} LIMIT 1"
             result = self.scope.query(
                 query,
-                QueryOptions(
-                    named_parameters={"content_hash": content_hash}, scan_consistency=QueryScanConsistency.REQUEST_PLUS
-                ),
+                QueryOptions(named_parameters=named_parameters, scan_consistency=QueryScanConsistency.REQUEST_PLUS),
             )
             for row in result.rows():
                 return True
@@ -830,6 +980,7 @@ class CouchbaseSearch(VectorDb):
 
             await async_search_mng.upsert_index(self.search_index_definition)
             logger.info(f"Created FTS index '{self.search_index_name}'")
+            self._warn_if_index_omits_user_id()
 
             if self.wait_until_index_ready:
                 await self._async_wait_for_index_ready()
@@ -881,8 +1032,13 @@ class CouchbaseSearch(VectorDb):
             return False
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
+        user_id = normalize_user_id(user_id)
         logger.info(f"[async] Inserting {len(documents)} documents")
 
         async_collection_instance = await self.get_async_collection()
@@ -930,7 +1086,7 @@ class CouchbaseSearch(VectorDb):
         for document in documents:
             try:
                 # User edit: self.prepare_doc is no longer awaited with to_thread
-                doc_data = self.prepare_doc(content_hash, document)
+                doc_data = self.prepare_doc(content_hash, document, user_id=user_id)
                 if filters:
                     doc_data["filters"] = filters
                 doc_id = doc_data.pop("_id")  # Remove _id as it's used as key
@@ -975,16 +1131,27 @@ class CouchbaseSearch(VectorDb):
         logger.info(f"[async] Total successfully inserted: {total_inserted_count}, Total failed: {total_failed_count}.")
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters)
+        user_id = normalize_user_id(user_id)
+        # Scope the dedupe-delete to the caller's own chunks (see _upsert).
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def _async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
+        user_id = normalize_user_id(user_id)
         logger.info(f"[async] Upserting {len(documents)} documents")
 
         async_collection_instance = await self.get_async_collection()
@@ -1032,7 +1199,7 @@ class CouchbaseSearch(VectorDb):
         for document in documents:
             try:
                 # Consistent with async_insert, prepare_doc is not awaited with to_thread based on prior user edits
-                doc_data = self.prepare_doc(content_hash, document)
+                doc_data = self.prepare_doc(content_hash, document, user_id=user_id)
                 if filters:
                     doc_data["filters"] = filters
                 doc_id = doc_data.pop("_id")  # _id is used as key for upsert
@@ -1078,31 +1245,32 @@ class CouchbaseSearch(VectorDb):
         logger.info(f"[async] Total successfully upserted: {total_upserted_count}, Total failed: {total_failed_count}.")
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
+        """Search asynchronously, scoped to user_id (own OR shared).
+
+        None applies no scope.
+        """
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
             filters = None
+        user_id = normalize_user_id(user_id)
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"[async] Failed to generate embedding for query: {query}")
             return []
         try:
-            # Implement vector search using Couchbase FTS
-            vector_search = VectorSearch.from_vector_query(
-                VectorQuery(field_name="embedding", vector=query_embedding, num_candidates=limit)
-            )
-            request = SearchRequest.create(vector_search)
-
-            # Prepare the options dictionary
-            options_dict = {"limit": limit, "fields": ["*"]}
-            if filters:
-                options_dict["raw"] = filters
+            # User scope (and any caller filters) ANDed in as a vector pre-filter.
+            request = self._build_search_request(query_embedding, limit, filters, user_id)
 
             search_args = {
                 "index": self.search_index_name,
                 "request": request,
-                "options": SearchOptions(**options_dict),  # Construct SearchOptions with the dictionary
+                "options": SearchOptions(limit=limit, fields=["*"]),
             }
 
             if self.is_global_level_index:
@@ -1326,56 +1494,73 @@ class CouchbaseSearch(VectorDb):
             log_info(f"Error deleting documents with metadata {metadata}: {e}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content ID.
 
         Args:
             content_id (str): The content ID to delete
+            user_id: When set, delete only the caller's own chunks (exact owner
+                match, shared bucket untouched). None deletes across all
+                owners.
 
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        user_id = normalize_user_id(user_id)
         try:
             log_debug(f"Couchbase VectorDB : Deleting documents with content_id {content_id}")
 
-            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE content_id = $content_id OR recipes.content_id = $content_id"
+            named_parameters: Dict[str, Any] = {"content_id": content_id}
+            base_clause = "content_id = $content_id OR recipes.content_id = $content_id"
+            if user_id is not None:
+                # Scope to the owner exactly; shared bucket untouched.
+                where_clause = f"({base_clause}) AND {self.USER_ID_FIELD} = $user_id"
+                named_parameters["user_id"] = user_id
+            else:
+                where_clause = base_clause
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE {where_clause}"
             result = self.scope.query(
                 query,
-                QueryOptions(
-                    named_parameters={"content_id": content_id}, scan_consistency=QueryScanConsistency.REQUEST_PLUS
-                ),
+                QueryOptions(named_parameters=named_parameters, scan_consistency=QueryScanConsistency.REQUEST_PLUS),
             )
             rows = list(result.rows())  # Collect once
 
             for row in rows:
                 self.collection.remove(row.get("doc_id"))
             log_info(f"Deleted {len(rows)} documents with content_id {content_id}")
-            return True
+            return len(rows) > 0
 
         except Exception as e:
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content hash.
 
         Args:
             content_hash (str): The content hash to delete
+            user_id: When set, scope the delete to the caller's own chunks.
 
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        user_id = normalize_user_id(user_id)
         try:
             log_debug(f"Couchbase VectorDB : Deleting documents with content_hash {content_hash}")
 
-            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE content_hash = $content_hash"
+            # Bind the owner exactly (real id, or the shared sentinel for None) so the
+            # dedupe-delete only clears the caller's own stale chunks
+            named_parameters: Dict[str, Any] = {
+                "content_hash": content_hash,
+                "user_id": user_id if user_id is not None else self.SHARED_USER_ID,
+            }
+            where_clause = f"content_hash = $content_hash AND {self.USER_ID_FIELD} = $user_id"
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE {where_clause}"
             result = self.scope.query(
                 query,
-                QueryOptions(
-                    named_parameters={"content_hash": content_hash}, scan_consistency=QueryScanConsistency.REQUEST_PLUS
-                ),
+                QueryOptions(named_parameters=named_parameters, scan_consistency=QueryScanConsistency.REQUEST_PLUS),
             )
             rows = list(result.rows())  # Collect once
 
@@ -1396,6 +1581,8 @@ class CouchbaseSearch(VectorDb):
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
         """
+        # Never let caller metadata reassign a chunk's owner.
+        metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_FIELD}
         try:
             # Query for documents with the given content_id
             query = f"SELECT META().id as doc_id, meta_data, filters FROM `{self.bucket_name}` WHERE content_id = $content_id"

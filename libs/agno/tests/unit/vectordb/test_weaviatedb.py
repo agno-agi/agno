@@ -256,6 +256,7 @@ def test_delete_by_metadata(weaviate_db, mock_weaviate_client):
 def test_delete_by_content_id(weaviate_db, mock_weaviate_client):
     """Test deleting documents by content ID"""
     collection = mock_weaviate_client.collections.get.return_value
+    collection.data.delete_many.return_value.successful = 1
 
     result = weaviate_db.delete_by_content_id("recipe_1")
     assert result is True

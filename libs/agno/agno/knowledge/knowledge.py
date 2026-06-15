@@ -125,8 +125,8 @@ class Knowledge(RemoteKnowledge):
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
             skip_if_exists: Whether to skip inserting content if it already exists (default: False)
-            user_id: Owner of this content. ``None`` writes to the shared
-                bucket (visible to everyone). See ``ainsert`` for details.
+            user_id: Owner of this content. None writes to the shared
+                bucket (visible to everyone). See ainsert for details.
         """
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -137,6 +137,8 @@ class Knowledge(RemoteKnowledge):
 
         # Strip reserved _agno key from user-provided metadata
         safe_metadata = strip_agno_metadata(metadata)
+
+        from agno.vectordb.base import normalize_user_id
 
         content = None
         file_data = None
@@ -154,7 +156,7 @@ class Knowledge(RemoteKnowledge):
             remote_content=remote_content,
             reader=reader,
             auth=auth,
-            user_id=user_id,
+            user_id=normalize_user_id(user_id),
         )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
@@ -202,11 +204,10 @@ class Knowledge(RemoteKnowledge):
         """Insert a single piece of content.
 
         Args:
-            user_id: Owner of this content. ``None`` writes to the shared
+            user_id: Owner of this content. None writes to the shared
                 bucket (visible to everyone). A string scopes the content
                 to that user — only they (and admins / unscoped callers)
-                will see it via per-user retrieval. See
-                ``KNOWLEDGE_ISOLATION_DESIGN.md``.
+                will see it via per-user retrieval.
         """
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -217,6 +218,8 @@ class Knowledge(RemoteKnowledge):
 
         # Strip reserved _agno key from user-provided metadata
         safe_metadata = strip_agno_metadata(metadata)
+
+        from agno.vectordb.base import normalize_user_id
 
         content = None
         file_data = None
@@ -234,7 +237,7 @@ class Knowledge(RemoteKnowledge):
             remote_content=remote_content,
             reader=reader,
             auth=auth,
-            user_id=user_id,
+            user_id=normalize_user_id(user_id),
         )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
@@ -260,6 +263,7 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         remote_content: Optional[RemoteContent] = None,
+        user_id: Optional[str] = None,
     ) -> None: ...
 
     async def ainsert_many(self, *args, **kwargs) -> None:
@@ -283,6 +287,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
                     remote_content=argument.get("remote_content", None),
                     auth=argument.get("auth"),
+                    user_id=argument.get("user_id"),
                 )
 
         elif kwargs:
@@ -300,6 +305,7 @@ class Knowledge(RemoteKnowledge):
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             auth = kwargs.get("auth")
+            user_id = kwargs.get("user_id")
             for path in paths:
                 await self.ainsert(
                     name=name,
@@ -312,6 +318,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             for url in urls:
                 await self.ainsert(
@@ -325,6 +332,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -340,6 +348,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             if topics:
                 await self.ainsert(
@@ -353,6 +362,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
 
             if remote_content:
@@ -365,6 +375,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
 
         else:
@@ -388,6 +399,7 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         remote_content: Optional[RemoteContent] = None,
+        user_id: Optional[str] = None,
     ) -> None: ...
 
     def insert_many(self, *args, **kwargs) -> None:
@@ -432,6 +444,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
                     remote_content=argument.get("remote_content", None),
                     auth=argument.get("auth"),
+                    user_id=argument.get("user_id"),
                 )
 
         elif kwargs:
@@ -449,6 +462,7 @@ class Knowledge(RemoteKnowledge):
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             auth = kwargs.get("auth")
+            user_id = kwargs.get("user_id")
             for path in paths:
                 self.insert(
                     name=name,
@@ -461,6 +475,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             for url in urls:
                 self.insert(
@@ -474,6 +489,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -489,6 +505,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             if topics:
                 self.insert(
@@ -502,6 +519,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
 
             if remote_content:
@@ -514,6 +532,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
 
         else:
@@ -527,16 +546,10 @@ class Knowledge(RemoteKnowledge):
         self,
         search_filters: Optional[Union[Dict[str, Any], List["FilterExpr"]]],
     ) -> Optional[Union[Dict[str, Any], List["FilterExpr"]]]:
-        """Inject the ``linked_to`` (Knowledge instance) scope into the
-        caller-provided filters when ``isolate_vector_search`` is on.
-
-        ``user_id`` is NOT mixed into the filter DSL — each backend handles
-        per-user isolation natively (pgvector uses a column predicate, Chroma
-        uses per-user collections, Pinecone uses namespaces, etc.). The
-        ``user_id`` value flows separately to ``vector_db.search(user_id=...)``.
-
-        Returns the new filter object — original ``search_filters`` is not
-        mutated.
+        """Inject the linked_to (Knowledge instance) scope into the caller-provided
+        filters when isolate_vector_search is on. user_id is not mixed in here — it
+        flows separately to vector_db.search(user_id=...). Returns a new filter
+        object; search_filters is not mutated.
         """
         if not (self.isolate_vector_search and self.name):
             return search_filters
@@ -561,10 +574,10 @@ class Knowledge(RemoteKnowledge):
 
         Args:
             user_id: Per-user RAG isolation scope. Forwarded directly to the
-                underlying ``vector_db.search(user_id=...)`` — each backend
+                underlying vector_db.search(user_id=...) — each backend
                 handles isolation using its native primitive (pgvector
-                column, Chroma collection, etc.). ``None`` returns
-                everything (admin / isolation-off behaviour).
+                column, Chroma collection, etc.). None returns
+                everything (admin / isolation-off behavior).
         """
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
@@ -586,9 +599,7 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(
-                query=query, limit=_max_results, filters=search_filters, user_id=user_id
-            )
+            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -601,7 +612,7 @@ class Knowledge(RemoteKnowledge):
         search_type: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Returns relevant documents matching a query. See ``search``."""
+        """Returns relevant documents matching a query. See search."""
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -627,9 +638,7 @@ class Knowledge(RemoteKnowledge):
                 )
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(
-                    query=query, limit=_max_results, filters=search_filters, user_id=user_id
-                )
+                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -653,8 +662,7 @@ class Knowledge(RemoteKnowledge):
             raise ValueError("get_content() is not supported for async databases. Please use aget_content() instead.")
 
         # Filter by linked_to (instance scope) and user_id (owner scope).
-        # The DB applies "(user_id = :uid OR user_id IS NULL)" when user_id
-        # is set, returning the caller's rows plus shared/legacy rows.
+        # When user_id is set the DB returns the caller's rows plus shared/legacy rows.
         contents, count = self.contents_db.get_knowledge_contents(
             limit=limit,
             page=page,
@@ -676,7 +684,7 @@ class Knowledge(RemoteKnowledge):
         if self.contents_db is None:
             raise ValueError("No contents db provided")
 
-        # Filter by linked_to + user_id (see ``get_content`` for semantics).
+        # Filter by linked_to + user_id (see get_content for semantics).
         if isinstance(self.contents_db, AsyncBaseDb):
             contents, count = await self.contents_db.get_knowledge_contents(
                 limit=limit,
@@ -776,12 +784,8 @@ class Knowledge(RemoteKnowledge):
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                # Scope the vector-DB delete to the same ``user_id`` that
-                # scopes the contents-DB delete below — otherwise a caller
-                # whose ownership check fails on the contents row could
-                # still wipe the vector chunks. Backends that don't yet
-                # implement per-user isolation accept ``user_id`` as a
-                # no-op (see VectorDb.delete_by_content_id).
+                # Scope the vector DB delete to the same user_id as the
+                # contents DB delete below (see VectorDb.delete_by_content_id)
                 self.vector_db.delete_by_content_id(content_id, user_id=user_id)
 
         if self.contents_db is not None:
@@ -797,7 +801,7 @@ class Knowledge(RemoteKnowledge):
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                # See the matching comment in ``remove_content_by_id``.
+                # See the matching comment in remove_content_by_id.
                 self.vector_db.delete_by_content_id(content_id, user_id=user_id)
 
         if self.contents_db is not None:
@@ -1367,11 +1371,8 @@ class Knowledge(RemoteKnowledge):
         Prepare documents for insertion by assigning content_id and optionally
         calculating sizes and updating metadata.
 
-        Note: ``user_id`` is NOT written into ``meta_data`` here. It flows as
-        an explicit parameter on the ``vector_db.insert`` / ``async_insert``
-        calls (see ``_aload_content`` etc.) — that keeps owner identity out
-        of the user-controlled JSONB blob and avoids collisions with any
-        ``user_id`` key callers might legitimately have in their own metadata.
+        Note: user_id is not written into meta_data here — it flows as an explicit
+        parameter on the vector_db.insert / async_insert calls instead.
 
         Args:
             documents: List of documents to prepare
@@ -1487,6 +1488,7 @@ class Knowledge(RemoteKnowledge):
                     metadata=content.metadata,
                     description=content.description,
                     reader=content.reader,
+                    user_id=content.user_id,
                 )
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
@@ -1572,6 +1574,7 @@ class Knowledge(RemoteKnowledge):
                     metadata=content.metadata,
                     description=content.description,
                     reader=content.reader,
+                    user_id=content.user_id,
                 )
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
@@ -1878,9 +1881,7 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        self.vector_db.upsert(
-                            doc_hash, source_docs, content.metadata, user_id=content.user_id
-                        )
+                        self.vector_db.upsert(doc_hash, source_docs, content.metadata, user_id=content.user_id)
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
@@ -2131,6 +2132,9 @@ class Knowledge(RemoteKnowledge):
             log_warning("No topics provided for content")
             return
 
+        # Capture the owner before the loop rebinds content — otherwise
+        # the per-topic Content would lose user_id and leak to the shared bucket.
+        owner_user_id = content.user_id
         for topic in content.topics:
             content = Content(
                 name=topic,
@@ -2141,6 +2145,7 @@ class Knowledge(RemoteKnowledge):
                     type="Topic",
                 ),
                 topics=[topic],
+                user_id=owner_user_id,
             )
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
@@ -2192,6 +2197,9 @@ class Knowledge(RemoteKnowledge):
             log_warning("No topics provided for content")
             return
 
+        # Capture the owner before the loop rebinds content — otherwise
+        # the per-topic Content would lose user_id and leak to the shared bucket.
+        owner_user_id = content.user_id
         for topic in content.topics:
             content = Content(
                 name=topic,
@@ -2202,6 +2210,7 @@ class Knowledge(RemoteKnowledge):
                     type="Topic",
                 ),
                 topics=[topic],
+                user_id=owner_user_id,
             )
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
@@ -2365,6 +2374,12 @@ class Knowledge(RemoteKnowledge):
             )
             hash_parts.append(fallback)
 
+        # Owner scoping: fold the owner into the hash so the same content from two
+        # users gets distinct hashes (and distinct content ids / row ids), keeping
+        # the dedupe path from colliding across users. user_id=None appends nothing.
+        if content.user_id:
+            hash_parts.append(f"user:{content.user_id}")
+
         hash_input = ":".join(hash_parts)
         return hashlib.sha256(hash_input.encode()).hexdigest()
 
@@ -2402,6 +2417,11 @@ class Knowledge(RemoteKnowledge):
         else:
             # Fallback: use content hash for uniqueness
             hash_parts.append(hashlib.sha256(document.content.encode()).hexdigest()[:16])
+
+        # Owner scoping — see _build_content_hash. Keeps per-page hashes from
+        # colliding across users for multi-page readers.
+        if content.user_id:
+            hash_parts.append(f"user:{content.user_id}")
 
         hash_input = ":".join(hash_parts)
         return hashlib.sha256(hash_input.encode()).hexdigest()
@@ -2491,8 +2511,8 @@ class Knowledge(RemoteKnowledge):
             access_count=0,
             status=content.status if content.status else ContentStatus.PROCESSING,
             status_message=self._ensure_string_field(content.status_message, "content.status_message", default=""),
-            # Carry the uploader from Content into the persisted row. ``None``
-            # means shared / org-wide (see KnowledgeRow.user_id docstring).
+            # Carry the uploader from Content into the persisted row. None
+            # means shared / org-wide (see KnowledgeRow.user_id).
             user_id=content.user_id,
             created_at=created_at,
             updated_at=updated_at,
@@ -3503,8 +3523,8 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             query: The query string.
             max_results: Maximum number of results.
             filters: Filters to apply.
-            user_id: Owner-scope filter forwarded to ``search``. ``None``
-                returns everything (admin / RBAC-off); a string returns the
+            user_id: Owner-scope filter forwarded to search. None
+                returns everything (admin / isolation-off); a string returns the
                 caller's chunks plus the shared bucket.
             **kwargs: Additional parameters.
 
@@ -3521,7 +3541,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         user_id: Optional[str] = None,
         **kwargs,
     ) -> List[Document]:
-        """Async version of retrieve. See ``retrieve`` for arg semantics."""
+        """Async version of retrieve. See retrieve for arg semantics."""
         return await self.asearch(query=query, max_results=max_results, filters=filters, user_id=user_id)
 
     # ========================================================================

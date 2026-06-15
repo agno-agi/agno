@@ -295,16 +295,12 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
-    # --- Knowledge ---
     # ``user_id`` semantics:
-    # - ``None``: no scoping. Single-user / admin / RBAC-off behaviour — sees
+    # - ``None``: no scoping. Single-user / admin / RBAC-off behavior — sees
     #   every row including those owned by other users.
     # - non-empty string: scope to "rows owned by this user OR shared rows
     #   (user_id IS NULL)". This is what non-admin authenticated routes pass.
-    #
-    # The "shared bucket" semantics (NULL = visible to all) lets admins
-    # publish org-wide knowledge by leaving the owner unset, while per-user
-    # uploads stay private. Owner on writes is carried inside ``knowledge_row``.
+    # Owner on writes is carried inside ``knowledge_row``.
 
     @abstractmethod
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
@@ -1002,7 +998,7 @@ class BaseDb(ABC):
     #
     # Notes on ``user_id`` for schedule methods:
     # - User-facing reads/updates/deletes accept an optional ``user_id`` filter.
-    #   ``None`` means "no scoping" (preserves single-user / admin behaviour);
+    #   ``None`` means "no scoping" (preserves single-user / admin behavior);
     #   a string AND-s into the WHERE clause so non-admins only see their own.
     # - Owner on writes is carried inside ``schedule_data`` / ``run_data``.
     # - ``claim_due_schedule`` and ``release_schedule`` are EXECUTOR endpoints
@@ -1699,15 +1695,11 @@ class AsyncBaseDb(ABC):
     # --- Schedules (Optional) ---
     # See "Notes on user_id" on the sync BaseDb above. Same semantics here.
 
-    async def get_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    async def get_schedule_by_name(
-        self, name: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by name."""
         raise NotImplementedError
 
@@ -1757,9 +1749,7 @@ class AsyncBaseDb(ABC):
         """Update a schedule run record. SYSTEM CONTEXT — executor writes."""
         raise NotImplementedError
 
-    async def get_schedule_run(
-        self, run_id: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
         raise NotImplementedError
 

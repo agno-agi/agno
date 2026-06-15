@@ -1917,9 +1917,9 @@ class SqliteDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                # calculate_date_metrics now returns a LIST: one record per
-                # distinct user_id (plus the empty-string bucket for unowned
-                # sessions). Flatten into the bulk-upsert list.
+                # calculate_date_metrics returns one record per distinct user_id
+                # (plus the empty-string bucket for unowned sessions); flatten
+                # those into the bulk-upsert list
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
@@ -1946,9 +1946,9 @@ class SqliteDb(BaseDb):
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
             user_id (Optional[str]): When provided, returns only that user's
-                per-user bucket. When ``None``, returns ALL buckets including
-                the empty-string unowned bucket — the router decides whether
-                that's appropriate (admins see all; non-admins are scoped).
+                per-user bucket. When None, returns all buckets including the
+                empty-string unowned bucket. The router decides whether that's
+                appropriate (admins see all; non-admins are scoped).
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1973,9 +1973,9 @@ class SqliteDb(BaseDb):
                 if not result:
                     return [], None
 
-                # Get the latest updated_at, scoped to whatever filter was
-                # applied — otherwise an admin's "give me everything" call
-                # could shadow a per-user view with a stale-looking timestamp.
+                # Get the latest updated_at, scoped to whatever filter was applied
+                # so an unscoped admin call can't shadow a per-user view with a
+                # stale-looking timestamp
                 latest_stmt = select(func.max(table.c.updated_at))
                 if user_id is not None:
                     latest_stmt = latest_stmt.where(table.c.user_id == user_id)
@@ -1996,11 +1996,10 @@ class SqliteDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-    # The owner-scope predicate is consistently
-    # ``(user_id = :uid OR user_id IS NULL)`` — i.e. "rows I own, plus rows
-    # nobody owns (admin / org-wide shared content)". When ``user_id`` is
-    # ``None`` the predicate is dropped entirely (admin / RBAC-off / single-
-    # user view sees everything).
+    # The owner-scope predicate is consistently "user_id = :uid OR user_id IS NULL",
+    # i.e. rows I own plus rows nobody owns (admin / org-wide shared content).
+    # When user_id is None the predicate is dropped entirely (admin / RBAC-off /
+    # single-user view sees everything).
 
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
@@ -2008,7 +2007,7 @@ class SqliteDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes the row if it is owned by ``user_id`` OR is unowned
+                deletes the row if it is owned by user_id OR is unowned
                 (NULL). Routes that want to forbid non-admins from deleting
                 shared rows must enforce that separately at the route layer.
 
@@ -4522,9 +4521,9 @@ class SqliteDb(BaseDb):
             return []
 
     # -- Schedule methods --
-    # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
-    # routes can scope by owner. The executor pair (``claim_due_schedule`` /
-    # ``release_schedule``) intentionally has no user_id — the poller must be
+    # User-facing reads/updates/deletes carry an optional user_id filter so the
+    # routes can scope by owner. The executor pair (claim_due_schedule /
+    # release_schedule) intentionally has no user_id; the poller must be
     # able to fire schedules across all users.
     def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
@@ -4629,7 +4628,7 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 if runs_table is not None:
                     # Mirror the user_id guard on the cascade delete so we don't
-                    # nuke another user's runs if the schedule_id happens to be
+                    # delete another user's runs if the schedule_id happens to be
                     # shared (it shouldn't be, but defend in depth).
                     runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
                     if user_id is not None:
@@ -4768,13 +4767,7 @@ class SqliteDb(BaseDb):
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(base_filter)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:

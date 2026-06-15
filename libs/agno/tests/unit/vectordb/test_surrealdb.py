@@ -156,30 +156,41 @@ def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
     """Test inserting documents"""
     surrealdb_vector.insert(content_hash="test_hash", documents=sample_documents)
 
-    # Verify create was called for each document
-    assert mock_surrealdb_client.create.call_count == 3
+    # Inserts now write through an UPSERT into an owner-folded deterministic
+    # record id (clobber-safe), so one client.query per document, not create.
+    assert mock_surrealdb_client.query.call_count == 3
 
-    # Check args for first document
-    args, _ = mock_surrealdb_client.create.call_args_list[0]
-    assert args[0] == "test_collection"
+    # Check args for first document: UPSERT targets a record in the collection
+    # and the payload carries the document fields plus the owner field.
+    args, _ = mock_surrealdb_client.query.call_args_list[0]
+    assert "UPSERT test_collection:" in args[0]
+    assert "SET content = $content" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    assert "user_id" in args[1]
 
 
 def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
     surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents)
 
-    # Verify query was called for each document
-    assert mock_surrealdb_client.query.call_count == 3
+    # Upsert first runs a scoped dedupe-delete for the content_hash, then one
+    # UPSERT per document: 1 delete + 3 upserts = 4 query calls.
+    assert mock_surrealdb_client.query.call_count == 4
 
-    # Check args for first call
-    args, _ = mock_surrealdb_client.query.call_args_list[0]
-    assert "UPSERT test_collection" in args[0]
+    # First call is the dedupe-delete keyed on content_hash.
+    delete_args, _ = mock_surrealdb_client.query.call_args_list[0]
+    assert "DELETE FROM test_collection" in delete_args[0]
+    assert "meta_data.content_hash = $content_hash" in delete_args[0]
+
+    # Remaining calls are the per-document UPSERTs carrying the owner field.
+    args, _ = mock_surrealdb_client.query.call_args_list[1]
+    assert "UPSERT test_collection:" in args[0]
     assert "SET content = $content" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    assert "user_id" in args[1]
 
 
 def test_search(surrealdb_vector: SurrealDb, mock_surrealdb_client: MagicMock) -> None:
@@ -253,12 +264,19 @@ async def test_async_create(async_surrealdb_vector, mock_async_surrealdb_client)
     """Test async create collection"""
     await async_surrealdb_vector.async_create()
 
-    # Verify query was called
-    mock_async_surrealdb_client.query.assert_awaited_once()
-    args = mock_async_surrealdb_client.query.await_args[0][0]
-    assert "DEFINE TABLE IF NOT EXISTS test_collection" in args
-    assert "DEFINE INDEX IF NOT EXISTS vector_idx" in args
-    assert f"DIMENSION {async_surrealdb_vector.embedder.dimensions}" in args
+    # async_create runs the table definition then an idempotent
+    # ``DEFINE FIELD IF NOT EXISTS`` migration that adds the owner field to
+    # tables predating per-user isolation: two query calls.
+    assert mock_async_surrealdb_client.query.await_count == 2
+
+    create_args = mock_async_surrealdb_client.query.await_args_list[0][0][0]
+    assert "DEFINE TABLE IF NOT EXISTS test_collection" in create_args
+    assert "DEFINE INDEX IF NOT EXISTS vector_idx" in create_args
+    assert f"DIMENSION {async_surrealdb_vector.embedder.dimensions}" in create_args
+
+    # The second call is the idempotent owner-field migration.
+    migrate_args = mock_async_surrealdb_client.query.await_args_list[1][0][0]
+    assert "DEFINE FIELD IF NOT EXISTS user_id ON test_collection" in migrate_args
 
 
 @pytest.mark.asyncio
@@ -282,15 +300,19 @@ async def test_async_insert(async_surrealdb_vector, mock_async_surrealdb_client,
     """Test async inserting documents"""
     await async_surrealdb_vector.async_insert(content_hash="test_hash", documents=sample_documents)
 
-    # Verify create was called for each document
-    assert mock_async_surrealdb_client.create.await_count == 3
+    # Inserts now write through an UPSERT into an owner-folded deterministic
+    # record id (clobber-safe), so one client.query per document, not create.
+    assert mock_async_surrealdb_client.query.await_count == 3
 
-    # Check args for first document
-    args, kwargs = mock_async_surrealdb_client.create.await_args_list[0]
-    assert args[0] == "test_collection"
+    # Check args for first document: UPSERT targets a record in the collection
+    # and the payload carries the document fields plus the owner field.
+    args, kwargs = mock_async_surrealdb_client.query.await_args_list[0]
+    assert "UPSERT test_collection:" in args[0]
+    assert "SET content = $content" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    assert "user_id" in args[1]
 
 
 @pytest.mark.asyncio
@@ -298,16 +320,23 @@ async def test_async_upsert(async_surrealdb_vector, mock_async_surrealdb_client,
     """Test async upserting documents"""
     await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents)
 
-    # Verify query was called for each document
-    assert mock_async_surrealdb_client.query.await_count == 3
+    # Upsert first runs a scoped dedupe-delete for the content_hash, then one
+    # UPSERT per document: 1 delete + 3 upserts = 4 query calls.
+    assert mock_async_surrealdb_client.query.await_count == 4
 
-    # Check args for first call
-    args, kwargs = mock_async_surrealdb_client.query.await_args_list[0]
-    assert "UPSERT test_collection" in args[0]
+    # First call is the dedupe-delete keyed on content_hash.
+    delete_args, _ = mock_async_surrealdb_client.query.await_args_list[0]
+    assert "DELETE FROM test_collection" in delete_args[0]
+    assert "meta_data.content_hash = $content_hash" in delete_args[0]
+
+    # Remaining calls are the per-document UPSERTs carrying the owner field.
+    args, kwargs = mock_async_surrealdb_client.query.await_args_list[1]
+    assert "UPSERT test_collection:" in args[0]
     assert "SET content = $content" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    assert "user_id" in args[1]
 
 
 @pytest.mark.asyncio

@@ -6,7 +6,6 @@ from cassandra.cluster import Session
 
 from agno.knowledge.document import Document
 from agno.vectordb.cassandra import Cassandra
-from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
 
 @pytest.fixture
@@ -38,7 +37,7 @@ def vector_db(mock_session, mock_embedder, mock_table):
     """Create a VectorDB instance with mocked session and table."""
     table_name = f"test_vectors_{uuid.uuid4().hex[:8]}"
 
-    with patch.object(AgnoMetadataVectorCassandraTable, "__new__", return_value=mock_table):
+    with patch("agno.vectordb.cassandra.cassandra.AgnoMetadataVectorCassandraTable", return_value=mock_table):
         db = Cassandra(table_name=table_name, keyspace="test_vectordb", embedder=mock_embedder, session=mock_session)
         db.create()
 

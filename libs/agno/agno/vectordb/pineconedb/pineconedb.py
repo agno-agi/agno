@@ -22,12 +22,21 @@ except ImportError:
     raise ImportError("The `pinecone` package is not installed, please install using `pip install pinecone`.")
 
 
+from hashlib import md5
+
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, normalize_user_id
+
+# Per-user RAG isolation. Owner is stored as a top-level metadata field
+# user_id and reads/deletes are scoped with a metadata filter.
+# * Upserts with user_id stamp the field; user_id=None omits it (shared bucket).
+# * Searches with user_id=X AND an $or of own OR shared onto the caller
+#   filter; user_id=None applies no scope (admin view).
+USER_ID_METADATA_KEY = "user_id"
 
 
 class PineconeDb(VectorDb):
@@ -64,6 +73,8 @@ class PineconeDb(VectorDb):
         timeout (Optional[int]): The timeout for Pinecone operations.
         kwargs (Optional[Dict[str, str]]): Additional keyword arguments.
     """
+
+    USER_ID_KEY = USER_ID_METADATA_KEY
 
     def __init__(
         self,
@@ -242,10 +253,13 @@ class PineconeDb(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        self._upsert(content_hash=content_hash, documents=documents, filters=filters)
+        user_id = normalize_user_id(user_id)
+        # Scope the dedupe-delete to the owner's stale chunks
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        self._upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def _upsert(
         self,
@@ -255,6 +269,7 @@ class PineconeDb(VectorDb):
         namespace: Optional[str] = None,
         batch_size: Optional[int] = None,
         show_progress: bool = False,
+        user_id: Optional[str] = None,
     ) -> None:
         """insert documents into the index.
 
@@ -264,9 +279,12 @@ class PineconeDb(VectorDb):
             namespace (Optional[str], optional): The namespace for the documents. Defaults to None.
             batch_size (Optional[int], optional): The batch size for upsert. Defaults to None.
             show_progress (bool, optional): Whether to show progress during upsert. Defaults to False.
+            user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
+                None writes to the shared bucket (no user_id metadata field).
 
         """
 
+        user_id = normalize_user_id(user_id)
         vectors = []
         for document in documents:
             document.embed(embedder=self.embedder)
@@ -282,9 +300,11 @@ class PineconeDb(VectorDb):
                 metadata["content_id"] = document.content_id
 
             metadata["content_hash"] = content_hash
+            # Stamp the owner last so caller filters/meta_data can't spoof it.
+            self._stamp_user_id(metadata, user_id)
 
             data_to_upsert = {
-                "id": document.id,
+                "id": self._vector_id(document, content_hash, user_id),
                 "values": document.embedding,
                 "metadata": metadata,
             }
@@ -307,10 +327,13 @@ class PineconeDb(VectorDb):
         namespace: Optional[str] = None,
         batch_size: Optional[int] = None,
         show_progress: bool = False,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents into the index asynchronously with batching."""
-        if self.content_hash_exists(content_hash):
-            await asyncio.to_thread(self._delete_by_content_hash, content_hash)
+        user_id = normalize_user_id(user_id)
+        # Scope the dedupe-delete to the owner's stale chunks (mirrors sync upsert)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
         if not documents:
             return
 
@@ -324,7 +347,7 @@ class PineconeDb(VectorDb):
 
         # Process each batch in parallel
         async def process_batch(batch_docs):
-            return await self._prepare_vectors(batch_docs, content_hash, filters)
+            return await self._prepare_vectors(batch_docs, content_hash, filters, user_id)
 
         # Run all batches in parallel
         batch_vectors = await asyncio.gather(*[process_batch(batch) for batch in batches])
@@ -340,9 +363,14 @@ class PineconeDb(VectorDb):
         log_debug(f"Finished async upsert of {len(documents)} documents")
 
     async def _prepare_vectors(
-        self, documents: List[Document], content_hash: str, filters: Optional[Dict[str, Any]] = None
+        self,
+        documents: List[Document],
+        content_hash: str,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Prepare vectors for upsert."""
+        user_id = normalize_user_id(user_id)
         vectors = []
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -397,9 +425,11 @@ class PineconeDb(VectorDb):
                 metadata["content_id"] = doc.content_id
 
             metadata["content_hash"] = content_hash
+            # Stamp the owner last so caller filters/meta_data can't spoof it.
+            self._stamp_user_id(metadata, user_id)
 
             data_to_upsert = {
-                "id": doc.id,
+                "id": self._vector_id(doc, content_hash, user_id),
                 "values": doc.embedding,
                 "metadata": metadata,
             }
@@ -418,10 +448,14 @@ class PineconeDb(VectorDb):
         )
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         log_warning("Pinecone does not support insert operations. Redirecting to async_upsert instead.")
-        await self.async_upsert(content_hash=content_hash, documents=documents, filters=filters)
+        await self.async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def upsert_available(self) -> bool:
         """Check if upsert operation is available.
@@ -432,9 +466,15 @@ class PineconeDb(VectorDb):
         """
         return True
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         log_warning("Pinecone does not support insert operations. Redirecting to upsert instead.")
-        self.upsert(content_hash=content_hash, documents=documents, filters=filters)
+        self.upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def _hybrid_scale(self, dense: List[float], sparse: Dict[str, Any], alpha: float):
         """Hybrid vector scaling using a convex combination
@@ -461,6 +501,7 @@ class PineconeDb(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for similar documents in the index.
 
@@ -471,6 +512,8 @@ class PineconeDb(VectorDb):
             namespace (Optional[str], optional): The namespace to search in. Defaults to None.
             include_values (Optional[bool], optional): Whether to include values in the search results. Defaults to None.
             include_metadata (Optional[bool], optional): Whether to include metadata in the search results. Defaults to None.
+            user_id (Optional[str], optional): Restrict results to the caller's chunks
+                plus the shared bucket. None means no scope (admin view).
 
         Returns:
             List[Document]: The list of matching documents.
@@ -479,6 +522,8 @@ class PineconeDb(VectorDb):
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in PineconeDB. No filters will be applied.")
             filters = None
+        # AND the own-OR-shared scope onto the caller's metadata filter
+        filters = self._scoped_filter(filters, normalize_user_id(user_id))
         dense_embedding = self.embedder.get_embedding(query)
 
         if self.use_hybrid_search:
@@ -530,9 +575,10 @@ class PineconeDb(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
         include_values: Optional[bool] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for similar documents in the index asynchronously."""
-        return await asyncio.to_thread(self.search, query, limit, filters, namespace, include_values)
+        return await asyncio.to_thread(self.search, query, limit, filters, namespace, include_values, user_id)
 
     def optimize(self) -> None:
         """Optimize the index.
@@ -591,15 +637,56 @@ class PineconeDb(VectorDb):
             log_warning(f"Error deleting documents with metadata {metadata}: {str(e)}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete documents by content ID (stored in metadata)."""
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content ID (stored in metadata).
+
+        Args:
+            content_id (str): The content ID to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks. None deletes all chunks.
+        """
+        user_id = normalize_user_id(user_id)
+        delete_filter = self._scoped_content_id_filter(content_id, user_id)
+        return self._delete_by_filter(delete_filter)
+
+    def _delete_by_filter(self, delete_filter: Dict[str, Any]) -> bool:
+        """Delete every vector matching delete_filter.
+
+        Tries the metadata-filter delete (pod-based indexes); if Pinecone
+        rejects it (serverless), resolves the matching ids via a query and
+        deletes by id instead.
+        """
         try:
-            # Delete all documents where metadata.content_id equals the given content_id
-            self.index.delete(filter={"content_id": {"$eq": content_id}})
+            self.index.delete(filter=delete_filter, namespace=self.namespace)
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with content_id {content_id}: {str(e)}")
-            return False
+            log_debug(f"Filter delete failed, falling back to id-based delete (serverless): {str(e)}")
+            try:
+                ids = self._ids_matching_filter(delete_filter)
+                if ids:
+                    self.index.delete(ids=ids, namespace=self.namespace)
+                return True
+            except Exception as inner:
+                log_warning(f"Error deleting documents with filter {delete_filter}: {str(inner)}")
+                return False
+
+    def _ids_matching_filter(self, query_filter: Dict[str, Any]) -> List[str]:
+        """Resolve the vector ids matching a metadata filter via a query.
+
+        Serverless has no scan-by-filter, so we issue a top-k query with a
+        zero vector (only the filter matters) to collect the matching ids.
+        """
+        if self.dimension is None:
+            raise ValueError("Dimension is not set for this Pinecone index")
+        dummy_vector = [0.0] * self.dimension
+        response = self.index.query(
+            vector=dummy_vector,
+            top_k=10000,
+            namespace=self.namespace,
+            filter=query_filter,
+            include_metadata=False,
+            include_values=False,
+        )
+        return [match.id for match in response.matches]
 
     def get_count(self) -> int:
         """Get the count of documents in the index."""
@@ -628,11 +715,12 @@ class PineconeDb(VectorDb):
             log_warning(f"Error checking if ID {id} exists: {str(e)}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if documents with the given content hash exist in the index.
 
         Args:
             content_hash (str): The content hash to check.
+            user_id (Optional[str]): Restrict the check to the owner's chunks.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
@@ -647,7 +735,7 @@ class PineconeDb(VectorDb):
                 vector=dummy_vector,
                 top_k=1,
                 namespace=self.namespace,
-                filter={"content_hash": {"$eq": content_hash}},
+                filter=self._content_hash_filter(content_hash, normalize_user_id(user_id)),
                 include_metadata=False,
                 include_values=False,
             )
@@ -656,22 +744,20 @@ class PineconeDb(VectorDb):
             log_warning(f"Error checking if content_hash {content_hash} exists: {str(e)}")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by content hash (stored in metadata).
 
         Args:
             content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks so
+                a re-upsert never wipes another user's chunks under the same hash.
 
         Returns:
             bool: True if documents were deleted, False otherwise.
         """
-        try:
-            # Delete all documents where metadata.content_hash equals the given content_hash
-            self.index.delete(filter={"content_hash": {"$eq": content_hash}}, namespace=self.namespace)
-            return True
-        except Exception as e:
-            log_warning(f"Error deleting documents with content_hash {content_hash}: {str(e)}")
-            return False
+        return self._delete_by_filter(
+            self._content_hash_filter(content_hash, normalize_user_id(user_id), scope_none_to_shared=True)
+        )
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
         """
@@ -700,16 +786,17 @@ class PineconeDb(VectorDb):
                 vector_id = match.id
                 current_metadata = match.metadata or {}
 
-                # Merge existing metadata with new metadata
+                # Merge existing metadata with new metadata (user_id is never caller-writable)
+                safe_metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
                 updated_metadata = current_metadata.copy()
-                updated_metadata.update(metadata)
+                updated_metadata.update(safe_metadata)
 
                 if "filters" not in updated_metadata:
                     updated_metadata["filters"] = {}
                 if isinstance(updated_metadata["filters"], dict):
-                    updated_metadata["filters"].update(metadata)
+                    updated_metadata["filters"].update(safe_metadata)
                 else:
-                    updated_metadata["filters"] = metadata
+                    updated_metadata["filters"] = safe_metadata
 
                 update_data.append({"id": vector_id, "metadata": updated_metadata})
 
@@ -724,6 +811,65 @@ class PineconeDb(VectorDb):
         except Exception:
             logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
+
+    # ---- Per-user isolation helpers ----
+
+    def _vector_id(self, document: Document, content_hash: str, user_id: Optional[str]) -> str:
+        """Owner-scoped vector id; the shared bucket keeps the legacy id."""
+        base_id = document.id or md5(content_hash.encode()).hexdigest()
+        if user_id:
+            return md5(f"{base_id}_{content_hash}_{user_id}".encode()).hexdigest()
+        return base_id
+
+    def _stamp_user_id(self, metadata: Dict[str, Any], user_id: Optional[str]) -> None:
+        """Stamp the owner onto the metadata; user_id=None omits it (shared bucket)."""
+        if user_id:
+            metadata[self.USER_ID_KEY] = user_id
+        else:
+            metadata.pop(self.USER_ID_KEY, None)
+
+    def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Own-OR-shared scope predicate; user_id=None returns None (no scope)."""
+        if not user_id:
+            return None
+        return {
+            "$or": [
+                {self.USER_ID_KEY: user_id},
+                {self.USER_ID_KEY: {"$exists": False}},
+            ]
+        }
+
+    def _scoped_filter(self, filters: Optional[Dict[str, Any]], user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """AND the own-OR-shared scope onto the caller's filter under $and."""
+        scope = self._user_scope_filter(user_id)
+        if scope is None:
+            return filters
+        if not filters:
+            return scope
+        return {"$and": [filters, scope]}
+
+    def _content_hash_filter(
+        self, content_hash: str, user_id: Optional[str], scope_none_to_shared: bool = False
+    ) -> Dict[str, Any]:
+        """Dedupe/existence predicate for upsert; a set user_id matches the owner, None with
+        scope_none_to_shared=True matches only the shared bucket, else any owner."""
+        condition: Dict[str, Any] = {"content_hash": {"$eq": content_hash}}
+        if user_id:
+            condition[self.USER_ID_KEY] = {"$eq": user_id}
+        elif scope_none_to_shared:
+            condition[self.USER_ID_KEY] = {"$exists": False}
+        return condition
+
+    def _scoped_content_id_filter(self, content_id: str, user_id: Optional[str]) -> Dict[str, Any]:
+        """Scoped delete predicate for delete_by_content_id.
+
+        A set user_id matches the owner exactly (no shared bucket); user_id=None
+        deletes across all owners.
+        """
+        condition: Dict[str, Any] = {"content_id": {"$eq": content_id}}
+        if user_id:
+            condition[self.USER_ID_KEY] = {"$eq": user_id}
+        return condition
 
     def get_supported_search_types(self) -> List[str]:
         """Get the supported search types for this vector database."""

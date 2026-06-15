@@ -5,8 +5,8 @@ try:
     from redis import Redis
     from redis.asyncio import Redis as AsyncRedis
     from redisvl.index import AsyncSearchIndex, SearchIndex
-    from redisvl.query import FilterQuery, HybridQuery, TextQuery, VectorQuery
-    from redisvl.query.filter import Tag
+    from redisvl.query import AggregateHybridQuery, FilterQuery, TextQuery, VectorQuery
+    from redisvl.query.filter import FilterExpression, Tag
     from redisvl.redis.utils import array_to_buffer, convert_bytes
     from redisvl.schema import IndexSchema
 except ImportError:
@@ -18,7 +18,7 @@ from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, normalize_user_id
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -30,6 +30,19 @@ class RedisDB(VectorDb):
     This class provides methods for creating, inserting, searching, and managing
     vector data in a Redis database using the RedisVL library.
     """
+
+    # TAG field storing a chunk's owner. Shared chunks omit it entirely, and the
+    # owner-OR-shared scope uses ismissing() to surface them.
+    USER_ID_FIELD: str = "user_id"
+
+    # A RediSearch TAG field splits its stored value on a separator (default ",").
+    # With the default, a user_id like "a,b,c" is indexed as THREE tags, so the
+    # owner can't match their own row (self-starve) AND an id crafted as a victim's
+    # comma-delimited subsequence leaks across tenants. We pin the owner field's
+    # separator to the Unit Separator control char (US, 0x1f), which never appears
+    # in a realistic user_id (uuids, emails, OIDC subs), so the owner is stored and
+    # matched as a single atomic tag. case_sensitive keeps "Alice" != "alice".
+    USER_ID_SEPARATOR: str = "\x1f"
 
     def __init__(
         self,
@@ -117,6 +130,83 @@ class RedisDB(VectorDb):
             self._async_index = AsyncSearchIndex(schema=self.schema, redis_client=self._async_redis_client)
         return self._async_index
 
+    def _owner_tag(self, user_id: str) -> str:
+        """Owner tag predicate with | escaped in RedisVL's output. RedisVL does not
+        escape it, so an OIDC id like auth0|sub would otherwise parse as a tag union
+        and match nothing."""
+        return str(Tag(self.USER_ID_FIELD) == user_id).replace("|", "\\|")
+
+    def _user_scope_filter(self, user_id: Optional[str]) -> Optional["FilterExpression"]:
+        """Build the owner-OR-shared scope for a search.
+
+        user_id set  -> match the caller's own chunks OR the shared chunks
+        (which omit the user_id field, hence ismissing).
+        user_id None -> return None (no scope; admin sees everything).
+        """
+        if user_id is None:
+            return None
+        own = self._owner_tag(user_id)
+        # Parenthesize the OR: it's spliced before the =>[KNN ...] clause, where a bare | won't parse.
+        return FilterExpression(f"({own} | ismissing(@{self.USER_ID_FIELD}))")
+
+    def _merge_filters(
+        self, base: Optional["FilterExpression"], scope: Optional["FilterExpression"]
+    ) -> Optional["FilterExpression"]:
+        """AND a base filter (e.g. metadata) with the user scope, skipping Nones."""
+        if base is None:
+            return scope
+        if scope is None:
+            return base
+        return base & scope
+
+    def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic id so two users uploading the
+        same content get distinct keys. The shared bucket keeps the legacy id.
+        """
+        if user_id is None:
+            return base_id
+        return hash_string_sha256(f"{base_id}_{user_id}")
+
+    def _indexed_field_names(self, info: Dict[str, Any]) -> set:
+        """Extract the set of indexed field identifiers from FT.INFO output.
+
+        info["attributes"] is a list of flat key/value lists, e.g.
+        ['identifier', 'id', 'attribute', 'id', 'type', 'TAG', ...].
+        """
+        names: set = set()
+        for attr in info.get("attributes", []):
+            for i in range(0, len(attr) - 1, 2):
+                if attr[i] == "identifier":
+                    names.add(attr[i + 1])
+                    break
+        return names
+
+    def _migrate_index_if_needed(self) -> None:
+        """Recreate the index definition in place if it predates user_id.
+
+        overwrite=True, drop=False re-applies the schema and re-indexes existing
+        keys without deleting data; legacy chunks surface via ismissing(@user_id).
+        """
+        try:
+            existing = self._indexed_field_names(self.index.info())
+            if self.USER_ID_FIELD not in existing:
+                log_debug(f"Migrating Redis index '{self.index_name}' to add '{self.USER_ID_FIELD}' field")
+                self.index.create(overwrite=True, drop=False)
+        except Exception as e:
+            log_error(f"Error migrating Redis index: {str(e)}")
+            raise
+
+    async def _async_migrate_index_if_needed(self, async_index: "AsyncSearchIndex") -> None:
+        """Async version of _migrate_index_if_needed method."""
+        try:
+            existing = self._indexed_field_names(await async_index.info())
+            if self.USER_ID_FIELD not in existing:
+                log_debug(f"Migrating Redis index '{self.index_name}' to add '{self.USER_ID_FIELD}' field")
+                await async_index.create(overwrite=True, drop=False)
+        except Exception as e:
+            log_error(f"Error migrating Redis index: {str(e)}")
+            raise
+
     def _get_schema(self):
         """Get default redis schema"""
         distance_mapping = {
@@ -138,6 +228,20 @@ class RedisDB(VectorDb):
                     {"name": "content", "type": "text"},
                     {"name": "content_hash", "type": "tag"},
                     {"name": "content_id", "type": "tag"},
+                    # Owner of the chunk for per-user isolation. index_missing
+                    # lets the scope query match shared chunks (which omit this
+                    # field) via ismissing(@user_id). A non-default separator and
+                    # case_sensitive keep the owner a single, exact tag (see
+                    # USER_ID_SEPARATOR).
+                    {
+                        "name": self.USER_ID_FIELD,
+                        "type": "tag",
+                        "attrs": {
+                            "index_missing": True,
+                            "separator": self.USER_ID_SEPARATOR,
+                            "case_sensitive": True,
+                        },
+                    },
                     # Common metadata fields used in operations/tests
                     {"name": "status", "type": "tag"},
                     {"name": "category", "type": "tag"},
@@ -168,6 +272,8 @@ class RedisDB(VectorDb):
                 self.index.create()
                 log_debug(f"Created Redis index: {self.index_name}")
             else:
+                # Index predating isolation lacks the user_id field; add it in place.
+                self._migrate_index_if_needed()
                 log_debug(f"Redis index already exists: {self.index_name}")
         except Exception as e:
             log_error(f"Error creating Redis index: {str(e)}")
@@ -177,8 +283,13 @@ class RedisDB(VectorDb):
         """Async version of create method."""
         try:
             async_index = await self._get_async_index()
-            await async_index.create(overwrite=False, drop=False)
-            log_debug(f"Created Redis index: {self.index_name}")
+            if await async_index.exists():
+                # Index predating isolation lacks the user_id field; add it in place.
+                await self._async_migrate_index_if_needed(async_index)
+                log_debug(f"Redis index already exists: {self.index_name}")
+            else:
+                await async_index.create(overwrite=False, drop=False)
+                log_debug(f"Created Redis index: {self.index_name}")
         except Exception as e:
             if "already exists" in str(e).lower():
                 log_debug(f"Redis index already exists: {self.index_name}")
@@ -247,14 +358,16 @@ class RedisDB(VectorDb):
             log_error(f"Error checking if content hash exists: {str(e)}")
             return False
 
-    def _parse_redis_hash(self, doc: Document):
+    def _parse_redis_hash(self, doc: Document, user_id: Optional[str] = None):
         """
         Create object serializable into Redis HASH structure
         """
         doc_dict = doc.to_dict()
-        # Ensure an ID is present; derive a deterministic one from content when missing
-        doc_id = doc.id or hash_string_sha256(doc.content)
-        doc_dict["id"] = doc_id
+        # Ensure an ID is present; derive a deterministic one from content when missing.
+        # Fold the owner into the id so two users uploading identical content under
+        # the same content_hash get distinct keys instead of clobbering each other.
+        base_id = doc.id or hash_string_sha256(doc.content)
+        doc_dict["id"] = self._scoped_doc_id(base_id, user_id)
         if not doc.embedding:
             doc.embed(self.embedder)
 
@@ -271,6 +384,13 @@ class RedisDB(VectorDb):
                 self.meta_data_fields.add(md)
             doc_dict.update(meta_data)
 
+        # Stamp the owner after merging meta_data so caller meta_data can't overwrite it.
+        # Shared chunks (user_id None) omit the field so ismissing() surfaces them.
+        if user_id is not None:
+            doc_dict[self.USER_ID_FIELD] = user_id
+        else:
+            doc_dict.pop(self.USER_ID_FIELD, None)
+
         return doc_dict
 
     def insert(
@@ -278,13 +398,15 @@ class RedisDB(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Insert documents into the Redis index."""
+        user_id = normalize_user_id(user_id)
         try:
             # Store content hash for tracking
             parsed_documents = []
             for doc in documents:
-                parsed_doc = self._parse_redis_hash(doc)
+                parsed_doc = self._parse_redis_hash(doc, user_id=user_id)
                 parsed_doc["content_hash"] = content_hash
                 parsed_documents.append(parsed_doc)
 
@@ -299,13 +421,15 @@ class RedisDB(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Async version of insert method."""
+        user_id = normalize_user_id(user_id)
         try:
             async_index = await self._get_async_index()
             parsed_documents = []
             for doc in documents:
-                parsed_doc = self._parse_redis_hash(doc)
+                parsed_doc = self._parse_redis_hash(doc, user_id=user_id)
                 parsed_doc["content_hash"] = content_hash
                 parsed_documents.append(parsed_doc)
             await async_index.load(parsed_documents, id_field="id")
@@ -318,20 +442,34 @@ class RedisDB(VectorDb):
         """Check if upsert is available (always True for Redis)."""
         return True
 
+    def _dedupe_filter(self, content_hash: str, user_id: Optional[str]) -> "FilterExpression":
+        """Filter for the upsert dedupe-delete, scoped to the caller's bucket.
+
+        A scoped upsert (user_id set) deletes only the caller's prior chunks
+        for this content_hash; a shared upsert (None) deletes only shared chunks.
+        """
+        ch = str(Tag("content_hash") == content_hash)
+        if user_id is None:
+            return FilterExpression(f"{ch} ismissing(@{self.USER_ID_FIELD})")
+        owner = self._owner_tag(user_id)
+        return FilterExpression(f"{ch} {owner}")
+
     def upsert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents into the Redis index.
-        Strategy: delete existing docs with the same content_hash, then insert new docs.
+        Strategy: delete existing docs with the same content_hash (scoped to the
+        caller's bucket), then insert new docs.
         """
+        user_id = normalize_user_id(user_id)
         try:
-            # Find existing docs for this content_hash and delete them
-            ch_filter = Tag("content_hash") == content_hash
+            # Find existing docs for this content_hash in the caller's bucket and delete them
             query = FilterQuery(
-                filter_expression=ch_filter,
+                filter_expression=self._dedupe_filter(content_hash, user_id),
                 return_fields=["id"],
                 num_results=1000,
             )
@@ -343,7 +481,7 @@ class RedisDB(VectorDb):
                     self.index.drop_keys(key)
 
             # Insert new docs
-            self.insert(content_hash, documents, filters)
+            self.insert(content_hash, documents, filters, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents: {str(e)}")
             raise
@@ -353,17 +491,19 @@ class RedisDB(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Async version of upsert method.
-        Strategy: delete existing docs with the same content_hash, then insert new docs.
+        Strategy: delete existing docs with the same content_hash (scoped to the
+        caller's bucket), then insert new docs.
         """
+        user_id = normalize_user_id(user_id)
         try:
             async_index = await self._get_async_index()
 
-            # Find existing docs for this content_hash and delete them
-            ch_filter = Tag("content_hash") == content_hash
+            # Find existing docs for this content_hash in the caller's bucket and delete them
             query = FilterQuery(
-                filter_expression=ch_filter,
+                filter_expression=self._dedupe_filter(content_hash, user_id),
                 return_fields=["id"],
                 num_results=1000,
             )
@@ -375,26 +515,59 @@ class RedisDB(VectorDb):
                     await async_index.drop_keys(key)
 
             # Insert new docs
-            await self.async_insert(content_hash, documents, filters)
+            await self.async_insert(content_hash, documents, filters, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents: {str(e)}")
             raise
 
+    # Fields accepted by Document. Text/hybrid queries return engine scoring
+    # keys (score, hybrid_score, vector_distance, ...) that Document(**dict)
+    # rejects, so we whitelist before constructing.
+    _DOCUMENT_FIELDS = {"content", "id", "name", "meta_data", "embedding", "content_id"}
+
+    def _to_document(self, row: Dict[str, Any]) -> Document:
+        """Build a Document from a raw result row, dropping engine-only keys."""
+        return Document.from_dict({k: v for k, v in row.items() if k in self._DOCUMENT_FIELDS})
+
+    def _build_metadata_filter(self, filters: Optional[Dict[str, Any]]) -> Optional["FilterExpression"]:
+        """Translate a dict-style metadata filter into an AND of Tag filters."""
+        if not filters:
+            return None
+        combined: Optional[FilterExpression] = None
+        for key, value in filters.items():
+            f = Tag(key) == str(value)
+            combined = f if combined is None else combined & f
+        return combined  # type: ignore[return-value]
+
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Search for documents using the specified search type."""
+        """Search for documents using the specified search type.
+
+        Threads both the metadata filters and the per-user scope into every
+        search mode as a PRE-filter, so scoped callers never see other owners'
+        chunks in any mode and shared chunks stay visible to everyone.
+        """
+        user_id = normalize_user_id(user_id)
 
         if filters and isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Redis. No filters will be applied.")
             filters = None
         try:
+            base_filter = self._build_metadata_filter(filters)  # type: ignore[arg-type]
+            scope_filter = self._user_scope_filter(user_id)
+            filter_expression = self._merge_filters(base_filter, scope_filter)
+
             if self.search_type == SearchType.vector:
-                return self.vector_search(query, limit)
+                return self.vector_search(query, limit, filter_expression)
             elif self.search_type == SearchType.keyword:
-                return self.keyword_search(query, limit)
+                return self.keyword_search(query, limit, filter_expression)
             elif self.search_type == SearchType.hybrid:
-                return self.hybrid_search(query, limit)
+                return self.hybrid_search(query, limit, filter_expression)
             else:
                 raise ValueError(f"Unsupported search type: {self.search_type}")
         except Exception as e:
@@ -402,12 +575,18 @@ class RedisDB(VectorDb):
             return []
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Async version of search method."""
-        return await asyncio.to_thread(self.search, query, limit, filters)
+        return await asyncio.to_thread(self.search, query, limit, filters, user_id)
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
+    def vector_search(
+        self, query: str, limit: int = 5, filter_expression: Optional["FilterExpression"] = None
+    ) -> List[Document]:
         """Perform vector similarity search."""
         try:
             # Get query embedding
@@ -421,6 +600,7 @@ class RedisDB(VectorDb):
                 return_fields=["id", "name", "content"],
                 return_score=False,
                 num_results=limit,
+                filter_expression=filter_expression,
             )
 
             # Execute search
@@ -438,13 +618,18 @@ class RedisDB(VectorDb):
             log_error(f"Error in vector search: {str(e)}")
             return []
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+    def keyword_search(
+        self, query: str, limit: int = 5, filter_expression: Optional["FilterExpression"] = None
+    ) -> List[Document]:
         """Perform keyword search using Redis text search."""
         try:
             # Create text query
             text_query = TextQuery(
                 text=query,
                 text_field_name="content",
+                return_fields=["id", "name", "content"],
+                num_results=limit,
+                filter_expression=filter_expression,
             )
 
             # Execute search
@@ -454,7 +639,7 @@ class RedisDB(VectorDb):
             parsed = convert_bytes(results)
 
             # Convert results to documents
-            documents = [Document.from_dict(p) for p in parsed]
+            documents = [self._to_document(p) for p in parsed]
 
             # Apply reranking if reranker is available
             if self.reranker:
@@ -465,29 +650,32 @@ class RedisDB(VectorDb):
             log_error(f"Error in keyword search: {str(e)}")
             return []
 
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
+    def hybrid_search(
+        self, query: str, limit: int = 5, filter_expression: Optional["FilterExpression"] = None
+    ) -> List[Document]:
         """Perform hybrid search combining vector and keyword search."""
         try:
             # Get query embedding
             query_embedding = array_to_buffer(self.embedder.get_embedding(query), "float32")
 
-            # Create vector query
-            vector_query = HybridQuery(
+            # Create hybrid query (FT.AGGREGATE based, works on standard RediSearch)
+            hybrid_query = AggregateHybridQuery(
                 vector=query_embedding,
                 vector_field_name="embedding",
                 text=query,
                 text_field_name="content",
-                linear_alpha=self.vector_score_weight,
+                alpha=self.vector_score_weight,
                 return_fields=["id", "name", "content"],
                 num_results=limit,
+                filter_expression=filter_expression,
             )
 
             # Execute search
-            results = self.index.query(vector_query)
+            results = self.index.query(hybrid_query)
             parsed = convert_bytes(results)
 
             # Convert results to documents
-            documents = [Document.from_dict(p) for p in parsed]
+            documents = [self._to_document(p) for p in parsed]
 
             # Apply reranking if reranker is available
             if self.reranker:
@@ -624,11 +812,21 @@ class RedisDB(VectorDb):
             log_error(f"Error deleting documents by metadata: {str(e)}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete documents by content ID."""
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content ID.
+
+        user_id set  -> delete only the caller's own chunks (must NOT touch
+        the shared bucket). None -> delete across all owners (legacy/admin).
+        """
+        user_id = normalize_user_id(user_id)
         try:
-            # Find documents with the given content_id
-            content_id_filter = Tag("content_id") == content_id
+            # Find documents with the given content_id, scoped to the caller's bucket.
+            if user_id is None:
+                content_id_filter: "FilterExpression" = Tag("content_id") == content_id
+            else:
+                cid = str(Tag("content_id") == content_id)
+                owner = self._owner_tag(user_id)
+                content_id_filter = FilterExpression(f"{cid} {owner}")
             query = FilterQuery(
                 filter_expression=content_id_filter,
                 return_fields=["id"],
@@ -653,6 +851,10 @@ class RedisDB(VectorDb):
     def update_metadata(self, content_id: str, metadata: Mapping[str, Any]) -> None:
         """Update metadata for documents with the given content ID."""
         try:
+            # Never let caller metadata reassign the owner.
+            if self.USER_ID_FIELD in metadata:
+                metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_FIELD}
+
             # Find documents with the given content_id
             content_id_filter = Tag("content_id") == content_id
             query = FilterQuery(
@@ -666,7 +868,7 @@ class RedisDB(VectorDb):
             # Update metadata for each found document
             for result in parsed:
                 key = result.get("id")
-                if key:
+                if key and metadata:
                     self.redis_client.hset(key, mapping=metadata)  # type: ignore[arg-type]
 
             log_debug(f"Updated metadata for documents with content_id '{content_id}'")
