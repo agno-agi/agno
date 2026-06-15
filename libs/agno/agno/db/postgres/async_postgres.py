@@ -416,6 +416,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             )
             return self.approvals_table
 
+        if table_type == "auth_tokens":
+            self.auth_tokens_table = await self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
+
         raise ValueError(f"Unknown table type: {table_type}")
 
     async def _get_or_create_table(
