@@ -241,8 +241,85 @@ class HITLHandler:
         blocks = append_submit_if_needed(result.blocks, ctx.run_id, ctx.awaiting_ts)
         await self.update_message(ctx.channel, ctx.card_ts, "Rejection pending", blocks)
 
+    async def _get_approval_status(self, approval_id: str) -> str:
+        """Query approval status from DB."""
+        db = getattr(self.entity, "db", None)
+        if not db or not approval_id:
+            return "pending"
+        try:
+            fn = getattr(db, "get_approval", None)
+            if not fn:
+                return "pending"
+            if asyncio.iscoroutinefunction(fn):
+                approval = await fn(approval_id)
+            else:
+                approval = fn(approval_id)
+            return approval.get("status", "pending") if approval else "pending"
+        except Exception as exc:
+            log_error(f"[HITL] Failed to get approval status: {exc}")
+            return "pending"
+
+    def _update_card_to_approved(self, blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Update approval card blocks to show approved status."""
+        new_blocks = []
+        for block in blocks:
+            if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
+                block = dict(block)
+                block["subtext"] = {"type": "mrkdwn", "text": ":white_check_mark: Approved"}
+                block["actions"] = []
+            new_blocks.append(block)
+        return new_blocks
+
+    async def _resume_after_approval(
+        self,
+        payload: Dict[str, Any],
+        run_id: str,
+        approval_id: str,
+        channel: str,
+        thread_ts: str,
+        msg_ts: str,
+        awaiting_ts: Optional[str],
+    ) -> None:
+        """Resume a paused run after admin approval."""
+        session_id = f"{self.entity_id}:{thread_ts}"
+        try:
+            run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
+            requirements = list(getattr(run_output, "active_requirements", None) or []) if run_output else []
+            for req in requirements:
+                tool_exec = getattr(req, "tool_execution", None)
+                if tool_exec and getattr(tool_exec, "approval_id", None) == approval_id:
+                    req.confirm()
+                    break
+        except Exception as exc:
+            log_error(f"[HITL] Failed to confirm requirement: {exc}")
+            requirements = []
+
+        ctx = SubmitContext(
+            run_id=run_id,
+            session_id=session_id,
+            channel=channel,
+            thread_ts=thread_ts,
+            msg_ts=msg_ts,
+            awaiting_ts=awaiting_ts,
+            user_id=(payload.get("user") or {}).get("id") or "",
+            team_id=(payload.get("team") or {}).get("id") or "",
+            state_values={},
+        )
+        stream = await open_chat_stream(
+            self._client(),
+            channel,
+            thread_ts,
+            ctx.user_id,
+            ctx.team_id,
+            self.task_display_mode,
+            self.buffer_size,
+        )
+        state = await self.stream_resumed_run(ctx, stream, requirements)
+        await self.complete_or_repause(ctx, stream, state)
+
     async def handle_check_status(self, payload: Dict[str, Any]) -> None:
-        """Check approval status via API and update the card accordingly."""
+        """Handle 'Check Status' button click for admin approval cards."""
+        # 1. Parse button value
         actions = payload.get("actions") or []
         if not actions:
             return
@@ -252,6 +329,7 @@ class HITLHandler:
             log_error(f"[HITL] Invalid admin approval button value: {button_value!r}")
             return
 
+        # 2. Extract Slack context
         channel = payload.get("channel", {}).get("id", "")
         message = payload.get("message", {})
         msg_ts = message.get("ts", "")
@@ -260,85 +338,27 @@ class HITLHandler:
             log_error(f"[HITL] Missing Slack context: channel={channel}, msg_ts={msg_ts}, thread_ts={thread_ts}")
             return
 
+        # 3. Extract card info for rebuilding
         blocks = message.get("blocks", [])
         tool_name_str = "Tool"
         body_text = ""
         for block in blocks:
             if block.get("type") == "card":
-                title = block.get("title", {})
-                body = block.get("body", {})
-                tool_name_str = (title.get("text") or "Tool").strip("*")
-                body_text = body.get("text") or ""
+                tool_name_str = (block.get("title", {}).get("text") or "Tool").strip("*")
+                body_text = block.get("body", {}).get("text") or ""
                 break
 
-        # 1. Query approval status from DB
-        db = getattr(self.entity, "db", None)
-        status = "pending"
-        if db and approval_id:
-            try:
-                fn = getattr(db, "get_approval", None)
-                if fn:
-                    if asyncio.iscoroutinefunction(fn):
-                        approval = await fn(approval_id)
-                    else:
-                        approval = fn(approval_id)
-                    if approval:
-                        status = approval.get("status", "pending")
-            except Exception as exc:
-                log_error(f"[HITL] Failed to get approval status: {exc}")
+        # 4. Query approval status
+        status = await self._get_approval_status(approval_id)
 
-        # 2. If approved, resume the run
+        # 5. Handle approved — delete indicator, update card, resume run
         if status == "approved":
             await self.delete_awaiting_indicator(channel, awaiting_ts)
-
-            new_blocks = []
-            for block in blocks:
-                if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
-                    block = dict(block)
-                    block["subtext"] = {"type": "mrkdwn", "text": ":white_check_mark: Approved"}
-                    block["actions"] = []
-                    new_blocks.append(block)
-                else:
-                    new_blocks.append(block)
-            await self.update_message(channel, msg_ts, "Approved", new_blocks)
-
-            session_id = f"{self.entity_id}:{thread_ts}"
-            try:
-                run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
-                requirements = list(getattr(run_output, "active_requirements", None) or []) if run_output else []
-                for req in requirements:
-                    te = getattr(req, "tool_execution", None)
-                    if te and getattr(te, "approval_id", None) == approval_id:
-                        req.confirm()
-                        break
-            except Exception as exc:
-                log_error(f"[HITL] Failed to confirm requirement: {exc}")
-
-            ctx = SubmitContext(
-                run_id=run_id,
-                session_id=session_id,
-                channel=channel,
-                thread_ts=thread_ts,
-                msg_ts=msg_ts,
-                awaiting_ts=awaiting_ts,
-                user_id=(payload.get("user") or {}).get("id") or "",
-                team_id=(payload.get("team") or {}).get("id") or "",
-                state_values={},
-            )
-            stream = await open_chat_stream(
-                self._client(),
-                channel,
-                thread_ts,
-                ctx.user_id,
-                ctx.team_id,
-                self.task_display_mode,
-                self.buffer_size,
-            )
-            state = await self.stream_resumed_run(ctx, stream, requirements)
-            await self.complete_or_repause(ctx, stream, state)
+            await self.update_message(channel, msg_ts, "Approved", self._update_card_to_approved(blocks))
+            await self._resume_after_approval(payload, run_id, approval_id, channel, thread_ts, msg_ts, awaiting_ts)
             return
 
-        # 3. Still pending/rejected — update card status
+        # 6. Still pending/rejected — update card with current status
         card = build_admin_approval_status_card(
             tool_name=tool_name_str,
             body_text=body_text,
@@ -348,14 +368,12 @@ class HITLHandler:
             run_id=run_id,
             awaiting_ts=awaiting_ts or thread_ts,
         )
-
         new_blocks = []
         for block in blocks:
             if block.get("type") == "card" and "admin_approval" in block.get("block_id", ""):
                 new_blocks.append(card.to_dict())
             else:
                 new_blocks.append(block)
-
         await self.update_message(channel, msg_ts, f"Status: {status}", new_blocks)
 
     async def _resolve_required_approvals(
@@ -374,7 +392,7 @@ class HITLHandler:
 
         for decision in decisions:
             req = reqs_by_id.get(decision.requirement_id)
-            te = getattr(req, "tool_execution", None) if req else None
+            tool_exec = getattr(req, "tool_execution", None) if req else None
             if te is None or getattr(te, "approval_type", None) != "required":
                 continue
 
