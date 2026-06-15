@@ -146,9 +146,15 @@ async def test_disabling_builtins_yields_only_custom_tools():
     assert await _tool_names(os) == {"ping"}
 
 
-async def test_disabling_builtins_with_no_custom_tools_yields_empty_server():
-    os = AgentOS(agents=[_agent()], enable_mcp_server=True, mcp_config=MCPServerConfig(enable_builtin_tools=False))
-    assert await _tool_names(os) == set()
+def test_disabling_builtins_with_no_custom_tools_is_rejected_at_construction():
+    """A config that would mount /mcp with zero tools fails fast with an actionable error.
+
+    Almost always a typo (user disabled built-ins meaning to ship their own and forgot
+    ``tools=[...]``); we'd rather surface that at config-construction than boot a server
+    that happily lists no tools.
+    """
+    with pytest.raises(ValueError, match="zero tools"):
+        MCPServerConfig(enable_builtin_tools=False)
 
 
 async def test_include_tags_scopes_builtins_to_core():

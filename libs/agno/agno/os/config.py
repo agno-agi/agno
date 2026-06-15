@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Dict, Generic, List, Optional, Set, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class MCPServerConfig(BaseModel):
@@ -40,9 +40,18 @@ class MCPServerConfig(BaseModel):
     include_tags: Optional[Set[str]] = None
     exclude_tags: Optional[Set[str]] = None
 
-    # Per-call gate for the MCP server. Given the authenticated caller's user_id (the JWT
-    # subject, or None when unauthenticated), return True to allow the request and False to
-    # reject it with 401 -- before any tool or model runs. Runs after JWT verification.
+    # Per-call gate for the MCP server. Given the authenticated caller's user_id, return True
+    # to allow the request and False to reject it with 401 -- before any tool or model runs.
+    # Runs after JWT verification.
+    #
+    # ``user_id`` is the verified JWT subject when ``AgentOS(authorization=True, ...)`` is set,
+    # and ``None`` otherwise -- including local dev where no JWT layer is configured. ``authorize``
+    # is therefore the only thing standing between an unauthenticated caller and the MCP surface
+    # in that mode; you MUST decide what ``None`` means for your app. Common choices: ``return
+    # False`` (refuse anonymous), or ``return not is_prd()`` (allow only in dev). A bare
+    # ``user_id in OWNER_IDS`` returns False on None, which is also fine. Pair this with
+    # ``allowed_hosts`` to keep an always-on local server from being driven by a web page.
+    #
     # Example: ``authorize=lambda user_id: user_id in OWNER_IDS`` for an owner-only server.
     authorize: Optional[Callable[[Optional[str]], bool]] = None
 
@@ -62,6 +71,23 @@ class MCPServerConfig(BaseModel):
     # Provide ``starlette.middleware.Middleware`` instances; they run ahead of the JWT and
     # ``authorize`` layers, in the order listed.
     middleware: Optional[List[Any]] = None
+
+    @model_validator(mode="after")
+    def _check_has_tools(self) -> "MCPServerConfig":
+        """Refuse a config that would mount an MCP server with zero tools.
+
+        ``enable_builtin_tools=False`` plus no ``tools`` is almost always a mistake -- the
+        user disabled the built-ins intending to ship their own and forgot to register them,
+        and ends up with a working ``/mcp`` endpoint that lists nothing. Fail fast at
+        construction with an actionable message instead of booting a useless server.
+        """
+        if not self.enable_builtin_tools and not self.tools:
+            raise ValueError(
+                "MCPServerConfig would register zero tools: enable_builtin_tools=False and "
+                "tools is empty. Pass tools=[...] to register custom tools, or leave "
+                "enable_builtin_tools=True (the default) to ship the built-in tools."
+            )
+        return self
 
 
 class AuthorizationConfig(BaseModel):
