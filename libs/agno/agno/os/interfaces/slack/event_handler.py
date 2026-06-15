@@ -8,7 +8,8 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.pause import finalize_pause, format_pause_label, post_pause_card
+from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
+from agno.os.interfaces.slack.types import tool_name
 from agno.os.interfaces.slack.helpers import (
     BotNameResolver,
     build_run_metadata,
@@ -224,7 +225,7 @@ class SlackEventHandler:
         if content:
             await send_slack_message_async(client, channel=ctx.channel_id, message=content, thread_ts=ctx.thread_id)
 
-        pause_labels = [format_pause_label(r) for r in requirements]
+        pause_labels = [PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
         awaiting_ts = None
         if pause_labels:
             try:

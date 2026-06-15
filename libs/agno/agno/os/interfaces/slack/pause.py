@@ -12,18 +12,12 @@ if TYPE_CHECKING:
 
     from agno.run.requirement import RunRequirement
 
-_PAUSE_LABELS = {
+PAUSE_LABELS = {
     "confirmation": "⏸ *Awaiting approval of* `{tool}`…",
     "user_input": "⏸ *Awaiting input for* `{tool}`…",
     "user_feedback": "⏸ *Awaiting feedback*…",
     "external_execution": "⏸ *Awaiting output for* `{tool}`…",
 }
-
-
-def format_pause_label(requirement: "RunRequirement") -> str:
-    """Format a human-readable label for a paused requirement."""
-    template = _PAUSE_LABELS.get(requirement.pause_type, "⏸ *Awaiting* `{tool}`…")
-    return template.format(tool=tool_name(requirement))
 
 
 async def finalize_pause(
@@ -52,7 +46,7 @@ async def finalize_pause(
         log_error(f"[HITL] stream.stop failed: run_id={run_id} err={slack_error_code(exc)!r} | {exc}")
 
     # Post "awaiting" indicator message
-    labels = [format_pause_label(r) for r in requirements]
+    labels = [PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
     if not labels:
         return None
 
