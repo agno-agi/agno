@@ -65,7 +65,7 @@ def resource_action_to_scope(resource: str, action: str) -> str:
 def resource_matches(pattern: str, request: str) -> bool:
     """Does a policy's ``pattern`` resource match a request's ``request`` resource?
 
-    Equivalent to Casbin's ``keyMatch2`` over our restricted resource space
+    Glob-style matching over our restricted resource space
     (``"*"`` / ``"type/*"`` / ``"type/id"``):
 
     - ``"*"``        matches anything (admin),
