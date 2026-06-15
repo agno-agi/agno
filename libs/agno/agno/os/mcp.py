@@ -1132,20 +1132,45 @@ def get_mcp_server(
 
     # Innermost: per-call authorize gate.
     if mcp_config is not None and mcp_config.authorize is not None:
+        # The gate reads request.state.user_id, which JWTMiddleware populates. Without a JWT
+        # layer in front, that attribute is never set, so the gate sees user_id=None on every
+        # call -- and an ``authorize=lambda u: u in OWNER_IDS``-style gate silently rejects
+        # every request (or, worse, "allows" everyone if the gate is permissive on None). The
+        # user almost always intended JWT to be on; warn loudly so this isn't a silent foot-gun.
+        if not os.authorization:
+            from agno.utils.log import log_warning
+
+            log_warning(
+                "MCPServerConfig.authorize is set but AgentOS(authorization=False); the gate will "
+                "be called with user_id=None on every request because no JWT middleware populates "
+                "request.state.user_id. Either pass authorization=True with an authorization_config, "
+                "or write your authorize() to handle user_id=None explicitly (e.g. for a dev shortcut)."
+            )
         _add_authorize_middleware(mcp_app, mcp_config.authorize)
 
-    # Add JWT middleware to MCP app if authorization is enabled
+    # Add JWT middleware to MCP app if authorization is enabled. Mirror the kwargs that
+    # the REST surface gets in agno/os/app.py::_add_jwt_middleware -- otherwise tokens that
+    # pass the REST audience check (or honour user_isolation / admin_scope) silently lose
+    # those constraints over /mcp.
     if os.authorization and os.authorization_config:
         from agno.os.middleware.jwt import JWTMiddleware
 
-        mcp_app.add_middleware(
-            JWTMiddleware,
-            verification_keys=os.authorization_config.verification_keys,
-            jwks_file=os.authorization_config.jwks_file,
-            algorithm=os.authorization_config.algorithm or "RS256",
-            authorization=os.authorization,
-            verify_audience=os.authorization_config.verify_audience or False,
-        )
+        jwt_kwargs: Dict[str, Any] = {
+            "verification_keys": os.authorization_config.verification_keys,
+            "jwks_file": os.authorization_config.jwks_file,
+            "algorithm": os.authorization_config.algorithm or "RS256",
+            "authorization": os.authorization,
+            "verify_audience": os.authorization_config.verify_audience or False,
+        }
+        if os.authorization_config.audience:
+            jwt_kwargs["audience"] = os.authorization_config.audience
+        if os.authorization_config.admin_scope:
+            jwt_kwargs["admin_scope"] = os.authorization_config.admin_scope
+        # Default to False on the middleware; only forward when actually enabled, matching the
+        # REST wiring's pattern so manual JWTMiddleware defaults stay backwards-compatible.
+        if os.authorization_config.user_isolation:
+            jwt_kwargs["user_isolation"] = True
+        mcp_app.add_middleware(JWTMiddleware, **jwt_kwargs)
 
     # App-provided middleware, preserving the order they were listed in.
     if mcp_config is not None and mcp_config.middleware:

@@ -24,6 +24,7 @@ from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
 import agno.os.mcp as mcp_mod  # noqa: E402
 from agno.agent import Agent  # noqa: E402
 from agno.os import AgentOS, MCPServerConfig  # noqa: E402
+from agno.os.config import AuthorizationConfig  # noqa: E402
 from agno.os.mcp import _resolve_user_id, build_mcp_server, get_mcp_server  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
 from agno.run.team import TeamRunOutput  # noqa: E402
@@ -374,6 +375,93 @@ async def test_authorize_gate_allows_authorized_caller():
         response = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_MCP_HEADERS)
 
     assert response.status_code == 200
+
+
+def test_authorize_without_jwt_warns_at_startup(monkeypatch):
+    """``authorize`` with ``authorization=False`` is a silent foot-gun: nothing populates
+    ``request.state.user_id``, so the gate sees ``None`` on every call. Warn at startup so
+    the user notices before discovering that every request is rejected (or, worse, allowed).
+    """
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        authorization=False,
+        mcp_config=MCPServerConfig(
+            tools=[_ok_tool],
+            enable_builtin_tools=False,
+            authorize=lambda user_id: user_id == "owner",
+        ),
+    )
+    get_mcp_server(os)
+
+    relevant = [w for w in warnings if "authorize" in w and "authorization=False" in w]
+    assert relevant, f"expected an authorize-without-JWT warning, got: {warnings}"
+
+
+def test_authorize_with_jwt_does_not_warn(monkeypatch):
+    """Sanity check: the warning is only emitted in the misconfigured case."""
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=["dummy"]),
+        mcp_config=MCPServerConfig(
+            tools=[_ok_tool],
+            enable_builtin_tools=False,
+            authorize=lambda user_id: user_id == "owner",
+        ),
+    )
+    get_mcp_server(os)
+
+    relevant = [w for w in warnings if "authorize" in w and "authorization=False" in w]
+    assert not relevant, f"unexpected authorize-without-JWT warning: {relevant}"
+
+
+def test_mcp_jwt_middleware_mirrors_rest_kwargs():
+    """``user_isolation`` / ``audience`` / ``admin_scope`` configured on ``AuthorizationConfig``
+    must reach the MCP JWT middleware, not just REST's. Otherwise tokens that pass REST's
+    audience check (or honour user_isolation / a custom admin scope) silently lose those
+    constraints over ``/mcp``."""
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=["dummy"],
+            user_isolation=True,
+            audience="myapi",
+            admin_scope="admin",
+        ),
+    )
+    mcp_app = get_mcp_server(os)
+    jwt_mw = next(m for m in mcp_app.user_middleware if m.cls.__name__ == "JWTMiddleware")
+
+    assert jwt_mw.kwargs.get("user_isolation") is True, "user_isolation must reach /mcp's JWT middleware"
+    assert jwt_mw.kwargs.get("audience") == "myapi", "audience must reach /mcp's JWT middleware"
+    assert jwt_mw.kwargs.get("admin_scope") == "admin", "admin_scope must reach /mcp's JWT middleware"
+
+
+def test_mcp_jwt_middleware_omits_unset_kwargs():
+    """Unset optional kwargs must not be forwarded -- they shouldn't accidentally override
+    JWTMiddleware's own defaults (matches the pattern in agno/os/app.py::_add_jwt_middleware)."""
+    os = AgentOS(
+        agents=[_agent()],
+        enable_mcp_server=True,
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=["dummy"]),
+    )
+    mcp_app = get_mcp_server(os)
+    jwt_mw = next(m for m in mcp_app.user_middleware if m.cls.__name__ == "JWTMiddleware")
+
+    assert "user_isolation" not in jwt_mw.kwargs
+    assert "audience" not in jwt_mw.kwargs
+    assert "admin_scope" not in jwt_mw.kwargs
 
 
 async def test_custom_middleware_passthrough_runs():
