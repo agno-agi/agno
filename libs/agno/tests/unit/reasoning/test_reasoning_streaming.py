@@ -8,7 +8,10 @@ from unittest.mock import patch
 
 import pytest
 
+from agno.agent import Agent
+from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.response import ModelResponse
 from agno.reasoning.step import ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent
 
@@ -139,6 +142,73 @@ def test_deepseek_stream_yields_tuples():
 
     assert "reasoning_agent" in params
     assert "messages" in params
+
+
+def test_openai_stream_yields_reasoning_content_deltas():
+    """Test OpenAI reasoning stream yields RunContent.reasoning_content chunks."""
+    from agno.reasoning.openai import get_openai_reasoning_stream
+    from agno.run.agent import RunCompletedEvent, RunContentEvent
+
+    class MockReasoningAgent:
+        def run(self, *args, **kwargs):
+            yield RunContentEvent(reasoning_content="The user ")
+            yield RunContentEvent(reasoning_content="asked a question.")
+            yield RunCompletedEvent()
+
+    results = list(get_openai_reasoning_stream(MockReasoningAgent(), messages=[]))
+
+    assert results[0] == ("The user ", None)
+    assert results[1] == ("asked a question.", None)
+    assert results[2][0] is None
+    assert results[2][1] is not None
+    assert results[2][1].reasoning_content == "The user asked a question."
+
+
+def test_agent_stream_emits_reasoning_events_for_model_reasoning_content():
+    """Test model-streamed reasoning_content is emitted as reasoning events."""
+
+    class ReasoningContentModel(Model):
+        id: str = "reasoning-content-model"
+        name: str = "ReasoningContentModel"
+
+        def invoke(self, *args, **kwargs):
+            return ModelResponse(content="Done")
+
+        async def ainvoke(self, *args, **kwargs):
+            return ModelResponse(content="Done")
+
+        def invoke_stream(self, *args, **kwargs):
+            yield ModelResponse(reasoning_content="The user ")
+            yield ModelResponse(reasoning_content="asked a question.")
+            yield ModelResponse(content="Done")
+
+        async def ainvoke_stream(self, *args, **kwargs):
+            yield ModelResponse(reasoning_content="The user ")
+            yield ModelResponse(reasoning_content="asked a question.")
+            yield ModelResponse(content="Done")
+
+        def _parse_provider_response(self, response, **kwargs):
+            return ModelResponse(content=response)
+
+        def _parse_provider_response_delta(self, response):
+            return ModelResponse(content=response)
+
+    agent = Agent(model=ReasoningContentModel(id="reasoning-content-model", name="ReasoningContentModel"))
+
+    events = list(agent.run("Hi", stream=True, stream_events=True))
+    event_types = [event.event for event in events]
+    reasoning_deltas = [event.reasoning_content for event in events if event.event == RunEvent.reasoning_content_delta]
+    completed_event = next(event for event in events if event.event == RunEvent.reasoning_completed)
+    run_content_events = [event for event in events if event.event == RunEvent.run_content]
+    final_event = events[-1]
+
+    assert RunEvent.reasoning_started in event_types
+    assert reasoning_deltas == ["The user ", "asked a question."]
+    assert completed_event.content == "The user asked a question."
+    assert completed_event.content_type == "str"
+    assert [event.content for event in run_content_events] == ["Done"]
+    assert event_types.index(RunEvent.reasoning_completed) < event_types.index(RunEvent.run_content)
+    assert final_event.reasoning_content == "The user asked a question."
 
 
 # ============================================================================

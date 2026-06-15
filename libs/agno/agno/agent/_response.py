@@ -1051,6 +1051,8 @@ def handle_model_response_stream(
 
     reasoning_state = {
         "reasoning_started": False,
+        "reasoning_content_streamed": False,
+        "reasoning_completed": False,
         "reasoning_time_taken": 0.0,
     }
     model_response = ModelResponse(content="")
@@ -1181,6 +1183,21 @@ def handle_model_response_stream(
                 events_to_skip=agent.events_to_skip,  # type: ignore
                 store_events=agent.store_events,
             )
+        elif (
+            reasoning_state["reasoning_content_streamed"]
+            and not reasoning_state["reasoning_completed"]
+            and run_response.reasoning_content
+        ):
+            yield handle_event(  # type: ignore
+                create_reasoning_completed_event(
+                    from_run_response=run_response,
+                    content=run_response.reasoning_content,
+                    content_type="str",
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
 
     # Update the run_response audio if streaming
     if model_response.audio is not None:
@@ -1202,6 +1219,8 @@ async def ahandle_model_response_stream(
 
     reasoning_state = {
         "reasoning_started": False,
+        "reasoning_content_streamed": False,
+        "reasoning_completed": False,
         "reasoning_time_taken": 0.0,
     }
     model_response = ModelResponse(content="")
@@ -1334,6 +1353,21 @@ async def ahandle_model_response_stream(
                 events_to_skip=agent.events_to_skip,  # type: ignore
                 store_events=agent.store_events,
             )
+        elif (
+            reasoning_state["reasoning_content_streamed"]
+            and not reasoning_state["reasoning_completed"]
+            and run_response.reasoning_content
+        ):
+            yield handle_event(  # type: ignore
+                create_reasoning_completed_event(
+                    from_run_response=run_response,
+                    content=run_response.reasoning_content,
+                    content_type="str",
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
 
     # Update the run_response audio if streaming
     if model_response.audio is not None:
@@ -1415,6 +1449,30 @@ def handle_model_response_chunk(
                     model_response.reasoning_content += model_response_event.redacted_reasoning_content
                 run_response.reasoning_content = model_response.reasoning_content
 
+            reasoning_content_delta = (
+                model_response_event.reasoning_content or model_response_event.redacted_reasoning_content
+            )
+            if stream_events and reasoning_content_delta and reasoning_state is not None:
+                if not reasoning_state["reasoning_started"]:
+                    yield handle_event(  # type: ignore
+                        create_reasoning_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                    reasoning_state["reasoning_started"] = True
+
+                reasoning_state["reasoning_content_streamed"] = True
+                yield handle_event(  # type: ignore
+                    create_reasoning_content_delta_event(
+                        from_run_response=run_response,
+                        reasoning_content=reasoning_content_delta,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+
             # Handle provider data (one chunk)
             if model_response_event.provider_data is not None:
                 run_response.model_provider_data = model_response_event.provider_data
@@ -1422,6 +1480,26 @@ def handle_model_response_chunk(
             # Handle citations (one chunk)
             if model_response_event.citations is not None:
                 run_response.citations = model_response_event.citations
+
+            if (
+                stream_events
+                and reasoning_state is not None
+                and reasoning_state["reasoning_content_streamed"]
+                and not reasoning_state["reasoning_completed"]
+                and model_response_event.content not in (None, "")
+                and run_response.reasoning_content
+            ):
+                yield handle_event(  # type: ignore
+                    create_reasoning_completed_event(
+                        from_run_response=run_response,
+                        content=run_response.reasoning_content,
+                        content_type="str",
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+                reasoning_state["reasoning_completed"] = True
 
             # Only yield if we have content to show
             if content_type != "str":
@@ -1437,10 +1515,15 @@ def handle_model_response_chunk(
                 )
             elif (
                 model_response_event.content is not None
-                or model_response_event.reasoning_content is not None
-                or model_response_event.redacted_reasoning_content is not None
                 or model_response_event.citations is not None
                 or model_response_event.provider_data is not None
+                or (
+                    not stream_events
+                    and (
+                        model_response_event.reasoning_content is not None
+                        or model_response_event.redacted_reasoning_content is not None
+                    )
+                )
             ):
                 yield handle_event(  # type: ignore
                     create_run_output_content_event(
