@@ -14,7 +14,7 @@ Examples for `mcp_demo` in AgentOS.
 
 By default `enable_mcp_server=True` registers ~19 built-in tools (config, run_agent/team/workflow,
 session CRUD, memory CRUD). Pass `mcp_config=MCPServerConfig(...)` to register your own tools, scope
-the built-ins, gate the channel, and add middleware:
+the built-ins, gate the server, and protect it — all with data, no middleware classes to write:
 
 ```python
 from agno.os import AgentOS
@@ -29,7 +29,8 @@ agent_os = AgentOS(
         # include_tags={"core"},     # keep only tools tagged "core"
         # exclude_tags={"memory"},   # drop the "memory" tools
         authorize=lambda user_id: user_id in OWNER_IDS,  # 401 non-owners before the model runs
-        # middleware=[Middleware(MyMiddleware)],          # extra ASGI middleware (e.g. DNS-rebinding)
+        allowed_hosts=["my-app.example.com"],            # DNS-rebinding protection (localhost is automatic)
+        # middleware=[Middleware(MyMiddleware)],          # escape hatch for anything else
     ),
 )
 ```
@@ -43,10 +44,16 @@ with the authenticated caller's id (the JWT subject), hidden from the client-fac
 can't be spoofed. Tools that need the full request can declare a FastMCP `Context` parameter, which
 FastMCP injects natively.
 
-**Gating + middleware.** `authorize=fn(user_id) -> bool` runs after JWT verification and returns 401
-before any tool or model runs — use it for an owner-only or allow-listed channel. `middleware=[...]`
-takes `starlette.middleware.Middleware` instances and runs outermost (ahead of the JWT and authorize
-layers), e.g. for DNS-rebinding protection on an always-on local server.
+**Gating.** `authorize=fn(user_id) -> bool` runs after JWT verification and returns 401 before any
+tool or model runs — use it for an owner-only or allow-listed server.
+
+**Transport security.** `allowed_hosts=[...]` turns on built-in DNS-rebinding protection: the request
+Host (and Origin, when present) is validated against your list plus localhost defaults, so an
+always-on local server can't be driven by a malicious web page via a rebound DNS name. You list only
+your deploy/tunnel host; localhost works out of the box. `allowed_origins=[...]` is an advanced extra.
+
+**Escape hatch.** `middleware=[...]` takes `starlette.middleware.Middleware` instances for anything
+the options above don't cover.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).

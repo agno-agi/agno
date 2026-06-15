@@ -1,18 +1,21 @@
 """
 AgentOS app that exposes ONE custom MCP tool routed through an agent, with the
-built-in MCP tools disabled and the channel gated to its owner.
+built-in MCP tools disabled and the server gated to its owner.
 
 This is the "one tool" shape: instead of the ~19 built-in AgentOS tools, the MCP
 server at /mcp exposes a single purpose-built tool that routes the caller's
 question through a dedicated agent. Useful when you want to expose an AgentOS
 agent as a single, well-scoped, owner-only MCP tool for another product to call.
 
-It demonstrates the three things that make a custom MCP server clean to write:
+It demonstrates everything that makes a custom MCP server clean to write -- no
+hand-rolled middleware classes required:
   - `tools=[...]` + `enable_builtin_tools=False`: ship only your tool.
   - injected `user_id`: declare a `user_id` parameter and AgentOS fills it with the
     authenticated caller's id (the JWT subject) and hides it from the client schema,
     so callers cannot spoof it.
   - `authorize=...`: a per-call gate that 401s non-owners before the model runs.
+  - `allowed_hosts=...`: built-in DNS-rebinding protection for an always-on local
+    server (localhost works out of the box; list only your deploy/tunnel host).
 
 After starting this app, point an MCP client at http://localhost:7777/mcp and
 call the `ask_workspace` tool.
@@ -32,7 +35,7 @@ from agno.tools import tool
 # Setup the database
 db = SqliteDb(db_file="tmp/agentos.db")
 
-# The set of owner identities allowed to use the channel. In production these are
+# The set of owner identities allowed to use the server. In production these are
 # the JWT subjects of your owners; AgentOS resolves the caller from the verified token.
 OWNER_IDS = {"owner@example.com"}
 
@@ -73,6 +76,8 @@ agent_os = AgentOS(
         enable_builtin_tools=False,  # ship ONLY our tool (disable the ~19 built-ins)
         # owner-only: 401 before the model runs
         authorize=lambda user_id: user_id in OWNER_IDS,
+        # DNS-rebinding protection; localhost is allowed out of the box, add your deploy host
+        allowed_hosts=["my-context.example.com"],
     ),
 )
 

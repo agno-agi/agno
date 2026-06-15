@@ -16,11 +16,13 @@
 
 **Description:** AgentOS exposing a single owner-only custom MCP tool (`ask_workspace`) routed
 through an agent: built-ins disabled via `MCPServerConfig(enable_builtin_tools=False)`, `user_id`
-injected into the tool (hidden from the client schema), and an `authorize` owner-gate.
+injected into the tool (hidden from the client schema), an `authorize` owner-gate, and built-in
+DNS-rebinding protection via `allowed_hosts` — no hand-written middleware classes.
 
 **Result:** App builds successfully; the MCP server at `/mcp` exposes only `ask_workspace`, the
-`user_id` arg is not in the client-facing schema, and the authorize middleware is wired (verified
-with an in-memory FastMCP client). A live model call requires `OPENAI_API_KEY`.
+`user_id` arg is not in the client-facing schema, and both the transport-security and authorize
+middlewares are wired (verified with an in-memory FastMCP client). A live model call requires
+`OPENAI_API_KEY`.
 
 ---
 
