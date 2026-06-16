@@ -177,10 +177,10 @@ class GoogleToolkit(Toolkit):
             return creds
 
         # Use aggregated scopes from GoogleAuth if available
-        oauth_scopes = self._auth.scopes if self._auth else self.scopes
+        oauth_scopes = self._auth.scopes
 
         # 4. DB lookup (if configured via auth.db)
-        db = getattr(self._auth, "db", None) if self._auth else None
+        db = self._auth.db
         if db:
             creds = self._load_from_db(db, user_id=None)
             if creds:
@@ -212,9 +212,8 @@ class GoogleToolkit(Toolkit):
             return creds
 
         # 6. Interactive OAuth (local only) — uses AGGREGATED scopes
-        client_id = self._auth.client_id if self._auth else os.getenv("GOOGLE_CLIENT_ID")
-        client_secret = self._auth.client_secret if self._auth else os.getenv("GOOGLE_CLIENT_SECRET")
-        redirect_uri = self._auth.redirect_uri if self._auth else os.getenv("GOOGLE_REDIRECT_URI", "http://localhost")
+        client_id = self._auth.client_id
+        client_secret = self._auth.client_secret
 
         client_config = {
             "installed": {
@@ -224,7 +223,7 @@ class GoogleToolkit(Toolkit):
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "redirect_uris": [redirect_uri],
+                "redirect_uris": ["http://localhost"],
             }
         }
         if creds_file.exists():
@@ -232,11 +231,16 @@ class GoogleToolkit(Toolkit):
         else:
             flow = InstalledAppFlow.from_client_config(client_config, oauth_scopes)
 
-        oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
+        oauth_kwargs: Dict[str, Any] = {
+            "prompt": self._auth.prompt,
+            "access_type": self._auth.access_type,
+        }
+        if self._auth.include_granted_scopes:
+            oauth_kwargs["include_granted_scopes"] = "true"
         if self._auth.login_hint:
             oauth_kwargs["login_hint"] = self._auth.login_hint
         if self._auth.hosted_domain:
-            oauth_kwargs["hd"] = hosted_domain
+            oauth_kwargs["hd"] = self._auth.hosted_domain
         creds = flow.run_local_server(port=self.oauth_port or 0, **oauth_kwargs)
 
         # Save to DB or file, then cache on GoogleAuth
@@ -275,9 +279,7 @@ class GoogleToolkit(Toolkit):
                     "user_id": user_id,
                     "service": "google",
                     "token_data": token_data,
-                    "granted_scopes": list(creds.scopes)
-                    if creds.scopes
-                    else (self._auth.scopes if self._auth else self.scopes),
+                    "granted_scopes": list(creds.scopes) if creds.scopes else self._auth.scopes,
                 }
             )
             log_debug(f"{self.google_service_name.title()} credentials saved to DB")

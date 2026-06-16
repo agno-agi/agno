@@ -8,25 +8,11 @@ if TYPE_CHECKING:
 
 @dataclass
 class AuthConfig:
-    """Shared auth config for Google toolkits with scope aggregation.
-
-    When multiple toolkits share the same AuthConfig instance, their scopes
-    are combined so ONE OAuth consent covers all services.
-
-    Example:
-        auth = AuthConfig()
-        agent = Agent(tools=[
-            GmailTools(auth=auth),           # registers Gmail scopes
-            GoogleCalendarTools(auth=auth),  # registers Calendar scopes
-            GoogleTasksTools(auth=auth),     # registers Tasks scopes
-        ])
-        # First tool to authenticate triggers OAuth with ALL scopes combined
-    """
+    """Shared auth config for Google toolkits. Enables scope consolidation and DB token storage."""
 
     # --- OAuth credentials ---
     client_id: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_CLIENT_ID"))
     client_secret: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_CLIENT_SECRET"))
-    redirect_uri: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/"))
 
     # --- Service account (alternative to OAuth) ---
     service_account_path: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_SERVICE_ACCOUNT_FILE"))

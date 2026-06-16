@@ -141,9 +141,7 @@ def test_shared_creds_skips_auth(mock_credentials):
     gmail = GmailTools(creds=mock_credentials)
     with patch("googleapiclient.discovery.build") as mock_build:
         mock_service = MagicMock()
-        mock_service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
-            "messages": []
-        }
+        mock_service.users.return_value.messages.return_value.list.return_value.execute.return_value = {"messages": []}
         mock_build.return_value = mock_service
         gmail._service = mock_service
         gmail.get_latest_emails(count=1)
