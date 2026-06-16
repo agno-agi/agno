@@ -60,7 +60,12 @@ class SlackContextProvider(ContextProvider):
         self.token = token or getenv("SLACK_BOT_TOKEN") or getenv("SLACK_TOKEN")
         if not self.token:
             raise ValueError("SlackContextProvider: SLACK_BOT_TOKEN (or SLACK_TOKEN) is required")
-        self._user_token = user_token or getenv("SLACK_USER_TOKEN")
+
+        # Resolve user token from param, env, or primary token (backward compat)
+        _user_token = user_token or getenv("SLACK_USER_TOKEN")
+        if not _user_token and self.token.startswith("xoxp-"):
+            _user_token = self.token
+        self._user_token = _user_token
         self._enable_search_messages = self._user_token is not None
         self.read_instructions_text = read_instructions
         self.write_instructions_text = (

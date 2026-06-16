@@ -188,7 +188,14 @@ class SlackTools(Toolkit):
         self.token: str = _token
         self.client = WebClient(token=self.token, ssl=ssl)
 
-        self._user_token: Optional[str] = user_token or getenv("SLACK_USER_TOKEN")
+        # 1. Resolve user token from param, env, or primary token (backward compat)
+        _user_token = user_token or getenv("SLACK_USER_TOKEN")
+        if not _user_token and _token.startswith("xoxp-"):
+            # Backward compat: primary token is a user token, use it for search
+            _user_token = _token
+        self._user_token: Optional[str] = _user_token
+
+        # 2. Create user client for search_messages if we have a user token
         self._user_client: Optional[WebClient] = (
             WebClient(token=self._user_token, ssl=ssl) if self._user_token else None
         )
@@ -224,7 +231,8 @@ class SlackTools(Toolkit):
         if enable_search_messages or all:
             if self._user_client:
                 tools.append(self.search_messages)
-            else:
+            elif enable_search_messages:
+                # Only warn when explicitly requested, not via all=True
                 log_warning("search_messages disabled: no user token (SLACK_USER_TOKEN) provided")
         if enable_search_workspace or all:
             tools.append(self.search_workspace)
