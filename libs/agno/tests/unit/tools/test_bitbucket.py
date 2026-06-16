@@ -44,6 +44,7 @@ class TestBitbucketTools:
         assert tools.auth_password == "test_password"
         assert tools.server_url == "api.bitbucket.org"
         assert tools.api_version == "2.0"
+        assert tools.timeout == 30
         assert "Basic" in tools.headers["Authorization"]
 
     def test_init_with_custom_params(self, mock_env_vars):
@@ -55,6 +56,7 @@ class TestBitbucketTools:
             username="custom_user",
             password="custom_password",
             api_version="2.1",
+            timeout=7,
         )
 
         assert tools.workspace == "custom_workspace"
@@ -63,6 +65,7 @@ class TestBitbucketTools:
         assert tools.auth_password == "custom_password"
         assert tools.server_url == "custom.bitbucket.com"
         assert tools.api_version == "2.1"
+        assert tools.timeout == 7
 
     def test_init_with_token_priority(self, mock_env_vars):
         """Test that token takes priority over password."""
@@ -109,6 +112,21 @@ class TestBitbucketTools:
 
         assert result == {"test": "data"}
         mock_request.assert_called_once()
+        assert mock_request.call_args.kwargs["timeout"] == 30
+
+    @patch("requests.request")
+    def test_make_request_uses_custom_timeout(self, mock_request, mock_env_vars):
+        """Test _make_request passes the configured timeout."""
+        mock_response = MagicMock()
+        mock_response.headers = {"Content-Type": "application/json"}
+        mock_response.json.return_value = {"test": "data"}
+        mock_response.text = '{"test": "data"}'
+        mock_request.return_value = mock_response
+        bitbucket_tools = BitbucketTools(workspace="test_workspace", repo_slug="test_repo", timeout=5)
+
+        bitbucket_tools._make_request("GET", "/test")
+
+        assert mock_request.call_args.kwargs["timeout"] == 5
 
     @patch("requests.request")
     def test_make_request_text_response(self, mock_request, bitbucket_tools):

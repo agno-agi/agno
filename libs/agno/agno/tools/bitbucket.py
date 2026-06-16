@@ -19,6 +19,7 @@ class BitbucketTools(Toolkit):
         workspace: Optional[str] = None,
         repo_slug: Optional[str] = None,
         api_version: str = "2.0",
+        timeout: int = 30,
         **kwargs,
     ):
         self.username = username or getenv("BITBUCKET_USERNAME")
@@ -34,6 +35,7 @@ class BitbucketTools(Toolkit):
         )
         self.workspace = workspace
         self.repo_slug = repo_slug
+        self.timeout = timeout
 
         if not (self.username and self.auth_password):
             raise ValueError("Username and password or token are required")
@@ -74,7 +76,7 @@ class BitbucketTools(Toolkit):
         data: Optional[Dict[str, Any]] = None,
     ) -> Union[str, Dict[str, Any]]:
         url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, headers=self.headers, json=data, params=params)
+        response = requests.request(method, url, headers=self.headers, json=data, params=params, timeout=self.timeout)
         response.raise_for_status()
         encoding_type = response.headers.get("Content-Type", "application/json")
         if encoding_type.startswith("application/json"):
