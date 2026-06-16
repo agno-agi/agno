@@ -22,15 +22,22 @@ class Playground:
         **kwargs,
     ):
         from agno.os import AgentOS
+        from agno.os.settings import AgnoAPISettings
 
         settings = settings or PlaygroundSettings()
-        kwargs.setdefault("name", settings.title)
+        name = kwargs.pop("name", None) or settings.title
 
         agent_os = AgentOS(
             agents=agents,
             teams=teams,
             workflows=workflows,
-            settings=settings,
+            settings=AgnoAPISettings(
+                env=settings.env,
+                docs_enabled=settings.docs_enabled,
+                os_security_key=settings.secret_key,
+                cors_origin_list=settings.cors_origin_list,
+            ),
+            name=name,
             base_app=api_app,
             **kwargs,
         )
