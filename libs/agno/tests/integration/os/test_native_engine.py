@@ -242,3 +242,31 @@ def test_reload_is_noop_in_memory():
     eng.assign("v", "viewer")
     eng.reload()  # must not wipe the in-memory state
     assert eng.roles_of("v") == ["viewer"]
+
+
+def test_set_role_scopes_atomic_on_bad_scope(tmp_path):
+    """#3: a bad scope mid-list must raise and leave the role's existing scopes
+    intact (cache AND db), not half-applied."""
+    pytest.importorskip("sqlalchemy")
+    url = f"sqlite:///{tmp_path / 'r.db'}"
+    eng = NativePolicyEngine(db_url=url)
+    eng.set_role_scopes("m", [("agents:*:read", "allow")])
+
+    with pytest.raises(ValueError):
+        eng.set_role_scopes("m", [("agents:*:run", "allow"), ("a:b:c:d", "allow")])  # 2nd is malformed
+
+    assert eng.get_role_scopes("m") == [("agents:read", "allow")]  # unchanged
+    # a fresh engine on the same DB agrees -> cache and DB never diverged
+    assert NativePolicyEngine(db_url=url).get_role_scopes("m") == [("agents:read", "allow")]
+
+
+def test_set_role_scopes_dedups_colliding_mappings(tmp_path):
+    """#6: two scopes that map to the same (resource, action) must not raise an
+    IntegrityError on persist; they collapse to one row (last effect wins)."""
+    pytest.importorskip("sqlalchemy")
+    url = f"sqlite:///{tmp_path / 'r.db'}"
+    eng = NativePolicyEngine(db_url=url)
+    # agents:read and agents:*:read both -> ('agents/*', 'read')
+    eng.set_role_scopes("m", [("agents:read", "allow"), ("agents:*:read", "allow")])
+    assert eng.get_role_scopes("m") == [("agents:read", "allow")]
+    assert NativePolicyEngine(db_url=url).get_role_scopes("m") == [("agents:read", "allow")]
