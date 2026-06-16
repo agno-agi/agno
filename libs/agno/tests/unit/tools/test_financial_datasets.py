@@ -34,6 +34,13 @@ def test_init_with_provided_key():
     """Test initialization with explicitly provided API key."""
     tools = FinancialDatasetsTools(api_key="explicit_key")
     assert tools.api_key == "explicit_key"
+    assert tools.timeout == 30
+
+
+def test_init_with_custom_timeout():
+    """Test initialization with a custom request timeout."""
+    tools = FinancialDatasetsTools(api_key="explicit_key", timeout=7)
+    assert tools.timeout == 7
 
 
 @patch.dict(os.environ, {"FINANCIAL_DATASETS_API_KEY": "env_key"})
@@ -51,6 +58,26 @@ def test_init_without_key(mock_log_error):
         tools = FinancialDatasetsTools()
         assert tools.api_key is None
         mock_log_error.assert_called_once()
+
+
+@patch("requests.get")
+def test_make_request_uses_configured_timeout(mock_get):
+    """Test API requests use the configured timeout."""
+    mock_response = MagicMock()
+    mock_response.text = '{"status": "success"}'
+    mock_response.raise_for_status.return_value = None
+    mock_get.return_value = mock_response
+    tools = FinancialDatasetsTools(api_key="explicit_key", timeout=5)
+
+    result = tools._make_request("prices", {"ticker": "AAPL"})
+
+    assert result == '{"status": "success"}'
+    mock_get.assert_called_once_with(
+        "https://api.financialdatasets.ai/prices",
+        headers={"X-API-KEY": "explicit_key"},
+        params={"ticker": "AAPL"},
+        timeout=5,
+    )
 
 
 # Financial Statements Endpoint Tests
