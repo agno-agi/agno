@@ -5154,8 +5154,8 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="auth_tokens")
             if table is None:
                 return None
-            # Use empty string for NULL user_id to match unique constraint
-            effective_user_id = user_id or ""
+            # Use empty string for NULL user_id to satisfy unique constraint on (provider, user_id, service)
+            effective_user_id = user_id if user_id is not None else ""
             with self.Session() as sess:
                 result = sess.execute(
                     select(table).where(
