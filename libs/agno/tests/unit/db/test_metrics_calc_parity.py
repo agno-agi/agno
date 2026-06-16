@@ -114,12 +114,19 @@ LOOSE_PARITY_BACKENDS += [
 ]
 
 
-def _agent(uid, runs=1, tokens=0):
+def _session(uid, runs=1, tokens=0, model="gpt-5", provider="openai"):
+    """Build a fake session row. Used for agent / team / workflow sessions —
+    they share the same schema; only the bucket the caller drops them into
+    differs."""
     return {
         "user_id": uid,
-        "runs": [{"model": "gpt-5", "model_provider": "openai"} for _ in range(runs)],
+        "runs": [{"model": model, "model_provider": provider} for _ in range(runs)],
         "session_data": {"session_metrics": {"input_tokens": tokens, "total_tokens": tokens}},
     }
+
+
+# Kept as an alias for the agent-only callsites below.
+_agent = _session
 
 
 # Each tuple: (label, sessions_data) — the cases we want to assert parity on.
@@ -147,6 +154,71 @@ CASES = [
     (
         "empty",
         {"agent": [], "team": [], "workflow": []},
+    ),
+    # --- Cases that exercise team + workflow + mixed session types ---
+    (
+        "team_only_single_user",
+        {
+            "agent": [],
+            "team": [_session("alice", runs=2, tokens=4)],
+            "workflow": [],
+        },
+    ),
+    (
+        "workflow_only_single_user",
+        {
+            "agent": [],
+            "team": [],
+            "workflow": [_session("alice", runs=3, tokens=6)],
+        },
+    ),
+    (
+        "mixed_session_types_one_user",
+        {
+            "agent": [_session("alice", runs=1, tokens=10)],
+            "team": [_session("alice", runs=2, tokens=5)],
+            "workflow": [_session("alice", runs=1, tokens=3)],
+        },
+    ),
+    (
+        "mixed_session_types_multi_user",
+        # Alice has all three; Bob has agent + team only; an unowned workflow
+        # session lands in the empty-string bucket. Tests that team + workflow
+        # rows get attributed to the correct user_id (per-user bucketing).
+        {
+            "agent": [
+                _session("alice", runs=1, tokens=10),
+                _session("bob", runs=2, tokens=5),
+            ],
+            "team": [
+                _session("alice", runs=3, tokens=4),
+                _session("bob", runs=1, tokens=2),
+            ],
+            "workflow": [
+                _session("alice", runs=2, tokens=6),
+                _session(None, runs=1, tokens=1),
+            ],
+        },
+    ),
+    (
+        "multi_model_per_bucket",
+        # Same user spans multiple models in one run set. Exercises the
+        # ``model_counts`` -> ``model_metrics`` per-user nesting.
+        {
+            "agent": [
+                {
+                    "user_id": "alice",
+                    "runs": [
+                        {"model": "gpt-5", "model_provider": "openai"},
+                        {"model": "gpt-5", "model_provider": "openai"},
+                        {"model": "claude-opus", "model_provider": "anthropic"},
+                    ],
+                    "session_data": {"session_metrics": {"input_tokens": 7, "total_tokens": 9}},
+                },
+            ],
+            "team": [],
+            "workflow": [],
+        },
     ),
 ]
 

@@ -109,7 +109,9 @@ class TestScheduleCRUD:
         db.create_schedule(s1)
         db.create_schedule(s2)
 
-        all_schedules = db.get_schedules()
+        # ``get_schedules`` returns ``(List[dict], total_count)``.
+        all_schedules, total = db.get_schedules()
+        assert total >= 2
         assert len(all_schedules) >= 2
         ids = {s["id"] for s in all_schedules}
         assert s1["id"] in ids
@@ -147,8 +149,8 @@ class TestEnabledFilter:
         db.create_schedule(s_enabled)
         db.create_schedule(s_disabled)
 
-        enabled_only = db.get_schedules(enabled=True)
-        disabled_only = db.get_schedules(enabled=False)
+        enabled_only, _ = db.get_schedules(enabled=True)
+        disabled_only, _ = db.get_schedules(enabled=False)
 
         enabled_ids = {s["id"] for s in enabled_only}
         disabled_ids = {s["id"] for s in disabled_only}
@@ -278,7 +280,9 @@ class TestScheduleRuns:
         db.create_schedule_run(r1)
         db.create_schedule_run(r2)
 
-        runs = db.get_schedule_runs(sched["id"])
+        # ``get_schedule_runs`` returns ``(List[dict], total_count)``.
+        runs, total = db.get_schedule_runs(sched["id"])
+        assert total == 2
         assert len(runs) == 2
         run_ids = {r["id"] for r in runs}
         assert r1["id"] in run_ids
@@ -288,8 +292,9 @@ class TestScheduleRuns:
         sched = _make_schedule()
         db.create_schedule(sched)
 
-        runs = db.get_schedule_runs(sched["id"])
+        runs, total = db.get_schedule_runs(sched["id"])
         assert runs == []
+        assert total == 0
 
     def test_get_runs_with_limit(self, db):
         sched = _make_schedule()
@@ -298,7 +303,9 @@ class TestScheduleRuns:
         for i in range(5):
             db.create_schedule_run(_make_run(sched["id"], attempt=i + 1))
 
-        runs = db.get_schedule_runs(sched["id"], limit=3)
+        runs, total = db.get_schedule_runs(sched["id"], limit=3)
+        # ``total`` is the unpaginated count; the slice respects ``limit``.
+        assert total == 5
         assert len(runs) == 3
 
     def test_get_run_not_found(self, db):
@@ -316,7 +323,8 @@ class TestScheduleRuns:
         db.create_schedule_run(r2)
 
         # Confirm runs exist
-        runs = db.get_schedule_runs(sched["id"])
+        runs, total = db.get_schedule_runs(sched["id"])
+        assert total == 2
         assert len(runs) == 2
 
         # Delete the schedule
@@ -324,7 +332,9 @@ class TestScheduleRuns:
         assert db.get_schedule(sched["id"]) is None
 
         # Runs should also be gone
-        assert db.get_schedule_runs(sched["id"]) == []
+        runs_after, total_after = db.get_schedule_runs(sched["id"])
+        assert runs_after == []
+        assert total_after == 0
         assert db.get_schedule_run(r1["id"]) is None
         assert db.get_schedule_run(r2["id"]) is None
 
@@ -377,7 +387,8 @@ class TestFullLifecycle:
         assert fetched["next_run_at"] == now + 7200
 
         # Verify run
-        runs = db.get_schedule_runs(sched["id"])
+        runs, total = db.get_schedule_runs(sched["id"])
+        assert total == 1
         assert len(runs) == 1
         assert runs[0]["status"] == "success"
 

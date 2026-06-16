@@ -1437,7 +1437,21 @@ class DynamoDb(BaseDb):
             raise e
 
     def _upsert_single_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Upsert a single metrics record, checking for existing records with the same date.
+        """Upsert a single metrics record.
+
+        ``calculate_date_metrics`` produces a deterministic id of the form
+        ``{date}_{user_id}_daily`` per (date, user_id, aggregation_period)
+        bucket. DynamoDB's primary key is ``id``, so ``PutItem`` is itself
+        the upsert — overwriting on the same id is the desired behaviour
+        for re-running the calculation, and distinct user buckets stay
+        distinct because their ids differ.
+
+        We deliberately do NOT dedupe via the
+        ``date-aggregation_period-index`` GSI: that index lacks ``user_id``,
+        so a Query would collapse all per-user records for a given date
+        into one, and the survivor's bucket data would clobber the others
+        (one row survives per date, ``get_metrics(user_id=...)`` returns
+        nothing).
 
         Args:
             table_name: The DynamoDB table name
@@ -1447,116 +1461,23 @@ class DynamoDb(BaseDb):
             Optional[Dict[str, Any]]: The upserted record or None if failed
         """
         try:
-            date_str = record.get("date")
-            if not date_str:
-                log_error("Metrics record missing date field")
+            if not record.get("id"):
+                log_error("Metrics record missing id field")
                 return None
 
-            # Convert date object to string if needed
-            if hasattr(date_str, "isoformat"):
-                date_str = date_str.isoformat()
+            record["updated_at"] = int(time.time())
 
-            # Check if a record already exists for this date
-            existing_record = self._get_existing_metrics_record(table_name, date_str)
-
-            if existing_record:
-                return self._update_existing_metrics_record(table_name, existing_record, record)
-            else:
-                return self._create_new_metrics_record(table_name, record)
-
-        except Exception as e:
-            log_error(f"Failed to upsert single metrics record: {str(e)}")
-            raise e
-
-    def _get_existing_metrics_record(self, table_name: str, date_str: str) -> Optional[Dict[str, Any]]:
-        """Get existing metrics record for a given date.
-
-        Args:
-            table_name: The DynamoDB table name
-            date_str: The date string to search for
-
-        Returns:
-            Optional[Dict[str, Any]]: The existing record or None if not found
-        """
-        try:
-            # Query using the date-aggregation_period-index
-            response = self.client.query(
-                TableName=table_name,
-                IndexName="date-aggregation_period-index",
-                KeyConditionExpression="#date = :date AND aggregation_period = :period",
-                ExpressionAttributeNames={"#date": "date"},
-                ExpressionAttributeValues={
-                    ":date": {"S": date_str},
-                    ":period": {"S": "daily"},
-                },
-                Limit=1,
-            )
-
-            items = response.get("Items", [])
-            if items:
-                return deserialize_from_dynamodb_item(items[0])
-            return None
-
-        except Exception as e:
-            log_error(f"Failed to get existing metrics record for date {date_str}: {str(e)}")
-            raise e
-
-    def _update_existing_metrics_record(
-        self,
-        table_name: str,
-        existing_record: Dict[str, Any],
-        new_record: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """Update an existing metrics record.
-
-        Args:
-            table_name: The DynamoDB table name
-            existing_record: The existing record
-            new_record: The new record data
-
-        Returns:
-            Optional[Dict[str, Any]]: The updated record or None if failed
-        """
-        try:
-            # Use the existing record's ID
-            new_record["id"] = existing_record["id"]
-            new_record["updated_at"] = int(time.time())
-
-            # Prepare and serialize the record
-            prepared_record = self._prepare_metrics_record_for_dynamo(new_record)
-            item = self._serialize_metrics_to_dynamo_item(prepared_record)
-
-            # Update the record
-            self.client.put_item(TableName=table_name, Item=item)
-
-            return new_record
-
-        except Exception as e:
-            log_error(f"Failed to update existing metrics record: {str(e)}")
-            raise e
-
-    def _create_new_metrics_record(self, table_name: str, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create a new metrics record.
-
-        Args:
-            table_name: The DynamoDB table name
-            record: The record to create
-
-        Returns:
-            Optional[Dict[str, Any]]: The created record or None if failed
-        """
-        try:
-            # Prepare and serialize the record
             prepared_record = self._prepare_metrics_record_for_dynamo(record)
             item = self._serialize_metrics_to_dynamo_item(prepared_record)
 
-            # Create the record
+            # PutItem on the deterministic per-(date, user_id, period) id —
+            # natural overwrite if it already exists.
             self.client.put_item(TableName=table_name, Item=item)
 
             return record
 
         except Exception as e:
-            log_error(f"Failed to create new metrics record: {str(e)}")
+            log_error(f"Failed to upsert single metrics record: {str(e)}")
             raise e
 
     def _prepare_metrics_record_for_dynamo(self, record: Dict[str, Any]) -> Dict[str, Any]:
