@@ -158,11 +158,8 @@ class SlackTools(Toolkit):
         Initialize the SlackTools class.
 
         Args:
-            token (str): The Slack bot token (xoxb-). Defaults to SLACK_BOT_TOKEN or SLACK_TOKEN env var.
-                Used for all standard Slack APIs (posting, reading channels, file operations).
-            user_token (str): Optional Slack user token (xoxp-) for the legacy search.messages API.
-                Defaults to SLACK_USER_TOKEN env var. Only needed if enable_search_messages=True.
-                Bot tokens cannot use search.messages (Slack returns not_allowed_token_type).
+            token (str): The Slack API token. Defaults to the SLACK_TOKEN environment variable.
+            user_token (str): User token (xoxp-) for search_messages. Defaults to SLACK_USER_TOKEN env var.
             markdown (bool): Whether to enable Slack markdown formatting. Defaults to True.
             output_directory (str): Directory for saving downloaded files. Only used when save_downloads=True.
             save_downloads (bool): Whether to save downloaded files to disk. Defaults to False (base64 only).
@@ -172,9 +169,7 @@ class SlackTools(Toolkit):
             enable_get_channel_history (bool): Whether to enable the get_channel_history tool. Defaults to True.
             enable_upload_file (bool): Whether to enable the upload_file tool. Defaults to True.
             enable_download_file (bool): Whether to enable the download_file tool. Defaults to True.
-            enable_search_messages (bool): Whether to enable the search_messages tool (legacy API).
-                Requires a user token (xoxp-) via user_token param or SLACK_USER_TOKEN env var.
-                Defaults to False.
+            enable_search_messages (bool): Whether to enable the search_messages tool (legacy API). Defaults to False.
             enable_search_workspace (bool): Whether to enable the search_workspace tool (assistant.search.context API).
                 Requires search:read.public, search:read.files, and search:read.users bot scopes.
                 The action_token is read from run_context.metadata at call time. Defaults to False.
@@ -187,17 +182,16 @@ class SlackTools(Toolkit):
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
             thread_message_limit (int): Maximum number of messages to fetch in get_thread. Defaults to 20.
         """
-        # Primary token (bot) for all standard APIs
-        _token = token or getenv("SLACK_BOT_TOKEN") or getenv("SLACK_TOKEN")
+        _token = token or getenv("SLACK_TOKEN")
         if not _token:
-            raise ValueError("SLACK_BOT_TOKEN (or SLACK_TOKEN) is not set")
+            raise ValueError("SLACK_TOKEN is not set")
         self.token: str = _token
         self.client = WebClient(token=self.token, ssl=ssl)
 
-        # User token for legacy search.messages API (optional)
-        _user_token = user_token or getenv("SLACK_USER_TOKEN")
-        self._user_token: Optional[str] = _user_token
-        self._user_client: Optional[WebClient] = WebClient(token=_user_token, ssl=ssl) if _user_token else None
+        self._user_token: Optional[str] = user_token or getenv("SLACK_USER_TOKEN")
+        self._user_client: Optional[WebClient] = (
+            WebClient(token=self._user_token, ssl=ssl) if self._user_token else None
+        )
         self.markdown = markdown
         self.max_file_size = max_file_size
         self.thread_message_limit = thread_message_limit
@@ -228,7 +222,10 @@ class SlackTools(Toolkit):
         if enable_download_file or all:
             tools.append(self.download_file)
         if enable_search_messages or all:
-            tools.append(self.search_messages)
+            if self._user_client:
+                tools.append(self.search_messages)
+            else:
+                log_warning("search_messages disabled: no user token (SLACK_USER_TOKEN) provided")
         if enable_search_workspace or all:
             tools.append(self.search_workspace)
         if enable_get_thread or all:
@@ -765,9 +762,7 @@ class SlackTools(Toolkit):
             return None
 
     def search_messages(self, query: str, limit: int = 20) -> str:
-        """Search messages across the Slack workspace using the legacy search.messages API.
-
-        Requires a user token (xoxp-). Bot tokens cannot use this API.
+        """Search messages across the Slack workspace.
 
         Args:
             query (str): The search query. Supports modifiers like from:@user, in:#channel, has:link, before:date, after:date.
@@ -776,13 +771,8 @@ class SlackTools(Toolkit):
         Returns:
             str: A JSON string containing the count and list of matching messages with text, user, channel, timestamp, and permalink.
         """
-        if not self._user_client:
-            return json.dumps({
-                "error": "search_messages requires a user token (xoxp-). "
-                "Set SLACK_USER_TOKEN or pass user_token to SlackTools."
-            })
         try:
-            response = self._user_client.search_messages(query=query, count=min(limit, 100))
+            response = self._user_client.search_messages(query=query, count=min(limit, 100))  # type: ignore[union-attr]
             message_results = cast(Dict[str, Any], response.get("messages") or {})
             matches = cast(List[Dict[str, Any]], message_results.get("matches") or [])
             messages = [

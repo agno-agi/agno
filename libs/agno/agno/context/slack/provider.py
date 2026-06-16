@@ -39,21 +39,7 @@ if TYPE_CHECKING:
 
 
 class SlackContextProvider(ContextProvider):
-    """Read + write access to a Slack workspace via two tools.
-
-    Token Configuration:
-        - ``token`` / ``SLACK_BOT_TOKEN``: Primary bot token (xoxb-) for all standard
-          Slack APIs (posting, reading channels, file operations). Required.
-        - ``user_token`` / ``SLACK_USER_TOKEN``: Optional user token (xoxp-) for the
-          legacy search.messages API. Only needed when deploying read agents that
-          require workspace search outside the Slack interface.
-
-    Search Methods:
-        - ``search_workspace``: Uses action_token from Slack interface events.
-          Works with bot token when running inside the Slack interface.
-        - ``search_messages``: Legacy API requiring a user token. Use when
-          search_workspace is unavailable (CLI, cron, external apps).
-    """
+    """Read + write access to a Slack workspace via two tools."""
 
     def __init__(
         self,
@@ -71,14 +57,11 @@ class SlackContextProvider(ContextProvider):
         write: bool = True,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
-        # Primary token (bot) for all standard Slack APIs
         self.token = token or getenv("SLACK_BOT_TOKEN") or getenv("SLACK_TOKEN")
         if not self.token:
             raise ValueError("SlackContextProvider: SLACK_BOT_TOKEN (or SLACK_TOKEN) is required")
-        # User token for legacy search.messages API (optional)
         self._user_token = user_token or getenv("SLACK_USER_TOKEN")
-        # Enable search_messages when user token available OR primary token is a user token
-        self._has_legacy_search = bool(self._user_token) or self.token.startswith("xoxp-")
+        self._enable_search_messages = self._user_token is not None
         self.read_instructions_text = read_instructions
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_SLACK_WRITE_INSTRUCTIONS
@@ -209,7 +192,7 @@ class SlackContextProvider(ContextProvider):
                 enable_download_file=self.enable_media_tools,
                 enable_list_channels=True,
                 enable_get_channel_history=True,
-                enable_search_messages=self._has_legacy_search,
+                enable_search_messages=self._enable_search_messages,
                 enable_search_workspace=False,
                 enable_get_thread=True,
                 enable_list_users=True,
@@ -229,7 +212,7 @@ class SlackContextProvider(ContextProvider):
                 enable_download_file=self.enable_media_tools,
                 enable_list_channels=True,
                 enable_get_channel_history=True,
-                enable_search_messages=self._has_legacy_search,
+                enable_search_messages=self._enable_search_messages,
                 enable_search_workspace=True,
                 enable_get_thread=True,
                 enable_list_users=True,
@@ -303,11 +286,9 @@ Workflow:
    recent messages in a specific channel, call
    `get_channel_history(channel)`. If they ask about a thread or a
    message with replies, call `get_thread(channel, ts)`.
-2. **Use search for broad reads.** `search_workspace(query)` searches with
-   Slack interface permissions - use it for topic lookups, catch-up, and
-   summaries. `search_messages(query)` is only present with a user token;
-   when it is available, fall back to it if `search_workspace` returns
-   nothing relevant.
+2. **Use search for broad reads.** `search_workspace(query)` uses Slack
+   interface permissions; `search_messages(query)` works with user tokens.
+   Try one, and if it fails or returns nothing relevant, try the other.
 3. **Shape search queries.** Include channel or topic hints from the
    user's request. Use Slack search filters when useful, e.g.
    `in:#agents`.
@@ -327,26 +308,22 @@ _SLACK_BOT_TOKEN_READ_INSTRUCTIONS = """\
 You answer questions by reading Slack with bot-token-compatible tools.
 
 Workflow:
-1. **Read known channels directly.** If the user provides a channel name
+1. **Search first.** Use `search_messages(query)` to find messages across
+   accessible channels. Shape queries with channel or topic hints, e.g.
+   `in:#agents topic`.
+2. **Read known channels directly.** If the user provides a channel name
    or ID, pass it straight to `get_channel_history(channel)`. The tool
    resolves names like `#agents` to IDs.
-2. **Discover only when needed.** Use `list_channels` only when the user
+3. **Discover only when needed.** Use `list_channels` only when the user
    did not name a channel. The bot must be a member of private channels.
-3. **Expand threads.** When a message has replies, call
+4. **Expand threads.** When a message has replies, call
    `get_thread(channel, ts)` for the full discussion. Pass the same
    channel name or ID you used for history.
-4. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
+5. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
    into display names. Don't invent a name when the ID doesn't resolve —
    report the raw user id instead.
-5. **Cite.** Every claim should point to channel + author + timestamp.
+6. **Cite.** Every claim should point to channel + author + timestamp.
    Quote message text verbatim; don't paraphrase.
-
-Free-text workspace search is not available on a bot token. There is no
-search tool on this path unless a user token (`xoxp-`) is configured, in
-which case `search_messages(query)` is available for broad topic lookups
-(shape queries with hints like `in:#agents topic`). Without it, read named
-channels directly; never claim a channel is empty just because you cannot
-search it.
 
 You are read-only. Never send messages, upload, or download. If the
 channel cannot be found or the bot is not a member, say so plainly.
