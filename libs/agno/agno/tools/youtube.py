@@ -23,10 +23,12 @@ class YouTubeTools(Toolkit):
         all: bool = False,
         languages: Optional[List[str]] = None,
         proxies: Optional[Dict[str, Any]] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         self.languages: Optional[List[str]] = languages
         self.proxies: Optional[Dict[str, Any]] = proxies
+        self.timeout = timeout
 
         tools: List[Any] = []
         if all or enable_get_video_captions:
@@ -88,7 +90,7 @@ class YouTubeTools(Toolkit):
             query_string = urlencode(params)
             url = url + "?" + query_string
 
-            with urlopen(url) as response:
+            with urlopen(url, timeout=self.timeout) as response:
                 response_text = response.read()
                 video_data = json.loads(response_text.decode())
                 clean_data = {
