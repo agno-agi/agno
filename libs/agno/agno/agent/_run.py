@@ -3424,10 +3424,8 @@ def continue_run_dispatch(
         # fork/checkpoint was passed (those already produce a new run_id).
         # RUNNING/ERROR/PAUSED runs continue in-place because their loop
         # never actually finished — there's no second loop to fork off into.
-        _auto_forking_on_completed = False
         if not fork and run_response.status == RunStatus.completed:
             fork = True
-            _auto_forking_on_completed = True
 
         # Apply fork/truncate before validation so the rest of the dispatch operates
         # on the modified state (time-travel + forking land before HITL checks).
