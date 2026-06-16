@@ -6,9 +6,9 @@ Demonstrates SlackContextProvider with:
 
 - **search_messages** — Slack's legacy search API. It requires a user
   token (`xoxp-`); a bot token (`xoxb-`) fails it with
-  `not_allowed_token_type`. The provider gates the tool on token type, so
-  it is registered on the read agents only when a user token is
-  configured.
+  `not_allowed_token_type`. The provider gates the tool on user token
+  availability, so search_messages is registered only when SLACK_USER_TOKEN
+  is set (or the primary token is a user token).
 - **enable_media_tools** — Opt-in file handling:
   - `download_file` on read agents (fetch images/files for multimodal)
   - `upload_file` on write agent (post generated content)
@@ -20,11 +20,13 @@ when you want faster/cheaper tool calls but stronger reasoning on top.
 Requires:
     GOOGLE_API_KEY
     SLACK_BOT_TOKEN  (xoxb-) — channel history + threads, no free-text search
-    SLACK_TOKEN      (xoxp-) — additionally enables the search_messages API
 
-With a bot token the provider does not register search_messages; reads go
-through get_channel_history / get_thread. With a user token, search_messages
-is available alongside the deterministic read tools.
+Optional:
+    SLACK_USER_TOKEN (xoxp-) — enables the search_messages API
+
+With only a bot token, reads go through get_channel_history / get_thread.
+With SLACK_USER_TOKEN set, search_messages is available alongside the
+deterministic read tools.
 
 Usage:
     python cookbook/12_context/06_slack_search_media.py

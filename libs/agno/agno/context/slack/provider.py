@@ -39,12 +39,27 @@ if TYPE_CHECKING:
 
 
 class SlackContextProvider(ContextProvider):
-    """Read + write access to a Slack workspace via two tools."""
+    """Read + write access to a Slack workspace via two tools.
+
+    Token Configuration:
+        - ``token`` / ``SLACK_BOT_TOKEN``: Primary bot token (xoxb-) for all standard
+          Slack APIs (posting, reading channels, file operations). Required.
+        - ``user_token`` / ``SLACK_USER_TOKEN``: Optional user token (xoxp-) for the
+          legacy search.messages API. Only needed when deploying read agents that
+          require workspace search outside the Slack interface.
+
+    Search Methods:
+        - ``search_workspace``: Uses action_token from Slack interface events.
+          Works with bot token when running inside the Slack interface.
+        - ``search_messages``: Legacy API requiring a user token. Use when
+          search_workspace is unavailable (CLI, cron, external apps).
+    """
 
     def __init__(
         self,
         *,
         token: str | None = None,
+        user_token: str | None = None,
         id: str = "slack",
         name: str = "Slack",
         read_instructions: str | None = None,
@@ -56,14 +71,14 @@ class SlackContextProvider(ContextProvider):
         write: bool = True,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+        # Primary token (bot) for all standard Slack APIs
         self.token = token or getenv("SLACK_BOT_TOKEN") or getenv("SLACK_TOKEN")
         if not self.token:
             raise ValueError("SlackContextProvider: SLACK_BOT_TOKEN (or SLACK_TOKEN) is required")
-        # Slack's legacy ``search.messages`` API is user-token-only; a bot token
-        # (``xoxb-``) always fails it with ``not_allowed_token_type``. Gate the
-        # tool on token type so bot-token deployments never register a tool that
-        # cannot work, while user-token (``xoxp-``) deployments keep it.
-        self._is_user_token = self.token.startswith("xoxp-")
+        # User token for legacy search.messages API (optional)
+        self._user_token = user_token or getenv("SLACK_USER_TOKEN")
+        # Enable search_messages when user token available OR primary token is a user token
+        self._has_legacy_search = bool(self._user_token) or self.token.startswith("xoxp-")
         self.read_instructions_text = read_instructions
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_SLACK_WRITE_INSTRUCTIONS
@@ -187,13 +202,14 @@ class SlackContextProvider(ContextProvider):
         if self._bot_read_tools is None:
             self._bot_read_tools = SlackTools(
                 token=self.token,
+                user_token=self._user_token,
                 enable_send_message=False,
                 enable_send_message_thread=False,
                 enable_upload_file=False,
                 enable_download_file=self.enable_media_tools,
                 enable_list_channels=True,
                 enable_get_channel_history=True,
-                enable_search_messages=self._is_user_token,
+                enable_search_messages=self._has_legacy_search,
                 enable_search_workspace=False,
                 enable_get_thread=True,
                 enable_list_users=True,
@@ -206,13 +222,14 @@ class SlackContextProvider(ContextProvider):
         if self._assisted_read_tools is None:
             self._assisted_read_tools = SlackTools(
                 token=self.token,
+                user_token=self._user_token,
                 enable_send_message=False,
                 enable_send_message_thread=False,
                 enable_upload_file=False,
                 enable_download_file=self.enable_media_tools,
                 enable_list_channels=True,
                 enable_get_channel_history=True,
-                enable_search_messages=self._is_user_token,
+                enable_search_messages=self._has_legacy_search,
                 enable_search_workspace=True,
                 enable_get_thread=True,
                 enable_list_users=True,

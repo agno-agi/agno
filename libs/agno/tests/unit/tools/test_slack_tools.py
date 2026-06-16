@@ -31,8 +31,49 @@ def slack_tools():
 
 def test_init_requires_token():
     with patch.dict("os.environ", clear=True):
-        with pytest.raises(ValueError, match="SLACK_TOKEN"):
+        with pytest.raises(ValueError, match="SLACK_BOT_TOKEN"):
             SlackTools()
+
+
+def test_init_prefers_slack_bot_token_env():
+    with patch.dict("os.environ", {"SLACK_BOT_TOKEN": "xoxb-bot", "SLACK_TOKEN": "xoxb-fallback"}):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            SlackTools()
+            mock_client.assert_called_once()
+            assert mock_client.call_args[1]["token"] == "xoxb-bot"
+
+
+def test_init_falls_back_to_slack_token_env():
+    with patch.dict("os.environ", {"SLACK_TOKEN": "xoxb-fallback"}, clear=True):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            SlackTools()
+            mock_client.assert_called_once()
+            assert mock_client.call_args[1]["token"] == "xoxb-fallback"
+
+
+def test_init_creates_user_client_when_user_token_provided():
+    with patch.dict("os.environ", {"SLACK_BOT_TOKEN": "xoxb-bot"}):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            tools = SlackTools(user_token="xoxp-user")
+            assert mock_client.call_count == 2
+            assert tools._user_token == "xoxp-user"
+            assert tools._user_client is not None
+
+
+def test_init_reads_user_token_from_env():
+    with patch.dict("os.environ", {"SLACK_BOT_TOKEN": "xoxb-bot", "SLACK_USER_TOKEN": "xoxp-env"}):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            tools = SlackTools()
+            assert mock_client.call_count == 2
+            assert tools._user_token == "xoxp-env"
+
+
+def test_init_no_user_client_without_user_token():
+    with patch.dict("os.environ", {"SLACK_BOT_TOKEN": "xoxb-bot"}, clear=True):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            tools = SlackTools()
+            assert mock_client.call_count == 1
+            assert tools._user_client is None
 
 
 def test_init_registers_default_tools():
@@ -246,8 +287,37 @@ def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tool
 # === Extended Tools ===
 
 
+def test_search_messages_requires_user_client():
+    """search_messages returns error when no user token is configured."""
+    with patch.dict("os.environ", {"SLACK_BOT_TOKEN": "xoxb-bot"}, clear=True):
+        with patch("agno.tools.slack.WebClient"):
+            tools = SlackTools(enable_search_messages=True)
+            result = json.loads(tools.search_messages("query"))
+            assert "error" in result
+            assert "user token" in result["error"].lower()
+
+
+def test_search_messages_uses_user_client():
+    """search_messages uses the user client, not the bot client."""
+    with patch.dict("os.environ", {"SLACK_BOT_TOKEN": "xoxb-bot"}):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            mock_user_client = Mock()
+            mock_bot_client = Mock()
+            mock_client.side_effect = [mock_bot_client, mock_user_client]
+            mock_user_client.search_messages.return_value = {
+                "messages": {"matches": [{"text": "found", "user": "U1", "channel": {}, "ts": "1"}]}
+            }
+            tools = SlackTools(user_token="xoxp-user", enable_search_messages=True)
+            result = tools.search_messages("query")
+            mock_user_client.search_messages.assert_called_once_with(query="query", count=20)
+            mock_bot_client.search_messages.assert_not_called()
+            assert json.loads(result)["count"] == 1
+
+
 def test_search_messages(slack_tools):
-    slack_tools.client.search_messages.return_value = {
+    # Legacy test - uses fixture with mocked client
+    slack_tools._user_client = slack_tools.client
+    slack_tools._user_client.search_messages.return_value = {
         "messages": {"matches": [{"text": "found", "user": "U1", "channel": {}, "ts": "1"}]}
     }
     result = slack_tools.search_messages("query")

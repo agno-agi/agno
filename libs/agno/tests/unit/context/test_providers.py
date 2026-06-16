@@ -452,19 +452,47 @@ def test_slack_read_surfaces_are_split_by_mode():
     assert "get_thread" in assisted_tools.functions
 
 
-def test_slack_bot_token_excludes_legacy_search_messages():
-    """Slack's legacy search.messages API is user-token-only and fails a bot
-    token with not_allowed_token_type, so a bot token (xoxb-) must not register
-    search_messages on either read surface."""
+def test_slack_bot_token_without_user_token_excludes_search_messages():
+    """Without a user token, search_messages is not registered since bot tokens
+    cannot use Slack's legacy search.messages API."""
     p = SlackContextProvider(token="xoxb-x")
 
     assert "search_messages" not in p._ensure_bot_read_tools().functions
     assert "search_messages" not in p._ensure_assisted_read_tools().functions
 
 
-def test_slack_user_token_keeps_legacy_search_messages():
-    """A user token (xoxp-) preserves search_messages on both read surfaces;
-    search_workspace stays assisted-read-only regardless of token type."""
+def test_slack_user_token_env_enables_search_messages():
+    """When SLACK_USER_TOKEN is set, search_messages is registered even with
+    a bot token as the primary token."""
+    import os
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"SLACK_USER_TOKEN": "xoxp-user"}):
+        p = SlackContextProvider(token="xoxb-x")
+
+        bot_tools = p._ensure_bot_read_tools()
+        assisted_tools = p._ensure_assisted_read_tools()
+
+        assert "search_messages" in bot_tools.functions
+        assert "search_messages" in assisted_tools.functions
+        assert "search_workspace" not in bot_tools.functions
+        assert "search_workspace" in assisted_tools.functions
+
+
+def test_slack_user_token_param_enables_search_messages():
+    """When user_token is passed directly, search_messages is registered."""
+    p = SlackContextProvider(token="xoxb-x", user_token="xoxp-user")
+
+    bot_tools = p._ensure_bot_read_tools()
+    assisted_tools = p._ensure_assisted_read_tools()
+
+    assert "search_messages" in bot_tools.functions
+    assert "search_messages" in assisted_tools.functions
+
+
+def test_slack_primary_user_token_enables_search_messages():
+    """When the primary token is a user token (xoxp-), search_messages is
+    registered for backward compatibility."""
     p = SlackContextProvider(token="xoxp-x")
 
     bot_tools = p._ensure_bot_read_tools()
