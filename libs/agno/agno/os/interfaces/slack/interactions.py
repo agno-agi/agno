@@ -250,8 +250,8 @@ def parse_submit_payload(
         kind = requirement.pause_type
         if kind == "confirmation":
             # approval_type="required" tools are resolved via os.agno.com, not Slack
-            te = requirement.tool_execution
-            if te and getattr(te, "approval_type", None) == "required":
+            tool_exec = requirement.tool_execution
+            if tool_exec and getattr(tool_exec, "approval_type", None) == "required":
                 continue
             decisions.append(_parse_confirmation(requirement, blocks, errors, state))
         elif kind == "user_input":

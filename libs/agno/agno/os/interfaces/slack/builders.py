@@ -192,9 +192,9 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
     body_text = truncate(body_text, 200)
 
     # approval_type="required" tools need admin approval via dashboard, not Slack buttons
-    te = requirement.tool_execution
-    if te and getattr(te, "approval_type", None) == "required":
-        approval_id = getattr(te, "approval_id", None) or ""
+    tool_exec = requirement.tool_execution
+    if tool_exec and getattr(tool_exec, "approval_type", None) == "required":
+        approval_id = getattr(tool_exec, "approval_id", None) or ""
         button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts)
         return Card(
             block_id=f"rowact:{req_id}:admin_approval",
