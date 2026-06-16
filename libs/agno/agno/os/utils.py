@@ -814,6 +814,7 @@ def get_agent_by_id(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
@@ -861,7 +862,7 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, user_id=user_id)
             return db_agent
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
@@ -878,6 +879,7 @@ async def get_agent_by_id_async(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Async variant of get_agent_by_id that supports async factories."""
     if agent_id is None:
@@ -907,7 +909,7 @@ async def get_agent_by_id_async(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, user_id=user_id)
             return db_agent
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
@@ -924,6 +926,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -963,7 +966,7 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, user_id=user_id)
             return db_team
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
@@ -980,6 +983,7 @@ async def get_team_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Async variant of get_team_by_id that supports async factories."""
     if team_id is None:
@@ -1003,7 +1007,7 @@ async def get_team_by_id_async(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, user_id=user_id)
             return db_team
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
@@ -1020,6 +1024,7 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
@@ -1064,7 +1069,9 @@ def get_workflow_by_id(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            db_workflow = get_workflow_by_id_db(
+                db=db, id=workflow_id, version=version, registry=registry, user_id=user_id
+            )
             return db_workflow
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
@@ -1081,6 +1088,7 @@ async def get_workflow_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Async variant of get_workflow_by_id that supports async factories."""
     if workflow_id is None:
@@ -1106,7 +1114,9 @@ async def get_workflow_by_id_async(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            db_workflow = get_workflow_by_id_db(
+                db=db, id=workflow_id, version=version, registry=registry, user_id=user_id
+            )
             return db_workflow
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
@@ -1898,6 +1908,13 @@ async def resolve_agent(
 
     Raises HTTPException on all error paths.
     """
+    # Owner scope for DB-backed components: a non-admin caller may only resolve
+    # agents they own. None (admin / isolation off / no request) means unscoped.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
     is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
     if is_factory:
         if request is None:
@@ -1905,7 +1922,7 @@ async def resolve_agent(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             agent = await get_agent_by_id_async(
-                agent_id, agents, db, registry, version=version, create_fresh=True, ctx=ctx
+                agent_id, agents, db, registry, version=version, create_fresh=True, ctx=ctx, user_id=scoped_user_id
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -1919,7 +1936,9 @@ async def resolve_agent(
             raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
     else:
         try:
-            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True)
+            agent = get_agent_by_id(
+                agent_id, agents, db, registry, version=version, create_fresh=True, user_id=scoped_user_id
+            )
         except Exception as e:
             logger.error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1941,6 +1960,12 @@ async def resolve_team(
     factory_input: Optional[str] = None,
 ) -> Union[Team, RemoteTeam]:
     """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
+    # Owner scope for DB-backed components; see resolve_agent.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
         if request is None:
@@ -1948,7 +1973,14 @@ async def resolve_team(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             team = await get_team_by_id_async(
-                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+                team_id,
+                teams,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                ctx=ctx,
+                user_id=scoped_user_id,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -1962,7 +1994,9 @@ async def resolve_team(
             raise HTTPException(status_code=500, detail=f"Error in team factory: {e}")
     else:
         try:
-            team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
+            team = get_team_by_id(
+                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, user_id=scoped_user_id
+            )
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1984,6 +2018,12 @@ async def resolve_workflow(
     factory_input: Optional[str] = None,
 ) -> Union[Workflow, RemoteWorkflow]:
     """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
+    # Owner scope for DB-backed components; see resolve_agent.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
@@ -1991,7 +2031,14 @@ async def resolve_workflow(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             workflow = await get_workflow_by_id_async(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+                workflow_id,
+                workflows,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                ctx=ctx,
+                user_id=scoped_user_id,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2006,7 +2053,13 @@ async def resolve_workflow(
     else:
         try:
             workflow = get_workflow_by_id(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True
+                workflow_id,
+                workflows,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                user_id=scoped_user_id,
             )
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")

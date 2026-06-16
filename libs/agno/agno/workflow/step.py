@@ -347,8 +347,11 @@ class Step:
             # Fall back to database
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
+                from agno.utils.component_scope import get_component_owner_scope
 
-                agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
+                # Scope DB resolution to the workflow owner (if any) so a step
+                # cannot rehydrate another user's private agent component.
+                agent = get_agent_by_id(db=db, id=agent_id, registry=registry, user_id=get_component_owner_scope())
 
             if agent is None and agent_id:
                 log_warning(
@@ -376,8 +379,11 @@ class Step:
             # Fall back to database
             if team is None and db is not None and team_id is not None:
                 from agno.team.team import get_team_by_id
+                from agno.utils.component_scope import get_component_owner_scope
 
-                team = get_team_by_id(db=db, id=team_id, registry=registry)
+                # Scope DB resolution to the workflow owner (if any) so a step
+                # cannot rehydrate another user's private team component.
+                team = get_team_by_id(db=db, id=team_id, registry=registry, user_id=get_component_owner_scope())
 
             if team is None and team_id:
                 log_warning(

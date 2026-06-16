@@ -759,6 +759,11 @@ def from_dict(
     members: Optional[List[Union[Agent, "Team"]]] = None
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
+    from agno.utils.component_scope import get_component_owner_scope
+
+    # Resolve DB-backed members as the component owner (if scoped), so a stored
+    # reference to another user's private component is not rehydrated here.
+    owner_user_id = get_component_owner_scope()
 
     if "members" in config and config["members"]:
         members = []
@@ -769,7 +774,7 @@ def from_dict(
                 if db is None:
                     log_warning(f"Cannot load member agent {member_data['agent_id']}: db is None")
                     continue
-                agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry)
+                agent = get_agent_by_id(id=member_data["agent_id"], db=db, registry=registry, user_id=owner_user_id)
                 if agent:
                     members.append(agent)
                 else:
@@ -779,7 +784,7 @@ def from_dict(
                 if db is None:
                     log_warning(f"Cannot load member team {member_data['team_id']}: db is None")
                     continue
-                nested_team = get_team_by_id(id=member_data["team_id"], db=db, registry=registry)
+                nested_team = get_team_by_id(id=member_data["team_id"], db=db, registry=registry, user_id=owner_user_id)
                 if nested_team:
                     members.append(nested_team)
                 else:

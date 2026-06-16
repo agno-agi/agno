@@ -827,7 +827,12 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
             )  # type: ignore[assignment]
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -948,7 +953,12 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1177,7 +1187,12 @@ def get_agent_router(
 
             # Exclude agents whose IDs are owned by the registry
             exclude_ids = registry.get_agent_ids() if registry else None
-            db_agents = get_agents(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
+            db_agents = get_agents(
+                db=os.db,
+                registry=registry,
+                exclude_component_ids=exclude_ids or None,
+                user_id=get_scoped_user_id(request),
+            )
             if db_agents:
                 # Apply the same RBAC filtering to DB-loaded agents
                 if getattr(request.state, "authorization_enabled", False):
@@ -1235,7 +1250,12 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
             )  # type: ignore[assignment]
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1289,7 +1309,12 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1391,7 +1416,14 @@ def get_agent_router(
                 detail="Stream resumption is not supported for factory agents",
             )
 
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        agent = get_agent_by_id(
+            agent_id=agent_id,
+            agents=os.agents,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            user_id=get_scoped_user_id(request),
+        )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
@@ -1448,7 +1480,12 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")

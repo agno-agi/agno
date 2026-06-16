@@ -67,7 +67,11 @@ if TYPE_CHECKING:
 
 
 async def handle_workflow_via_websocket(
-    websocket: WebSocket, message: dict, os: "AgentOS", ws_user_context: Optional[Dict[str, Any]] = None
+    websocket: WebSocket,
+    message: dict,
+    os: "AgentOS",
+    ws_user_context: Optional[Dict[str, Any]] = None,
+    ws_auth: Optional["WebSocketAuthContext"] = None,
 ):
     """Handle workflow execution directly via WebSocket"""
     try:
@@ -93,6 +97,14 @@ async def handle_workflow_via_websocket(
                     user_id = user_id or jwt_user_id
                 else:
                     user_id = jwt_user_id
+
+        # Owner scope for DB-backed workflow components: a non-admin caller may
+        # only resolve workflows they own, and only when isolation is enabled.
+        scoped_user_id = (
+            user_id
+            if (ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id)
+            else None
+        )
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -135,7 +147,12 @@ async def handle_workflow_via_websocket(
         else:
             try:
                 workflow = get_workflow_by_id(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=scoped_user_id,
                 )
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
@@ -237,6 +254,8 @@ async def handle_workflow_subscription(
         jwt_enabled = ctx.jwt_enabled
         is_admin = ctx.is_admin
         user_isolation_enabled = ctx.user_isolation_enabled
+        # Owner scope for DB-backed workflow components on reconnect.
+        scoped_user_id = user_id if (jwt_enabled and user_isolation_enabled and not is_admin and user_id) else None
 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
@@ -302,6 +321,7 @@ async def handle_workflow_subscription(
                         db=os.db,
                         registry=os.registry,
                         create_fresh=True,
+                        user_id=scoped_user_id,
                     )
                 except FactoryContextRequired:
                     workflow = None
@@ -456,6 +476,12 @@ async def handle_workflow_continue_via_websocket(
         session_id = message.get("session_id")
         user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
+        # Owner scope for DB-backed workflow components on continue.
+        scoped_user_id = (
+            user_id
+            if (ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id)
+            else None
+        )
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -490,7 +516,12 @@ async def handle_workflow_continue_via_websocket(
                 return
 
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            user_id=scoped_user_id,
         )
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
@@ -1049,7 +1080,7 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            for db_workflow in get_workflows(db=os.db, registry=os.registry):
+            for db_workflow in get_workflows(db=os.db, registry=os.registry, user_id=get_scoped_user_id(request)):
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
                 except Exception:
@@ -1103,6 +1134,7 @@ def get_workflow_router(
                 registry=os.registry,
                 create_fresh=True,
                 version=version,
+                user_id=get_scoped_user_id(request),
             )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
@@ -1509,7 +1541,12 @@ def get_workflow_router(
 
         try:
             workflow = get_workflow_by_id(
-                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                workflow_id=workflow_id,
+                workflows=os.workflows,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
             )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
@@ -1596,7 +1633,12 @@ def get_workflow_router(
             )
 
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            user_id=scoped_user_id,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -1665,7 +1707,12 @@ def get_workflow_router(
         else:
             try:
                 workflow = get_workflow_by_id(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
