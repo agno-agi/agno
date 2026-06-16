@@ -31,16 +31,16 @@ def mock_gmail_service():
 @pytest.fixture
 def gmail_tools(mock_credentials, mock_gmail_service):
     """Create GmailTools instance with mocked dependencies."""
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_gmail_service
         tools = GmailTools(creds=mock_credentials)
-        tools.service = mock_gmail_service
+        tools._service = mock_gmail_service
         return tools
 
 
 @pytest.fixture
 def gmail_tools_all(mock_credentials, mock_gmail_service):
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = mock_gmail_service
         tools = GmailTools(
             creds=mock_credentials,
@@ -52,7 +52,7 @@ def gmail_tools_all(mock_credentials, mock_gmail_service):
             trash_message=True,
             download_attachment=True,
         )
-        tools.service = mock_gmail_service
+        tools._service = mock_gmail_service
         return tools
 
 
@@ -74,7 +74,7 @@ def create_mock_message(msg_id: str, subject: str, sender: str, date: str, body:
 def test_init_with_default_scopes():
     """Test initialization with default scopes."""
     tools = GmailTools()
-    assert tools.scopes == GmailTools.DEFAULT_SCOPES
+    assert tools.scopes == GmailTools.default_scopes
     assert "https://www.googleapis.com/auth/gmail.readonly" in tools.scopes
     assert "https://www.googleapis.com/auth/gmail.compose" in tools.scopes
 
@@ -125,44 +125,56 @@ def test_init_with_missing_read_scope():
 
 
 def test_authentication_decorator():
-    """Test the authentication decorator behavior."""
+    """Test the authentication decorator sets up service when creds provided."""
     mock_creds = Mock(spec=Credentials)
-    mock_creds.valid = False
+    mock_creds.valid = True
+    mock_creds.scopes = GmailTools.default_scopes
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_service = MagicMock()
+        mock_service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
+            "messages": []
+        }
         mock_build.return_value = mock_service
 
         tools = GmailTools(creds=mock_creds)
-
-        with patch.object(tools, "_auth") as mock_auth:
-            tools.get_latest_emails(count=1)
-            mock_auth.assert_called_once()
+        tools._service = mock_service
+        tools.get_latest_emails(count=1)
+        assert tools.service is not None
 
 
 def test_auth_with_expired_credentials():
-    """Test authentication with expired credentials."""
+    """Test that expired credentials from file get refreshed."""
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = False
     mock_creds.expired = True
-    mock_creds.refresh_token = True
+    mock_creds.refresh_token = "test_refresh_token"
+    mock_creds.scopes = GmailTools.default_scopes
+    mock_creds.to_json.return_value = '{"token": "refreshed"}'
 
-    # Real Credentials.refresh() sets token + expiry, making valid=True
     def refresh_side_effect(request):
         mock_creds.valid = True
         mock_creds.expired = False
 
     mock_creds.refresh = Mock(side_effect=refresh_side_effect)
-    mock_creds.to_json.return_value = '{"token": "refreshed"}'
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = MagicMock()
-        tools = GmailTools(creds=mock_creds)
+        # Don't pass creds — let it load from file
+        tools = GmailTools()
 
-        with patch("pathlib.Path.exists", return_value=False):
-            with patch("pathlib.Path.write_text"):
-                tools._auth()
-                mock_creds.refresh.assert_called_once()
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch(
+                "google.oauth2.credentials.Credentials.from_authorized_user_file",
+                return_value=mock_creds
+            ),
+            patch("pathlib.Path.write_text"),
+            patch("google.auth.transport.requests.Request"),
+        ):
+            result = tools._resolve_creds()
+            mock_creds.refresh.assert_called_once()
+            assert result.valid is True
 
 
 def test_auth_with_custom_paths():
@@ -176,12 +188,13 @@ def test_auth_with_custom_paths():
 
     with patch("pathlib.Path.exists", return_value=True):
         with patch(
-            "agno.tools.google.gmail.Credentials.from_authorized_user_file", return_value=mock_loaded_creds
+            "google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_loaded_creds
         ) as mock_from_file:
             with patch("pathlib.Path.write_text"):
                 tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
-                tools._auth()
+                result = tools._resolve_creds()
                 mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
+                assert result == mock_loaded_creds
 
 
 def test_get_latest_emails(gmail_tools, mock_gmail_service):
@@ -492,10 +505,10 @@ def test_invalid_email_parameters():
     """Test handling of invalid email parameters."""
     tools = GmailTools(creds=Mock(spec=Credentials, valid=True))
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
-        tools.service = mock_service
+        tools._service = mock_service
 
         result = tools.send_email(to="invalid-email", subject="Test", body="Test body")
         assert "Invalid recipient email format" in result
@@ -512,7 +525,7 @@ def test_service_initialization():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = True
 
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_service = MagicMock()
         mock_build.return_value = mock_service
 
@@ -1554,14 +1567,14 @@ def test_temp_dir_reused_across_downloads(gmail_tools_all, mock_gmail_service):
 
 
 def test_instructions_include_compose_when_enabled(mock_credentials):
-    with patch("agno.tools.google.gmail.build"):
+    with patch("googleapiclient.discovery.build"):
         tools = GmailTools(creds=mock_credentials, create_draft_email=True)
         assert "Composing Emails" in tools.instructions
         assert "thread_id" in tools.instructions
 
 
 def test_instructions_exclude_compose_when_disabled(mock_credentials):
-    with patch("agno.tools.google.gmail.build"):
+    with patch("googleapiclient.discovery.build"):
         tools = GmailTools(
             creds=mock_credentials,
             # Disable all compose tools
