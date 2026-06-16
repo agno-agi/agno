@@ -94,12 +94,23 @@ def test_init_with_custom_params():
         language="fr",
         num_results=15,
         date_range="qdr:w",
+        timeout=7,
     )
     assert tools.api_key == "test_key"
     assert tools.location == "uk"
     assert tools.language == "fr"
     assert tools.num_results == 15
     assert tools.date_range == "qdr:w"
+    assert tools.timeout == 7
+
+
+def test_make_request_uses_configured_timeout(mock_search_response):
+    """Requests should use the configured timeout."""
+    tools = SerperTools(api_key="test_key", timeout=5)
+    with patch("requests.request", return_value=mock_search_response) as mock_req:
+        result = tools.search_web("pytest testing")
+        assert result == mock_search_response.text
+        assert mock_req.call_args.kwargs["timeout"] == 5
 
 
 # Search Tests
@@ -131,6 +142,7 @@ def test_search_success(api_tools, mock_search_response):
             "https://google.serper.dev/search",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps({"q": "pytest testing", "num": 5, "tbs": "qdr:d", "gl": "us", "hl": "en"}),
+            timeout=30,
         )
 
 
@@ -152,6 +164,7 @@ def test_search_with_custom_num_results(api_tools, mock_search_response):
             "https://google.serper.dev/search",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(expected_payload),
+            timeout=30,
         )
 
 
@@ -200,6 +213,7 @@ def test_search_news_success(api_tools, mock_news_response):
             "https://google.serper.dev/news",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(expected_payload),
+            timeout=30,
         )
 
 
@@ -213,6 +227,7 @@ def test_search_news_with_custom_num_results(api_tools, mock_news_response):
         mock_req.assert_called_once()
         call_args = mock_req.call_args
         assert json.loads(call_args[1]["data"]) == expected_payload
+        assert call_args.kwargs["timeout"] == 30
 
 
 def test_search_news_exception(api_tools):
@@ -260,6 +275,7 @@ def test_search_scholar_success(api_tools, mock_scholar_response):
             "https://google.serper.dev/scholar",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(expected_payload),
+            timeout=30,
         )
 
 
@@ -308,6 +324,7 @@ def test_scrape_webpage_success(api_tools, mock_scrape_response):
             "https://scrape.serper.dev",
             headers={"X-API-KEY": "test_key", "Content-Type": "application/json"},
             data=json.dumps(expected_payload),
+            timeout=30,
         )
 
 
@@ -326,6 +343,7 @@ def test_scrape_webpage_with_markdown(api_tools, mock_scrape_response):
         }
         call_args = mock_req.call_args
         assert json.loads(call_args[1]["data"]) == expected_payload
+        assert call_args.kwargs["timeout"] == 30
 
 
 def test_scrape_webpage_exception(api_tools):
@@ -345,6 +363,7 @@ def test_tools_without_optional_params():
     assert tools.language == "en"
     assert tools.num_results == 10
     assert tools.date_range is None
+    assert tools.timeout == 30
 
 
 def test_http_error_handling(api_tools):
