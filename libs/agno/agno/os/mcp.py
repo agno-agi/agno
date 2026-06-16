@@ -235,7 +235,9 @@ def build_mcp_server(
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
         user_id = _resolve_user_id(user_id)
-        return await agent.arun(message, user_id=user_id, session_id=session_id)  # type: ignore[misc]
+        # Force non-streaming: MCP returns a single final output, but the component default may be
+        # stream=True, in which case arun() returns an AsyncIterator and awaiting it raises (see #8062).
+        return await agent.arun(message, user_id=user_id, session_id=session_id, stream=False)  # type: ignore[misc]
 
     @register_builtin_tool(name="run_team", description="Run a team with a message", tags={"core"})  # type: ignore
     async def run_team(
@@ -248,7 +250,7 @@ def build_mcp_server(
         if team is None:
             raise Exception(f"Team {team_id} not found")
         user_id = _resolve_user_id(user_id)
-        return await team.arun(message, user_id=user_id, session_id=session_id)  # type: ignore[misc]
+        return await team.arun(message, user_id=user_id, session_id=session_id, stream=False)  # type: ignore[misc]
 
     @register_builtin_tool(name="run_workflow", description="Run a workflow with a message", tags={"core"})  # type: ignore
     async def run_workflow(
@@ -261,7 +263,7 @@ def build_mcp_server(
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
         user_id = _resolve_user_id(user_id)
-        return await workflow.arun(message, user_id=user_id, session_id=session_id)
+        return await workflow.arun(message, user_id=user_id, session_id=session_id, stream=False)
 
     # ==================== Session Management Tools ====================
 
