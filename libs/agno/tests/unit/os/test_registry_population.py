@@ -431,17 +431,36 @@ class TestPopulateRegistryComponentsSafety:
 
 
 class TestPopulateRegistryComponentsToolDedup:
-    """Tools dedupe by object identity, never by name."""
+    """Toolkits dedupe structurally (type, name, function set); callables by equality."""
 
-    def test_distinct_tools_sharing_a_name_are_both_kept(self):
-        # Two toolkit instances with the same name are distinct objects; keying
-        # by name would silently drop one (and break rehydration of its agent).
+    def test_structurally_identical_toolkits_collapse(self):
+        # Two instances of the same toolkit (same type, name, empty function set)
+        # are interchangeable; auto-population collapses them to one.
         class _NamedToolkit(Toolkit):
             def __init__(self):
                 super().__init__(name="shared_name", tools=[])
 
         toolkit_alpha = _NamedToolkit()
         toolkit_beta = _NamedToolkit()
+        a = Agent(name="A1", id="a1", tools=[toolkit_alpha], telemetry=False)
+        b = Agent(name="A2", id="a2", tools=[toolkit_beta], telemetry=False)
+
+        os = AgentOS(agents=[a, b], telemetry=False)
+
+        toolkits = [t for t in os.registry.tools if isinstance(t, _NamedToolkit)]
+        assert len(toolkits) == 1
+
+    def test_toolkits_sharing_name_with_different_functions_both_kept(self):
+        # Same name but different function sets are genuinely different tools and
+        # must both survive, otherwise rehydration of one agent breaks.
+        def alpha():
+            pass
+
+        def beta():
+            pass
+
+        toolkit_alpha = Toolkit(name="shared_name", tools=[alpha])
+        toolkit_beta = Toolkit(name="shared_name", tools=[beta])
         a = Agent(name="A1", id="a1", tools=[toolkit_alpha], telemetry=False)
         b = Agent(name="A2", id="a2", tools=[toolkit_beta], telemetry=False)
 

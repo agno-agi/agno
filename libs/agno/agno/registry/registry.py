@@ -92,19 +92,59 @@ class Registry:
         self.models.append(model)
 
     def add_tool(self, tool: Any) -> None:
-        """Add a tool unless the exact same object is already present.
+        """Add a tool unless an equivalent one is already present.
 
-        Tools dedupe by object identity, never by name: two distinct tools that
-        share a name (two toolkit instances with the same name, or multiple
-        ``<lambda>``/``functools.partial`` callables) must both be kept, otherwise
-        one is silently dropped and rehydration of the agent that uses it breaks.
+        Deduplication depends on the kind of tool, because they duplicate for
+        different reasons:
+
+        - ``Toolkit`` instances are re-created at call sites (``DuckDuckGoTools()``
+          written in two places yields two distinct objects), so they dedupe
+          structurally by ``(type, name, function names)``. The same object is
+          skipped silently; a *different* instance with a matching key is skipped
+          with a warning, since the registry is populated with user-declared tools
+          first and those should win. Two toolkits that differ only in
+          non-functional config (api keys, timeouts) collapse to one, and the kept
+          instance is the one used at rehydration -- hence the warning.
+        - ``Function`` and plain callables are defined once, so referencing them in
+          two places yields the *same* object; they dedupe by equality. ``==``
+          falls back to identity for functions, lambdas and ``functools.partial``
+          (so genuinely distinct callables are never merged on a shared name) while
+          additionally catching bound methods, which build a fresh object on every
+          attribute access but compare equal by ``(__self__, __func__)``.
+
         Adding a tool invalidates the ``_entrypoint_lookup`` cache so that
         ``rehydrate_function`` rebuilds it and sees the new tool.
         """
         if not (isinstance(tool, (Toolkit, Function)) or callable(tool)):
             return
-        if any(existing is tool for existing in self.tools):
-            return
+
+        if isinstance(tool, Toolkit):
+            key = (type(tool), tool.name, frozenset(tool.functions))
+            for existing in self.tools:
+                if existing is tool:
+                    return
+                if (
+                    isinstance(existing, Toolkit)
+                    and (type(existing), existing.name, frozenset(existing.functions)) == key
+                ):
+                    log_warning(
+                        f"Registry: a '{tool.name}' toolkit matching one already registered was found; "
+                        "keeping the existing instance. If they differ in configuration, share a single "
+                        "instance across your registry and primitives to avoid divergent rehydration."
+                    )
+                    return
+        else:
+            for existing in self.tools:
+                if existing is tool:
+                    return
+                try:
+                    if existing == tool:
+                        return
+                except Exception:
+                    # A callable with a pathological __eq__ should not block the add;
+                    # fall back to keeping both, which is the safe direction.
+                    continue
+
         self.tools.append(tool)
         self.__dict__.pop("_entrypoint_lookup", None)
 

@@ -1034,13 +1034,79 @@ class TestAddTool:
         reg.add_tool(tk)
         assert reg.tools.count(tk) == 1
 
-    def test_keeps_distinct_tools_sharing_a_name(self):
+    def test_dedupes_toolkit_with_matching_structural_key(self):
+        # Two distinct instances of the same toolkit (same type, name, function
+        # set) collapse to one; the first (user-declared) instance wins.
         reg = Registry()
         tk1 = Toolkit(name="same", tools=[])
         tk2 = Toolkit(name="same", tools=[])
         reg.add_tool(tk1)
         reg.add_tool(tk2)
+        assert reg.tools == [tk1]
+
+    def test_warns_when_dropping_matching_toolkit(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        reg = Registry()
+        reg.add_tool(Toolkit(name="same", tools=[]))
+        reg.add_tool(Toolkit(name="same", tools=[]))
+        assert warnings and "same" in warnings[0]
+
+    def test_keeps_toolkits_with_different_function_sets(self):
+        # Same type and name but different functions are genuinely different
+        # tools (e.g. configured via include_tools/exclude_tools) and are kept.
+        def alpha():
+            pass
+
+        def beta():
+            pass
+
+        reg = Registry()
+        tk1 = Toolkit(name="same", tools=[alpha])
+        tk2 = Toolkit(name="same", tools=[beta])
+        reg.add_tool(tk1)
+        reg.add_tool(tk2)
         assert tk1 in reg.tools and tk2 in reg.tools
+
+    def test_keeps_distinct_toolkit_subclasses_sharing_a_name(self):
+        class ToolkitA(Toolkit):
+            pass
+
+        class ToolkitB(Toolkit):
+            pass
+
+        reg = Registry()
+        tk1 = ToolkitA(name="same", tools=[])
+        tk2 = ToolkitB(name="same", tools=[])
+        reg.add_tool(tk1)
+        reg.add_tool(tk2)
+        assert tk1 in reg.tools and tk2 in reg.tools
+
+    def test_dedupes_bound_method_by_equality(self):
+        # A bound method builds a fresh object on each access, so identity dedup
+        # misses it; equality dedup (same __self__/__func__) catches it.
+        class Helper:
+            def lookup(self):
+                pass
+
+        helper = Helper()
+        reg = Registry()
+        reg.add_tool(helper.lookup)
+        reg.add_tool(helper.lookup)
+        assert len(reg.tools) == 1
+
+    def test_keeps_distinct_lambdas_sharing_a_name(self):
+        # Lambdas have no value equality, so == falls back to identity and both
+        # are kept despite sharing the name "<lambda>".
+        reg = Registry()
+        a = lambda: 1  # noqa: E731
+        b = lambda: 2  # noqa: E731
+        reg.add_tool(a)
+        reg.add_tool(b)
+        assert a in reg.tools and b in reg.tools
 
     def test_invalidates_entrypoint_lookup_cache(self):
         reg = Registry()
