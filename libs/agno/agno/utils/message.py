@@ -7,6 +7,46 @@ from agno.models.message import Message
 from agno.utils.log import log_debug
 
 
+def safe_truncation_index(messages: Sequence[Message], requested_index: int) -> int:
+    """Snap a requested truncation boundary DOWN to the nearest pair-safe index.
+
+    A transcript records tool use as a batch: an ``assistant`` message that owns
+    ``tool_calls=[{id: ...}, ...]`` followed by one ``tool``-role message per
+    call, each carrying the matching ``tool_call_id``. Cutting ``messages[:k]``
+    in the middle of such a batch leaves an assistant tool_call with no result,
+    which most providers (OpenAI, Anthropic) reject with a 400.
+
+    Returns the largest index ``b <= requested_index`` such that every assistant
+    tool_call kept in ``messages[:b]`` has its result message also in
+    ``messages[:b]``. When the requested boundary would split a batch, ``b`` is
+    the index of the first offending assistant message, dropping that whole
+    incomplete exchange. Boundaries produced by ``regenerate`` / ``last_user`` /
+    ``end`` never land mid-batch, so this is a no-op for them.
+    """
+    if requested_index <= 0 or requested_index >= len(messages):
+        return requested_index
+
+    # Map each tool_call_id to the index of the tool-role message that answers it.
+    result_at: Dict[str, int] = {}
+    for idx, message in enumerate(messages):
+        tool_call_id = getattr(message, "tool_call_id", None)
+        if tool_call_id:
+            result_at[tool_call_id] = idx
+
+    # Find the earliest assistant within messages[:requested_index] whose
+    # tool_calls are not all answered within messages[:requested_index].
+    for idx in range(requested_index):
+        for tool_call in getattr(messages[idx], "tool_calls", None) or []:
+            call_id = tool_call.get("id") if isinstance(tool_call, dict) else getattr(tool_call, "id", None)
+            if not call_id:
+                continue
+            result_index = result_at.get(call_id)
+            if result_index is None or result_index >= requested_index:
+                # Drop this incomplete exchange (and everything after it).
+                return idx
+    return requested_index
+
+
 def normalize_tool_messages(messages: List[Message]) -> List[Message]:
     """
     Split combined tool result messages into individual canonical messages.

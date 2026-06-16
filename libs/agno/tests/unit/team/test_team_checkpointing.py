@@ -158,6 +158,28 @@ class TestTeamTruncate:
         assert r.messages[-1].checkpoint_status == RunStatus.running.value
         assert r.messages[-1].checkpoint_created_at is not None
 
+    def test_truncate_snaps_down_to_avoid_orphaned_tool_call(self):
+        """Cutting between an assistant tool_call and its result snaps down so the
+        team transcript never ships an orphaned call (provider 400)."""
+        r = TeamRunOutput(
+            run_id="r1",
+            messages=[
+                Message(role="user", content="q"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="result", tool_call_id="tc1"),
+                Message(role="assistant", content="final"),
+            ],
+        )
+        # Index 2 lands after the assistant tool_call but before its result.
+        team_run._truncate_team_run_to_checkpoint(r, message_index=2)
+        assert [m.role for m in r.messages] == ["user"]
+        assert r.last_checkpoint_at_message_index == 1
+        # No surviving assistant tool_call lacks a matching result.
+        result_ids = {m.tool_call_id for m in r.messages if getattr(m, "tool_call_id", None)}
+        for m in r.messages:
+            for tc in getattr(m, "tool_calls", None) or []:
+                assert tc["id"] in result_ids
+
 
 # ---------------------------------------------------------------------------
 # Fork helper — DEEP COPY of member runs is the key team-specific concern

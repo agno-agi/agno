@@ -85,13 +85,18 @@ def build_run_checkpoint_snapshot(run_output: Any, message_index: int) -> Dict[s
     The returned payload is derived from a deep copy of the persisted run and
     never mutates the stored run object.
     """
+    from agno.utils.message import safe_truncation_index
+
     messages = run_output.messages or []
     if message_index < 0 or message_index > len(messages):
         raise ValueError(f"message_index must be between 0 and {len(messages)}")
 
+    # Snap down so the snapshot never ends with an orphaned tool_call.
+    safe_index = safe_truncation_index(messages, message_index)
+
     snapshot = copy.deepcopy(run_output)
-    snapshot.messages = list(snapshot.messages or [])[:message_index]
-    snapshot.last_checkpoint_at_message_index = message_index
+    snapshot.messages = list(snapshot.messages or [])[:safe_index]
+    snapshot.last_checkpoint_at_message_index = safe_index
 
     valid_tool_call_ids = _referenced_tool_call_ids(snapshot.messages)
     if getattr(snapshot, "tools", None):

@@ -5974,6 +5974,18 @@ def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", message_inde
     if message_index >= len(run_response.messages):
         return
 
+    # Snap the boundary down so we never cut between an assistant tool_call and
+    # its result (an orphaned call is rejected by most providers).
+    from agno.utils.message import safe_truncation_index
+
+    safe_index = safe_truncation_index(run_response.messages, message_index)
+    if safe_index != message_index:
+        log_warning(
+            f"Truncation index {message_index} would orphan a tool call; "
+            f"snapped to {safe_index} to keep the transcript valid."
+        )
+    message_index = safe_index
+
     run_response.messages = run_response.messages[:message_index]
 
     valid_tool_call_ids: set = set()
@@ -6020,6 +6032,12 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     """
     import copy
     from time import time as _time
+
+    from agno.utils.message import safe_truncation_index
+
+    # Snap to a pair-safe boundary so fork metadata matches the truncation that
+    # _truncate_team_run_to_checkpoint will actually perform.
+    message_index = safe_truncation_index(run_response.messages or [], message_index)
 
     forked = copy.deepcopy(run_response)
     forked.run_id = str(uuid4())

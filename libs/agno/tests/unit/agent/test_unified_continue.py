@@ -21,6 +21,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.agent import _init, _response, _run, _storage, _tools
 from agno.agent._run import _fork_run, _truncate_run_to_checkpoint
+from agno.utils.message import safe_truncation_index
 from agno.agent.agent import Agent
 from agno.models.message import Message
 from agno.models.response import ToolExecution
@@ -753,6 +754,103 @@ class TestTruncateHelper:
         assert run.requirements == [], "Requirement dropped because its tool no longer survives"
 
 
+def _assert_no_orphaned_tool_calls(messages) -> None:
+    """Every tool_call owned by a surviving assistant must have its result
+    message also present — otherwise providers reject the transcript."""
+    result_ids = {m.tool_call_id for m in (messages or []) if getattr(m, "tool_call_id", None)}
+    for m in messages or []:
+        for tc in getattr(m, "tool_calls", None) or []:
+            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+            if tc_id:
+                assert tc_id in result_ids, f"orphaned tool_call {tc_id} (no matching result message)"
+
+
+class TestTruncatePairSafety:
+    """The boundary must never split an assistant tool_call from its result."""
+
+    def _build_single_call_run(self) -> RunOutput:
+        """4 messages: user, assistant(calls tc1), tool(tc1), assistant(final)."""
+        return RunOutput(
+            run_id="run-ps",
+            session_id="s",
+            tools=[ToolExecution(tool_call_id="tc1", tool_name="x", tool_args={}, result="r1")],
+            messages=[
+                Message(role="user", content="q"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="r1", tool_call_id="tc1"),
+                Message(role="assistant", content="final answer"),
+            ],
+        )
+
+    def _build_multi_call_run(self) -> RunOutput:
+        """5 messages: user, assistant(calls tc1+tc2), tool(tc1), tool(tc2), assistant(final)."""
+        return RunOutput(
+            run_id="run-mc",
+            session_id="s",
+            tools=[
+                ToolExecution(tool_call_id="tc1", tool_name="x", tool_args={}, result="r1"),
+                ToolExecution(tool_call_id="tc2", tool_name="y", tool_args={}, result="r2"),
+            ],
+            messages=[
+                Message(role="user", content="q"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}, {"id": "tc2"}]),
+                Message(role="tool", content="r1", tool_call_id="tc1"),
+                Message(role="tool", content="r2", tool_call_id="tc2"),
+                Message(role="assistant", content="final answer"),
+            ],
+        )
+
+    def test_cut_between_assistant_and_result_snaps_down(self):
+        """Index 2 lands after assistant(tool_calls) but before its result —
+        snaps down to 1, dropping the incomplete exchange."""
+        run = self._build_single_call_run()
+        _truncate_run_to_checkpoint(run, 2)
+        assert [m.role for m in (run.messages or [])] == ["user"]
+        assert run.last_checkpoint_at_message_index == 1
+        _assert_no_orphaned_tool_calls(run.messages)
+
+    def test_cut_inside_result_batch_snaps_down(self):
+        """Index 3 keeps tool(tc1) but drops tool(tc2), orphaning tc2 — snaps to 1."""
+        run = self._build_multi_call_run()
+        _truncate_run_to_checkpoint(run, 3)
+        assert [m.role for m in (run.messages or [])] == ["user"]
+        assert run.last_checkpoint_at_message_index == 1
+        _assert_no_orphaned_tool_calls(run.messages)
+
+    def test_complete_exchange_boundary_is_not_snapped(self):
+        """Index 4 keeps the full assistant+both-results batch — pair-safe, no snap."""
+        run = self._build_multi_call_run()
+        _truncate_run_to_checkpoint(run, 4)
+        assert len(run.messages or []) == 4
+        assert run.last_checkpoint_at_message_index == 4
+        _assert_no_orphaned_tool_calls(run.messages)
+
+    def test_fork_at_mid_batch_index_is_pair_safe(self):
+        """Forking at an orphaning index produces a valid transcript and records
+        the snapped boundary in fork metadata."""
+        run = self._build_single_call_run()
+        forked = _fork_run(run, 2)
+        assert [m.role for m in (forked.messages or [])] == ["user"]
+        assert forked.forked_from_message_index == 1
+        _assert_no_orphaned_tool_calls(forked.messages)
+        # Original untouched.
+        assert len(run.messages or []) == 4
+
+    def test_safe_index_helper_snaps_and_is_idempotent(self):
+        run = self._build_multi_call_run()
+        msgs = run.messages
+        # mid-batch -> first offending assistant
+        assert safe_truncation_index(msgs, 2) == 1
+        assert safe_truncation_index(msgs, 3) == 1
+        # complete-exchange and end boundaries are untouched
+        assert safe_truncation_index(msgs, 4) == 4
+        assert safe_truncation_index(msgs, 5) == 5
+        assert safe_truncation_index(msgs, 1) == 1
+        assert safe_truncation_index(msgs, 0) == 0
+        # idempotent: snapping an already-safe result is a fixed point
+        assert safe_truncation_index(msgs, safe_truncation_index(msgs, 3)) == 1
+
+
 class TestForkHelper:
     """Direct coverage of _fork_run."""
 
@@ -778,9 +876,9 @@ class TestForkHelper:
 
     def test_fork_sets_fork_metadata(self):
         original = self._build_run()
-        forked = _fork_run(original, 2)
+        forked = _fork_run(original, 3)
         assert forked.forked_from_run_id == "origin-run"
-        assert forked.forked_from_message_index == 2
+        assert forked.forked_from_message_index == 3
 
     def test_fork_preserves_session_id(self):
         original = self._build_run()
@@ -802,14 +900,14 @@ class TestForkHelper:
 
     def test_fork_truncates_to_index(self):
         original = self._build_run()
-        forked = _fork_run(original, 2)
+        # Index 3 keeps the complete tool exchange (assistant tool_call + result),
+        # a pair-safe boundary. tc1 is still referenced, so it survives.
+        forked = _fork_run(original, 3)
         assert forked.messages is not None
-        assert len(forked.messages) == 2
-        # tc1 is referenced by the assistant message at index 1, so it survives
-        # truncation to length 2. The tool RESULT at index 2 is gone but the
-        # tool_call is still in the assistant's tool_calls list.
+        assert len(forked.messages) == 3
         assert forked.tools is not None
         assert [t.tool_call_id for t in forked.tools] == ["tc1"]
+        _assert_no_orphaned_tool_calls(forked.messages)
 
     def test_fork_truncate_drops_unreferenced_tools(self):
         """Truncating to a point BEFORE any tool_calls drops the tool entirely."""
