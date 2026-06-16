@@ -343,7 +343,7 @@ project_notes_store = ProjectNotesStore(
 )
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     learning=LearningMachine(
         custom_stores={

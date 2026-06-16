@@ -142,3 +142,34 @@ class TestDefaultScopeMappings:
         # Delete
         assert mappings["DELETE /components/*"] == ["components:delete"]
         assert mappings["DELETE /components/*/configs/*"] == ["components:delete"]
+
+    def test_learnings_endpoints_have_scope_mappings(self):
+        mappings = get_default_scope_mappings()
+        assert mappings["GET /learnings"] == ["learnings:read"]
+        assert mappings["GET /learnings/*"] == ["learnings:read"]
+        assert mappings["POST /learnings"] == ["learnings:write"]
+        assert mappings["PATCH /learnings/*"] == ["learnings:write"]
+        assert mappings["DELETE /learnings/*"] == ["learnings:delete"]
+
+
+class TestLearningsRouteScopeResolution:
+    """The learnings routes must not be left unmapped -- an unmapped route requires no scopes
+    and would let any authenticated token bypass RBAC. Verify every route (including the nested
+    /learnings/users and /learnings/users/{user_id}) resolves to a learnings scope."""
+
+    def _required(self, method, path):
+        from agno.os.middleware.jwt import JWTMiddleware
+
+        mw = JWTMiddleware.__new__(JWTMiddleware)
+        mw.scope_mappings = get_default_scope_mappings()
+        return mw._get_required_scopes(method, path)
+
+    def test_all_learnings_routes_require_a_learnings_scope(self):
+        assert self._required("GET", "/learnings") == ["learnings:read"]
+        assert self._required("GET", "/learnings/users") == ["learnings:read"]
+        assert self._required("GET", "/learnings/lrn-1") == ["learnings:read"]
+        assert self._required("POST", "/learnings") == ["learnings:write"]
+        assert self._required("PATCH", "/learnings/lrn-1") == ["learnings:write"]
+        assert self._required("DELETE", "/learnings/lrn-1") == ["learnings:delete"]
+        # Nested bulk-delete-by-user must also be gated (not left unmapped).
+        assert self._required("DELETE", "/learnings/users/priti@agno.com") == ["learnings:delete"]
