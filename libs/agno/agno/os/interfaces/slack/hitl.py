@@ -287,7 +287,7 @@ class HITLHandler:
             return
 
         run_user_id = run_output.user_id
-        requirements = list(run_output.active_requirements or [])
+        requirements = list(getattr(run_output, "active_requirements", None) or [])
 
         for req in requirements:
             if req.tool_execution and req.tool_execution.approval_id == approval_id:
@@ -434,12 +434,13 @@ class HITLHandler:
             log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
             run_output = None
 
-        if not run_output or not run_output.active_requirements:
+        active_reqs = getattr(run_output, "active_requirements", None) if run_output else None
+        if not run_output or not active_reqs:
             await self.post_ephemeral(channel=ctx.channel, user=ctx.user_id, text="This approval is no longer active.")
             return
 
         run_user_id = run_output.user_id
-        requirements = list(run_output.active_requirements)
+        requirements = list(active_reqs)
 
         decisions = await self.validate_and_apply_decisions(ctx, payload, requirements)
         if decisions is None:
