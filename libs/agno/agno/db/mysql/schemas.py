@@ -19,8 +19,23 @@ SESSION_TABLE_SCHEMA = {
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
+RUN_TABLE_SCHEMA = {
+    "run_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "session_id": {"type": lambda: String(128), "nullable": False, "index": True},
+    "run_type": {"type": lambda: String(20), "nullable": False, "index": True},
+    "agent_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "team_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "workflow_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
+    "parent_run_id": {"type": lambda: String(128), "nullable": True},
+    "status": {"type": lambda: String(50), "nullable": True, "index": True},
+    "run_index": {"type": BigInteger, "nullable": True},
+    "run_data": {"type": JSON, "nullable": False},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
@@ -182,6 +197,7 @@ def get_table_schema_definition(
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        "runs": RUN_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,

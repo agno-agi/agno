@@ -24,7 +24,7 @@ from agno.utils.log import log_error, log_info
 
 try:
     from sqlalchemy import text
-    from sqlalchemy.dialects import postgresql, sqlite
+    from sqlalchemy.dialects import mysql, postgresql, sqlite
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
@@ -47,6 +47,8 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _migrate_postgres(db, table_name)
         elif db_type == "SqliteDb":
             return _migrate_sqlite(db, table_name)
+        elif db_type in ("MySQLDb", "SingleStoreDb"):
+            return _migrate_mysql_like(db, table_name)
         else:
             log_info(f"Migration v3.0.0 is not implemented for {db_type}. Sessions will keep storing runs inline.")
         return False
@@ -71,6 +73,8 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _migrate_async_postgres(db, table_name)
         elif db_type == "AsyncSqliteDb":
             return await _migrate_async_sqlite(db, table_name)
+        elif db_type == "AsyncMySQLDb":
+            return await _migrate_async_mysql(db, table_name)
         else:
             log_info(f"Migration v3.0.0 is not implemented for {db_type}. Sessions will keep storing runs inline.")
         return False
@@ -95,6 +99,8 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_postgres(db, table_name)
         elif db_type == "SqliteDb":
             return _revert_sqlite(db, table_name)
+        elif db_type in ("MySQLDb", "SingleStoreDb"):
+            return _revert_mysql_like(db, table_name)
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -119,6 +125,8 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _revert_async_postgres(db, table_name)
         elif db_type == "AsyncSqliteDb":
             return await _revert_async_sqlite(db, table_name)
+        elif db_type == "AsyncMySQLDb":
+            return await _revert_async_mysql(db, table_name)
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -620,5 +628,274 @@ async def _revert_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
         # Drop the runs table
         log_info(f"-- Dropping runs table {runs_table_name}")
         await sess.execute(text(f"DROP TABLE {runs_table_name}"))
+
+        return True
+
+
+# ---------------------------------------------------------------------------
+# MySQL / SingleStore (sync). SingleStore is MySQL-protocol-compatible so it
+# uses the same code path. AsyncMySQLDb has its own coroutine variants below.
+# ---------------------------------------------------------------------------
+
+
+def _migrate_mysql_like(db: BaseDb, table_name: str) -> bool:
+    """Move session runs into the runs table for MySQL or SingleStore.
+
+    Non-destructive: the legacy `runs` column is left in place. Call
+    ``db.cleanup_legacy_runs_column()`` to drop it once you have verified
+    the migration and taken a backup.
+    """
+    db_schema = db.db_schema or "agno"  # type: ignore
+
+    # Ensure the runs table exists
+    runs_table = db._get_table(table_type="runs", create_table_if_not_found=True)  # type: ignore
+    if runs_table is None:
+        return False
+
+    with db.Session() as sess, sess.begin():  # type: ignore
+        # Does the sessions table exist?
+        table_exists = sess.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                ")"
+            ),
+            {"schema": db_schema, "table_name": table_name},
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        # Does the legacy `runs` column exist?
+        column_exists = sess.execute(
+            text(
+                "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
+            ),
+            {"schema": db_schema, "table": table_name},
+        ).scalar() is not None
+        if not column_exists:
+            log_info(f"Table {table_name} has no runs column, skipping migration")
+            return False
+
+        # Copy every legacy run into the runs table
+        result = sess.execute(
+            text(
+                f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL"
+            )
+        )
+        migrated_runs = 0
+        while True:
+            batch = result.fetchmany(BATCH_SIZE)
+            if not batch:
+                break
+
+            rows: List[Dict[str, Any]] = []
+            for session_id, user_id, runs in batch:
+                # MySQL JSON columns come back as either dict/list (asyncmy)
+                # or str (pymysql), depending on driver — _build_run_rows handles both.
+                rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
+
+            if rows:
+                insert_stmt = mysql.insert(runs_table).values(rows)
+                # ON DUPLICATE KEY UPDATE that effectively does nothing: keeps idempotency
+                # without raising on previously-migrated runs.
+                insert_stmt = insert_stmt.on_duplicate_key_update(run_id=insert_stmt.inserted.run_id)
+                sess.execute(insert_stmt)
+                migrated_runs += len(rows)
+
+        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+        log_info(
+            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+        )
+
+        return True
+
+
+async def _migrate_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async MySQL variant of :func:`_migrate_mysql_like`."""
+    db_schema = db.db_schema or "agno"  # type: ignore
+
+    runs_table = await db._get_table(table_type="runs", create_table_if_not_found=True)  # type: ignore
+    if runs_table is None:
+        return False
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        table_exists = (
+            await sess.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                    "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                    ")"
+                ),
+                {"schema": db_schema, "table_name": table_name},
+            )
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        column_exists = (
+            await sess.execute(
+                text(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
+                ),
+                {"schema": db_schema, "table": table_name},
+            )
+        ).scalar() is not None
+        if not column_exists:
+            log_info(f"Table {table_name} has no runs column, skipping migration")
+            return False
+
+        result = await sess.execute(
+            text(
+                f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL"
+            )
+        )
+        migrated_runs = 0
+        while True:
+            batch = result.fetchmany(BATCH_SIZE)
+            if not batch:
+                break
+
+            rows: List[Dict[str, Any]] = []
+            for session_id, user_id, runs in batch:
+                rows.extend(_build_run_rows(runs, session_id, user_id, run_data_as_string=False))
+
+            if rows:
+                insert_stmt = mysql.insert(runs_table).values(rows)
+                insert_stmt = insert_stmt.on_duplicate_key_update(run_id=insert_stmt.inserted.run_id)
+                await sess.execute(insert_stmt)
+                migrated_runs += len(rows)
+
+        log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs table")
+        log_info(
+            f"-- The legacy '{table_name}.runs' column was preserved as a backup. "
+            "Once you have verified the migration, drop it via db.cleanup_legacy_runs_column()."
+        )
+
+        return True
+
+
+def _revert_mysql_like(db: BaseDb, table_name: str) -> bool:
+    """Revert: rebuild blobs in `sessions.runs` from the runs table; drop the runs table."""
+    db_schema = db.db_schema or "agno"  # type: ignore
+    runs_table_name = db.runs_table_name  # type: ignore
+
+    with db.Session() as sess, sess.begin():  # type: ignore
+        runs_table_exists = sess.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                ")"
+            ),
+            {"schema": db_schema, "table_name": runs_table_name},
+        ).scalar()
+        if not runs_table_exists:
+            log_info(f"Runs table {runs_table_name} does not exist, skipping revert")
+            return False
+
+        # Re-add the runs column if missing
+        column_exists = sess.execute(
+            text(
+                "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
+            ),
+            {"schema": db_schema, "table": table_name},
+        ).scalar() is not None
+        if not column_exists:
+            log_info(f"-- Adding runs column back to {table_name}")
+            sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` ADD COLUMN `runs` JSON"))
+
+        # Rebuild blobs
+        session_ids = sess.execute(
+            text(f"SELECT DISTINCT session_id FROM `{db_schema}`.`{runs_table_name}` ORDER BY session_id")
+        ).fetchall()
+        for (session_id,) in session_ids:
+            run_rows = sess.execute(
+                text(
+                    f"SELECT run_data FROM `{db_schema}`.`{runs_table_name}` "
+                    f"WHERE session_id = :session_id ORDER BY run_index, created_at"
+                ),
+                {"session_id": session_id},
+            ).fetchall()
+            runs = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in run_rows]
+            sess.execute(
+                text(
+                    f"UPDATE `{db_schema}`.`{table_name}` SET runs = :runs WHERE session_id = :session_id"
+                ),
+                {"runs": json.dumps(runs, cls=CustomJSONEncoder), "session_id": session_id},
+            )
+
+        # Drop the runs table
+        log_info(f"-- Dropping runs table {runs_table_name}")
+        sess.execute(text(f"DROP TABLE `{db_schema}`.`{runs_table_name}`"))
+
+        return True
+
+
+async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async MySQL variant of :func:`_revert_mysql_like`."""
+    db_schema = db.db_schema or "agno"  # type: ignore
+    runs_table_name = db.runs_table_name  # type: ignore
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        runs_table_exists = (
+            await sess.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                    "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                    ")"
+                ),
+                {"schema": db_schema, "table_name": runs_table_name},
+            )
+        ).scalar()
+        if not runs_table_exists:
+            log_info(f"Runs table {runs_table_name} does not exist, skipping revert")
+            return False
+
+        column_exists = (
+            await sess.execute(
+                text(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
+                ),
+                {"schema": db_schema, "table": table_name},
+            )
+        ).scalar() is not None
+        if not column_exists:
+            log_info(f"-- Adding runs column back to {table_name}")
+            await sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` ADD COLUMN `runs` JSON"))
+
+        result = await sess.execute(
+            text(f"SELECT DISTINCT session_id FROM `{db_schema}`.`{runs_table_name}` ORDER BY session_id")
+        )
+        session_ids = result.fetchall()
+        for (session_id,) in session_ids:
+            run_rows = (
+                await sess.execute(
+                    text(
+                        f"SELECT run_data FROM `{db_schema}`.`{runs_table_name}` "
+                        f"WHERE session_id = :session_id ORDER BY run_index, created_at"
+                    ),
+                    {"session_id": session_id},
+                )
+            ).fetchall()
+            runs = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in run_rows]
+            await sess.execute(
+                text(
+                    f"UPDATE `{db_schema}`.`{table_name}` SET runs = :runs WHERE session_id = :session_id"
+                ),
+                {"runs": json.dumps(runs, cls=CustomJSONEncoder), "session_id": session_id},
+            )
+
+        log_info(f"-- Dropping runs table {runs_table_name}")
+        await sess.execute(text(f"DROP TABLE `{db_schema}`.`{runs_table_name}`"))
 
         return True
