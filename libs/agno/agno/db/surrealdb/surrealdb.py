@@ -1066,12 +1066,16 @@ class SurrealDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1092,6 +1096,9 @@ class SurrealDb(BaseDb):
         if ending_date is not None:
             ending_datetime = datetime.combine(ending_date, datetime.min.time()).replace(tzinfo=timezone.utc)
             where = where.and_("date", ending_datetime, "<=")
+
+        if user_id is not None:
+            where = where.and_("user_id", user_id)
 
         where_clause, where_vars = where.build()
 
@@ -1129,6 +1136,11 @@ class SurrealDb(BaseDb):
                     transformed["updated_at"] = int(transformed["updated_at"].timestamp())
                 if isinstance(transformed.get("date"), datetime):
                     transformed["date"] = int(transformed["date"].timestamp())
+
+                # Map the sentinel empty-string user_id back to None so API
+                # consumers don't have to know about the storage detail.
+                if transformed.get("user_id") == "":
+                    transformed["user_id"] = None
 
                 transformed_results.append(transformed)
 
@@ -1187,8 +1199,10 @@ class SurrealDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             results = []  # Initialize before the if block
             if metrics_records:
@@ -1211,27 +1225,51 @@ class SurrealDb(BaseDb):
         table = self._get_table("knowledge")
         _ = self.client.delete(table)
 
-    def delete_knowledge_content(self, id: str):
+    # -- Knowledge methods --
+    # SurrealQL ``user_id IS NONE`` matches absent fields (Surreal stores
+    # NULL by omitting the field, like Mongo). ``WhereClause`` only chains
+    # AND, so for the OR-with-NULL scope we append a raw clause inline.
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned.
         """
         table = self._get_table("knowledge")
+        if user_id is None:
+            self.client.delete(RecordID(table, id))
+            return
+        # Read-then-delete to enforce ownership. Race-free in practice:
+        # ownership doesn't change concurrently in any code path we ship.
+        row = self.get_knowledge_content(id, user_id=user_id)
+        if row is None:
+            log_debug(f"Skipping delete of knowledge content {id}: not visible to {user_id}")
+            return
         self.client.delete(RecordID(table, id))
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
         table = self._get_table("knowledge")
         record_id = RecordID(table, id)
-        raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+        if user_id is None:
+            raw = self._query_one("SELECT * FROM ONLY $record_id", {"record_id": record_id}, dict)
+            return deserialize_knowledge_row(raw) if raw else None
+        raw = self._query_one(
+            "SELECT * FROM ONLY $record_id WHERE user_id = $user_id OR user_id IS NONE",
+            {"record_id": record_id, "user_id": user_id},
+            dict,
+        )
         return deserialize_knowledge_row(raw) if raw else None
 
     def get_knowledge_contents(
@@ -1241,6 +1279,7 @@ class SurrealDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1250,6 +1289,7 @@ class SurrealDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1265,6 +1305,15 @@ class SurrealDb(BaseDb):
             where.and_("linked_to", linked_to)
 
         where_clause, where_vars = where.build()
+
+        # Owner scoping: append the OR-with-NULL predicate inline.
+        if user_id is not None:
+            scope_predicate = "(user_id = $user_id OR user_id IS NONE)"
+            if where_clause:
+                where_clause = f"{where_clause} AND {scope_predicate}"
+            else:
+                where_clause = f"WHERE {scope_predicate}"
+            where_vars["user_id"] = user_id
 
         # Total count
         total_count = self._count(table, where_clause, where_vars)
@@ -2073,3 +2122,4 @@ class SurrealDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for SurrealDb")
+

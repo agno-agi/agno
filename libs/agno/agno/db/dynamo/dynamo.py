@@ -1247,8 +1247,10 @@ class DynamoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             # Store metrics in DynamoDB
             if metrics_records:
@@ -1618,6 +1620,7 @@ class DynamoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Any], Optional[int]]:
         """
         Get metrics from the database.
@@ -1625,6 +1628,9 @@ class DynamoDb(BaseDb):
         Args:
             starting_date: The starting date to filter metrics by.
             ending_date: The ending date to filter metrics by.
+            user_id: When provided, returns only that user's per-user bucket.
+                When ``None``, returns ALL buckets including the empty-string
+                unowned bucket.
 
         Returns:
             Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the total count.
@@ -1671,8 +1677,16 @@ class DynamoDb(BaseDb):
             metrics_data = []
             for item in items:
                 metric_data = deserialize_from_dynamodb_item(item)
-                if metric_data:
-                    metrics_data.append(metric_data)
+                if not metric_data:
+                    continue
+                # Post-filter by user_id (DynamoDB scan can't OR-NULL on a
+                # non-key attribute cheaply; user_id isn't an index here).
+                if user_id is not None and metric_data.get("user_id") != user_id:
+                    continue
+                # Map the sentinel empty-string user_id back to None.
+                if metric_data.get("user_id") == "":
+                    metric_data["user_id"] = None
+                metrics_data.append(metric_data)
 
             return metrics_data, len(metrics_data)
 
@@ -1682,17 +1696,41 @@ class DynamoDb(BaseDb):
 
     # --- Knowledge methods ---
 
-    def delete_knowledge_content(self, id: str):
+    # -- Knowledge methods --
+    # DynamoDB has no SQL OR predicate, so we post-filter in Python: the row
+    # is visible if its ``user_id`` matches the caller OR is unowned (None /
+    # absent). When the caller passes ``user_id=None`` we skip the check
+    # entirely (admin / RBAC-off view sees everything).
+
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             table_name = self._get_table("knowledge")
+
+            if user_id is not None:
+                # No conditional delete with OR-NULL on the row's user_id, so
+                # read-then-delete. The race window is tolerable: ownership
+                # cannot change concurrently in any code path we ship.
+                existing = self.get_knowledge_content(id)
+                if existing is not None and not self._knowledge_row_is_visible(existing, user_id):
+                    log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
+                    return
 
             self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
 
@@ -1702,11 +1740,12 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete knowledge content {id}: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1716,10 +1755,13 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
 
             item = response.get("Item")
-            if item:
-                return deserialize_knowledge_row(item)
+            if not item:
+                return None
 
-            return None
+            row = deserialize_knowledge_row(item)
+            if not self._knowledge_row_is_visible(row, user_id):
+                return None
+            return row
 
         except Exception as e:
             log_error(f"Failed to get knowledge content {id}: {str(e)}")
@@ -1732,6 +1774,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1741,6 +1784,7 @@ class DynamoDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1772,6 +1816,10 @@ class DynamoDb(BaseDb):
                     knowledge_rows.append(knowledge_row)
                 except Exception as e:
                     log_error(f"Failed to deserialize knowledge row: {str(e)}")
+
+            # Owner scoping: drop rows the caller isn't allowed to see.
+            if user_id is not None:
+                knowledge_rows = [row for row in knowledge_rows if self._knowledge_row_is_visible(row, user_id)]
 
             # Apply linked_to filter if provided
             if linked_to is not None:
@@ -3011,3 +3059,4 @@ class DynamoDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for DynamoDb")
+

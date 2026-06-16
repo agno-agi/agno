@@ -216,14 +216,17 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     results = []
     stmt = postgresql.insert(table)
 
-    # Columns to update in case of conflict
+    # Columns to update in case of conflict.
+    # user_id is part of the unique key now; never overwrite it on conflict.
     update_columns = {
         col.name: stmt.excluded[col.name]
         for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
     }
 
-    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "date", "aggregation_period"], set_=update_columns
+    ).returning(  # type: ignore
         table
     )
     result = session.execute(stmt, metrics_records)
@@ -249,14 +252,17 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     results = []
     stmt = postgresql.insert(table)
 
-    # Columns to update in case of conflict
+    # Columns to update in case of conflict.
+    # user_id is part of the unique key now; never overwrite it on conflict.
     update_columns = {
         col.name: stmt.excluded[col.name]
         for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
     }
 
-    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "date", "aggregation_period"], set_=update_columns
+    ).returning(  # type: ignore
         table
     )
     result = await session.execute(stmt, metrics_records)
@@ -266,85 +272,115 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     return results  # type: ignore
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given single date.
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+    """Calculate metrics for the given single date, bucketed per ``user_id``.
+
+    Each session is attributed to its owning user. Sessions without a
+    ``user_id`` (system / pre-RBAC / anonymous) aggregate under the sentinel
+    empty-string bucket — that bucket is what RBAC-off deployments see and
+    looks identical to the legacy global-metrics shape (one row per date).
 
     Args:
-        date_to_process (date): The date to calculate metrics for.
-        sessions_data (dict): The sessions data to calculate metrics for.
+        date_to_process: The date to calculate metrics for.
+        sessions_data: Sessions for this date, keyed by session_type
+            (``agent`` / ``team`` / ``workflow``).
 
     Returns:
-        dict: The calculated metrics.
+        A list of per-user metrics records. One entry per distinct ``user_id``
+        seen on this date, plus optionally an empty-string-owner record if any
+        unowned sessions exist.
     """
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+        }
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
-    all_user_ids = set()
+
+    # bucket_key = "" for unowned sessions; explicit user_id otherwise.
+    per_user: Dict[str, Dict[str, Any]] = {}
 
     for session_type, sessions_count_key, runs_count_key in session_types:
         sessions = sessions_data.get(session_type, []) or []
-        metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
+            bucket_key = session.get("user_id") or ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            bucket[sessions_count_key] += 1
+
             runs = session.get("runs", []) or []
-            metrics[runs_count_key] += len(runs)
-            if runs:
-                for run in runs:
-                    if model_id := run.get("model"):
-                        model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
+            bucket[runs_count_key] += len(runs)
+            for run in runs:
+                if model_id := run.get("model"):
+                    model_provider = run.get("model_provider", "")
+                    key = f"{model_id}:{model_provider}"
+                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
+
             session_data = session.get("session_data", {}) or {}
             session_metrics = session_data.get("session_metrics", {}) or {}
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.rsplit(":", 1)
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-    metrics["users_count"] = len(all_user_ids)
     current_time = int(time.time())
+    completed = date_to_process < datetime.now(timezone.utc).date()
 
-    return {
-        "id": str(uuid4()),
-        "date": date_to_process,
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
-    }
+    records: List[dict] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+
+        # ``users_count`` in a per-user bucket is always 1 (or 0 for the
+        # unowned bucket — kept as 0 so legacy global-shape callers see the
+        # same number they always did when summing).
+        users_count = 0 if user_id == "" else 1
+
+        records.append(
+            {
+                "id": str(uuid4()),
+                "date": date_to_process,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records
 
 
 def fetch_all_sessions_data(

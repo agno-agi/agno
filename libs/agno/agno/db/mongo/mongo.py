@@ -1628,8 +1628,10 @@ class MongoDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 results = bulk_upsert_metrics(collection, metrics_records)
@@ -1644,14 +1646,23 @@ class MongoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
+        """
         try:
             collection = self._get_collection(table_type="metrics")
             if collection is None:
                 return [], None
 
-            query = {}
+            query: Dict[str, Any] = {}
             if starting_date:
                 query["date"] = {"$gte": starting_date.isoformat()}
             if ending_date:
@@ -1659,6 +1670,8 @@ class MongoDb(BaseDb):
                     query["date"]["$lte"] = ending_date.isoformat()
                 else:
                     query["date"] = {"$lte": ending_date.isoformat()}
+            if user_id is not None:
+                query["user_id"] = user_id
 
             records = list(collection.find(query))
             if not records:
@@ -1667,7 +1680,17 @@ class MongoDb(BaseDb):
             # Get the latest updated_at
             latest_updated_at = max(record.get("updated_at", 0) for record in records)
 
-            return records, latest_updated_at
+            # Map the sentinel empty-string user_id back to None so API
+            # consumers don't have to know about the storage detail. Also
+            # strip MongoDB's internal _id.
+            cleaned: List[dict] = []
+            for record in records:
+                row = dict(record)
+                row.pop("_id", None)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
@@ -1675,11 +1698,29 @@ class MongoDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    # -- Knowledge methods --
+    # The owner-scope predicate is consistently "rows I own, plus rows nobody
+    # owns (admin / org-wide shared content)". Mongo expresses this as
+    # ``{"$or": [{"user_id": uid}, {"user_id": None}, {"user_id": {"$exists": False}}]}``
+    # — the third clause covers documents written before the column existed
+    # (Mongo silently omits absent fields rather than storing them as null).
+    # When ``user_id`` is ``None`` the predicate is dropped entirely (admin /
+    # RBAC-off / single-user view sees everything).
+
+    def _knowledge_user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        if user_id is None:
+            return None
+        return {"$or": [{"user_id": user_id}, {"user_id": None}, {"user_id": {"$exists": False}}]}
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned
+                (NULL). Routes that want to forbid non-admins from deleting
+                shared rows must enforce that separately at the route layer.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1689,7 +1730,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return
 
-            collection.delete_one({"id": id})
+            query: Dict[str, Any] = {"id": id}
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]}
+            collection.delete_one(query)
 
             log_debug(f"Deleted knowledge content with id '{id}'")
 
@@ -1697,11 +1742,12 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1714,7 +1760,11 @@ class MongoDb(BaseDb):
             if collection is None:
                 return None
 
-            result = collection.find_one({"id": id})
+            query: Dict[str, Any] = {"id": id}
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]}
+            result = collection.find_one(query)
             if result is None:
                 return None
 
@@ -1731,6 +1781,7 @@ class MongoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1740,6 +1791,7 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1757,6 +1809,11 @@ class MongoDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 query["linked_to"] = linked_to
+
+            # Owner scoping: "rows I own, plus shared rows (NULL owner)".
+            scope = self._knowledge_user_scope_filter(user_id)
+            if scope is not None:
+                query = {"$and": [query, scope]} if query else scope
 
             # Get total count
             total_count = collection.count_documents(query)
@@ -2720,13 +2777,20 @@ class MongoDb(BaseDb):
             return []
 
     # -- Scheduler methods --
-    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
+    # routes can scope by owner. The executor pair (``claim_due_schedule`` /
+    # ``release_schedule``) intentionally has no user_id — the poller must be
+    # able to fire schedules across all users.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = collection.find_one({"id": schedule_id})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = collection.find_one(query)
             if result is None:
                 return None
 
@@ -2736,13 +2800,16 @@ class MongoDb(BaseDb):
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = collection.find_one({"name": name})
+            query: Dict[str, Any] = {"name": name}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = collection.find_one(query)
             if result is None:
                 return None
 
@@ -2757,6 +2824,7 @@ class MongoDb(BaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = self._get_collection(table_type="schedules")
@@ -2766,6 +2834,8 @@ class MongoDb(BaseDb):
             query: Dict[str, Any] = {}
             if enabled is not None:
                 query["enabled"] = enabled
+            if user_id is not None:
+                query["user_id"] = user_id
 
             total_count = collection.count_documents(query)
 
@@ -2792,22 +2862,27 @@ class MongoDb(BaseDb):
             log_error(f"Error creating schedule: {e}")
             raise e
 
-    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             collection = self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
             kwargs["updated_at"] = int(time.time())
-            result = collection.update_one({"id": schedule_id}, {"$set": kwargs})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = collection.update_one(query, {"$set": kwargs})
             if result.matched_count == 0:
                 return None
-            return self.get_schedule(schedule_id)
+            return self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    def delete_schedule(self, schedule_id: str) -> bool:
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             schedules_collection = self._get_collection(table_type="schedules")
             if schedules_collection is None:
@@ -2815,9 +2890,18 @@ class MongoDb(BaseDb):
 
             runs_collection = self._get_collection(table_type="schedule_runs")
             if runs_collection is not None:
-                runs_collection.delete_many({"schedule_id": schedule_id})
+                # Mirror the user_id guard on the cascade delete so we don't
+                # nuke another user's runs if the schedule_id happens to be
+                # shared (it shouldn't be, but defend in depth).
+                runs_query: Dict[str, Any] = {"schedule_id": schedule_id}
+                if user_id is not None:
+                    runs_query["user_id"] = user_id
+                runs_collection.delete_many(runs_query)
 
-            result = schedules_collection.delete_one({"id": schedule_id})
+            delete_query: Dict[str, Any] = {"id": schedule_id}
+            if user_id is not None:
+                delete_query["user_id"] = user_id
+            result = schedules_collection.delete_one(delete_query)
             return result.deleted_count > 0
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
@@ -2897,12 +2981,15 @@ class MongoDb(BaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             collection = self._get_collection(table_type="schedule_runs")
             if collection is None:
                 return None
-            result = collection.find_one({"id": run_id})
+            query: Dict[str, Any] = {"id": run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = collection.find_one(query)
             if result is None:
                 return None
 
@@ -2917,13 +3004,16 @@ class MongoDb(BaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = self._get_collection(table_type="schedule_runs")
             if collection is None:
                 return [], 0
 
-            query = {"schedule_id": schedule_id}
+            query: Dict[str, Any] = {"schedule_id": schedule_id}
+            if user_id is not None:
+                query["user_id"] = user_id
             total_count = collection.count_documents(query)
 
             offset = (page - 1) * limit

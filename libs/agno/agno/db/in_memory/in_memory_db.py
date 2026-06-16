@@ -712,24 +712,27 @@ class InMemoryDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Upsert each record by the full (user_id, date,
+                # aggregation_period) key.
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                    existing_record_idx = None
+                    for i, existing_metric in enumerate(self._metrics):
+                        if (
+                            existing_metric.get("user_id") == metrics_record["user_id"]
+                            and existing_metric.get("date") == str(date_to_process)
+                            and existing_metric.get("aggregation_period") == "daily"
+                        ):
+                            existing_record_idx = i
+                            break
 
-                # Upsert metrics record
-                existing_record_idx = None
-                for i, existing_metric in enumerate(self._metrics):
-                    if (
-                        existing_metric.get("date") == str(date_to_process)
-                        and existing_metric.get("aggregation_period") == "daily"
-                    ):
-                        existing_record_idx = i
-                        break
+                    if existing_record_idx is not None:
+                        self._metrics[existing_record_idx] = metrics_record
+                    else:
+                        self._metrics.append(metrics_record)
 
-                if existing_record_idx is not None:
-                    self._metrics[existing_record_idx] = metrics_record
-                else:
-                    self._metrics.append(metrics_record)
-
-                results.append(metrics_record)
+                    results.append(metrics_record)
 
             log_debug("Updated metrics calculations")
 
@@ -794,8 +797,17 @@ class InMemoryDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
+        """
         try:
             filtered_metrics = []
             latest_updated_at = None
@@ -807,8 +819,14 @@ class InMemoryDb(BaseDb):
                     continue
                 if ending_date and metric_date > ending_date:
                     continue
+                if user_id is not None and metric.get("user_id") != user_id:
+                    continue
 
-                filtered_metrics.append(deepcopy(metric))
+                row = deepcopy(metric)
+                # Map the sentinel empty-string user_id back to None.
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                filtered_metrics.append(row)
 
                 updated_at = metric.get("updated_at")
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
@@ -822,27 +840,45 @@ class InMemoryDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    # -- Knowledge methods --
+    # In-memory storage filters in Python: a row is visible if its
+    # ``user_id`` matches the caller OR is unset (None / missing).
+
+    @staticmethod
+    def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = item.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from in-memory storage.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id`` OR is unowned.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
-            self._knowledge = [item for item in self._knowledge if item.get("id") != id]
+            self._knowledge = [
+                item
+                for item in self._knowledge
+                if not (item.get("id") == id and self._knowledge_item_is_visible(item, user_id))
+            ]
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from in-memory storage.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -852,7 +888,7 @@ class InMemoryDb(BaseDb):
         """
         try:
             for item in self._knowledge:
-                if item.get("id") == id:
+                if item.get("id") == id and self._knowledge_item_is_visible(item, user_id):
                     return KnowledgeRow.model_validate(item)
 
             return None
@@ -868,6 +904,7 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from in-memory storage.
 
@@ -877,6 +914,7 @@ class InMemoryDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -890,6 +928,12 @@ class InMemoryDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
+
+            # Owner scoping: drop rows the caller isn't allowed to see.
+            if user_id is not None:
+                knowledge_items = [
+                    item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)
+                ]
 
             total_count = len(knowledge_items)
 
@@ -1411,3 +1455,4 @@ class InMemoryDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for InMemoryDb")
+

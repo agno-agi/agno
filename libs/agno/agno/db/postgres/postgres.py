@@ -1953,9 +1953,10 @@ class PostgresDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 with self.Session() as sess, sess.begin():
@@ -1973,12 +1974,17 @@ class PostgresDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket — the router decides whether
+                that's appropriate (admins see all; non-admins are scoped).
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1997,15 +2003,29 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchall()
                 if not result:
                     return [], None
 
-                # Get the latest updated_at
+                # Get the latest updated_at, scoped to whatever filter was
+                # applied — otherwise an admin's "give me everything" call
+                # could shadow a per-user view with a stale-looking timestamp.
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_updated_at = sess.execute(latest_stmt).scalar()
 
-            return [row._mapping for row in result], latest_updated_at
+            # Map the sentinel empty-string user_id back to None so API
+            # consumers don't have to know about the storage detail.
+            rows: List[dict] = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_error(f"Exception getting metrics: {str(e)}")
@@ -4649,25 +4669,35 @@ class PostgresDb(BaseDb):
             return []
 
     # -- Schedule methods --
-    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
+    # routes can scope by owner. The executor pair (``claim_due_schedule`` /
+    # ``release_schedule``) intentionally has no user_id — the poller must be
+    # able to fire schedules across all users.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                stmt = select(table).where(table.c.name == name)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule by name: {e}")
@@ -4678,6 +4708,7 @@ class PostgresDb(BaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedules")
@@ -4688,6 +4719,8 @@ class PostgresDb(BaseDb):
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -4716,20 +4749,25 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating schedule: {str(e)}")
             raise
 
-    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
                 return None
             kwargs["updated_at"] = int(time.time())
             with self.Session() as sess, sess.begin():
-                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
-            return self.get_schedule(schedule_id)
+                stmt = table.update().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                sess.execute(stmt.values(**kwargs))
+            return self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    def delete_schedule(self, schedule_id: str) -> bool:
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
@@ -4737,8 +4775,17 @@ class PostgresDb(BaseDb):
             runs_table = self._get_table(table_type="schedule_runs")
             with self.Session() as sess, sess.begin():
                 if runs_table is not None:
-                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                    # Mirror the user_id guard on the cascade delete so we don't
+                    # nuke another user's runs if the schedule_id happens to be
+                    # shared (it shouldn't be, but defend in depth).
+                    runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                    if user_id is not None:
+                        runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                    sess.execute(runs_delete)
+                delete_stmt = table.delete().where(table.c.id == schedule_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
@@ -4822,13 +4869,16 @@ class PostgresDb(BaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting schedule run: {e}")
@@ -4839,14 +4889,19 @@ class PostgresDb(BaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedule_runs")
             if table is None:
                 return [], 0
             with self.Session() as sess:
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = and_(base_filter, table.c.user_id == user_id)
+
                 # Get total count
-                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
                 total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Calculate offset from page
@@ -4855,7 +4910,7 @@ class PostgresDb(BaseDb):
                 # Get paginated results
                 stmt = (
                     select(table)
-                    .where(table.c.schedule_id == schedule_id)
+                    .where(base_filter)
                     .order_by(table.c.created_at.desc())
                     .limit(limit)
                     .offset(offset)
