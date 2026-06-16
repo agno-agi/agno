@@ -450,6 +450,24 @@ class TestPopulateRegistryComponentsToolDedup:
         toolkits = [t for t in os.registry.tools if isinstance(t, _NamedToolkit)]
         assert len(toolkits) == 1
 
+    def test_config_distinct_toolkits_resolve_to_first_deterministically(self):
+        # Two agents each carry a separate instance of the same toolkit class with
+        # the same function names but different config. Rehydration is keyed by
+        # function name globally, so only one instance can win; we make that the
+        # first one walked (deterministic), and the later clash is ignored.
+        from agno.tools.duckduckgo import DuckDuckGoTools
+
+        first = DuckDuckGoTools(fixed_max_results=3)
+        second = DuckDuckGoTools(fixed_max_results=99)
+        a = Agent(name="A1", id="a1", tools=[first], telemetry=False)
+        b = Agent(name="A2", id="a2", tools=[second], telemetry=False)
+
+        os = AgentOS(agents=[a, b], telemetry=False)
+
+        kept = [t for t in os.registry.tools if isinstance(t, DuckDuckGoTools)]
+        assert len(kept) == 1 and kept[0] is first
+        assert os.registry._entrypoint_lookup["web_search"].__self__ is first
+
     def test_toolkits_sharing_name_with_different_functions_both_kept(self):
         # Same name but different function sets are genuinely different tools and
         # must both survive, otherwise rehydration of one agent breaks.

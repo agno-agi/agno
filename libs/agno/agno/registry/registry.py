@@ -103,13 +103,17 @@ class Registry:
 
         - ``Toolkit`` instances are re-created at call sites (``DuckDuckGoTools()``
           written in two places yields two distinct objects), so they dedupe
-          structurally by ``(type, name, function names)``. The registry is
-          populated with user-declared tools first, so the registered instance
-          wins; a matching instance discovered on a primitive is skipped. This is
-          expected (re-instantiating a default toolkit in two places is common),
-          so the skip is logged at debug rather than warned. The trade-off: two
-          toolkits that differ only in non-functional config (api keys, timeouts)
-          collapse to one, and the kept instance is the one used at rehydration.
+          structurally by ``(type, name, function names)``. The first matching
+          instance wins deterministically: user-declared registry tools are added
+          before primitives are walked, and primitives are walked in order, so a
+          later matching instance is skipped. This is expected (re-instantiating a
+          default toolkit in two places is common), so the skip is logged at debug
+          rather than warned. The trade-off is accepted: rehydration resolves
+          entrypoints by function name globally (see ``_entrypoint_lookup``), so
+          only one instance can ever back a given name regardless of dedup -- two
+          toolkits that differ only in non-functional config (api keys, timeouts,
+          region) collapse to the first, and that is the instance used at
+          rehydration.
         - ``Function`` and plain callables are defined once, so referencing them in
           two places yields the *same* object; they dedupe by equality. ``==``
           falls back to identity for functions, lambdas and ``functools.partial``
