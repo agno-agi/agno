@@ -356,7 +356,7 @@ Three tiers, pick the lowest that fits:
 | Tier | You write | Dependency |
 |------|-----------|------------|
 | Scopes (default) | scopes in the JWT | none |
-| Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[roles]` |
+| Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[roles]` (native engine, no third-party) |
 | Custom provider | your own `AuthorizationProvider` (map token claims to permissions however you like) | none |
 
 Each cookbook below runs the whole scenario for you and prints a plain
