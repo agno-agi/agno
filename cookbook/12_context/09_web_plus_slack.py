@@ -23,6 +23,9 @@ Requires:
     SLACK_BOT_TOKEN    (or SLACK_TOKEN fallback; scopes: channels:read,
                         channels:history, users:read)
     pip install parallel-web
+
+Optional:
+    SLACK_USER_TOKEN   (xoxp-) enables search_messages API
 """
 
 from __future__ import annotations
