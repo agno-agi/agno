@@ -15,7 +15,7 @@ Try in the chat UI:
 
 Usage:
     # Start the AgentOS server
-    .venvs/demo/bin/python cookbook/05_agent_os/studio/studio_hitl_agent_os.py
+    .venvs/demo/bin/python cookbook/05_agent_os/studio_tool/studio_hitl_agent_os.py
 """
 
 from pathlib import Path

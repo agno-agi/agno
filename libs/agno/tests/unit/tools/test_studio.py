@@ -564,6 +564,21 @@ class TestVersioning:
         assert stages.count("published") == 2
         assert stages.count("draft") == 0
 
+    def test_publish_already_published_version_is_noop(self, studio_versioned):
+        self._create_and_edit(studio_versioned)
+        studio_versioned.publish_component("tutor")  # draft v2 -> published
+
+        # Re-publishing the same (now published) version must not raise the db's
+        # "Cannot update published config" error; it is an idempotent no-op.
+        out = _loads(studio_versioned.publish_component("tutor", version=2))
+        assert out["status"] == "already_published"
+        assert out["version"] == 2
+
+    def test_publish_unknown_version_returns_error(self, studio_versioned):
+        studio_versioned.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        out = _loads(studio_versioned.publish_component("tutor", version=99))
+        assert "error" in out
+
     def test_publish_without_draft_returns_error(self, studio_versioned):
         studio_versioned.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
         out = _loads(studio_versioned.publish_component("tutor"))

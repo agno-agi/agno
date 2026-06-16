@@ -23,8 +23,9 @@ Semantics:
       - with versions=True the edit is saved as a draft (an existing draft is
         updated in place; otherwise a new draft version is created). Use
         publish_component() to promote the draft to published+current.
-      - with versions=False (default) the edit is published immediately as the
-        new current version.
+      - with versions=False (default) the edit is published immediately as a
+        new current version. Each edit creates a new published version; prior
+        versions remain in history (they are immutable).
 
 Enable flags:
     * Default: only agent operations are exposed (agents=True, teams=False,
@@ -665,6 +666,8 @@ class StudioTool(Toolkit):
     def get_agent(self, agent_id: str) -> str:
         """Read an agent's current published config. Call this before edit_agent.
 
+        Returns the published version; pending draft edits are not reflected here.
+
         Args:
             agent_id (str): The id or name of the agent.
         """
@@ -685,6 +688,8 @@ class StudioTool(Toolkit):
 
     def get_team(self, team_id: str) -> str:
         """Read a team's current published config. Call this before edit_team.
+
+        Returns the published version; pending draft edits are not reflected here.
 
         Args:
             team_id (str): The id or name of the team.
@@ -707,6 +712,8 @@ class StudioTool(Toolkit):
 
     def get_workflow(self, workflow_id: str) -> str:
         """Read a workflow's current published config. Call this before edit_workflow.
+
+        Returns the published version; pending draft edits are not reflected here.
 
         Args:
             workflow_id (str): The id or name of the workflow.
@@ -1139,18 +1146,27 @@ class StudioTool(Toolkit):
         Args:
             component_id (str): The component id.
             version (Optional[int]): The draft version to publish. If omitted, publishes the
-                latest draft.
+                latest draft. Re-publishing an already-published version is a no-op and
+                returns status "already_published".
         """
         if self.db is None:
             return json.dumps({"error": "StudioTool has no db configured."})
         try:
+            configs = self.db.list_configs(component_id, include_config=False)
             target = version
             if target is None:
-                configs = self.db.list_configs(component_id, include_config=False)
                 drafts = [c for c in configs if c.get("stage") == "draft"]
                 if not drafts:
                     return json.dumps({"error": "No draft version to publish."})
                 target = max(d.get("version", 0) for d in drafts)
+            else:
+                # Explicit version: validate it exists and is not already published.
+                match = next((c for c in configs if c.get("version") == target), None)
+                if match is None:
+                    return json.dumps({"error": f"Version not found: {component_id} v{target}"})
+                if match.get("stage") == "published":
+                    self._sync_component_row(component_id, target)
+                    return json.dumps({"status": "already_published", "id": component_id, "version": target})
 
             result = self.db.upsert_config(component_id=component_id, version=target, stage="published")
             published_version = result.get("version", target)

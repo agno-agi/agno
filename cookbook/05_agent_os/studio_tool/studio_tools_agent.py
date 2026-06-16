@@ -15,7 +15,7 @@ Ask the studio agent things like:
 
 Usage:
     # Start the AgentOS server
-    .venvs/demo/bin/python cookbook/05_agent_os/studio/studio_tools_agent.py
+    .venvs/demo/bin/python cookbook/05_agent_os/studio_tool/studio_tools_agent.py
 """
 
 from pathlib import Path

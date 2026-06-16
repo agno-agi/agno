@@ -15,14 +15,14 @@ Versioning tools (`list_versions`, `get_version`, `publish_component`, `set_curr
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).
 - Run examples with `.venvs/demo/bin/python <path-to-file>.py`.
-- The examples create their SQLite files under `cookbook/05_agent_os/studio/tmp/`.
+- The examples create their SQLite files under `cookbook/05_agent_os/studio_tool/tmp/`.
 
 ## Studio UI
 
 Run the AgentOS example:
 
 ```bash
-.venvs/demo/bin/python cookbook/05_agent_os/studio/studio_tools_agent.py
+.venvs/demo/bin/python cookbook/05_agent_os/studio_tool/studio_tools_agent.py
 ```
 
 Open the Studio frontend and connect it to the local AgentOS server on port `7777`.

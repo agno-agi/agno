@@ -5,7 +5,7 @@ agents backed by a local SQLite database. No AgentOS server, no REST, just
 in-process composition.
 
 Usage:
-    .venvs/demo/bin/python cookbook/05_agent_os/studio/standalone_studio_agent.py
+    .venvs/demo/bin/python cookbook/05_agent_os/studio_tool/standalone_studio_agent.py
 """
 
 from pathlib import Path

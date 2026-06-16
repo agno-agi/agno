@@ -18,7 +18,7 @@ The demo sends a deliberately underspecified request ("Create an agent called
         -> paused (confirm create_agent?) -> continue -> created
 
 Usage:
-    .venvs/demo/bin/python cookbook/05_agent_os/studio/studio_hitl_agent.py
+    .venvs/demo/bin/python cookbook/05_agent_os/studio_tool/studio_hitl_agent.py
 """
 
 from pathlib import Path
