@@ -145,6 +145,8 @@ class GoogleToolkit(Toolkit):
         if creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
+                # Save refreshed token back to DB
+                self._save_to_db(db, creds, user_id)
             except Exception:
                 return None
 
