@@ -270,3 +270,30 @@ def test_set_role_scopes_dedups_colliding_mappings(tmp_path):
     eng.set_role_scopes("m", [("agents:read", "allow"), ("agents:*:read", "allow")])
     assert eng.get_role_scopes("m") == [("agents:read", "allow")]
     assert NativePolicyEngine(db_url=url).get_role_scopes("m") == [("agents:read", "allow")]
+
+
+def test_authorize_route_requires_all_scopes_and_no_blanket_allow():
+    """#5: a route requiring >1 scope must satisfy ALL (was ANY). #4: a resource
+    route with mixed actions (ctx.action=None) must not blanket-allow."""
+    from agno.os.authz.engine import EngineAuthorizationProvider
+    from agno.os.authz.provider import AuthorizationContext
+
+    eng = NativePolicyEngine()
+    eng.set_role_scopes("partial", [("sessions:read", "allow")])
+    eng.set_role_scopes("full", [("sessions:read", "allow"), ("sessions:write", "allow")])
+    eng.assign("p", "partial")
+    eng.assign("f", "full")
+    prov = EngineAuthorizationProvider(eng)
+
+    # #5 — non-resource route requiring read AND write
+    req = ["sessions:read", "sessions:write"]
+    assert prov.authorize_route(AuthorizationContext(principal_id="p"), req) is False  # read only -> ALL fails
+    assert prov.authorize_route(AuthorizationContext(principal_id="f"), req) is True
+
+    # #4 — resource route, mixed actions => ctx.action is None; must require all, not allow
+    eng.set_role_scopes("reader", [("agents:secret:read", "allow")])
+    eng.assign("r", "reader")
+    mixed = AuthorizationContext(principal_id="r", resource_type="agents", resource_id="secret", action=None)
+    assert prov.authorize_route(mixed, ["agents:read", "agents:run"]) is False  # has read, not run
+    eng.set_role_scopes("reader", [("agents:secret:read", "allow"), ("agents:secret:run", "allow")])
+    assert prov.authorize_route(mixed, ["agents:read", "agents:run"]) is True
