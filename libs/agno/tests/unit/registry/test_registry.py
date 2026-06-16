@@ -1008,6 +1008,32 @@ class TestAddModel:
         reg.add_model(_model("m", provider="azure"))
         assert len(reg.models) == 2
 
+    def test_warns_when_dropping_matching_model(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        m1 = _model("gpt-5.4")
+        m2 = _model("gpt-5.4")  # same provider+id, distinct instance
+        reg = Registry()
+        reg.add_model(m1)
+        reg.add_model(m2)
+        assert len(reg.models) == 1 and reg.models[0] is m1
+        assert warnings and "gpt-5.4" in warnings[0]
+
+    def test_no_warning_when_same_model_instance_repeats(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        m = _model("gpt-5.4")
+        reg = Registry()
+        reg.add_model(m)
+        reg.add_model(m)
+        assert len(reg.models) == 1 and warnings == []
+
     def test_ignores_non_model(self):
         reg = Registry()
         reg.add_model("openai:gpt-5.4")
@@ -1140,6 +1166,56 @@ class TestAddDbAndVectorDb:
         reg.add_db(db1)
         reg.add_db(db2)
         assert len(reg.dbs) == 1
+
+    def test_add_db_warns_when_dropping_matching_id(self, monkeypatch):
+        import agno.registry.registry as registry_module
+        from agno.db.base import BaseDb
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        db1 = MagicMock(spec=BaseDb)
+        db1.id = "db-1"
+        db2 = MagicMock(spec=BaseDb)
+        db2.id = "db-1"  # same id, distinct instance
+        reg = Registry()
+        reg.add_db(db1)
+        reg.add_db(db2)
+        assert len(reg.dbs) == 1 and reg.dbs[0] is db1
+        assert warnings and "db-1" in warnings[0]
+
+    def test_add_db_no_warning_when_same_instance_repeats(self, monkeypatch):
+        import agno.registry.registry as registry_module
+        from agno.db.base import BaseDb
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        db = MagicMock(spec=BaseDb)
+        db.id = "db-1"
+        reg = Registry()
+        reg.add_db(db)
+        reg.add_db(db)
+        assert len(reg.dbs) == 1 and warnings == []
+
+    def test_add_vector_db_warns_when_dropping_matching_key(self, monkeypatch):
+        import agno.registry.registry as registry_module
+        from agno.vectordb.base import VectorDb
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        v1 = MagicMock(spec=VectorDb)
+        v1.id = None
+        v1.name = "vec"
+        v2 = MagicMock(spec=VectorDb)
+        v2.id = None
+        v2.name = "vec"  # same name, distinct instance
+        reg = Registry()
+        reg.add_vector_db(v1)
+        reg.add_vector_db(v2)
+        assert len(reg.vector_dbs) == 1 and reg.vector_dbs[0] is v1
+        assert warnings and "vec" in warnings[0]
 
     def test_add_db_ignores_non_db(self):
         reg = Registry()

@@ -87,8 +87,16 @@ class Registry:
         if not isinstance(model, Model):
             return
         key = (getattr(model, "provider", None), getattr(model, "id", None))
-        if any((getattr(m, "provider", None), getattr(m, "id", None)) == key for m in self.models):
-            return
+        for existing in self.models:
+            if existing is model:
+                return
+            if (getattr(existing, "provider", None), getattr(existing, "id", None)) == key:
+                log_warning(
+                    f"Registry: a model matching provider/id '{key[0]}/{key[1]}' is already registered; "
+                    "keeping the existing instance. If they differ in configuration, share a single "
+                    "instance across your registry and primitives to avoid divergent rehydration."
+                )
+                return
         self.models.append(model)
 
     def add_tool(self, tool: Any) -> None:
@@ -158,8 +166,16 @@ class Registry:
             return
         db_id = getattr(db, "id", None)
         if db_id is not None:
-            if any(getattr(d, "id", None) == db_id for d in self.dbs):
-                return
+            for existing in self.dbs:
+                if existing is db:
+                    return
+                if getattr(existing, "id", None) == db_id:
+                    log_warning(
+                        f"Registry: a database with id '{db_id}' is already registered; keeping the "
+                        "existing instance. If they differ in configuration, share a single instance "
+                        "across your registry and primitives to avoid divergent rehydration."
+                    )
+                    return
         elif any(d is db for d in self.dbs):
             return
         self.dbs.append(db)
@@ -170,8 +186,16 @@ class Registry:
             return
         key = getattr(vector_db, "id", None) or getattr(vector_db, "name", None)
         if key is not None:
-            if any((getattr(v, "id", None) or getattr(v, "name", None)) == key for v in self.vector_dbs):
-                return
+            for existing in self.vector_dbs:
+                if existing is vector_db:
+                    return
+                if (getattr(existing, "id", None) or getattr(existing, "name", None)) == key:
+                    log_warning(
+                        f"Registry: a vector db matching '{key}' is already registered; keeping the "
+                        "existing instance. If they differ in configuration, share a single instance "
+                        "across your registry and primitives to avoid divergent rehydration."
+                    )
+                    return
         elif any(v is vector_db for v in self.vector_dbs):
             return
         self.vector_dbs.append(vector_db)
