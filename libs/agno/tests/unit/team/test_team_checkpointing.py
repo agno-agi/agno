@@ -265,7 +265,7 @@ class TestRegenerateSugarNormalization:
         fork, fc, inp = team_run._normalize_regenerate_params_team(
             run,
             regenerate=True,
-            preserve_original=False,
+            replace_original=False,
             additional_instructions=None,
             fork=False,
             continue_index=None,
@@ -273,12 +273,12 @@ class TestRegenerateSugarNormalization:
         )
         assert fork is True  # regenerate ALWAYS forks (1-run-1-loop)
 
-    def test_regenerate_with_preserve_still_forks(self):
+    def test_regenerate_with_replace_still_forks(self):
         run = self._run_with_user()
         fork, fc, inp = team_run._normalize_regenerate_params_team(
             run,
             regenerate=True,
-            preserve_original=True,
+            replace_original=True,
             additional_instructions=None,
             fork=False,
             continue_index=None,
@@ -299,7 +299,7 @@ class TestRegenerateSugarNormalization:
         _, fc, _ = team_run._normalize_regenerate_params_team(
             run,
             regenerate=True,
-            preserve_original=False,
+            replace_original=False,
             additional_instructions=None,
             fork=False,
             continue_index=None,
@@ -324,7 +324,7 @@ class TestRegenerateSugarNormalization:
         _, fc, _ = team_run._normalize_regenerate_params_team(
             run,
             regenerate=True,
-            preserve_original=False,
+            replace_original=False,
             additional_instructions=None,
             fork=False,
             continue_index=None,
@@ -355,7 +355,7 @@ class TestRegenerateSugarNormalization:
         _, _, inp = team_run._normalize_regenerate_params_team(
             run,
             regenerate=True,
-            preserve_original=False,
+            replace_original=False,
             additional_instructions="be brief",
             fork=False,
             continue_index=None,
@@ -369,20 +369,20 @@ class TestRegenerateSugarNormalization:
             team_run._normalize_regenerate_params_team(
                 run,
                 regenerate=True,
-                preserve_original=False,
+                replace_original=False,
                 additional_instructions="x",
                 fork=False,
                 continue_index=None,
                 input="y",
             )
 
-    def test_preserve_original_without_regenerate_raises(self):
+    def test_replace_original_without_regenerate_raises(self):
         run = self._run_with_user()
         with pytest.raises(ValueError, match="only makes sense with"):
             team_run._normalize_regenerate_params_team(
                 run,
                 regenerate=False,
-                preserve_original=True,
+                replace_original=True,
                 additional_instructions=None,
                 fork=False,
                 continue_index=None,

@@ -8,7 +8,7 @@ Examples covering mid-run persistence (`checkpoint="tool-batch"`) and the unifie
 | [`01_crash_recovery.py`](./01_crash_recovery.py) | `checkpoint="tool-batch"` writes after each tool batch. If the agent process dies mid-run, the DB has the latest checkpoint and `/continue` resumes from there. |
 | [`02_time_travel.py`](./02_time_travel.py) | `/continue` with `continue_from="end"`, `"last_user"`, and a raw integer index. COMPLETED runs auto-fork, so the source is preserved. |
 | [`03_forking.py`](./03_forking.py) | `/continue` with `continue_from="last_user", fork=True` and the numeric form `continue_from=K, fork=True` — non-destructive siblings in the same session. |
-| [`04_regenerate.py`](./04_regenerate.py) | `/continue` with `regenerate=True` to redo the last response. Drops only the trailing assistant reply, **keeping intermediate tool exchanges** so tools aren't re-invoked. Pair with `additional_instructions` to steer, `preserve_original=True` to keep the old one. |
+| [`04_regenerate.py`](./04_regenerate.py) | `/continue` with `regenerate=True` to redo the last response. Drops only the trailing assistant reply, **keeping intermediate tool exchanges** so tools aren't re-invoked. Pair with `additional_instructions` to steer, `replace_original=True` to hide the old one. |
 | [`05_branch_session.py`](./05_branch_session.py) | `agent.branch_session()` deep-copies every run into a **new session**. Different from `fork`, which makes a sibling run in the *same* session. |
 | [`06_tool_error_persistence.py`](./06_tool_error_persistence.py) | When a tool raises mid-run, in-flight messages are flushed onto the ERROR row so the failed conversation isn't lost. |
 | [`07_checkpoint_endpoints.py`](./07_checkpoint_endpoints.py) | Calls the two new GET endpoints — `/checkpoints` (timeline) and `/checkpoints/{message_index}` (snapshot) — via an in-process `TestClient`, prints raw payloads, and feeds the returned `message_index` back into `/continue`. |
@@ -41,7 +41,7 @@ crash-recoverable workflows, not for chatty agents.
 | `continue_from=K` | Low-level numeric message index fallback |
 | `regenerate=True` | **Always forks.** Drops only the trailing no-tool-call assistant message and keeps intermediate tool exchanges (tools NOT re-invoked) |
 | `regenerate=True, additional_instructions="..."` | Same, with steering text appended |
-| `regenerate=True, preserve_original=True` | Same + mark source `REGENERATED` so it's hidden from future history |
+| `regenerate=True, replace_original=True` | Same + mark source `REGENERATED` so it's hidden from future history |
 
 **The 1-run-1-loop invariant.** Whenever a model loop has already finished (status COMPLETED), `/continue` produces a new `run_id`. This is structural — there's no way to mix two model loops' metrics into one row. Only mid-flight resumes (RUNNING / ERROR / PAUSED — the loop never actually finished) stay on the same `run_id`.
 
@@ -51,7 +51,7 @@ These compose:
 await agent.acontinue_run(
     run_id=...,
     regenerate=True,
-    preserve_original=True,
+    replace_original=True,
     additional_instructions="be more concise",
 )
 ```
@@ -61,7 +61,7 @@ await agent.acontinue_run(
 | You want | Use |
 |---|---|
 | "Redo the last response" (drop assistant reply, fresh run_id) | `regenerate=True` |
-| Same, and hide the original from future history | `regenerate=True, preserve_original=True` |
+| Same, and hide the original from future history | `regenerate=True, replace_original=True` |
 | Same, with a steering message | `regenerate=True, additional_instructions="..."` |
 | Drop the last *3* messages, not just the assistant reply | `continue_from=K` |
 | Drop messages *and* keep the old run | `continue_from=K, fork=True` |

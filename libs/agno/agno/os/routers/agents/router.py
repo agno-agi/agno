@@ -213,7 +213,7 @@ async def agent_continue_response_streamer(
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
-    preserve_original: bool = False,
+    replace_original: bool = False,
     additional_instructions: Optional[str] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -238,7 +238,7 @@ async def agent_continue_response_streamer(
             continue_from=continue_from,
             fork=fork,
             regenerate=regenerate,
-            preserve_original=preserve_original,
+            replace_original=replace_original,
             additional_instructions=additional_instructions,
             session_id=session_id,
             user_id=user_id,
@@ -280,7 +280,7 @@ async def agent_resumable_continue_response_streamer(
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
-    preserve_original: bool = False,
+    replace_original: bool = False,
     additional_instructions: Optional[str] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -315,7 +315,7 @@ async def agent_resumable_continue_response_streamer(
             continue_from=continue_from,
             fork=fork,
             regenerate=regenerate,
-            preserve_original=preserve_original,
+            replace_original=replace_original,
             additional_instructions=additional_instructions,
             session_id=session_id,
             user_id=user_id,
@@ -954,16 +954,18 @@ def get_agent_router(
                 "Sugar: regenerate the last response of this run. Auto-computes "
                 "``continue_from='last_user'`` to land just after the last user message. Pair with "
                 "``additional_instructions`` to steer the new output. Pair with "
-                "``preserve_original=true`` to keep the old response as a sibling instead "
-                "of overwriting it."
+                "``replace_original=true`` to hide the old response so the new one "
+                "replaces it in the transcript (by default both remain)."
             ),
         ),
-        preserve_original: bool = Form(
+        replace_original: bool = Form(
             False,
             description=(
-                "Only valid with ``regenerate=true``: keep the original run alongside the "
-                "regenerated one (status=REGENERATED). Equivalent to ``fork=true`` under "
-                "the hood."
+                "Only valid with ``regenerate=true``: mark the original run "
+                "``REGENERATED`` so history builders skip it — the regenerated run "
+                "replaces it in the rendered transcript. Default (false) leaves the "
+                "original visible alongside the regenerated run. Note: ``regenerate`` "
+                "always forks; this flag only controls whether the source is hidden."
             ),
         ),
         additional_instructions: Optional[str] = Form(
@@ -1092,7 +1094,7 @@ def get_agent_router(
                     continue_from=continue_from_value,
                     fork=fork,
                     regenerate=regenerate,
-                    preserve_original=preserve_original,
+                    replace_original=replace_original,
                     additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
@@ -1112,7 +1114,7 @@ def get_agent_router(
                     continue_from=continue_from_value,
                     fork=fork,
                     regenerate=regenerate,
-                    preserve_original=preserve_original,
+                    replace_original=replace_original,
                     additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
@@ -1138,7 +1140,7 @@ def get_agent_router(
                         continue_from=continue_from_value,
                         fork=fork,
                         regenerate=regenerate,
-                        preserve_original=preserve_original,
+                        replace_original=replace_original,
                         additional_instructions=additional_instructions,
                         session_id=session_id,
                         user_id=user_id,

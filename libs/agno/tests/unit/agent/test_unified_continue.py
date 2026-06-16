@@ -1160,7 +1160,7 @@ class TestForkMetricsReset:
 
 
 class TestRegenerateSugar:
-    """``regenerate=True``, ``preserve_original=True``, and ``additional_instructions``
+    """``regenerate=True``, ``replace_original=True``, and ``additional_instructions``
     are sugar params that normalize to the canonical ``fork`` / ``message_index``
     / ``input`` triple inside the dispatch."""
 
@@ -1317,7 +1317,7 @@ class TestRegenerateSugar:
 
         assert captured["run_response"].regenerated_from == "run-A"
 
-    def test_preserve_original_marks_old_run_regenerated(self, monkeypatch: pytest.MonkeyPatch):
+    def test_replace_original_marks_old_run_regenerated(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
 
@@ -1331,14 +1331,14 @@ class TestRegenerateSugar:
             run_id="run-A",
             session_id="s",
             regenerate=True,
-            preserve_original=True,
+            replace_original=True,
             stream=False,
         )
 
         # Old run got status flipped (history-builders will skip it).
         assert run.status == RunStatus.regenerated
 
-    def test_preserve_original_creates_fork_with_new_run_id(self, monkeypatch: pytest.MonkeyPatch):
+    def test_replace_original_creates_fork_with_new_run_id(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
         captured: dict = {}
@@ -1355,17 +1355,18 @@ class TestRegenerateSugar:
             run_id="run-A",
             session_id="s",
             regenerate=True,
-            preserve_original=True,
+            replace_original=True,
             stream=False,
         )
 
-        # Sugar resolves preserve_original=True → fork=True under the hood.
+        # regenerate=True always forks under the hood (replace_original only
+        # controls whether the source run is hidden, not whether to fork).
         assert captured["run_id"] != "run-A"
         assert captured["forked_from"] == "run-A"
 
     def test_regenerate_always_forks(self, monkeypatch: pytest.MonkeyPatch):
         """``regenerate=True`` ALWAYS creates a new run_id (1-run-1-loop
-        invariant). ``preserve_original`` is a separate concern about
+        invariant). ``replace_original`` is a separate concern about
         whether the source is hidden from history, not whether to fork.
         """
         run = self._build_run_with_assistant_tail()
@@ -1421,7 +1422,7 @@ class TestRegenerateSugar:
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
 
-        with pytest.raises(ValueError, match="preserve_original"):
+        with pytest.raises(ValueError, match="replace_original"):
             _run.continue_run_dispatch(
                 agent=agent,
                 run_id="run-A",
@@ -1446,7 +1447,7 @@ class TestRegenerateSugar:
                 stream=False,
             )
 
-    def test_preserve_original_without_regenerate_raises(self, monkeypatch: pytest.MonkeyPatch):
+    def test_replace_original_without_regenerate_raises(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
 
@@ -1455,7 +1456,7 @@ class TestRegenerateSugar:
                 agent=agent,
                 run_id="run-A",
                 session_id="s",
-                preserve_original=True,
+                replace_original=True,
                 stream=False,
             )
 
@@ -1688,7 +1689,7 @@ class TestStreamingParity:
                 f, fc, inp = _normalize_regenerate_params(
                     run_response,
                     regenerate=kw.get("regenerate", False),
-                    preserve_original=kw.get("preserve_original", False),
+                    replace_original=kw.get("replace_original", False),
                     additional_instructions=kw.get("additional_instructions"),
                     fork=kw.get("fork", False),
                     continue_index=continue_index,
@@ -1774,8 +1775,8 @@ class TestStreamingParity:
         assert rr.messages[-1].content == "Q2"
 
     @pytest.mark.asyncio
-    async def test_stream_regenerate_with_preserve_original_forks(self, monkeypatch: pytest.MonkeyPatch):
-        """preserve_original=True on the streaming path must create a fork, not a rewrite."""
+    async def test_stream_regenerate_with_replace_original_forks(self, monkeypatch: pytest.MonkeyPatch):
+        """replace_original=True on the streaming path must create a fork, not a rewrite."""
         captured: dict = {}
         agent = self._patch_stream_dispatch(monkeypatch, captured, runs=[self._build_run()])
 
@@ -1783,7 +1784,7 @@ class TestStreamingParity:
             run_id="run-S",
             session_id="sess-S",
             regenerate=True,
-            preserve_original=True,
+            replace_original=True,
             stream=True,
         )
         async for _ in result:

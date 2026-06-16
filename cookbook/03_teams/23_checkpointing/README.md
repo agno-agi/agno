@@ -24,7 +24,7 @@ state, not member state.
 | empty + RUNNING / ERROR | Resume in place (loop didn't finish; retry semantics) |
 | `regenerate=True` | Always forks: drops only the trailing no-tool-call assistant message, intermediate tool exchanges survive (tools NOT re-invoked) |
 | `regenerate=True, additional_instructions=...` | Same with steering text appended |
-| `regenerate=True, preserve_original=True` | Source marked `REGENERATED` so history-builders skip it |
+| `regenerate=True, replace_original=True` | Source marked `REGENERATED` so history-builders skip it |
 | `continue_from="end"` | Resume from the current end of the transcript |
 | `fork=True, continue_from="last_user"` | Fork at the last user message — drops the post-user tail including tool exchanges |
 | `continue_from="last_user"` | Resume just after the last user message (tools will be re-invoked) |

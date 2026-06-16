@@ -20,8 +20,9 @@ Fork vs branch_session (see 05_branch_session.py):
 - **branch_session** → new session containing copies of every run (session-level)
 
 If you just want "redo the last response, keeping the old one around," the
-friendlier alias is ``regenerate=True, preserve_original=True`` - same
-mechanic, no message index math required. See 04_regenerate.py.
+friendlier alias is ``regenerate=True`` (which forks but leaves the original
+visible) - same mechanic, no message index math required. Add
+``replace_original=True`` to hide the old response instead. See 04_regenerate.py.
 """
 
 import asyncio

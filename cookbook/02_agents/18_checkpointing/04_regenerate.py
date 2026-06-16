@@ -13,13 +13,13 @@ audit trails always reflect exactly one model loop.
 Two flavors:
 - ``regenerate=True``                            -> fork. Both runs visible in
   session and history. Use when you want to compare attempts.
-- ``regenerate=True, preserve_original=True``    -> fork, AND mark the source
+- ``regenerate=True, replace_original=True``    -> fork, AND mark the source
   ``status=REGENERATED`` so history-builders skip it. The model sees only
   the new turn when re-rebuilding context for future runs.
 - ``regenerate=True, additional_instructions=X`` -> append X as a user message
   before re-generating. Use this to steer the new output.
 
-These compose. ``regenerate=True, preserve_original=True,
+These compose. ``regenerate=True, replace_original=True,
 additional_instructions="be more concise"`` is the typical "let me try that
 again with guidance, hide the old one from future context" pattern.
 
@@ -83,22 +83,26 @@ async def main() -> None:
     print(steered.content)
     print()
 
-    # Regenerate but keep the old one — preserve_original creates a fork.
-    preserved = await agent.acontinue_run(
+    # Regenerate and hide the old one — replace_original marks the source
+    # REGENERATED so history-builders skip it. The new run still forks (every
+    # regenerate does); replace_original only controls whether the old run
+    # stays visible.
+    replaced = await agent.acontinue_run(
         run_id=original.run_id,
         session_id=original.session_id,
         regenerate=True,
-        preserve_original=True,
+        replace_original=True,
         additional_instructions="Now do it in haiku form.",
     )
-    print("--- Regenerated with preserve_original=True (fork) ---")
-    print("  run_id:", preserved.run_id, "(new)")
-    print("  regenerated_from:", preserved.regenerated_from)
-    print(preserved.content)
+    print("--- Regenerated with replace_original=True (source hidden) ---")
+    print("  run_id:", replaced.run_id, "(new)")
+    print("  regenerated_from:", replaced.regenerated_from)
+    print(replaced.content)
     print()
 
-    # Verify the session: 4 runs now — original + 2 regenerates + 1 preserved-style.
-    # Each has its own metrics; the source is untouched.
+    # Verify the session: 4 runs now — original + 2 regenerates + 1 replacing run.
+    # Each has its own metrics; the source row is untouched (only its status flips
+    # to REGENERATED when replace_original=True).
     session = agent.db.get_session(session_id=original.session_id, session_type="agent")
     print(f"Session has {len(session.runs or [])} runs:")
     for r in session.runs or []:
