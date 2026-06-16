@@ -36,6 +36,8 @@ from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
     RunCancelledException,
+    RunNotContinuableError,
+    RunNotFoundError,
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -3357,7 +3359,7 @@ def continue_run_dispatch(
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
         if run_response.status == RunStatus.cancelled:
-            raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+            raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
         # The run is continued from a provided run_response. This contains the updated tools.
         continue_index: Optional[int] = _resolve_continue_from(
             run_response,
@@ -3394,9 +3396,9 @@ def continue_run_dispatch(
         runs = agent_session.runs or []
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
-            raise RuntimeError(f"No runs found for run ID {run_id}")
+            raise RunNotFoundError(f"No runs found for run ID {run_id}")
         if run_response.status == RunStatus.cancelled:
-            raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+            raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
         continue_index = _resolve_continue_from(
             run_response,
@@ -4552,7 +4554,7 @@ async def _acontinue_run(
                 # 4. Prepare run response
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
-                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
                     continue_index: Optional[int] = _resolve_continue_from(
                         run_response,
@@ -4585,9 +4587,9 @@ async def _acontinue_run(
                     runs = agent_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
-                        raise RuntimeError(f"No runs found for run ID {run_id}")
+                        raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
-                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                     continue_index = _resolve_continue_from(
                         run_response,
@@ -5042,7 +5044,7 @@ async def _acontinue_run_stream(
                 # 4. Prepare run response
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
-                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
                     continue_index: Optional[int] = _resolve_continue_from(
                         run_response,
@@ -5076,9 +5078,9 @@ async def _acontinue_run_stream(
                     runs = agent_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
-                        raise RuntimeError(f"No runs found for run ID {run_id}")
+                        raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
-                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                     continue_index = _resolve_continue_from(
                         run_response,

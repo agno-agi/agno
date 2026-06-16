@@ -23,6 +23,7 @@ from agno.agent import _init, _response, _run, _storage, _tools
 from agno.agent._run import _fork_run, _truncate_run_to_checkpoint
 from agno.utils.message import safe_truncation_index
 from agno.agent.agent import Agent
+from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
@@ -2086,3 +2087,29 @@ class TestStreamingRealBody:
         assert rr.forked_from_run_id == "run-real"
         assert rr.forked_from_message_index == 1
         assert len(rr.messages or []) == 1
+
+
+class TestContinueErrorTypes:
+    """Continue dispatch raises typed exceptions the OS layer maps to 404/409
+    (instead of bubbling bare RuntimeError/ValueError into a 500)."""
+
+    def test_missing_run_raises_run_not_found(self, monkeypatch: pytest.MonkeyPatch):
+        agent = _make_agent(monkeypatch, runs=[])
+        with pytest.raises(RunNotFoundError):
+            _run.continue_run_dispatch(agent=agent, run_id="nope", session_id="s", stream=False)
+
+    def test_cancelled_run_raises_not_continuable(self, monkeypatch: pytest.MonkeyPatch):
+        cancelled = RunOutput(
+            run_id="run-x",
+            session_id="s",
+            status=RunStatus.cancelled,
+            messages=[Message(role="user", content="Q")],
+        )
+        agent = _make_agent(monkeypatch, runs=[cancelled])
+        with pytest.raises(RunNotContinuableError):
+            _run.continue_run_dispatch(agent=agent, run_id="run-x", session_id="s", stream=False)
+
+    def test_typed_exceptions_keep_sdk_compatible_bases(self):
+        # SDK callers that catch the standard bases still work.
+        assert issubclass(RunNotFoundError, RuntimeError)
+        assert issubclass(RunNotContinuableError, ValueError)

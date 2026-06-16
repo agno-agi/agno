@@ -21,7 +21,7 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -1151,7 +1151,11 @@ def get_agent_router(
                 )
                 return run_response_obj.to_dict()
 
-            except InputCheckError as e:
+            except RunNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except RunNotContinuableError as e:
+                raise HTTPException(status_code=409, detail=str(e))
+            except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(

@@ -29,6 +29,8 @@ from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
     RunCancelledException,
+    RunNotContinuableError,
+    RunNotFoundError,
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -6447,12 +6449,12 @@ def continue_run_dispatch(
         runs = team_session.runs or []
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
-            raise RuntimeError(f"No runs found for run ID {run_id}")
+            raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
     run_response = cast(TeamRunOutput, run_response)
 
     if run_response.status == RunStatus.cancelled:
-        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
     # --- Snapshot dispatch (regenerate / fork / time-travel) ----------------
     continue_index: Optional[int] = _resolve_continue_from_team(
@@ -7893,12 +7895,12 @@ async def _acontinue_run(
                     runs = team_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
-                        raise RuntimeError(f"No runs found for run ID {run_id}")
+                        raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
 
                 if run_response.status == RunStatus.cancelled:
-                    raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                    raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                 # --- Snapshot dispatch (regenerate / fork / time-travel) ---
                 continue_index: Optional[int] = _resolve_continue_from_team(
@@ -8319,12 +8321,12 @@ async def _acontinue_run_stream(
                     runs = team_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
-                        raise RuntimeError(f"No runs found for run ID {run_id}")
+                        raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
 
                 if run_response.status == RunStatus.cancelled:
-                    raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                    raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                 # --- Snapshot dispatch (regenerate / fork / time-travel) ---
                 continue_index: Optional[int] = _resolve_continue_from_team(

@@ -19,6 +19,7 @@ import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
+from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
@@ -754,3 +755,71 @@ class TestTeamRegenerateSugar:
         agent_rows = [r for r in session.runs if isinstance(r, RunOutput)]
         assert len(agent_rows) == 1
         assert agent_rows[0].run_id == "member-1"
+
+
+class TestTeamUpdateRunResponseDedup:
+    """Terminal non-stream merge must not duplicate tools the checkpoint callback
+    already wrote, and must preserve the delegation -> member-run link."""
+
+    def test_dedupes_tools_and_preserves_child_run_id(self):
+        from agno.models.response import ModelResponse
+        from agno.run.messages import RunMessages
+
+        team = Team(members=[], name="t")
+        # checkpoint="tool-batch": the per-batch callback already wrote the
+        # delegate tool (with child_run_id) into run_response.tools.
+        run_response = TeamRunOutput(
+            run_id="team-1",
+            tools=[ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id="member-9")],
+        )
+        rm = RunMessages()
+        rm.messages = [Message(role="assistant", content="x")]
+        # Terminal merge sees the same execution in model_response (no child_run_id).
+        model_response = ModelResponse(
+            tool_executions=[ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id=None)]
+        )
+
+        team_response_mod._update_run_response(team, model_response, run_response, rm)
+
+        assert len(run_response.tools) == 1, "duplicate tool execution under checkpoint=tool-batch"
+        assert run_response.tools[0].child_run_id == "member-9"
+
+
+class TestTeamContinueErrorTypes:
+    """Continue dispatch raises typed exceptions the OS layer maps to 404/409."""
+
+    def test_missing_run_raises_run_not_found(self, monkeypatch: pytest.MonkeyPatch):
+        team = Team(members=[], name="t")
+        _patch_team_sync_dispatch(team, monkeypatch, runs=[])
+        with pytest.raises(RunNotFoundError):
+            team_run.continue_run_dispatch(team=team, run_id="nope", session_id="sess-1", stream=False)
+
+    def test_cancelled_run_raises_not_continuable(self, monkeypatch: pytest.MonkeyPatch):
+        cancelled = TeamRunOutput(
+            run_id="run-x",
+            session_id="sess-1",
+            status=RunStatus.cancelled,
+            messages=[Message(role="user", content="Q")],
+        )
+        team = Team(members=[], name="t")
+        _patch_team_sync_dispatch(team, monkeypatch, runs=[cancelled])
+        with pytest.raises(RunNotContinuableError):
+            team_run.continue_run_dispatch(team=team, run_id="run-x", session_id="sess-1", stream=False)
+
+
+class TestTeamForkEndpoint:
+    """Parity with the agent: the team session-fork HTTP endpoint must exist."""
+
+    def test_fork_session_route_registered(self):
+        from unittest.mock import MagicMock
+
+        from agno.os.routers.teams.router import get_team_router
+
+        router = get_team_router(MagicMock())
+        matches = [
+            route
+            for route in router.routes
+            if getattr(route, "path", "").endswith("/sessions/{session_id}/fork")
+            and "POST" in (getattr(route, "methods", None) or set())
+        ]
+        assert matches, "POST /teams/{team_id}/sessions/{session_id}/fork is not registered"
