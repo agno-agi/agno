@@ -522,3 +522,45 @@ class TestPopulateRegistryComponentsCacheInvalidation:
 
         # The cached lookup must have been invalidated and rebuilt with tool_b
         assert "tool_b" in os.registry._entrypoint_lookup
+
+
+class TestPopulateRegistryDedupLogging:
+    """Dedup chatter is suppressed for registries AgentOS auto-creates."""
+
+    def test_auto_created_registry_is_silent_on_duplicate(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        debugs = []
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: debugs.append(msg))
+
+        class _NamedToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="shared_name", tools=[])
+
+        # No registry provided -> AgentOS auto-creates one; duplicates across the
+        # two agents are an internal wiring detail and must not be logged.
+        a = Agent(name="A1", id="a1", tools=[_NamedToolkit()], telemetry=False)
+        b = Agent(name="A2", id="a2", tools=[_NamedToolkit()], telemetry=False)
+        os = AgentOS(agents=[a, b], telemetry=False)
+
+        assert os.registry._emit_dedup_logs is False
+        assert not any("shared_name" in m for m in debugs)
+
+    def test_user_registry_logs_on_clash_with_primitive(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        debugs = []
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: debugs.append(msg))
+
+        class _NamedToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="shared_name", tools=[])
+
+        # User explicitly declares a registry; a primitive carrying a matching
+        # toolkit clashes with it, which is worth surfacing.
+        registry = Registry(tools=[_NamedToolkit()])
+        agent = Agent(name="A1", id="a1", tools=[_NamedToolkit()], telemetry=False)
+        os = AgentOS(agents=[agent], registry=registry, telemetry=False)
+
+        assert os.registry._emit_dedup_logs is True
+        assert any("shared_name" in m for m in debugs)

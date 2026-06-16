@@ -41,6 +41,13 @@ class Registry:
     # Code-defined agents and teams (for workflow rehydration)
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
+    # Internal: whether add_* should log when a duplicate component is skipped.
+    # AgentOS turns this off for registries it auto-creates while wiring up
+    # components from primitives -- there, dedup is an internal step the user did
+    # not ask for, so duplicate chatter would be noise. A user-constructed
+    # Registry keeps it on, so clashes against explicitly declared components are
+    # surfaced.
+    _emit_dedup_logs: bool = field(default=True, repr=False, compare=False)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -91,7 +98,10 @@ class Registry:
             if existing is model:
                 return
             if (getattr(existing, "provider", None), getattr(existing, "id", None)) == key:
-                log_debug(f"Registry: skipped a duplicate model '{key[0]}/{key[1]}'; keeping the registered instance.")
+                if self._emit_dedup_logs:
+                    log_debug(
+                        f"Registry: skipped a duplicate model '{key[0]}/{key[1]}'; keeping the registered instance."
+                    )
                 return
         self.models.append(model)
 
@@ -108,7 +118,10 @@ class Registry:
           before primitives are walked, and primitives are walked in order, so a
           later matching instance is skipped. This is expected (re-instantiating a
           default toolkit in two places is common), so the skip is logged at debug
-          rather than warned. The trade-off is accepted: rehydration resolves
+          rather than warned -- and only when ``_emit_dedup_logs`` is set (i.e. the
+          user explicitly defined this registry); for registries AgentOS
+          auto-creates to wire up primitives the skip is silent. The trade-off is
+          accepted: rehydration resolves
           entrypoints by function name globally (see ``_entrypoint_lookup``), so
           only one instance can ever back a given name regardless of dedup -- two
           toolkits that differ only in non-functional config (api keys, timeouts,
@@ -136,7 +149,10 @@ class Registry:
                     isinstance(existing, Toolkit)
                     and (type(existing), existing.name, frozenset(existing.functions)) == key
                 ):
-                    log_debug(f"Registry: skipped a duplicate '{tool.name}' toolkit; keeping the registered instance.")
+                    if self._emit_dedup_logs:
+                        log_debug(
+                            f"Registry: skipped a duplicate '{tool.name}' toolkit; keeping the registered instance."
+                        )
                     return
         else:
             for existing in self.tools:
