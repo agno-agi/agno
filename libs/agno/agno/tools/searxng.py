@@ -14,11 +14,13 @@ class Searxng(Toolkit):
         host: str,
         engines: List[str] = [],
         fixed_max_results: Optional[int] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         self.host = host
         self.engines = engines
         self.fixed_max_results = fixed_max_results
+        self.timeout = timeout
 
         tools: List[Any] = [
             self.search_web,
@@ -140,7 +142,9 @@ class Searxng(Toolkit):
 
         log_info(f"Fetching results from searxng: {url}")
         try:
-            resp = httpx.get(url).json()
+            response = httpx.get(url, timeout=self.timeout)
+            response.raise_for_status()
+            resp = response.json()
             results = self.fixed_max_results or max_results
             resp["results"] = resp["results"][:results]
             return json.dumps(resp)

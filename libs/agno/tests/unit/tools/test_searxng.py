@@ -51,7 +51,7 @@ def test_searxng_search(searxng_instance):
         assert result_data["results"][0]["title"] == "Result 1"
         assert result_data["results"][1]["title"] == "Result 2"
 
-        mock_get.assert_called_once_with("http://localhost:53153/search?format=json&q=test%20query")
+        mock_get.assert_called_once_with("http://localhost:53153/search?format=json&q=test%20query", timeout=30)
 
 
 def test_searxng_search_with_engines(searxng_with_engines):
@@ -66,7 +66,7 @@ def test_searxng_search_with_engines(searxng_with_engines):
         searxng_with_engines.search_web("test query")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query&engines=google,bing"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
@@ -101,7 +101,7 @@ def test_searxng_image_search(searxng_instance):
         result = searxng_images.image_search("test image")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20image&categories=images"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
         result_data = json.loads(result)
         assert result_data["results"][0]["title"] == "Image 1"
@@ -120,7 +120,7 @@ def test_searxng_news_search():
         searxng_news.news_search("breaking news")
 
         expected_url = "http://localhost:53153/search?format=json&q=breaking%20news&categories=news"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_search_error_handling(searxng_instance):
@@ -145,7 +145,7 @@ def test_searxng_query_encoding(searxng_instance):
         searxng_instance.search_web("test query with spaces & symbols")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query%20with%20spaces%20%26%20symbols"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
 
 def test_searxng_initialization():
@@ -155,9 +155,25 @@ def test_searxng_initialization():
     assert searxng.host == "http://test.com"
     assert searxng.engines == ["google"]
     assert searxng.fixed_max_results == 10
+    assert searxng.timeout == 30
     assert (
         len(searxng.tools) == 8
     )  # All 8 tools: search, image_search, it_search, map_search, music_search, news_search, science_search, video_search
+
+
+def test_searxng_search_uses_configured_timeout():
+    """Test search requests use the configured timeout."""
+    mock_response_payload = {"results": [{"title": "Result", "url": "http://example.com"}]}
+
+    with patch("httpx.get") as mock_get:
+        mock_response = Mock()
+        mock_response.json.return_value = mock_response_payload
+        mock_get.return_value = mock_response
+
+        searxng = Searxng(host="http://localhost:53153", timeout=9)
+        searxng.search_web("test query")
+
+        mock_get.assert_called_once_with("http://localhost:53153/search?format=json&q=test%20query", timeout=9)
 
 
 @pytest.mark.parametrize(
@@ -187,7 +203,7 @@ def test_category_searches(category, method_name):
         result = method("test query")
 
         expected_url = f"http://localhost:53153/search?format=json&q=test%20query&categories={category}"
-        mock_get.assert_called_once_with(expected_url)
+        mock_get.assert_called_once_with(expected_url, timeout=30)
 
         result_data = json.loads(result)
         assert result_data["results"][0]["title"] == "Test"
