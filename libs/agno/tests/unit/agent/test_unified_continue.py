@@ -918,6 +918,52 @@ class TestForkHelper:
         assert forked.tools == [], "No tool_call_ids referenced in surviving messages"
 
 
+class TestCheckpointScrubIsolation:
+    """A mid-run checkpoint with store_media=False must scrub the storage copy
+    without stripping media off the live, still-running run."""
+
+    def _run_with_media(self) -> RunOutput:
+        from agno.media import Image
+
+        return RunOutput(
+            run_id="r1",
+            session_id="s1",
+            messages=[Message(role="user", content="hi", images=[Image(url="http://example.com/x.png")])],
+        )
+
+    def test_inflight_checkpoint_isolates_media_from_live_run(self):
+        from types import SimpleNamespace
+
+        from agno.agent._run import _scrub_and_propagate_session_state
+
+        run = self._run_with_media()
+        live_images = run.messages[0].images
+        agent = SimpleNamespace(store_media=False, store_tool_messages=True, store_history_messages=True)
+
+        storage_copy = _scrub_and_propagate_session_state(agent, run, None, isolate_inflight=True)
+
+        # Storage copy is scrubbed for persistence...
+        assert storage_copy.messages[0].images is None
+        # ...but the live run keeps its media for the next model turn.
+        assert run.messages[0].images is live_images
+        assert run.messages[0].images is not None
+        assert storage_copy.messages[0] is not run.messages[0]
+
+    def test_terminal_scrub_shares_objects(self):
+        """Terminal path (isolate_inflight=False) keeps the existing in-place
+        behavior — the run is finished, so no isolating copy is taken."""
+        from types import SimpleNamespace
+
+        from agno.agent._run import _scrub_and_propagate_session_state
+
+        run = self._run_with_media()
+        agent = SimpleNamespace(store_media=False, store_tool_messages=True, store_history_messages=True)
+
+        storage_copy = _scrub_and_propagate_session_state(agent, run, None)
+
+        assert storage_copy.messages[0] is run.messages[0]
+
+
 # ---------------------------------------------------------------------------
 # Dispatch wiring for message_index and fork
 # ---------------------------------------------------------------------------

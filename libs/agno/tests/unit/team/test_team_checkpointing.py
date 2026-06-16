@@ -499,6 +499,66 @@ class TestTeamCheckpointSyncPreservesChildRunId:
         assert run_response.tools[0].child_run_id == "member-new"
 
 
+class TestTeamCheckpointScrubIsolation:
+    """A mid-run team checkpoint with store_media=False must scrub the storage
+    copy without stripping media off the live team run or its live member runs."""
+
+    def _team_run_with_media(self) -> TeamRunOutput:
+        from agno.media import Image
+        from agno.run.agent import RunOutput
+
+        member = RunOutput(
+            run_id="m1",
+            agent_id="member-1",
+            messages=[Message(role="assistant", content="m", images=[Image(url="http://example.com/m.png")])],
+        )
+        return TeamRunOutput(
+            run_id="team-1",
+            messages=[Message(role="user", content="hi", images=[Image(url="http://example.com/t.png")])],
+            member_responses=[member],
+        )
+
+    def test_inflight_checkpoint_isolates_team_and_member_state(self, monkeypatch: pytest.MonkeyPatch):
+        from types import SimpleNamespace
+
+        monkeypatch.setattr("agno.team._session.update_session_metrics", lambda *a, **k: None)
+
+        run_response = self._team_run_with_media()
+        live_team_images = run_response.messages[0].images
+        live_members = run_response.member_responses
+        live_member0 = run_response.member_responses[0]
+
+        captured: dict = {}
+
+        class FakeSession:
+            session_data = None
+            runs: list = []
+
+            def upsert_run(self, run_response):
+                captured["copy"] = run_response
+
+        team = SimpleNamespace(
+            store_media=False,
+            store_tool_messages=True,
+            store_history_messages=True,
+            store_member_responses=True,
+            save_session=lambda session: None,
+        )
+
+        team_run._persist_team_run_in_session(team, run_response, FakeSession(), run_context=None)
+
+        storage_copy = captured["copy"]
+        # Team's own messages: storage copy scrubbed, live run untouched.
+        assert storage_copy.messages[0].images is None
+        assert run_response.messages[0].images is live_team_images
+        assert run_response.messages[0].images is not None
+        # member_responses deep-copied so the later in-place member scrub in
+        # save_session can't reach the live member runs.
+        assert storage_copy.member_responses is not live_members
+        assert storage_copy.member_responses[0] is not live_member0
+        assert run_response.member_responses[0].messages[0].images is not None
+
+
 # ---------------------------------------------------------------------------
 # Continue dispatch sugar + auto-fork-on-COMPLETED
 #
