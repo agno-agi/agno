@@ -190,24 +190,32 @@ class NativePolicyEngine(PolicyEngine):
 
     # --- authoring: roles -> scopes -------------------------------------
     def set_role_scopes(self, role: str, entries: List[ScopeEntry]) -> None:
-        for key in [k for k in self._policies if k[0] == role]:
-            del self._policies[key]
-        rows: List[Tuple[str, str, str]] = []
+        # Stage + validate EVERY entry before touching the DB or the cache: a bad
+        # scope mid-list raises here (nothing mutated yet), and mapping to a dict
+        # dedups colliding (resource, action) pairs (e.g. agents:read & agents:*:read)
+        # so the persist can't blow up on a duplicate primary key. Last effect wins.
+        staged: Dict[Tuple[str, str], str] = {}
         for scope, effect in entries:
             resource, action = scope_to_resource_action(scope)
-            self._policies[(role, resource, action)] = effect  # dedup per (role, resource, action)
-            rows.append((resource, action, effect))
+            staged[(resource, action)] = effect
+        rows = [(resource, action, effect) for (resource, action), effect in staged.items()]
+        # DB first (one transaction); only swap the cache once it has committed, so a
+        # persist failure leaves the cache matching the DB instead of half-applied.
         self._persist_policies_set(role, rows)
+        for key in [k for k in self._policies if k[0] == role]:
+            del self._policies[key]
+        for (resource, action), effect in staged.items():
+            self._policies[(role, resource, action)] = effect
 
     def add_scope(self, role: str, scope: str, effect: str = _ALLOW) -> None:
-        resource, action = scope_to_resource_action(scope)
-        self._policies[(role, resource, action)] = effect
+        resource, action = scope_to_resource_action(scope)  # validate before mutating
         self._persist_policy(role, resource, action, effect)
+        self._policies[(role, resource, action)] = effect
 
     def remove_scope(self, role: str, scope: str) -> None:
-        resource, action = scope_to_resource_action(scope)
-        self._policies.pop((role, resource, action), None)
+        resource, action = scope_to_resource_action(scope)  # validate before mutating
         self._delete_policy(role, resource, action)
+        self._policies.pop((role, resource, action), None)
 
     def get_role_scopes(self, role: str) -> List[ScopeEntry]:
         return [
