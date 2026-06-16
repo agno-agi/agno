@@ -52,7 +52,6 @@ class MigrationManager:
             "knowledge": "knowledge_table_name",
             "culture": "culture_table_name",
             "approvals": "approvals_table_name",
-            "components": "components_table_name",
         }
 
         # Select tables to migrate
@@ -146,7 +145,6 @@ class MigrationManager:
             "knowledge": "knowledge_table_name",
             "culture": "culture_table_name",
             "approvals": "approvals_table_name",
-            "components": "components_table_name",
         }
 
         # Select tables to migrate

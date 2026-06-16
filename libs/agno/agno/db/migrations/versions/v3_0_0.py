@@ -1,8 +1,7 @@
-"""Migration v3.0.0: Add user_id column to evals and components tables
+"""Migration v3.0.0: Add user_id column to evals table
 
 Changes:
 - Add user_id column to agno_eval_runs table
-- Add user_id column to agno_components table
 - Add index on user_id column for performance
 """
 
@@ -18,7 +17,7 @@ except ImportError:
 
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     """
-    Add user_id column to the evals / components table.
+    Add user_id column to evals table.
 
     Returns:
         bool: True if any migration was applied, False otherwise.
@@ -26,7 +25,7 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
-        if table_type not in ("evals", "components"):
+        if table_type != "evals":
             return False
 
         if db_type == "PostgresDb":
@@ -47,7 +46,7 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """
-    Add user_id column to the evals / components table.
+    Add user_id column to evals table.
 
     Returns:
         bool: True if any migration was applied, False otherwise.
@@ -55,7 +54,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
-        if table_type not in ("evals", "components"):
+        if table_type != "evals":
             return False
 
         if db_type == "AsyncPostgresDb":
@@ -74,7 +73,7 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
 
 def down(db: BaseDb, table_type: str, table_name: str) -> bool:
     """
-    Revert: drop user_id column from the evals / components table.
+    Revert: drop user_id column from evals table.
 
     Returns:
         bool: True if any migration was reverted, False otherwise.
@@ -82,7 +81,7 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
-        if table_type not in ("evals", "components"):
+        if table_type != "evals":
             return False
 
         if db_type == "PostgresDb":
@@ -103,7 +102,7 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """
-    Revert: drop user_id column from the evals / components table.
+    Revert: drop user_id column from evals table.
 
     Returns:
         bool: True if any migration was reverted, False otherwise.
@@ -111,7 +110,7 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
-        if table_type not in ("evals", "components"):
+        if table_type != "evals":
             return False
 
         if db_type == "AsyncPostgresDb":
