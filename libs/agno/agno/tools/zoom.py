@@ -16,6 +16,7 @@ class ZoomTools(Toolkit):
         account_id: Optional[str] = None,
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         """
@@ -25,12 +26,14 @@ class ZoomTools(Toolkit):
             account_id (str): The Zoom account ID for authentication. If not provided, will use ZOOM_ACCOUNT_ID env var.
             client_id (str): The client ID for authentication. If not provided, will use ZOOM_CLIENT_ID env var.
             client_secret (str): The client secret for authentication. If not provided, will use ZOOM_CLIENT_SECRET env var.
+            timeout (int): The timeout for Zoom API requests in seconds. Defaults to 30.
             name (str): The name of the tool. Defaults to "zoom_tool".
         """
         # Get credentials from env vars if not provided
         self.account_id = account_id or getenv("ZOOM_ACCOUNT_ID")
         self.client_id = client_id or getenv("ZOOM_CLIENT_ID")
         self.client_secret = client_secret or getenv("ZOOM_CLIENT_SECRET")
+        self.timeout = timeout
         self.__access_token = None  # Made private
         self.__token_expiry = None  # Track token expiration
 
@@ -77,7 +80,7 @@ class ZoomTools(Toolkit):
                 "account_id": self.account_id,
             }
 
-            response = requests.post("https://zoom.us/oauth/token", headers=headers, data=data)
+            response = requests.post("https://zoom.us/oauth/token", headers=headers, data=data, timeout=self.timeout)
             response.raise_for_status()
 
             token_data = response.json()
@@ -134,7 +137,7 @@ class ZoomTools(Toolkit):
         }
 
         try:
-            response = requests.post(url, json=data, headers=headers)
+            response = requests.post(url, json=data, headers=headers, timeout=self.timeout)
             response.raise_for_status()
             meeting_info = response.json()
 
@@ -174,7 +177,7 @@ class ZoomTools(Toolkit):
         params = {"type": "upcoming", "page_size": str(30)}
 
         try:
-            response = requests.get(url, headers=headers, params=params)  # type: ignore
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)  # type: ignore
             response.raise_for_status()
             meetings = response.json()
 
@@ -213,7 +216,7 @@ class ZoomTools(Toolkit):
         params = {"type": type}
 
         try:
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)
             response.raise_for_status()
             meetings = response.json()
 
@@ -266,7 +269,7 @@ class ZoomTools(Toolkit):
                     logger.warning("Invalid TTL value. Must be between 0 and 604800 seconds.")
 
         try:
-            response = requests.get(url, headers=headers, params=params)
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)
             response.raise_for_status()
             recordings = response.json()
 
@@ -313,7 +316,7 @@ class ZoomTools(Toolkit):
         params = {"schedule_for_reminder": schedule_for_reminder}
 
         try:
-            response = requests.delete(url, headers=headers, params=params)
+            response = requests.delete(url, headers=headers, params=params, timeout=self.timeout)
             response.raise_for_status()
 
             # Zoom returns 204 No Content for successful deletion
@@ -349,7 +352,7 @@ class ZoomTools(Toolkit):
         headers = {"Authorization": f"Bearer {token}"}
 
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=self.timeout)
             response.raise_for_status()
             meeting_info = response.json()
 

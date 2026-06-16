@@ -40,6 +40,18 @@ def test_init_with_credentials():
     assert tool.account_id == "test_account_id"
     assert tool.client_id == "test_client_id"
     assert tool.client_secret == "test_client_secret"
+    assert tool.timeout == 30
+
+
+def test_init_with_custom_timeout():
+    """Test initialization with a custom request timeout"""
+    tool = ZoomTools(
+        account_id="test_account_id",
+        client_id="test_client_id",
+        client_secret="test_client_secret",
+        timeout=7,
+    )
+    assert tool.timeout == 7
 
 
 @patch.dict(
@@ -75,6 +87,7 @@ def test_get_access_token_success(zoom_tools, mock_token_response):
         assert kwargs["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
         assert kwargs["data"]["grant_type"] == "account_credentials"
         assert kwargs["data"]["account_id"] == "test_account_id"
+        assert kwargs["timeout"] == 30
 
 
 def test_get_access_token_reuse(zoom_tools, mock_token_response):
@@ -168,6 +181,7 @@ def test_schedule_meeting_success(zoom_tools):
         assert result_data["meeting_id"] == 123456789
         assert result_data["topic"] == "Test Meeting"
         assert result_data["join_url"] == "https://zoom.us/j/123456789"
+        assert mock_post.call_args.kwargs["timeout"] == 30
 
 
 def test_get_meeting_success(zoom_tools):
@@ -194,6 +208,7 @@ def test_get_meeting_success(zoom_tools):
         assert result_data["meeting_id"] == "123456789"
         assert result_data["topic"] == "Test Meeting"
         assert result_data["join_url"] == "https://zoom.us/j/123456789"
+        assert mock_get.call_args.kwargs["timeout"] == 30
 
 
 def test_get_upcoming_meetings_success(zoom_tools):
@@ -228,6 +243,7 @@ def test_get_upcoming_meetings_success(zoom_tools):
         assert len(result_data["meetings"]) == 2
         assert result_data["meetings"][0]["id"] == 123456789
         assert result_data["meetings"][1]["id"] == 987654321
+        assert mock_get.call_args.kwargs["timeout"] == 30
 
 
 def test_list_meetings_success(zoom_tools):
@@ -265,6 +281,7 @@ def test_list_meetings_success(zoom_tools):
         assert len(result_data["meetings"]) == 2
         assert result_data["meetings"][0]["id"] == 123456789
         assert result_data["meetings"][1]["topic"] == "Scheduled Meeting 2"
+        assert mock_get.call_args.kwargs["timeout"] == 30
 
 
 def test_get_meeting_recordings_success(zoom_tools):
@@ -309,6 +326,7 @@ def test_get_meeting_recordings_success(zoom_tools):
         assert len(result_data["recording_files"]) == 2
         assert result_data["recording_files"][0]["recording_type"] == "shared_screen_with_speaker_view"
         assert result_data["recording_files"][1]["recording_type"] == "audio_only"
+        assert mock_get.call_args.kwargs["timeout"] == 30
 
 
 def test_delete_meeting_success(zoom_tools):
@@ -331,6 +349,7 @@ def test_delete_meeting_success(zoom_tools):
         args, kwargs = mock_delete.call_args
         assert args[0] == "https://api.zoom.us/v2/meetings/123456789"
         assert kwargs["headers"]["Authorization"] == "Bearer test_token"
+        assert kwargs["timeout"] == 30
 
 
 @pytest.mark.parametrize(
