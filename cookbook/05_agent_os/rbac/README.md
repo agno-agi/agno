@@ -356,8 +356,8 @@ Three tiers, pick the lowest that fits:
 | Tier | You write | Dependency |
 |------|-----------|------------|
 | Scopes (default) | scopes in the JWT | none |
-| Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[casbin]` (hidden) |
-| Raw provider | your own `AuthorizationProvider` (e.g. a Casbin model) | yours |
+| Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[roles]` (native engine, no third-party) |
+| Raw provider | your own `AuthorizationProvider` (e.g. OpenFGA / a custom engine) | yours |
 
 Each cookbook below runs the whole scenario for you and prints a plain
 `ALLOWED` / `BLOCKED` transcript that explains itself, then exits (no server, no
@@ -369,26 +369,12 @@ New to authorization? Read them in this order:
    decides what they can do. Shows a change taking effect instantly.
 2. `managed_roles_sessions.py` — roles protecting real data: who is allowed to
    delete a saved chat session (and who gets stopped before any data is touched).
-3. `casbin_runtime_policy.py` — turning a person's access on and off live, instantly.
-4. `casbin_provider.py` — advanced: swapping the rules engine for Casbin while
-   everything else stays the same. Most people won't need this.
 
-### The three ways a company runs this
+Both use `ManagedRoleStore`, agno's native managed-roles engine (deny-overrides
+RBAC, no third-party dependency). The IdP / user-directory / over-HTTP scenarios
+(WorkOS/Auth0, the admin console, ReBAC) live in the directory and FGA cookbooks.
 
-A company either already has a login service (WorkOS/Okta/Auth0) or it doesn't,
-and either way we handle the "what are you allowed to do" part. The three setups,
-each with a runnable cookbook:
-
-| # | Their situation | Who owns "who has which role" | Do we store users? | Cookbook |
-|---|---|---|---|---|
-| 1 | They have a login service; we only enforce | the login service (role on the token) | no | `idp_enforce_only.py` |
-| 2 | No login service; they want us to manage it | us (define + assign roles, manage over HTTP) | yes | `managed_roles_api.py` |
-| 3 | A mix of both at once | both — token role if present, else our list | for the non-IdP users | `casbin_external_idp.py` |
-
-The same agent ends up protected the same way in all three; only where the role
-comes from changes.
-
-Install the optional extra first: `pip install "agno[casbin]"`.
+Install the optional extra for DB-backed persistence: `pip install "agno[roles]"`.
 
 ## Additional Resources
 

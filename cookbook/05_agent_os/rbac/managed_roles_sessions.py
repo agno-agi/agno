@@ -19,7 +19,7 @@ That is the whole idea of authorization in one screen: the right people get
 through, the wrong ones get stopped, before any data is touched.
 
 Run it:
-    pip install "agno[casbin]"
+    pip install "agno[roles]"
     python managed_roles_sessions.py
 """
 
