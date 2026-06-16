@@ -39,6 +39,7 @@ from agno.tools.google.calendar import GoogleCalendarTools
 
 if TYPE_CHECKING:
     from agno.models.base import Model
+    from agno.tools.google.auth import AuthConfig
 
 
 DEFAULT_READ_INSTRUCTIONS = """\
@@ -73,10 +74,12 @@ class GoogleCalendarContextProvider(ContextProvider):
     def __init__(
         self,
         *,
-        # Service account auth
+        # Unified auth config (preferred — enables DB storage + scope aggregation)
+        auth: AuthConfig | None = None,
+        # Service account auth (legacy — use auth= instead)
         service_account_path: str | None = None,
         delegated_user: str | None = None,
-        # OAuth auth (browser flow)
+        # OAuth auth (browser flow, legacy — use auth= instead)
         credentials_path: str | None = None,  # OAuth client config (client_id/secret JSON)
         token_path: str | None = None,  # Cached user tokens after consent
         calendar_id: str = "primary",
@@ -90,6 +93,9 @@ class GoogleCalendarContextProvider(ContextProvider):
         write: bool = False,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+
+        # Store auth config for toolkit creation
+        self._auth = auth
 
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._credentials_path = credentials_path
@@ -188,6 +194,7 @@ class GoogleCalendarContextProvider(ContextProvider):
 
     def _build_read_toolkit(self) -> GoogleCalendarTools:
         return GoogleCalendarTools(
+            auth=self._auth,
             service_account_path=self._sa_path,
             delegated_user=self._delegated_user,
             credentials_path=self._credentials_path,
@@ -202,6 +209,7 @@ class GoogleCalendarContextProvider(ContextProvider):
 
     def _build_write_toolkit(self) -> GoogleCalendarTools:
         return GoogleCalendarTools(
+            auth=self._auth,
             service_account_path=self._sa_path,
             delegated_user=self._delegated_user,
             credentials_path=self._credentials_path,
