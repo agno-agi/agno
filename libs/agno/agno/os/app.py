@@ -679,9 +679,9 @@ class AgentOS:
                 agent_id = getattr(agent, "id", None)
                 if agent_id is None:
                     continue
-                existing = existing_agents.get(agent_id)
-                if existing is not None:
-                    if existing is not agent:
+                existing_agent = existing_agents.get(agent_id)
+                if existing_agent is not None:
+                    if existing_agent is not agent:
                         log_warning(
                             f"Registry: multiple distinct agents share id '{agent_id}'; keeping the "
                             "first. Give them distinct ids to avoid one shadowing the other."
@@ -696,9 +696,9 @@ class AgentOS:
                 team_id = getattr(team, "id", None)
                 if team_id is None:
                     continue
-                existing = existing_teams.get(team_id)
-                if existing is not None:
-                    if existing is not team:
+                existing_team = existing_teams.get(team_id)
+                if existing_team is not None:
+                    if existing_team is not team:
                         log_warning(
                             f"Registry: multiple distinct teams share id '{team_id}'; keeping the "
                             "first. Give them distinct ids to avoid one shadowing the other."
