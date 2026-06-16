@@ -80,6 +80,11 @@ class TestHackerNewsToolsInitialization:
         tools = HackerNewsTools()
         assert tools.name == "hackers_news"
 
+    def test_initialization_with_custom_timeout(self):
+        """Test initialization with custom request timeout."""
+        tools = HackerNewsTools(timeout=7)
+        assert tools.timeout == 7
+
 
 class TestGetTopHackerNewsStories:
     """Tests for get_top_hackernews_stories method."""
@@ -93,7 +98,7 @@ class TestGetTopHackerNewsStories:
             {"id": 11111, "title": "Story 3", "by": "user3", "url": "https://example3.com"},
         ]
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -114,6 +119,25 @@ class TestGetTopHackerNewsStories:
         assert stories[1]["title"] == "Story 2"
         assert stories[2]["title"] == "Story 3"
 
+    def test_get_top_stories_uses_configured_timeout(self):
+        """Test top stories requests use the configured timeout."""
+        tools = HackerNewsTools(timeout=7)
+
+        def mock_get(url, **kwargs):
+            response = MagicMock()
+            if "topstories" in url:
+                response.json.return_value = [12345]
+            else:
+                response.json.return_value = {"id": 12345, "title": "Story 1", "by": "user1"}
+            return response
+
+        with patch("agno.tools.hackernews.httpx.get", side_effect=mock_get) as mock_http_get:
+            tools.get_top_hackernews_stories(num_stories=1)
+
+        assert mock_http_get.call_count == 2
+        for call in mock_http_get.call_args_list:
+            assert call.kwargs["timeout"] == 7
+
     def test_get_top_stories_custom_count(self, hackernews_tools):
         """Test getting top stories with custom count."""
         mock_story_ids = [1, 2, 3, 4, 5]
@@ -122,7 +146,7 @@ class TestGetTopHackerNewsStories:
             2: {"id": 2, "title": "Story 2", "by": "user2"},
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -142,7 +166,7 @@ class TestGetTopHackerNewsStories:
         mock_story_ids = [12345]
         mock_story = {"id": 12345, "title": "Test Story", "by": "testuser", "score": 100}
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -160,7 +184,7 @@ class TestGetTopHackerNewsStories:
     def test_get_top_stories_empty_response(self, hackernews_tools):
         """Test handling of empty story list."""
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             response.json.return_value = []
             return response
@@ -188,7 +212,7 @@ class TestGetTopHackerNewsStories:
             67890: {"id": 67890, "title": "Story 2", "by": "user2"},
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -210,7 +234,7 @@ class TestGetTopHackerNewsStories:
         mock_story_ids = [12345]
         mock_story = {"id": 12345, "title": "Job Posting", "type": "job", "url": "https://example.com"}
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -238,7 +262,7 @@ class TestGetTopHackerNewsStories:
             "type": "story",
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -384,7 +408,7 @@ class TestEdgeCases:
         """Test requesting zero stories."""
         mock_story_ids = [1, 2, 3]
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             response.json.return_value = mock_story_ids
             return response
@@ -403,7 +427,7 @@ class TestEdgeCases:
             2: {"id": 2, "title": "Story 2", "by": "user2"},
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
@@ -446,7 +470,7 @@ class TestEdgeCases:
             "score": 5000,
         }
 
-        def mock_get(url):
+        def mock_get(url, **kwargs):
             response = MagicMock()
             if "topstories" in url:
                 response.json.return_value = mock_story_ids
