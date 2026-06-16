@@ -29,13 +29,12 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_tools(mock_credentials, mock_calendar_service):
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
+        patch("googleapiclient.discovery.build") as mock_build,
         patch("agno.tools.google.calendar.authenticate", lambda func: func),
     ):
         mock_build.return_value = mock_calendar_service
-        tools = GoogleCalendarTools()
-        tools.creds = mock_credentials
-        tools.service = mock_calendar_service
+        tools = GoogleCalendarTools(creds=mock_credentials)
+        tools._service = mock_calendar_service
         return tools
 
 
@@ -43,17 +42,17 @@ def calendar_tools(mock_credentials, mock_calendar_service):
 def calendar_tools_all(mock_credentials, mock_calendar_service):
     """Instance with ALL tools enabled including write tools."""
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
+        patch("googleapiclient.discovery.build") as mock_build,
         patch("agno.tools.google.calendar.authenticate", lambda func: func),
     ):
         mock_build.return_value = mock_calendar_service
         tools = GoogleCalendarTools(
+            creds=mock_credentials,
             quick_add_event=True,
             move_event=True,
             respond_to_event=True,
         )
-        tools.creds = mock_credentials
-        tools.service = mock_calendar_service
+        tools._service = mock_calendar_service
         return tools
 
 
@@ -142,12 +141,12 @@ class TestGoogleCalendarToolsInitialization:
             service_account_path="/path/to/key.json",
             delegated_user="user@example.com",
         )
-        assert tools.service_account_path == "/path/to/key.json"
-        assert tools.delegated_user == "user@example.com"
+        assert tools._legacy_service_account_path == "/path/to/key.json"
+        assert tools._legacy_delegated_user == "user@example.com"
 
     def test_init_login_hint(self):
         tools = GoogleCalendarTools(login_hint="user@example.com")
-        assert tools.login_hint == "user@example.com"
+        assert tools._legacy_login_hint == "user@example.com"
 
 
 class TestBackwardCompat:
@@ -175,7 +174,7 @@ class TestBackwardCompat:
 class TestScopeValidation:
     def test_default_scopes(self):
         tools = GoogleCalendarTools()
-        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
+        assert tools.scopes == GoogleCalendarTools.default_scopes
 
     def test_read_only_tools_get_default_scopes(self):
         tools = GoogleCalendarTools(
@@ -183,7 +182,7 @@ class TestScopeValidation:
             update_event=False,
             delete_event=False,
         )
-        assert tools.scopes == GoogleCalendarTools.DEFAULT_SCOPES
+        assert tools.scopes == GoogleCalendarTools.default_scopes
 
     def test_custom_scopes_write_validated(self):
         with pytest.raises(ValueError, match="required for write operations"):
