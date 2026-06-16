@@ -61,6 +61,7 @@ from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.agent.subagent import SubAgentConfig
 from agno.utils.log import log_warning
 from agno.utils.safe_formatter import SafeFormatter
 
@@ -338,6 +339,14 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
+    # --- Dynamic Subagents ---
+    # If True, the agent gains a spawn_agent tool it can call to create ephemeral subagents mid-run
+    enable_dynamic_subagents: bool = False
+    # Base Agent to deep-copy for every spawned subagent. Inherits parent model when None.
+    subagent_template: Optional[Agent] = None
+    # Spawn-time policy (tool delegation, model tiers, concurrency). Uses sensible defaults when None.
+    subagent_config: Optional[SubAgentConfig] = None
+
     # --- Experimental Features ---
     # --- Agent Culture ---
     # Culture manager to use for this agent
@@ -491,6 +500,9 @@ class Agent:
         cache_callables: bool = True,
         callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        enable_dynamic_subagents: bool = False,
+        subagent_template: Optional[Agent] = None,
+        subagent_config: Optional[SubAgentConfig] = None,
     ):
         self.model = model  # type: ignore[assignment]
         if fallback_config is not None:
@@ -667,6 +679,14 @@ class Agent:
         self.enable_agentic_culture = enable_agentic_culture
         self.update_cultural_knowledge = update_cultural_knowledge
         self.add_culture_to_context = add_culture_to_context
+
+        self.enable_dynamic_subagents = enable_dynamic_subagents
+        if subagent_template is not None and not isinstance(subagent_template, Agent):
+            raise TypeError(f"subagent_template must be an Agent instance, got {type(subagent_template).__name__}")
+        self.subagent_template = subagent_template
+        if subagent_config is not None and not isinstance(subagent_config, SubAgentConfig):
+            raise TypeError(f"subagent_config must be a SubAgentConfig instance, got {type(subagent_config).__name__}")
+        self.subagent_config = subagent_config
 
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:

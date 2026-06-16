@@ -237,6 +237,48 @@ def get_models(agent: Agent) -> None:
         agent.compression_manager.model = agent.model
 
 
+def set_dynamic_subagents(agent: "Agent") -> None:
+    """Append SubAgentToolkit to agent.tools and inject context-isolation guidance."""
+    if not agent.enable_dynamic_subagents:
+        return
+
+    from agno.agent.subagent import SubAgentConfig, SubAgentToolkit
+
+    # If tools is a callable factory, we cannot introspect or append safely.
+    # Warn and skip — the user must pass tools as a list to use dynamic subagents.
+    if callable(agent.tools) and not isinstance(agent.tools, list):
+        log_warning(
+            "enable_dynamic_subagents=True is not supported when tools is a callable factory. "
+            "Pass tools as a list instead. Skipping SubAgentToolkit wiring."
+        )
+        return
+
+    # Idempotency guard: do not add a second toolkit on subsequent initialize_agent() calls
+    if any(isinstance(t, SubAgentToolkit) for t in (agent.tools or [])):
+        return
+
+    config = agent.subagent_config or SubAgentConfig()
+    toolkit = SubAgentToolkit(parent=agent, config=config)
+
+    # Inject guidance into the parent's instructions so the LLM knows when
+    # and how to use spawn_agent (context_heavy_tools, model tiers, etc.)
+    guidance = toolkit.build_guidance()
+    if isinstance(agent.instructions, str):
+        agent.instructions = (agent.instructions + "\n\n" + guidance) if agent.instructions else guidance
+    elif isinstance(agent.instructions, list):
+        agent.instructions = list(agent.instructions) + [guidance]
+    elif agent.instructions is None:
+        agent.instructions = guidance
+    # Callable instructions cannot be augmented at init time; the LLM will
+    # still have the tool description to guide it.
+
+    if isinstance(agent.tools, list):
+        agent.tools.append(toolkit)
+    elif agent.tools is None:
+        agent.tools = [toolkit]
+    # No `else` branch: callable case was handled above.
+
+
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_default_model(agent)
     set_debug(agent, debug_mode=debug_mode)
@@ -257,6 +299,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_compression_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
+    if agent.enable_dynamic_subagents:
+        set_dynamic_subagents(agent)
 
     log_debug(f"Agent ID: {agent.id}", center=True)
 

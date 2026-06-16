@@ -1,3 +1,4 @@
+from agno.agent.subagent import SubAgentConfig, SubAgentToolkit
 from agno.models.fallback import FallbackConfig
 from agno.run.team import (
     FollowupsCompletedEvent,
@@ -26,6 +27,8 @@ from agno.team.team import Team, get_team_by_id, get_teams
 
 __all__ = [
     "FallbackConfig",
+    "SubAgentConfig",
+    "SubAgentToolkit",
     "Team",
     "TeamFactory",
     "TeamMode",

@@ -9,6 +9,7 @@ from agno.agent.agent import (
 )
 from agno.agent.factory import AgentFactory
 from agno.agent.remote import RemoteAgent
+from agno.agent.subagent import SubAgentConfig, SubAgentToolkit
 from agno.factory import (
     BaseFactory,
     FactoryContextRequired,
@@ -80,4 +81,6 @@ __all__ = [
     "ToolCallCompletedEvent",
     "get_agent_by_id",
     "get_agents",
+    "SubAgentConfig",
+    "SubAgentToolkit",
 ]

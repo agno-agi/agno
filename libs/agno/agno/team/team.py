@@ -22,6 +22,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.agent.subagent import SubAgentConfig
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -365,6 +366,14 @@ class Team:
     # Store member agent runs inside the team's RunOutput
     store_member_responses: bool = False
 
+    # --- Dynamic Subagents ---
+    # If True, the team leader gains a spawn_agent tool to create ephemeral subagents mid-run
+    enable_dynamic_subagents: bool = False
+    # Base Agent to deep-copy for every spawned subagent. Inherits team model when None.
+    subagent_template: Optional[Agent] = None
+    # Spawn-time policy (tool delegation, model tiers, concurrency). Uses sensible defaults when None.
+    subagent_config: Optional[SubAgentConfig] = None
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -548,6 +557,9 @@ class Team:
         callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
         callable_members_cache_key: Optional[Callable[..., Optional[str]]] = None,
+        enable_dynamic_subagents: bool = False,
+        subagent_template: Optional[Agent] = None,
+        subagent_config: Optional[SubAgentConfig] = None,
     ):
         _init.__init__(
             self,
@@ -670,6 +682,9 @@ class Team:
             callable_tools_cache_key=callable_tools_cache_key,
             callable_knowledge_cache_key=callable_knowledge_cache_key,
             callable_members_cache_key=callable_members_cache_key,
+            enable_dynamic_subagents=enable_dynamic_subagents,
+            subagent_template=subagent_template,
+            subagent_config=subagent_config,
         )
 
         # Component metadata (set by get_teams during DB loading)

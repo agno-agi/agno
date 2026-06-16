@@ -1,6 +1,78 @@
-from typing import Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from agno.models.base import Model
+
+# Prefix-based sniffing for bare model IDs (no explicit ``<provider>:`` prefix).
+#
+# Each entry is a (prefix, provider) pair. The first matching prefix wins, so
+# keep longer / more specific prefixes above shorter ones that could collide
+# (e.g. ``open-mistral-`` above any hypothetical ``open-`` prefix).
+#
+# Only unambiguous prefixes belong here. Model families hosted on multiple
+# providers (Llama on Meta/Bedrock/Vertex, Claude on Anthropic/Bedrock/Vertex)
+# are intentionally *not* sniffed: the direct provider is the default for
+# Claude because ``claude-*`` IDs are Anthropic's canonical scheme, but users
+# on wrapped providers (AWS Bedrock, Azure, Vertex) must still pass a
+# pre-constructed ``Model`` or use an explicit ``<provider>:<id>`` string.
+_PROVIDER_PREFIXES: List[Tuple[str, str]] = [
+    # OpenAI — GPT family
+    ("gpt-", "openai"),
+    ("chatgpt-", "openai"),
+    # Anthropic (direct API; Bedrock/Vertex Claude needs explicit prefix)
+    ("claude-", "anthropic"),
+    # Google
+    ("gemini-", "google"),
+    # Mistral family (all variants route to mistral)
+    ("open-mistral-", "mistral"),
+    ("open-mixtral-", "mistral"),
+    ("mistral-", "mistral"),
+    ("ministral-", "mistral"),
+    ("codestral-", "mistral"),
+    ("mixtral-", "mistral"),
+    ("pixtral-", "mistral"),
+    ("magistral-", "mistral"),
+    ("devstral-", "mistral"),
+    # DeepSeek
+    ("deepseek-", "deepseek"),
+    # Cohere Command
+    ("command-", "cohere"),
+    # xAI Grok
+    ("grok-", "xai"),
+]
+
+# Exact model IDs (no dash variant) that are unambiguous.
+_PROVIDER_EXACT: Dict[str, str] = {
+    "o1": "openai",
+    "o3": "openai",
+    "o4": "openai",
+}
+
+
+def _sniff_provider(model_id: str) -> Optional[str]:
+    """Infer the provider slug from a bare model ID.
+
+    Returns the provider slug (e.g. ``"openai"``, ``"anthropic"``) if the
+    model ID starts with a recognised prefix, otherwise ``None``.
+
+    Only unambiguous prefixes are recognised. Users on wrapped providers
+    (Bedrock, Vertex, Azure-*) must still use an explicit ``<provider>:<id>``
+    string or pass a pre-constructed ``Model`` instance.
+    """
+    model_id = (model_id or "").strip()
+    if not model_id:
+        return None
+    if model_id in _PROVIDER_EXACT:
+        return _PROVIDER_EXACT[model_id]
+    # Match against ``o1-``, ``o3-``, ``o4-`` reasoning variants before the
+    # generic ``gpt-`` check; these deserve their own slot because ``o`` is
+    # otherwise a very ambiguous single-letter prefix.
+    for reasoning_prefix in ("o1-", "o3-", "o4-"):
+        if model_id.startswith(reasoning_prefix):
+            return "openai"
+    for prefix, provider in _PROVIDER_PREFIXES:
+        if model_id.startswith(prefix):
+            return provider
+    return None
 
 
 def _get_model_class(model_id: str, model_provider: str) -> Model:
@@ -283,8 +355,15 @@ def _parse_model_string(model_string: str) -> Model:
         raise ValueError(f"Model string must be a non-empty string, got: {model_string}")
 
     if ":" not in model_string:
+        # Bare model ID — attempt provider sniffing from the prefix.
+        sniffed_provider = _sniff_provider(model_string)
+        if sniffed_provider is not None:
+            return _get_model_class(model_string.strip(), sniffed_provider)
         raise ValueError(
-            f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'"
+            f"Invalid model string format: '{model_string}'. "
+            "Use '<provider>:<model_id>' (e.g. 'openai:gpt-4o', 'anthropic:claude-sonnet-4-5'), "
+            "or pass a bare model ID with a recognised prefix "
+            "(gpt-*, claude-*, gemini-*, mistral-*, deepseek-*, command-*, grok-*, o1/o3/o4)."
         )
 
     parts = model_string.split(":", 1)
