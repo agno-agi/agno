@@ -51,6 +51,7 @@ def attach_routes(
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     reply_to_mentions_only: bool = True,
     token: Optional[str] = None,
+    user_token: Optional[str] = None,
     signing_secret: Optional[str] = None,
     streaming: bool = True,
     loading_messages: Optional[List[str]] = None,
@@ -78,7 +79,7 @@ def attach_routes(
     op_suffix = entity_name.lower().replace(" ", "_")
     entity_id = getattr(entity, "id", None) or entity_name
 
-    slack_tools = SlackTools(token=token, ssl=ssl, max_file_size=max_file_size)
+    slack_tools = SlackTools(token=token, user_token=user_token, ssl=ssl, max_file_size=max_file_size)
     bot_name_resolver = BotNameResolver()
     if entity is None:
         raise ValueError("attach_routes requires agent, team, or workflow")
