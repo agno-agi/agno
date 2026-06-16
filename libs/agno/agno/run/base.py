@@ -320,7 +320,8 @@ class RunStatus(str, Enum):
     cancelled = "CANCELLED"
     error = "ERROR"
     # Marker for a run whose response was regenerated via /continue?regenerate=true
-    # with preserve_original=true. The new regenerated run sits alongside it as a
-    # sibling (via fork mechanics); the old run keeps this status so history-builders
-    # can skip it when rebuilding context.
+    # (replace_original defaults to true). The new regenerated run sits alongside it
+    # as a sibling (via fork mechanics); the old run keeps this status so
+    # history-builders can skip it when rebuilding context. Pass replace_original=false
+    # to keep the original COMPLETED and visible instead.
     regenerated = "REGENERATED"

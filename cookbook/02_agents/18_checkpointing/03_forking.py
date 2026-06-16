@@ -19,8 +19,8 @@ Fork vs branch_session (see 05_branch_session.py):
 - **fork**         → new run inside the **same** session (run-level)
 - **branch_session** → new session containing copies of every run (session-level)
 
-If you just want "redo the last response, keeping the old one around," the
-friendlier alias is ``regenerate=True, preserve_original=True`` - same
+If you just want "redo the last response, keeping the old one visible," the
+friendlier alias is ``regenerate=True, replace_original=False`` - same
 mechanic, no message index math required. See 04_regenerate.py.
 """
 

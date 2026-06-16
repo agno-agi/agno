@@ -22,9 +22,9 @@ state, not member state.
 | `tools=[...]` / `requirements=[...]` (PAUSED + HITL) | Apply tool results, resume |
 | empty + COMPLETED | **Auto-fork**: new `run_id`, source preserved |
 | empty + RUNNING / ERROR | Resume in place (loop didn't finish; retry semantics) |
-| `regenerate=True` | Always forks: drops only the trailing no-tool-call assistant message, intermediate tool exchanges survive (tools NOT re-invoked) |
+| `regenerate=True` | Always forks: drops only the trailing no-tool-call assistant message, intermediate tool exchanges survive (tools NOT re-invoked). By default marks the source `REGENERATED` so history-builders skip it and the new run replaces it |
 | `regenerate=True, additional_instructions=...` | Same with steering text appended |
-| `regenerate=True, preserve_original=True` | Source marked `REGENERATED` so history-builders skip it |
+| `regenerate=True, replace_original=False` | Keep the source COMPLETED and visible so both attempts show in history |
 | `continue_from="end"` | Resume from the current end of the transcript |
 | `fork=True, continue_from="last_user"` | Fork at the last user message — drops the post-user tail including tool exchanges |
 | `continue_from="last_user"` | Resume just after the last user message (tools will be re-invoked) |

@@ -6,22 +6,23 @@ tool-role results) are **preserved** — the model regenerates a fresh
 summary of the same tool outputs without re-invoking the tools.
 
 **Always non-destructive.** Every regenerate creates a NEW run with a fresh
-``run_id`` and fresh ``RunMetrics``; the source run stays intact. This
-preserves the "1 run = 1 model loop" invariant - metrics, timestamps, and
-audit trails always reflect exactly one model loop.
+``run_id`` and fresh ``RunMetrics``; the source run is always retained in
+storage. This preserves the "1 run = 1 model loop" invariant - metrics,
+timestamps, and audit trails always reflect exactly one model loop.
 
-Two flavors:
-- ``regenerate=True``                            -> fork. Both runs visible in
-  session and history. Use when you want to compare attempts.
-- ``regenerate=True, preserve_original=True``    -> fork, AND mark the source
-  ``status=REGENERATED`` so history-builders skip it. The model sees only
-  the new turn when re-rebuilding context for future runs.
-- ``regenerate=True, additional_instructions=X`` -> append X as a user message
+``replace_original`` controls only whether the source run stays *visible* in
+history (the source row is always kept either way):
+- ``regenerate=True`` (default)                  -> the source is marked
+  ``status=REGENERATED`` and hidden from history; the new run replaces it.
+  Future runs see only the new turn when context is rebuilt.
+- ``regenerate=True, replace_original=False``     -> both runs stay visible in
+  session and history. Use when you want to compare attempts side by side.
+- ``regenerate=True, additional_instructions=X``  -> append X as a user message
   before re-generating. Use this to steer the new output.
 
-These compose. ``regenerate=True, preserve_original=True,
-additional_instructions="be more concise"`` is the typical "let me try that
-again with guidance, hide the old one from future context" pattern.
+These compose. ``regenerate=True, additional_instructions="be more concise"``
+is the typical "let me try that again with guidance, replace the old one"
+pattern.
 
 Compare to ``continue_from="last_user"`` (02_time_travel.py): both rewind, but
 ``"last_user"`` drops the whole post-user tail including tool exchanges,
@@ -54,13 +55,14 @@ async def main() -> None:
     print(original.content)
     print()
 
-    # Regenerate — creates a NEW run with a fresh run_id. The original is preserved.
+    # Regenerate — creates a NEW run with a fresh run_id. By default the original
+    # is hidden from history (status=REGENERATED) so the new run replaces it.
     redo = await agent.acontinue_run(
         run_id=original.run_id,
         session_id=original.session_id,
         regenerate=True,
     )
-    print("--- Regenerated (new run_id, original preserved) ---")
+    print("--- Regenerated (new run_id, original hidden from history) ---")
     print("  run_id:", redo.run_id, "(new)")
     print(
         "  forked_from_run_id:",
@@ -83,22 +85,23 @@ async def main() -> None:
     print(steered.content)
     print()
 
-    # Regenerate but keep the old one — preserve_original creates a fork.
-    preserved = await agent.acontinue_run(
+    # Regenerate but keep BOTH visible — replace_original=False leaves the source
+    # COMPLETED so both attempts show up in history for comparison.
+    kept = await agent.acontinue_run(
         run_id=original.run_id,
         session_id=original.session_id,
         regenerate=True,
-        preserve_original=True,
+        replace_original=False,
         additional_instructions="Now do it in haiku form.",
     )
-    print("--- Regenerated with preserve_original=True (fork) ---")
-    print("  run_id:", preserved.run_id, "(new)")
-    print("  regenerated_from:", preserved.regenerated_from)
-    print(preserved.content)
+    print("--- Regenerated with replace_original=False (both visible) ---")
+    print("  run_id:", kept.run_id, "(new)")
+    print("  regenerated_from:", kept.regenerated_from)
+    print(kept.content)
     print()
 
-    # Verify the session: 4 runs now — original + 2 regenerates + 1 preserved-style.
-    # Each has its own metrics; the source is untouched.
+    # Verify the session: 4 runs now — original + 3 regenerates.
+    # Each has its own metrics; the source is always retained.
     session = agent.db.get_session(session_id=original.session_id, session_type="agent")
     print(f"Session has {len(session.runs or [])} runs:")
     for r in session.runs or []:

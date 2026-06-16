@@ -3131,7 +3131,7 @@ def _normalize_regenerate_params(
     run_response: Optional[RunOutput],
     *,
     regenerate: bool,
-    preserve_original: bool,
+    replace_original: Optional[bool],
     additional_instructions: Optional[str],
     fork: bool,
     continue_index: Optional[int],
@@ -3143,22 +3143,26 @@ def _normalize_regenerate_params(
     - ``regenerate=True`` → the continuation index is auto-computed to drop the
       final assistant response (and resume from just after the last user
       message). Pair with ``additional_instructions`` to steer the new output.
-    - ``preserve_original=True`` → ``fork=True`` (keeps the original run as a
-      sibling instead of overwriting). Only meaningful with ``regenerate=True``.
+    - ``replace_original`` → controls history visibility of the source run only;
+      the source is ALWAYS retained in storage (``regenerate`` always forks).
+      Defaults to True: the source is marked ``REGENERATED`` and hidden from
+      history so the new run replaces it. Pass False to keep both the original
+      and the regenerated run visible side by side. Only meaningful with
+      ``regenerate=True``.
     - ``additional_instructions`` → ``input``. Reserved name for the regenerate
       flow.
 
     Conflicts (raise ``ValueError``):
     - ``regenerate=True`` with ``fork`` explicitly set (the sugar derives it).
     - ``additional_instructions`` and ``input`` both set.
-    - ``preserve_original=True`` without ``regenerate=True``.
+    - ``replace_original`` set (True or False) without ``regenerate=True``.
 
     Returns: (resolved_fork, resolved_continue_index, resolved_input).
     """
     if additional_instructions is not None and input is not None:
         raise ValueError("Provide either `additional_instructions` or `input`, not both.")
-    if preserve_original and not regenerate:
-        raise ValueError("`preserve_original=True` only makes sense with `regenerate=True`.")
+    if replace_original is not None and not regenerate:
+        raise ValueError("`replace_original` only makes sense with `regenerate=True`.")
 
     if not regenerate:
         return fork, continue_index, input
@@ -3166,7 +3170,7 @@ def _normalize_regenerate_params(
     if fork:
         raise ValueError(
             "`regenerate=True` derives the destructive/preserving choice from "
-            "`preserve_original`; do not pass `fork=True` directly."
+            "`replace_original`; do not pass `fork=True` directly."
         )
     if run_response is None:
         raise ValueError("`regenerate=True` requires a loaded run_response to compute the checkpoint.")
@@ -3174,7 +3178,7 @@ def _normalize_regenerate_params(
     resolved_input = additional_instructions if additional_instructions is not None else input
     # ``regenerate`` ALWAYS forks. The 1-run-1-loop invariant demands a new
     # run_id whenever the source run's loop has already completed —
-    # ``preserve_original`` controls a separate concern (whether the source
+    # ``replace_original`` controls a separate concern (whether the source
     # is marked REGENERATED and hidden from history), not whether to fork.
     return (True, _find_regenerate_checkpoint(run_response), resolved_input)
 
@@ -3221,7 +3225,7 @@ def continue_run_dispatch(
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
-    preserve_original: bool = False,
+    replace_original: Optional[bool] = None,
     additional_instructions: Optional[str] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = False,
@@ -3346,7 +3350,7 @@ def continue_run_dispatch(
         fork, continue_index, input = _normalize_regenerate_params(
             run_response,
             regenerate=regenerate,
-            preserve_original=preserve_original,
+            replace_original=replace_original,
             additional_instructions=additional_instructions,
             fork=fork,
             continue_index=continue_index,
@@ -3359,7 +3363,7 @@ def continue_run_dispatch(
         run_response = _apply_continue_modifiers(run_response, fork, continue_index)
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
-            if preserve_original and run_response.forked_from_run_id:
+            if replace_original is not False and run_response.forked_from_run_id:
                 # Mark the original run as REGENERATED so history builders skip it.
                 for r in agent_session.runs or []:
                     if r.run_id == original_run_id_for_lineage:
@@ -3384,7 +3388,7 @@ def continue_run_dispatch(
         fork, continue_index, input = _normalize_regenerate_params(
             run_response,
             regenerate=regenerate,
-            preserve_original=preserve_original,
+            replace_original=replace_original,
             additional_instructions=additional_instructions,
             fork=fork,
             continue_index=continue_index,
@@ -3416,7 +3420,7 @@ def continue_run_dispatch(
         run_response = _apply_continue_modifiers(run_response, fork, continue_index)
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
-            if preserve_original and run_response.forked_from_run_id:
+            if replace_original is not False and run_response.forked_from_run_id:
                 for r in agent_session.runs or []:
                     if r.run_id == original_run_id_for_lineage:
                         r.status = RunStatus.regenerated
@@ -4091,7 +4095,7 @@ def acontinue_run_dispatch(  # type: ignore
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
-    preserve_original: bool = False,
+    replace_original: Optional[bool] = None,
     additional_instructions: Optional[str] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
@@ -4227,7 +4231,7 @@ def acontinue_run_dispatch(  # type: ignore
                 continue_from=continue_from,
                 fork=fork,
                 regenerate=regenerate,
-                preserve_original=preserve_original,
+                replace_original=replace_original,
                 additional_instructions=additional_instructions,
                 run_id=run_id,
                 user_id=user_id,
@@ -4251,7 +4255,7 @@ def acontinue_run_dispatch(  # type: ignore
             continue_from=continue_from,
             fork=fork,
             regenerate=regenerate,
-            preserve_original=preserve_original,
+            replace_original=replace_original,
             additional_instructions=additional_instructions,
             run_id=run_id,
             user_id=user_id,
@@ -4275,7 +4279,7 @@ def acontinue_run_dispatch(  # type: ignore
             continue_from=continue_from,
             fork=fork,
             regenerate=regenerate,
-            preserve_original=preserve_original,
+            replace_original=replace_original,
             additional_instructions=additional_instructions,
             run_id=run_id,
             user_id=user_id,
@@ -4297,7 +4301,7 @@ async def _acontinue_run_background_stream(
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
-    preserve_original: bool = False,
+    replace_original: Optional[bool] = None,
     additional_instructions: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -4357,7 +4361,7 @@ async def _acontinue_run_background_stream(
                 continue_from=continue_from,
                 fork=fork,
                 regenerate=regenerate,
-                preserve_original=preserve_original,
+                replace_original=replace_original,
                 additional_instructions=additional_instructions,
                 run_id=run_id,
                 user_id=user_id,
@@ -4450,7 +4454,7 @@ async def _acontinue_run(
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
-    preserve_original: bool = False,
+    replace_original: Optional[bool] = None,
     additional_instructions: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -4541,7 +4545,7 @@ async def _acontinue_run(
                     fork, continue_index, input = _normalize_regenerate_params(
                         run_response,
                         regenerate=regenerate,
-                        preserve_original=preserve_original,
+                        replace_original=replace_original,
                         additional_instructions=additional_instructions,
                         fork=fork,
                         continue_index=continue_index,
@@ -4553,7 +4557,7 @@ async def _acontinue_run(
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
-                        if preserve_original and run_response.forked_from_run_id:
+                        if replace_original is not False and run_response.forked_from_run_id:
                             for r in agent_session.runs or []:
                                 if r.run_id == original_run_id_for_lineage:
                                     r.status = RunStatus.regenerated
@@ -4576,7 +4580,7 @@ async def _acontinue_run(
                     fork, continue_index, input = _normalize_regenerate_params(
                         run_response,
                         regenerate=regenerate,
-                        preserve_original=preserve_original,
+                        replace_original=replace_original,
                         additional_instructions=additional_instructions,
                         fork=fork,
                         continue_index=continue_index,
@@ -4600,7 +4604,7 @@ async def _acontinue_run(
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
-                        if preserve_original and run_response.forked_from_run_id:
+                        if replace_original is not False and run_response.forked_from_run_id:
                             for r in agent_session.runs or []:
                                 if r.run_id == original_run_id_for_lineage:
                                     r.status = RunStatus.regenerated
@@ -4944,7 +4948,7 @@ async def _acontinue_run_stream(
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
     fork: bool = False,
     regenerate: bool = False,
-    preserve_original: bool = False,
+    replace_original: Optional[bool] = None,
     additional_instructions: Optional[str] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -5031,7 +5035,7 @@ async def _acontinue_run_stream(
                     fork, continue_index, input = _normalize_regenerate_params(
                         run_response,
                         regenerate=regenerate,
-                        preserve_original=preserve_original,
+                        replace_original=replace_original,
                         additional_instructions=additional_instructions,
                         fork=fork,
                         continue_index=continue_index,
@@ -5043,7 +5047,7 @@ async def _acontinue_run_stream(
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
-                        if preserve_original and run_response.forked_from_run_id:
+                        if replace_original is not False and run_response.forked_from_run_id:
                             for r in agent_session.runs or []:
                                 if r.run_id == original_run_id_for_lineage:
                                     r.status = RunStatus.regenerated
@@ -5067,7 +5071,7 @@ async def _acontinue_run_stream(
                     fork, continue_index, input = _normalize_regenerate_params(
                         run_response,
                         regenerate=regenerate,
-                        preserve_original=preserve_original,
+                        replace_original=replace_original,
                         additional_instructions=additional_instructions,
                         fork=fork,
                         continue_index=continue_index,
@@ -5091,7 +5095,7 @@ async def _acontinue_run_stream(
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
-                        if preserve_original and run_response.forked_from_run_id:
+                        if replace_original is not False and run_response.forked_from_run_id:
                             for r in agent_session.runs or []:
                                 if r.run_id == original_run_id_for_lineage:
                                     r.status = RunStatus.regenerated
