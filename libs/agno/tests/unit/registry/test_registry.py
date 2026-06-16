@@ -1008,11 +1008,13 @@ class TestAddModel:
         reg.add_model(_model("m", provider="azure"))
         assert len(reg.models) == 2
 
-    def test_warns_when_dropping_matching_model(self, monkeypatch):
+    def test_logs_debug_when_dropping_matching_model(self, monkeypatch):
+        # A re-instantiated model (catalog id reused) is benign, so the skip is
+        # logged at debug rather than warned.
         import agno.registry.registry as registry_module
 
-        warnings = []
-        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+        debugs = []
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: debugs.append(msg))
 
         m1 = _model("gpt-5.4")
         m2 = _model("gpt-5.4")  # same provider+id, distinct instance
@@ -1020,19 +1022,20 @@ class TestAddModel:
         reg.add_model(m1)
         reg.add_model(m2)
         assert len(reg.models) == 1 and reg.models[0] is m1
-        assert warnings and "gpt-5.4" in warnings[0]
+        assert debugs and "gpt-5.4" in debugs[0]
 
-    def test_no_warning_when_same_model_instance_repeats(self, monkeypatch):
+    def test_no_log_when_same_model_instance_repeats(self, monkeypatch):
         import agno.registry.registry as registry_module
 
-        warnings = []
-        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+        logs = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: logs.append(msg))
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: logs.append(msg))
 
         m = _model("gpt-5.4")
         reg = Registry()
         reg.add_model(m)
         reg.add_model(m)
-        assert len(reg.models) == 1 and warnings == []
+        assert len(reg.models) == 1 and logs == []
 
     def test_ignores_non_model(self):
         reg = Registry()
@@ -1070,16 +1073,18 @@ class TestAddTool:
         reg.add_tool(tk2)
         assert reg.tools == [tk1]
 
-    def test_warns_when_dropping_matching_toolkit(self, monkeypatch):
+    def test_logs_debug_when_dropping_matching_toolkit(self, monkeypatch):
+        # Re-instantiating a default toolkit in two places is common and benign,
+        # so the skip is logged at debug rather than warned.
         import agno.registry.registry as registry_module
 
-        warnings = []
-        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+        debugs = []
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: debugs.append(msg))
 
         reg = Registry()
         reg.add_tool(Toolkit(name="same", tools=[]))
         reg.add_tool(Toolkit(name="same", tools=[]))
-        assert warnings and "same" in warnings[0]
+        assert debugs and "same" in debugs[0]
 
     def test_keeps_toolkits_with_different_function_sets(self):
         # Same type and name but different functions are genuinely different

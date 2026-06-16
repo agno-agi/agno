@@ -11,7 +11,7 @@ from agno.db.base import BaseDb
 from agno.models.base import Model
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.vectordb.base import VectorDb
 
 if TYPE_CHECKING:
@@ -91,11 +91,7 @@ class Registry:
             if existing is model:
                 return
             if (getattr(existing, "provider", None), getattr(existing, "id", None)) == key:
-                log_warning(
-                    f"Registry: a model matching provider/id '{key[0]}/{key[1]}' is already registered; "
-                    "keeping the existing instance. If they differ in configuration, share a single "
-                    "instance across your registry and primitives to avoid divergent rehydration."
-                )
+                log_debug(f"Registry: skipped a duplicate model '{key[0]}/{key[1]}'; keeping the registered instance.")
                 return
         self.models.append(model)
 
@@ -107,12 +103,13 @@ class Registry:
 
         - ``Toolkit`` instances are re-created at call sites (``DuckDuckGoTools()``
           written in two places yields two distinct objects), so they dedupe
-          structurally by ``(type, name, function names)``. The same object is
-          skipped silently; a *different* instance with a matching key is skipped
-          with a warning, since the registry is populated with user-declared tools
-          first and those should win. Two toolkits that differ only in
-          non-functional config (api keys, timeouts) collapse to one, and the kept
-          instance is the one used at rehydration -- hence the warning.
+          structurally by ``(type, name, function names)``. The registry is
+          populated with user-declared tools first, so the registered instance
+          wins; a matching instance discovered on a primitive is skipped. This is
+          expected (re-instantiating a default toolkit in two places is common),
+          so the skip is logged at debug rather than warned. The trade-off: two
+          toolkits that differ only in non-functional config (api keys, timeouts)
+          collapse to one, and the kept instance is the one used at rehydration.
         - ``Function`` and plain callables are defined once, so referencing them in
           two places yields the *same* object; they dedupe by equality. ``==``
           falls back to identity for functions, lambdas and ``functools.partial``
@@ -135,11 +132,7 @@ class Registry:
                     isinstance(existing, Toolkit)
                     and (type(existing), existing.name, frozenset(existing.functions)) == key
                 ):
-                    log_warning(
-                        f"Registry: a '{tool.name}' toolkit matching one already registered was found; "
-                        "keeping the existing instance. If they differ in configuration, share a single "
-                        "instance across your registry and primitives to avoid divergent rehydration."
-                    )
+                    log_debug(f"Registry: skipped a duplicate '{tool.name}' toolkit; keeping the registered instance.")
                     return
         else:
             for existing in self.tools:
@@ -171,9 +164,8 @@ class Registry:
                     return
                 if getattr(existing, "id", None) == db_id:
                     log_warning(
-                        f"Registry: a database with id '{db_id}' is already registered; keeping the "
-                        "existing instance. If they differ in configuration, share a single instance "
-                        "across your registry and primitives to avoid divergent rehydration."
+                        f"Registry: multiple distinct databases share id '{db_id}'; keeping the first. "
+                        "Give them distinct ids to avoid one shadowing the other."
                     )
                     return
         elif any(d is db for d in self.dbs):
@@ -191,9 +183,8 @@ class Registry:
                     return
                 if (getattr(existing, "id", None) or getattr(existing, "name", None)) == key:
                     log_warning(
-                        f"Registry: a vector db matching '{key}' is already registered; keeping the "
-                        "existing instance. If they differ in configuration, share a single instance "
-                        "across your registry and primitives to avoid divergent rehydration."
+                        f"Registry: multiple distinct vector dbs share '{key}'; keeping the first. "
+                        "Give them distinct ids/names to avoid one shadowing the other."
                     )
                     return
         elif any(v is vector_db for v in self.vector_dbs):
