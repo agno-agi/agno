@@ -9,6 +9,12 @@ Storage is in-memory by default (``ManagedRoleStore()``); pass a ``db`` (an agno
 (``authz_policy``, ``authz_grouping``) and are loaded back on startup. The
 in-memory caches are the read path either way; mutations write through to the DB.
 
+Single process: a change takes effect on the very next request (the writer updates
+its own cache). Across **multiple workers/replicas** each process holds its own
+cache loaded at startup, so a change made on one worker is not seen by the others
+until they reload — pass ``reload_interval=<seconds>`` for bounded auto-refresh, or
+call :meth:`reload` explicitly (e.g. on a timer or after admin changes).
+
 The decision model, in agno terms:
 
 - a role's scopes are stored as ``(resource, action, effect)`` via the shared
@@ -21,6 +27,7 @@ The decision model, in agno terms:
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from agno.os.authz._db import engine_from_db as _engine_from_db
@@ -37,7 +44,12 @@ class NativePolicyEngine(PolicyEngine):
     """agno-native :class:`PolicyEngine`. In-memory, or SQLAlchemy-persisted when
     given ``db``/``db_url``."""
 
-    def __init__(self, db_url: Optional[str] = None, db: Optional[Any] = None):
+    def __init__(
+        self,
+        db_url: Optional[str] = None,
+        db: Optional[Any] = None,
+        reload_interval: Optional[float] = None,
+    ):
         # Read path: in-memory caches, authoritative for decisions either way.
         self._policies: Dict[_PolicyKey, str] = {}  # (role, resource, action) -> effect
         self._grouping: Dict[str, Set[str]] = {}  # subject -> {role, ...}
@@ -45,6 +57,10 @@ class NativePolicyEngine(PolicyEngine):
         self._policy_tbl: Any = None
         self._group_tbl: Any = None
         self._log = logging.getLogger("agno.authz.engine")
+        # Multi-worker freshness: auto-reload the cache from the DB when it's older
+        # than this many seconds (None = never auto-reload; single-process default).
+        self._reload_interval = reload_interval
+        self._last_load = 0.0
 
         target = _engine_from_db(db) if db is not None else (self._make_engine(db_url) if db_url else None)
         if target is not None:
@@ -77,12 +93,38 @@ class NativePolicyEngine(PolicyEngine):
             sa.Column("role", sa.String(255), primary_key=True),
         )
         metadata.create_all(self._engine)
-        # Load persisted state into the in-memory caches (the read path).
+        self.reload()  # initial load of persisted state into the caches
+
+    def reload(self) -> None:
+        """Reload policy + assignments from the DB into the in-memory caches.
+
+        No-op for an in-memory engine. In multi-worker / multi-replica deployments
+        call this (or set ``reload_interval``) so a process picks up role/assignment
+        changes another process wrote. Builds fresh dicts and swaps them atomically,
+        so a concurrent reader never sees a half-loaded cache."""
+        if self._engine is None or self._policy_tbl is None:
+            return
+        import sqlalchemy as sa
+
+        policies: Dict[_PolicyKey, str] = {}
+        grouping: Dict[str, Set[str]] = {}
         with self._engine.connect() as conn:
             for row in conn.execute(sa.select(self._policy_tbl)).mappings():
-                self._policies[(row["role"], row["resource"], row["action"])] = row["effect"]
+                policies[(row["role"], row["resource"], row["action"])] = row["effect"]
             for row in conn.execute(sa.select(self._group_tbl)).mappings():
-                self._grouping.setdefault(row["subject"], set()).add(row["role"])
+                grouping.setdefault(row["subject"], set()).add(row["role"])
+        self._policies = policies  # atomic swap
+        self._grouping = grouping
+        self._last_load = time.monotonic()
+
+    def _maybe_reload(self) -> None:
+        """Auto-refresh from the DB once ``reload_interval`` seconds have elapsed.
+        No-op in-memory or when no interval is set, so single-process deployments
+        pay nothing."""
+        if self._engine is None or self._reload_interval is None:
+            return
+        if time.monotonic() - self._last_load >= self._reload_interval:
+            self.reload()
 
     def _persist_policies_set(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
         """Replace a role's persisted policy rows with ``rows`` ((resource, action, effect))."""
@@ -237,6 +279,7 @@ class NativePolicyEngine(PolicyEngine):
     def _enforce(self, resource: str, action: str, subject: Optional[str], roles: Optional[List[str]]) -> bool:
         """One decision for ``(resource, action)``. Token-carried roles take precedence
         (each evaluated as its own root and OR'd); else the subject's assignments."""
+        self._maybe_reload()
         if roles:
             decision = any(self._allowed_for_root(role, resource, action) for role in roles)
         elif subject:
@@ -282,6 +325,7 @@ class NativePolicyEngine(PolicyEngine):
         take precedence, else the subject's stored assignments; deny rows skipped."""
         if not resource_type:
             return set()
+        self._maybe_reload()
         roots = list(roles) if roles else ([subject] if subject else [])
         if not roots:
             return set()
@@ -315,6 +359,7 @@ class NativePolicyEngine(PolicyEngine):
         list endpoints honour deny-overrides like the per-resource gate does."""
         if not resource_type:
             return set()
+        self._maybe_reload()
         roots = list(roles) if roles else ([subject] if subject else [])
         if not roots:
             return set()

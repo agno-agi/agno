@@ -198,3 +198,47 @@ def test_denied_resource_ids_empty_without_denies():
     eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
     eng.assign("v", "viewer")
     assert eng.denied_resource_ids("agents", "read", subject="v") == set()
+
+
+def test_reload_picks_up_another_process_change(tmp_path):
+    """Multi-worker freshness (#2): a second engine on the same DB is stale until
+    reload(), then reflects the revocation. reload swaps caches atomically."""
+    pytest.importorskip("sqlalchemy")
+    url = f"sqlite:///{tmp_path / 'roles.db'}"
+
+    a = NativePolicyEngine(db_url=url)
+    a.set_role_scopes("admin", [("agent_os:admin", "allow")])
+    a.assign("bob", "admin")
+
+    b = NativePolicyEngine(db_url=url)  # "worker B" loads current state at boot
+    assert b.check_resource("agents", "x", "run", subject="bob") is True
+
+    a.unassign("bob", "admin")  # revoked on "worker A" (writes through to the DB)
+    assert b.check_resource("agents", "x", "run", subject="bob") is True  # B stale before reload
+    b.reload()
+    assert b.check_resource("agents", "x", "run", subject="bob") is False  # fresh after reload
+    assert b.roles_of("bob") == []
+
+
+def test_reload_interval_auto_refreshes(tmp_path):
+    """reload_interval=0 => reload on every decision, so a second engine auto-picks
+    up another process's change without an explicit reload()."""
+    pytest.importorskip("sqlalchemy")
+    url = f"sqlite:///{tmp_path / 'roles.db'}"
+
+    a = NativePolicyEngine(db_url=url)
+    a.set_role_scopes("admin", [("agent_os:admin", "allow")])
+    a.assign("bob", "admin")
+
+    b = NativePolicyEngine(db_url=url, reload_interval=0)  # always-fresh
+    assert b.check_resource("agents", "x", "run", subject="bob") is True
+    a.unassign("bob", "admin")
+    assert b.check_resource("agents", "x", "run", subject="bob") is False  # auto-reloaded
+
+
+def test_reload_is_noop_in_memory():
+    eng = NativePolicyEngine()  # no db
+    eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
+    eng.assign("v", "viewer")
+    eng.reload()  # must not wipe the in-memory state
+    assert eng.roles_of("v") == ["viewer"]

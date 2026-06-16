@@ -5,8 +5,10 @@ change them at runtime, persisted to your own DB. You work entirely in agno
 scope terms (``agents:*:read``, ``agents:research-agent:run``,
 ``agent_os:admin``). The decision engine underneath is agno's own
 :class:`~agno.os.authz.native_engine.NativePolicyEngine` (deny-overrides RBAC, no
-third-party dependency); changes persist and take effect on the next request with
-no token re-mint. The engine is swappable behind the :class:`PolicyEngine` port.
+third-party dependency). The engine is swappable behind the :class:`PolicyEngine`
+port. A change persists and takes effect on the next request **in that process**;
+across multiple workers/replicas the others pick it up on reload — pass
+``reload_interval=<seconds>`` for bounded auto-refresh, or call :meth:`reload`.
 
 Persistence to a DB needs SQLAlchemy: ``pip install "agno[roles]"`` (or ``agno[os]``).
 
@@ -52,6 +54,7 @@ class ManagedRoleStore:
         decision_log: bool = False,
         db: Optional[Any] = None,
         engine: Optional[PolicyEngine] = None,
+        reload_interval: Optional[float] = None,
     ):
         """
         Args:
@@ -74,13 +77,18 @@ class ManagedRoleStore:
                 as your agent data. Takes precedence over ``db_url``.
             engine: a custom :class:`~agno.os.authz.engine.PolicyEngine` backend.
                 Defaults to the native engine built from ``db``/``db_url``.
+            reload_interval: for the native engine, seconds after which a worker
+                auto-reloads policy/assignments from the DB so multi-worker /
+                multi-replica deployments pick up changes made by another process.
+                None (default) = no auto-reload (single-process; or call
+                :meth:`reload`). Ignored when a custom ``engine`` is supplied.
         """
         if engine is not None:
             self._engine: PolicyEngine = engine
         else:
             from agno.os.authz.native_engine import NativePolicyEngine
 
-            self._engine = NativePolicyEngine(db_url=db_url, db=db)
+            self._engine = NativePolicyEngine(db_url=db_url, db=db, reload_interval=reload_interval)
         self._roles_claim = roles_claim
         self._audit = audit
 
@@ -164,6 +172,15 @@ class ManagedRoleStore:
 
     def roles_of(self, subject: str) -> List[str]:
         return self._engine.roles_of(subject)
+
+    def reload(self) -> None:
+        """Reload roles/assignments from the DB into the engine's cache. Use in
+        multi-worker / multi-replica deployments so this process picks up changes
+        another process made (or set ``reload_interval`` for automatic refresh).
+        No-op for in-memory or engines that don't support reloading."""
+        reload_fn = getattr(self._engine, "reload", None)
+        if callable(reload_fn):
+            reload_fn()
 
     # ------------------------------------------------------------------ audit
     def audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
