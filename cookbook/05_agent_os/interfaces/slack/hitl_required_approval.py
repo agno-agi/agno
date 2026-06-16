@@ -2,25 +2,12 @@
 Slack HITL — Required Approval
 ==============================
 
-Infrastructure agent that handles database schema changes. Schema migrations
-are high-risk operations requiring approval from authorized personnel — both
-for compliance audit trails AND to gate the actual execution.
-
-This demonstrates `@approval` (approval_type="required"):
-- Creates a DB approval record when the tool pauses
-- Slack shows Approve/Deny buttons
-- Resolution updates the DB record (status, resolved_by, timestamp)
-- Tool executes only after approval
-
-vs `@tool(requires_confirmation=True)` (confirmation-only):
-- Pauses for UI confirmation but NO DB record
-- Simpler, but no audit trail
-
-Use this pattern when you need compliance audit trails or when approvals
-must persist across restarts (the paused run is recoverable from DB).
+Infrastructure agent that handles database schema migrations. Migrations
+require admin approval via os.agno.com — the `@approval` decorator creates
+a DB record so approvals persist across restarts and leave an audit trail.
 
 Try in Slack:
-  @bot migrate users table: add verified_at timestamp column for compliance
+  @bot migrate users table: add verified_at timestamp column
 
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
