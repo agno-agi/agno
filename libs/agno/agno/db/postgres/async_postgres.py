@@ -3102,6 +3102,44 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return False
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.learning_id == id)
+                    .values(content=content, metadata=metadata, updated_at=int(time.time()))
+                )
+                result = await sess.execute(stmt)
+                return getattr(result, "rowcount", 0) > 0
+
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return 0
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == user_id)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                result = await sess.execute(stmt)
+                return getattr(result, "rowcount", 0) or 0
+
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
+
     async def get_learnings(
         self,
         learning_type: Optional[str] = None,
@@ -3167,6 +3205,134 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.learning_id == id))
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise e
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    if include_global:
+                        stmt = stmt.where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    else:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                stmt = apply_sorting(stmt, table, sort_by or "updated_at", sort_order or "desc")
+                stmt = stmt.limit(limit).offset((page - 1) * limit)
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+                return [dict(row._mapping) for row in rows], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise e
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            async with self.async_session_factory() as sess:
+                last_updated_col = func.max(table.c.updated_at)
+                stmt = select(
+                    table.c.user_id,
+                    last_updated_col.label("last_learning_updated_at"),
+                )
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+
+                sort_columns = {
+                    "user_id": table.c.user_id,
+                    "last_learning_updated_at": last_updated_col,
+                }
+                sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
+                stmt = stmt.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+                return [
+                    {
+                        "user_id": row.user_id,
+                        "last_learning_updated_at": row.last_learning_updated_at,
+                    }
+                    for row in rows
+                ], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e
 
     # --- Components (Not yet supported for async) ---
     def get_component(

@@ -11,7 +11,6 @@ from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-
 from workflow_db import db
 
 
