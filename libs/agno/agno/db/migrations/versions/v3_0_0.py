@@ -49,6 +49,8 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _migrate_sqlite(db, table_name)
         elif db_type in ("MySQLDb", "SingleStoreDb"):
             return _migrate_mysql_like(db, table_name)
+        elif db_type == "MongoDb":
+            return _migrate_mongo(db, table_name)
         else:
             log_info(f"Migration v3.0.0 is not implemented for {db_type}. Sessions will keep storing runs inline.")
         return False
@@ -75,6 +77,8 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _migrate_async_sqlite(db, table_name)
         elif db_type == "AsyncMySQLDb":
             return await _migrate_async_mysql(db, table_name)
+        elif db_type == "AsyncMongoDb":
+            return await _migrate_async_mongo(db, table_name)
         else:
             log_info(f"Migration v3.0.0 is not implemented for {db_type}. Sessions will keep storing runs inline.")
         return False
@@ -101,6 +105,8 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_sqlite(db, table_name)
         elif db_type in ("MySQLDb", "SingleStoreDb"):
             return _revert_mysql_like(db, table_name)
+        elif db_type == "MongoDb":
+            return _revert_mongo(db, table_name)
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -127,6 +133,8 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
             return await _revert_async_sqlite(db, table_name)
         elif db_type == "AsyncMySQLDb":
             return await _revert_async_mysql(db, table_name)
+        elif db_type == "AsyncMongoDb":
+            return await _revert_async_mongo(db, table_name)
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -899,3 +907,138 @@ async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
         await sess.execute(text(f"DROP TABLE `{db_schema}`.`{runs_table_name}`"))
 
         return True
+
+
+# ---------------------------------------------------------------------------
+# MongoDB
+# ---------------------------------------------------------------------------
+
+
+def _migrate_mongo(db: BaseDb, table_name: str) -> bool:
+    """Copy runs from the legacy `runs` field on session documents into the runs collection.
+
+    Non-destructive: the legacy `runs` field is left in place. Call
+    ``db.cleanup_legacy_runs_field()`` to remove it once you have verified
+    the migration and taken a backup.
+    """
+    sessions_collection = db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
+    if sessions_collection is None:
+        log_info(f"Sessions collection {table_name} does not exist, skipping migration")
+        return False
+
+    # Ensure the runs collection exists (creates indexes too)
+    runs_collection = db._get_collection(table_type="runs", create_collection_if_not_found=True)  # type: ignore
+    if runs_collection is None:
+        log_info("Runs collection unavailable, skipping migration")
+        return False
+
+    migrated_runs = 0
+    cursor = sessions_collection.find(
+        {"runs": {"$exists": True, "$ne": None, "$not": {"$size": 0}}},
+        {"session_id": 1, "user_id": 1, "runs": 1},
+    ).batch_size(BATCH_SIZE)
+
+    for doc in cursor:
+        rows = _build_run_rows(doc.get("runs"), doc.get("session_id"), doc.get("user_id"), run_data_as_string=False)
+        for row in rows:
+            runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
+            migrated_runs += 1
+
+    log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs collection")
+    log_info(
+        f"-- The legacy '{table_name}.runs' field was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_field()."
+    )
+
+    return True
+
+
+def _revert_mongo(db: BaseDb, table_name: str) -> bool:
+    """Revert: rebuild the legacy `runs` field on session documents from the runs collection.
+
+    The runs collection is dropped at the end.
+    """
+    sessions_collection = db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
+    runs_collection_name = db.runs_table_name  # type: ignore
+    runs_collection = db._get_collection(table_type="runs", create_collection_if_not_found=True)  # type: ignore
+
+    if sessions_collection is None or runs_collection is None:
+        log_info("Sessions or runs collection unavailable, skipping revert")
+        return False
+
+    # Group runs by session_id, ordered
+    pipeline = [
+        {"$sort": {"session_id": 1, "run_index": 1, "created_at": 1}},
+        {"$group": {"_id": "$session_id", "runs": {"$push": "$run_data"}}},
+    ]
+    for group in runs_collection.aggregate(pipeline):
+        session_id = group["_id"]
+        runs = group["runs"]
+        sessions_collection.update_one(
+            {"session_id": session_id},
+            {"$set": {"runs": runs}},
+        )
+
+    log_info(f"-- Dropping runs collection {runs_collection_name}")
+    runs_collection.drop()
+
+    return True
+
+
+async def _migrate_async_mongo(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async variant of :func:`_migrate_mongo`."""
+    sessions_collection = await db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
+    if sessions_collection is None:
+        log_info(f"Sessions collection {table_name} does not exist, skipping migration")
+        return False
+
+    runs_collection = await db._get_collection(table_type="runs", create_collection_if_not_found=True)  # type: ignore
+    if runs_collection is None:
+        log_info("Runs collection unavailable, skipping migration")
+        return False
+
+    migrated_runs = 0
+    cursor = sessions_collection.find(
+        {"runs": {"$exists": True, "$ne": None, "$not": {"$size": 0}}},
+        {"session_id": 1, "user_id": 1, "runs": 1},
+    ).batch_size(BATCH_SIZE)
+
+    async for doc in cursor:
+        rows = _build_run_rows(doc.get("runs"), doc.get("session_id"), doc.get("user_id"), run_data_as_string=False)
+        for row in rows:
+            await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
+            migrated_runs += 1
+
+    log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs collection")
+    log_info(
+        f"-- The legacy '{table_name}.runs' field was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return True
+
+
+async def _revert_async_mongo(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async variant of :func:`_revert_mongo`."""
+    sessions_collection = await db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
+    runs_collection_name = db.runs_table_name  # type: ignore
+    runs_collection = await db._get_collection(table_type="runs", create_collection_if_not_found=True)  # type: ignore
+
+    if sessions_collection is None or runs_collection is None:
+        log_info("Sessions or runs collection unavailable, skipping revert")
+        return False
+
+    pipeline = [
+        {"$sort": {"session_id": 1, "run_index": 1, "created_at": 1}},
+        {"$group": {"_id": "$session_id", "runs": {"$push": "$run_data"}}},
+    ]
+    async for group in runs_collection.aggregate(pipeline):
+        session_id = group["_id"]
+        runs = group["runs"]
+        await sessions_collection.update_one(
+            {"session_id": session_id},
+            {"$set": {"runs": runs}},
+        )
+
+    log_info(f"-- Dropping runs collection {runs_collection_name}")
+    await runs_collection.drop()
+    return True

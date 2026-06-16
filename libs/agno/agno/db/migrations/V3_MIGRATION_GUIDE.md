@@ -53,10 +53,22 @@ v3.0 normalized run storage is implemented for:
 
 - `PostgresDb` and `AsyncPostgresDb`
 - `SqliteDb` and `AsyncSqliteDb`
+- `MySQLDb` and `AsyncMySQLDb`
+- `SingleStoreDb`
+- `MongoDb` and `AsyncMongoDb` (uses a separate ``agno_runs`` collection)
 
-Other adapters (MySQL, MongoDB, Redis, DynamoDB, Firestore, SingleStore, SurrealDB,
-JSON, GCS, in-memory) continue to store runs inline in the session and will be ported in
+Other adapters (Redis, DynamoDB, Firestore, SurrealDB, ClickHouse, JSON, GCS,
+in-memory) continue to store runs inline in the session and will be ported in
 follow-up releases.
+
+### MongoDB note
+
+For MongoDB the v3.0 storage shape is a dedicated ``agno_runs`` collection with one
+document per run, with the same fields as the SQL ``agno_runs`` table. The
+``run_data`` field is a nested document (not flattened) to match the SQL design.
+The legacy ``runs`` field on session documents is preserved by the migration; call
+``db.cleanup_legacy_runs_field()`` (rather than ``cleanup_legacy_runs_column()``)
+to unset it when you have verified the migration.
 
 ## Migrating existing data
 
