@@ -63,7 +63,8 @@ class SlackContextProvider(ContextProvider):
 
         # Resolve user token from param, env, or primary token (backward compat)
         _user_token = user_token or getenv("SLACK_USER_TOKEN")
-        if not _user_token and self.token.startswith("xoxp-"):
+        if not _user_token and ("xoxp-" in self.token):
+            # Handles both xoxp-... and rotated xoxe.xoxp-... formats
             _user_token = self.token
         self._user_token = _user_token
         self._enable_search_messages = self._user_token is not None

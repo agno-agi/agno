@@ -190,8 +190,9 @@ class SlackTools(Toolkit):
 
         # 1. Resolve user token from param, env, or primary token (backward compat)
         _user_token = user_token or getenv("SLACK_USER_TOKEN")
-        if not _user_token and _token.startswith("xoxp-"):
+        if not _user_token and ("xoxp-" in _token):
             # Backward compat: primary token is a user token, use it for search
+            # Handles both xoxp-... and rotated xoxe.xoxp-... formats
             _user_token = _token
         self._user_token: Optional[str] = _user_token
 
