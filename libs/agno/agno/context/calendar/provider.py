@@ -117,6 +117,7 @@ class GoogleCalendarContextProvider(ContextProvider):
             sa_path=self._sa_path,
             token_path=self._token_path,
             delegated_user=self._delegated_user,
+            auth=self._auth,
         )
 
     async def astatus(self) -> Status:

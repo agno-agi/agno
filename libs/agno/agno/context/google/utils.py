@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from agno.context.provider import Status
+
+if TYPE_CHECKING:
+    from agno.tools.google.auth import AuthConfig
 
 
 def validate_google_credentials(
@@ -13,11 +17,12 @@ def validate_google_credentials(
     sa_path: str | None,
     token_path: str | None,
     delegated_user: str | None = None,
+    auth: "AuthConfig | None" = None,
 ) -> Status:
     """Validate Google credentials and return provider status.
 
     Service account mode: loads and validates the SA JSON file.
-    OAuth mode: loads and validates the cached token file.
+    OAuth mode: checks DB first (if auth.db set), then falls back to token file.
     """
     try:
         from google.oauth2.credentials import Credentials
@@ -36,7 +41,14 @@ def validate_google_credentials(
         except Exception as e:
             return Status(ok=False, detail=f"invalid service account file: {e}")
 
-    # OAuth mode
+    # OAuth mode - check DB first, then file
+    # 1. Check DB (if auth.db is configured)
+    if auth and auth.db:
+        status = _check_db_token(provider_id, auth)
+        if status:
+            return status
+
+    # 2. Fall back to file
     token_file = Path(token_path) if token_path else None
     if token_file and token_file.exists():
         try:
@@ -50,3 +62,33 @@ def validate_google_credentials(
             return Status(ok=False, detail=f"invalid token file: {e}")
 
     return Status(ok=False, detail=f"{provider_id} (oauth, not authenticated)")
+
+
+def _check_db_token(provider_id: str, auth: "AuthConfig") -> Status | None:
+    """Check for valid token in DB. Returns Status if found, None to fall back to file."""
+    try:
+        from google.oauth2.credentials import Credentials
+
+        from agno.utils.encryption import decrypt_dict, is_encrypted
+
+        row = auth.db.get_auth_token("google", None, "google")
+        if not row:
+            return None
+
+        token_data = row.get("token_data")
+        if not token_data:
+            return None
+
+        if is_encrypted(token_data):
+            token_data = decrypt_dict(token_data, key=auth.token_encryption_key)
+
+        granted_scopes = row.get("granted_scopes") or []
+        creds = Credentials.from_authorized_user_info(token_data, granted_scopes)
+
+        if creds.valid:
+            return Status(ok=True, detail=f"{provider_id} (oauth/db, valid)")
+        if creds.expired and creds.refresh_token:
+            return Status(ok=True, detail=f"{provider_id} (oauth/db, expired but refreshable)")
+        return Status(ok=False, detail=f"{provider_id} (oauth/db, token invalid)")
+    except Exception:
+        return None
