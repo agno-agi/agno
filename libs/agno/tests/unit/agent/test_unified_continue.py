@@ -1603,15 +1603,15 @@ class TestRegenerateSugar:
 
 
 # ---------------------------------------------------------------------------
-# Bug-fix tests: branch_session deep-copies + rewrites lineage
+# Bug-fix tests: fork_session deep-copies + rewrites lineage
 # ---------------------------------------------------------------------------
 
 
-class TestBranchSession:
-    """``Agent.branch_session()`` deep-copies all runs into a fresh session with
+class TestForkSession:
+    """``Agent.fork_session()`` deep-copies all runs into a fresh session with
     new run_ids and the lineage pointers set correctly."""
 
-    def _make_branching_agent(self, monkeypatch: pytest.MonkeyPatch, source: AgentSession) -> Agent:
+    def _make_forking_agent(self, monkeypatch: pytest.MonkeyPatch, source: AgentSession) -> Agent:
         agent = Agent(name="b")
         monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
         monkeypatch.setattr(
@@ -1627,16 +1627,16 @@ class TestBranchSession:
         agent._saved = saved  # type: ignore[attr-defined]
         return agent
 
-    def test_branch_creates_new_session_with_fresh_ids(self, monkeypatch: pytest.MonkeyPatch):
+    def test_fork_session_creates_new_session_with_fresh_ids(self, monkeypatch: pytest.MonkeyPatch):
         original_run = RunOutput(
             run_id="r-orig",
             session_id="s-orig",
             messages=[Message(role="user", content="hi")],
         )
         source = AgentSession(session_id="s-orig", user_id="u1", runs=[original_run])
-        agent = self._make_branching_agent(monkeypatch, source)
+        agent = self._make_forking_agent(monkeypatch, source)
 
-        new_sid = agent.branch_session(source_session_id="s-orig", user_id="u1")
+        new_sid = agent.fork_session(source_session_id="s-orig", user_id="u1")
 
         assert new_sid != "s-orig"
         assert len(agent._saved) == 1  # type: ignore[attr-defined]
@@ -1645,50 +1645,50 @@ class TestBranchSession:
         assert len(saved.runs) == 1
         assert saved.runs[0].run_id != "r-orig"
         assert saved.runs[0].session_id == new_sid
-        assert saved.runs[0].branched_from == "s-orig"
+        assert saved.runs[0].forked_from_session_id == "s-orig"
 
-    def test_branch_does_not_mutate_source(self, monkeypatch: pytest.MonkeyPatch):
+    def test_fork_session_does_not_mutate_source(self, monkeypatch: pytest.MonkeyPatch):
         original_run = RunOutput(
             run_id="r-orig",
             session_id="s-orig",
             messages=[Message(role="user", content="hi")],
         )
         source = AgentSession(session_id="s-orig", user_id="u1", runs=[original_run])
-        agent = self._make_branching_agent(monkeypatch, source)
+        agent = self._make_forking_agent(monkeypatch, source)
 
-        agent.branch_session(source_session_id="s-orig", user_id="u1")
+        agent.fork_session(source_session_id="s-orig", user_id="u1")
 
         # Source session and its run are untouched.
         assert source.session_id == "s-orig"
         assert source.runs[0].run_id == "r-orig"
         assert source.runs[0].session_id == "s-orig"
-        assert source.runs[0].branched_from is None
+        assert source.runs[0].forked_from_session_id is None
 
-    def test_branch_raises_on_empty_session(self, monkeypatch: pytest.MonkeyPatch):
+    def test_fork_session_raises_on_empty_session(self, monkeypatch: pytest.MonkeyPatch):
         source = AgentSession(session_id="s-orig", user_id="u1", runs=[])
-        agent = self._make_branching_agent(monkeypatch, source)
+        agent = self._make_forking_agent(monkeypatch, source)
 
         with pytest.raises(ValueError, match="no runs"):
-            agent.branch_session(source_session_id="s-orig", user_id="u1")
+            agent.fork_session(source_session_id="s-orig", user_id="u1")
 
-    def test_branch_preserves_branched_from_on_nested_branch(self, monkeypatch: pytest.MonkeyPatch):
-        # A run that was already branched once keeps its original source pointer.
+    def test_fork_session_preserves_forked_from_session_id_on_nested_fork(self, monkeypatch: pytest.MonkeyPatch):
+        # A run that was already forked once keeps its original source pointer.
         nested_run = RunOutput(
             run_id="r-nested",
             session_id="s-mid",
-            branched_from="s-root",  # root-level lineage already recorded
+            forked_from_session_id="s-root",  # root-level lineage already recorded
             messages=[Message(role="user", content="hi")],
         )
         source = AgentSession(session_id="s-mid", user_id="u1", runs=[nested_run])
-        agent = self._make_branching_agent(monkeypatch, source)
+        agent = self._make_forking_agent(monkeypatch, source)
 
-        agent.branch_session(source_session_id="s-mid", user_id="u1")
+        agent.fork_session(source_session_id="s-mid", user_id="u1")
 
         saved = agent._saved[0]  # type: ignore[attr-defined]
-        # Run-level branched_from preserved (points at root).
-        assert saved.runs[0].branched_from == "s-root"
-        # Session-level branched_from points at immediate parent.
-        assert saved.session_data["branched_from"] == "s-mid"
+        # Run-level forked_from_session_id preserved (points at root).
+        assert saved.runs[0].forked_from_session_id == "s-root"
+        # Session-level forked_from_session_id points at immediate parent.
+        assert saved.session_data["forked_from_session_id"] == "s-mid"
 
 
 # ---------------------------------------------------------------------------

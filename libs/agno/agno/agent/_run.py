@@ -6050,39 +6050,39 @@ def abuild_after_tool_results_callback(
 
 
 # ---------------------------------------------------------------------------
-# Session branching
+# Session forking
 # ---------------------------------------------------------------------------
 
 
-def _build_branched_session(source_session: AgentSession, new_user_id: Optional[str]) -> AgentSession:
+def _build_forked_session(source_session: AgentSession, new_user_id: Optional[str]) -> AgentSession:
     """Deep-copy ``source_session`` into a brand-new ``AgentSession`` with fresh
     ``session_id`` and ``run_id``s, recording lineage on both the session and
     each copied run.
 
     Lineage shape:
-    - ``session.session_data["branched_from"]`` is the **immediate** parent
-      session_id, overwritten on each re-branch.
-    - ``run.branched_from`` records each run's **original** session_id, set
-      only-if-empty so nested branches keep pointing at the root.
+    - ``session.session_data["forked_from_session_id"]`` is the **immediate** parent
+      session_id, overwritten on each re-fork.
+    - ``run.forked_from_session_id`` records each run's **original** session_id, set
+      only-if-empty so nested forks keep pointing at the root.
 
-    For root → mid → leaf: ``leaf.session.branched_from == mid``,
-    ``leaf.runs[*].branched_from == root``.
+    For root → mid → leaf: ``leaf.session.forked_from_session_id == mid``,
+    ``leaf.runs[*].forked_from_session_id == root``.
     """
     import copy
     import time as _time
 
     now = int(_time.time())
     new_session_id = str(uuid4())
-    branched_runs = copy.deepcopy(source_session.runs or [])
+    forked_runs = copy.deepcopy(source_session.runs or [])
 
-    for run in branched_runs:
+    for run in forked_runs:
         run.run_id = str(uuid4())
         run.session_id = new_session_id
-        if not run.branched_from:
-            run.branched_from = source_session.session_id
+        if not run.forked_from_session_id:
+            run.forked_from_session_id = source_session.session_id
 
     new_session_data = copy.deepcopy(source_session.session_data) or {}
-    new_session_data["branched_from"] = source_session.session_id
+    new_session_data["forked_from_session_id"] = source_session.session_id
 
     return AgentSession(
         session_id=new_session_id,
@@ -6093,14 +6093,14 @@ def _build_branched_session(source_session: AgentSession, new_user_id: Optional[
         session_data=new_session_data,
         metadata=copy.deepcopy(source_session.metadata),
         agent_data=copy.deepcopy(source_session.agent_data),
-        runs=branched_runs,
+        runs=forked_runs,
         summary=copy.deepcopy(source_session.summary),
         created_at=now,
         updated_at=now,
     )
 
 
-def branch_session_dispatch(
+def fork_session_dispatch(
     agent: Agent,
     *,
     source_session_id: Optional[str] = None,
@@ -6114,7 +6114,7 @@ def branch_session_dispatch(
     ``user_id`` to prevent cross-user access.
 
     Args:
-        source_session_id: The session to branch. Defaults to ``agent.session_id``.
+        source_session_id: The session to fork. Defaults to ``agent.session_id``.
         user_id: Caller user_id. Must own the source session. The new session
             inherits this user_id.
 
@@ -6127,37 +6127,37 @@ def branch_session_dispatch(
 
     if has_async_db(agent):
         raise RuntimeError(
-            "`branch_session` is not supported with an async database. Please use `abranch_session` instead."
+            "`fork_session` is not supported with an async database. Please use `afork_session` instead."
         )
 
     source_session_id = source_session_id or agent.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to branch a session.")
+        raise ValueError("source_session_id is required to fork a session.")
 
     agent.initialize_agent()
     source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
     if not source_session.runs:
-        raise ValueError("Source session has no runs to branch.")
+        raise ValueError("Source session has no runs to fork.")
 
-    new_session = _build_branched_session(source_session, new_user_id=user_id)
+    new_session = _build_forked_session(source_session, new_user_id=user_id)
     save_session(agent, session=new_session)
     return new_session.session_id
 
 
-async def abranch_session_dispatch(
+async def afork_session_dispatch(
     agent: Agent,
     *,
     source_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> str:
-    """Async variant of :func:`branch_session_dispatch`."""
+    """Async variant of :func:`fork_session_dispatch`."""
     from agno.agent._init import has_async_db
     from agno.agent._session import asave_session, save_session
     from agno.agent._storage import aread_or_create_session, read_or_create_session
 
     source_session_id = source_session_id or agent.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to branch a session.")
+        raise ValueError("source_session_id is required to fork a session.")
 
     agent.initialize_agent()
 
@@ -6167,9 +6167,9 @@ async def abranch_session_dispatch(
         source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
 
     if not source_session.runs:
-        raise ValueError("Source session has no runs to branch.")
+        raise ValueError("Source session has no runs to fork.")
 
-    new_session = _build_branched_session(source_session, new_user_id=user_id)
+    new_session = _build_forked_session(source_session, new_user_id=user_id)
 
     if has_async_db(agent):
         await asave_session(agent, session=new_session)

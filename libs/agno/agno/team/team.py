@@ -755,7 +755,7 @@ class Team:
     async def acancel_run(run_id: str) -> bool:
         return await _run.acancel_run(run_id=run_id)
 
-    def branch_session(
+    def fork_session(
         self,
         *,
         source_session_id: Optional[str] = None,
@@ -769,16 +769,16 @@ class Team:
 
         Returns the new ``session_id``.
         """
-        return _run.branch_session_dispatch(self, source_session_id=source_session_id, user_id=user_id)
+        return _run.fork_session_dispatch(self, source_session_id=source_session_id, user_id=user_id)
 
-    async def abranch_session(
+    async def afork_session(
         self,
         *,
         source_session_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> str:
-        """Async variant of :meth:`branch_session`."""
-        return await _run.abranch_session_dispatch(self, source_session_id=source_session_id, user_id=user_id)
+        """Async variant of :meth:`fork_session`."""
+        return await _run.afork_session_dispatch(self, source_session_id=source_session_id, user_id=user_id)
 
     @overload
     def run(

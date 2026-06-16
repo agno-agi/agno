@@ -15,9 +15,9 @@ Use forks to:
 The session's ``runs`` array becomes a DAG (each fork points at its origin via
 ``forked_from_run_id``).
 
-Fork vs branch_session (see 05_branch_session.py):
+Fork vs fork_session (see 05_fork_session.py):
 - **fork**         → new run inside the **same** session (run-level)
-- **branch_session** → new session containing copies of every run (session-level)
+- **fork_session** → new session containing copies of every run (session-level)
 
 If you just want "redo the last response, keeping the old one visible," the
 friendlier alias is ``regenerate=True, replace_original=False`` - same

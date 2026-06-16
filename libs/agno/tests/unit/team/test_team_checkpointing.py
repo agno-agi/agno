@@ -53,10 +53,10 @@ class TestTeamRunOutputLineage:
         restored = TeamRunOutput.from_dict(r.to_dict())
         assert restored.regenerated_from == "r0"
 
-    def test_branched_from_round_trips(self):
-        r = TeamRunOutput(run_id="r1", branched_from="sess-original")
+    def test_forked_from_session_id_round_trips(self):
+        r = TeamRunOutput(run_id="r1", forked_from_session_id="sess-original")
         restored = TeamRunOutput.from_dict(r.to_dict())
-        assert restored.branched_from == "sess-original"
+        assert restored.forked_from_session_id == "sess-original"
 
     def test_last_checkpoint_at_message_index_round_trips(self):
         r = TeamRunOutput(run_id="r1", last_checkpoint_at_message_index=5)
@@ -68,7 +68,7 @@ class TestTeamRunOutputLineage:
         assert r.forked_from_run_id is None
         assert r.forked_from_message_index is None
         assert r.regenerated_from is None
-        assert r.branched_from is None
+        assert r.forked_from_session_id is None
         assert r.last_checkpoint_at_message_index is None
 
 

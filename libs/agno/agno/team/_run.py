@@ -6192,35 +6192,35 @@ def _maybe_append_input_message_team(
 
 
 # ---------------------------------------------------------------------------
-# Session branching — mirrors agent's branch_session_dispatch
+# Session forking — mirrors agent's fork_session_dispatch
 # ---------------------------------------------------------------------------
 
 
-def _build_branched_team_session(source_session: TeamSession, new_user_id: Optional[str]) -> TeamSession:
+def _build_forked_team_session(source_session: TeamSession, new_user_id: Optional[str]) -> TeamSession:
     """Deep-copy ``source_session`` into a brand-new ``TeamSession`` with a
     fresh ``session_id`` and fresh ``run_id``s for every copied run.
 
     Lineage shape mirrors the agent:
-    - ``session.session_data["branched_from"]``: the immediate parent
-      session_id (overwritten on each re-branch).
-    - ``run.branched_from``: each run's **original** session_id, set
-      only-if-empty so nested branches keep pointing at the root.
+    - ``session.session_data["forked_from_session_id"]``: the immediate parent
+      session_id (overwritten on each re-fork).
+    - ``run.forked_from_session_id``: each run's **original** session_id, set
+      only-if-empty so nested forks keep pointing at the root.
     """
     import copy
     import time as _time
 
     now = int(_time.time())
     new_session_id = str(uuid4())
-    branched_runs = copy.deepcopy(source_session.runs or [])
+    forked_runs = copy.deepcopy(source_session.runs or [])
 
-    for run in branched_runs:
+    for run in forked_runs:
         run.run_id = str(uuid4())
         run.session_id = new_session_id
-        if not getattr(run, "branched_from", None):
-            run.branched_from = source_session.session_id
+        if not getattr(run, "forked_from_session_id", None):
+            run.forked_from_session_id = source_session.session_id
 
     new_session_data = copy.deepcopy(source_session.session_data) or {}
-    new_session_data["branched_from"] = source_session.session_id
+    new_session_data["forked_from_session_id"] = source_session.session_id
 
     return TeamSession(
         session_id=new_session_id,
@@ -6230,14 +6230,14 @@ def _build_branched_team_session(source_session: TeamSession, new_user_id: Optio
         team_data=copy.deepcopy(source_session.team_data),
         session_data=new_session_data,
         metadata=copy.deepcopy(source_session.metadata),
-        runs=branched_runs,
+        runs=forked_runs,
         summary=copy.deepcopy(source_session.summary),
         created_at=now,
         updated_at=now,
     )
 
 
-def branch_session_dispatch(
+def fork_session_dispatch(
     team: "Team",
     *,
     source_session_id: Optional[str] = None,
@@ -6248,35 +6248,35 @@ def branch_session_dispatch(
     from agno.team._storage import _read_or_create_session
 
     if _has_async_db(team):
-        raise RuntimeError("`branch_session` is not supported with an async database. Use `abranch_session` instead.")
+        raise RuntimeError("`fork_session` is not supported with an async database. Use `afork_session` instead.")
 
     source_session_id = source_session_id or team.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to branch a session.")
+        raise ValueError("source_session_id is required to fork a session.")
 
     team.initialize_team()
     source_session = _read_or_create_session(team, session_id=source_session_id, user_id=user_id)
     if not source_session.runs:
-        raise ValueError("Source session has no runs to branch.")
+        raise ValueError("Source session has no runs to fork.")
 
-    new_session = _build_branched_team_session(source_session, new_user_id=user_id)
+    new_session = _build_forked_team_session(source_session, new_user_id=user_id)
     team.save_session(session=new_session)
     return new_session.session_id
 
 
-async def abranch_session_dispatch(
+async def afork_session_dispatch(
     team: "Team",
     *,
     source_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> str:
-    """Async variant of :func:`branch_session_dispatch`."""
+    """Async variant of :func:`fork_session_dispatch`."""
     from agno.team._init import _has_async_db
     from agno.team._storage import _aread_or_create_session, _read_or_create_session
 
     source_session_id = source_session_id or team.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to branch a session.")
+        raise ValueError("source_session_id is required to fork a session.")
 
     team.initialize_team()
 
@@ -6286,9 +6286,9 @@ async def abranch_session_dispatch(
         source_session = _read_or_create_session(team, session_id=source_session_id, user_id=user_id)
 
     if not source_session.runs:
-        raise ValueError("Source session has no runs to branch.")
+        raise ValueError("Source session has no runs to fork.")
 
-    new_session = _build_branched_team_session(source_session, new_user_id=user_id)
+    new_session = _build_forked_team_session(source_session, new_user_id=user_id)
     if _has_async_db(team):
         await team.asave_session(session=new_session)
     else:

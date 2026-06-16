@@ -9,7 +9,7 @@ Examples covering mid-run persistence (`checkpoint="tool-batch"`) and the unifie
 | [`02_time_travel.py`](./02_time_travel.py) | `/continue` with `continue_from="end"`, `"last_user"`, and a raw integer index. COMPLETED runs auto-fork, so the source is preserved. |
 | [`03_forking.py`](./03_forking.py) | `/continue` with `continue_from="last_user", fork=True` and the numeric form `continue_from=K, fork=True` — non-destructive siblings in the same session. |
 | [`04_regenerate.py`](./04_regenerate.py) | `/continue` with `regenerate=True` to redo the last response. Drops only the trailing assistant reply, **keeping intermediate tool exchanges** so tools aren't re-invoked. Pair with `additional_instructions` to steer, `replace_original=True` to keep the old one. |
-| [`05_branch_session.py`](./05_branch_session.py) | `agent.branch_session()` deep-copies every run into a **new session**. Different from `fork`, which makes a sibling run in the *same* session. |
+| [`05_fork_session.py`](./05_fork_session.py) | `agent.fork_session()` deep-copies every run into a **new session**. Different from `fork`, which makes a sibling run in the *same* session. |
 | [`06_tool_error_persistence.py`](./06_tool_error_persistence.py) | When a tool raises mid-run, in-flight messages are flushed onto the ERROR row so the failed conversation isn't lost. |
 | [`07_checkpoint_endpoints.py`](./07_checkpoint_endpoints.py) | Calls the two new GET endpoints — `/checkpoints` (timeline) and `/checkpoints/{message_index}` (snapshot) — via an in-process `TestClient`, prints raw payloads, and feeds the returned `message_index` back into `/continue`. |
 
@@ -95,16 +95,16 @@ checkpoint table:
 
 The returned `message_index` can be passed back as `continue_from=K`.
 
-## Fork vs branch_session
+## Fork vs fork_session
 
-| | `fork=True` | `branch_session()` |
+| | `fork=True` | `fork_session()` |
 |---|---|---|
 | Granularity | **Run** | **Session** |
 | Result | New sibling run, same session | New session with copies of every run |
-| Endpoint | `POST /runs/{run_id}/continue` | `POST /sessions/{session_id}/branch` |
-| Lineage field | `run.forked_from_run_id` | `run.branched_from` (session_id) |
+| Endpoint | `POST /runs/{run_id}/continue` | `POST /sessions/{session_id}/fork` |
+| Lineage field | `run.forked_from_run_id` | `run.forked_from_session_id` (session_id) |
 
-Use fork to explore alternatives from one mid-run state. Use branch_session
+Use fork to explore alternatives from one mid-run state. Use fork_session
 when you want a whole new conversation thread that starts from the current
 state.
 
@@ -115,7 +115,7 @@ state.
 .venvs/demo/bin/python cookbook/02_agents/18_checkpointing/02_time_travel.py
 .venvs/demo/bin/python cookbook/02_agents/18_checkpointing/03_forking.py
 .venvs/demo/bin/python cookbook/02_agents/18_checkpointing/04_regenerate.py
-.venvs/demo/bin/python cookbook/02_agents/18_checkpointing/05_branch_session.py
+.venvs/demo/bin/python cookbook/02_agents/18_checkpointing/05_fork_session.py
 .venvs/demo/bin/python cookbook/02_agents/18_checkpointing/06_tool_error_persistence.py
 .venvs/demo/bin/python cookbook/02_agents/18_checkpointing/07_checkpoint_endpoints.py
 ```

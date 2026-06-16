@@ -818,10 +818,10 @@ class Agent:
         return await _run.acancel_run(run_id)
 
     # ---------------------------------------------------------------
-    # Session branching — copy a session into a new independent session
+    # Session forking — copy a session into a new independent session
     # ---------------------------------------------------------------
 
-    def branch_session(
+    def fork_session(
         self,
         *,
         source_session_id: Optional[str] = None,
@@ -835,7 +835,7 @@ class Agent:
         polluting the source.
 
         Args:
-            source_session_id: The session to branch. Defaults to the agent's
+            source_session_id: The session to fork. Defaults to the agent's
                 current ``session_id``.
             user_id: Caller user_id. Must own the source session. The new
                 session inherits this user_id.
@@ -843,20 +843,20 @@ class Agent:
         Returns:
             The new ``session_id``.
         """
-        return _run.branch_session_dispatch(
+        return _run.fork_session_dispatch(
             self,
             source_session_id=source_session_id,
             user_id=user_id,
         )
 
-    async def abranch_session(
+    async def afork_session(
         self,
         *,
         source_session_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> str:
-        """Async variant of :meth:`branch_session`."""
-        return await _run.abranch_session_dispatch(
+        """Async variant of :meth:`fork_session`."""
+        return await _run.afork_session_dispatch(
             self,
             source_session_id=source_session_id,
             user_id=user_id,

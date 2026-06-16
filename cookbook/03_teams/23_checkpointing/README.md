@@ -12,7 +12,7 @@ state, not member state.
 | [`01_regenerate.py`](./01_regenerate.py) | `team.continue_run(regenerate=True)` drops only the trailing assistant turn (intermediate tool exchanges survive — tools not re-invoked). New `run_id`, fresh metrics. Original team and original members untouched. |
 | [`02_fork.py`](./02_fork.py) | `fork=True, continue_from="last_user"` to fork at a clear message boundary. |
 | [`03_time_travel.py`](./03_time_travel.py) | `continue_from="end"`, `"last_user"`, and the numeric `continue_from=K` form for exact boundaries. COMPLETED runs auto-fork. |
-| [`04_branch_session.py`](./04_branch_session.py) | `team.branch_session()` deep-copies every run into a new session. Independent conversation threads. |
+| [`04_fork_session.py`](./04_fork_session.py) | `team.fork_session()` deep-copies every run into a new session. Independent conversation threads. |
 | [`05_checkpoint_endpoints.py`](./05_checkpoint_endpoints.py) | Calls the two new GET endpoints — `/checkpoints` (timeline) and `/checkpoints/{message_index}` (snapshot) — via an in-process `TestClient`, prints raw payloads, and feeds the returned index back into `/continue`. |
 
 ## The unified `/continue` (same as agent)
@@ -72,6 +72,6 @@ copy.
 .venvs/demo/bin/python cookbook/03_teams/23_checkpointing/01_regenerate.py
 .venvs/demo/bin/python cookbook/03_teams/23_checkpointing/02_fork.py
 .venvs/demo/bin/python cookbook/03_teams/23_checkpointing/03_time_travel.py
-.venvs/demo/bin/python cookbook/03_teams/23_checkpointing/04_branch_session.py
+.venvs/demo/bin/python cookbook/03_teams/23_checkpointing/04_fork_session.py
 .venvs/demo/bin/python cookbook/03_teams/23_checkpointing/05_checkpoint_endpoints.py
 ```
