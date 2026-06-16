@@ -145,15 +145,32 @@ class EngineAuthorizationProvider(AuthorizationProvider):
         return self._engine.check_resource(ctx.resource_type, ctx.resource_id, ctx.action, subject=subject, roles=roles)
 
     def authorize_route(self, ctx: AuthorizationContext, required_scopes: List[str]) -> bool:
-        # Resource-typed routes decide on the extracted (type, id, action); other
-        # routes (sessions/memory/config/...) evaluate the route's required scopes
-        # against the policy — allow if ANY is satisfied.
-        if ctx.resource_type:
-            return self.check(ctx)
+        subject, roles = self._identity(ctx)
+        # A resource route with a concrete single action: decide on the extracted
+        # (type, id, action) — the per-resource gate.
+        if ctx.resource_type and ctx.action:
+            return self._engine.check_resource(
+                ctx.resource_type, ctx.resource_id, ctx.action, subject=subject, roles=roles
+            )
+        # Otherwise — a non-resource route, or a resource route whose required scopes
+        # span more than one action (ctx.action is None) — require ALL of the route's
+        # scopes, matching the scope provider's AND semantics. Never fall through to a
+        # blanket allow: a multi-action resource route used to hit check_resource with
+        # action=None and be waved through. Evaluate each scope against the specific
+        # resource when one is known, else as a generic scope string.
         if not required_scopes:
             return True
-        subject, roles = self._identity(ctx)
-        return any(self._engine.check_scope(s, subject=subject, roles=roles) for s in required_scopes)
+        for scope in required_scopes:
+            if ctx.resource_type and ctx.resource_id:
+                action = scope.rsplit(":", 1)[1] if ":" in scope else scope
+                ok = self._engine.check_resource(
+                    ctx.resource_type, ctx.resource_id, action, subject=subject, roles=roles
+                )
+            else:
+                ok = self._engine.check_scope(scope, subject=subject, roles=roles)
+            if not ok:
+                return False
+        return True
 
     def accessible_resource_ids(self, ctx: AuthorizationContext) -> Set[str]:
         if not ctx.resource_type:
