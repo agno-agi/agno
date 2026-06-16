@@ -15,10 +15,9 @@ from agno.os.interfaces.slack.builders import (
     response_blocks,
     select_confirmation_row,
 )
-from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
-from agno.run.approval import aresolve_approval
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import open_chat_stream, slack_error_code
+from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
 from agno.os.interfaces.slack.interactions import (
     apply_decisions,
     extract_row_action_context,
@@ -28,6 +27,7 @@ from agno.os.interfaces.slack.interactions import (
 )
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
 from agno.os.interfaces.slack.types import SubmitContext, tool_args, tool_name, truncate
+from agno.run.approval import aresolve_approval
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error, log_info
@@ -72,14 +72,6 @@ class HITLHandler:
         except Exception as exc:
             if "message_not_found" not in str(exc):
                 log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
-
-    async def load_active_requirements(self, ctx: SubmitContext) -> List[Any]:
-        try:
-            run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=ctx.session_id)  # type: ignore[union-attr]
-        except Exception as exc:
-            log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
-            return []
-        return list(getattr(run_output, "active_requirements", None) or []) if run_output else []
 
     async def freeze_form(
         self, ctx: SubmitContext, original_blocks: List[Dict[str, Any]], requirements: List[Any]
@@ -146,6 +138,7 @@ class HITLHandler:
         ctx: SubmitContext,
         stream: Any,
         requirements: List[Any],
+        user_id: Optional[str] = None,
     ) -> StreamState:
         state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
         try:
@@ -153,6 +146,7 @@ class HITLHandler:
                 run_id=ctx.run_id,
                 requirements=requirements,
                 session_id=ctx.session_id,
+                user_id=user_id,
                 stream=True,
                 stream_events=True,
             )
@@ -282,17 +276,23 @@ class HITLHandler:
     ) -> None:
         """Resume a paused run after admin approval."""
         session_id = f"{self.entity_id}:{thread_ts}"
+
         try:
             run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
-            requirements = list(getattr(run_output, "active_requirements", None) or []) if run_output else []
-            for req in requirements:
-                tool_exec = getattr(req, "tool_execution", None)
-                if tool_exec and getattr(tool_exec, "approval_id", None) == approval_id:
-                    req.confirm()
-                    break
         except Exception as exc:
-            log_error(f"[HITL] Failed to confirm requirement: {exc}")
-            requirements = []
+            log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
+            return
+
+        if not run_output:
+            return
+
+        run_user_id = run_output.user_id
+        requirements = list(run_output.active_requirements or [])
+
+        for req in requirements:
+            if req.tool_execution and req.tool_execution.approval_id == approval_id:
+                req.confirm()
+                break
 
         ctx = SubmitContext(
             run_id=run_id,
@@ -314,7 +314,7 @@ class HITLHandler:
             self.task_display_mode,
             self.buffer_size,
         )
-        state = await self.stream_resumed_run(ctx, stream, requirements)
+        state = await self.stream_resumed_run(ctx, stream, requirements, user_id=run_user_id)
         await self.complete_or_repause(ctx, stream, state)
 
     async def handle_check_status(self, payload: Dict[str, Any]) -> None:
@@ -428,10 +428,18 @@ class HITLHandler:
 
         await self.delete_awaiting_indicator(ctx.channel, ctx.awaiting_ts)
 
-        requirements = await self.load_active_requirements(ctx)
-        if not requirements:
+        try:
+            run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=ctx.session_id)  # type: ignore[union-attr]
+        except Exception as exc:
+            log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
+            run_output = None
+
+        if not run_output or not run_output.active_requirements:
             await self.post_ephemeral(channel=ctx.channel, user=ctx.user_id, text="This approval is no longer active.")
             return
+
+        run_user_id = run_output.user_id
+        requirements = list(run_output.active_requirements)
 
         decisions = await self.validate_and_apply_decisions(ctx, payload, requirements)
         if decisions is None:
@@ -453,7 +461,7 @@ class HITLHandler:
         )
 
         await self.post_denial_cards(stream, decisions, requirements, ctx.run_id)
-        state = await self.stream_resumed_run(ctx, stream, requirements)
+        state = await self.stream_resumed_run(ctx, stream, requirements, user_id=run_user_id)
         await self.complete_or_repause(ctx, stream, state)
 
     async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:

@@ -17,7 +17,6 @@ from slack_sdk.models.blocks.basic_components import MarkdownTextObject, Option,
 from slack_sdk.models.blocks.block_elements import ButtonElement
 
 from agno.os.interfaces.slack.components import Card
-from agno.os.interfaces.slack.interactions import confirmation_row_summary
 from agno.os.interfaces.slack.ids import (
     ACTION_CHECK_STATUS,
     ACTION_EXTERNAL_RESULT,
@@ -35,6 +34,7 @@ from agno.os.interfaces.slack.ids import (
     user_input_action_id,
     user_input_block_id,
 )
+from agno.os.interfaces.slack.interactions import confirmation_row_summary
 from agno.os.interfaces.slack.types import (
     RowActionContext,
     RowTransformResult,

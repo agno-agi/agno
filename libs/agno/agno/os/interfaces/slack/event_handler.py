@@ -8,8 +8,6 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
-from agno.os.interfaces.slack.types import tool_name
 from agno.os.interfaces.slack.helpers import (
     BotNameResolver,
     build_run_metadata,
@@ -23,7 +21,9 @@ from agno.os.interfaces.slack.helpers import (
     strip_bot_mention,
     upload_response_media_async,
 )
+from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
+from agno.os.interfaces.slack.types import tool_name
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error
