@@ -4648,10 +4648,27 @@ def _sync_team_run_response_with_model_response(
     model_response: "ModelResponse",  # noqa: F821
 ) -> None:
     """Mirror the in-flight model_response state onto run_response for a team.
-    Same shape as the agent helper.
+
+    Same shape as the agent helper, with one team-specific concern: ``child_run_id``
+    (the delegation -> member-run link) is patched onto the existing
+    ``run_response.tools`` entries during tool execution, NOT onto
+    ``model_response.tool_executions``. A naive ``run_response.tools = list(...)``
+    would therefore drop the linkage on every mid-run checkpoint taken after a
+    delegation. Carry it over by ``tool_call_id``, mirroring the streaming merge
+    in :mod:`agno.team._response`.
     """
     if model_response.tool_executions is not None:
-        run_response.tools = list(model_response.tool_executions)
+        existing_child_run_ids = {
+            tool.tool_call_id: tool.child_run_id
+            for tool in (run_response.tools or [])
+            if tool.tool_call_id is not None and tool.child_run_id is not None
+        }
+        new_tools = list(model_response.tool_executions)
+        if existing_child_run_ids:
+            for tool in new_tools:
+                if tool.child_run_id is None and tool.tool_call_id in existing_child_run_ids:
+                    tool.child_run_id = existing_child_run_ids[tool.tool_call_id]
+        run_response.tools = new_tools
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 

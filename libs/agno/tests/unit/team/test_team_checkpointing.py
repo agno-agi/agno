@@ -448,6 +448,57 @@ class TestTeamFlushHelper:
         assert rr.messages[0].content == "kept"
 
 
+class TestTeamCheckpointSyncPreservesChildRunId:
+    """A mid-run checkpoint must not drop the delegation -> member-run link.
+
+    child_run_id is patched onto run_response.tools during tool execution, but
+    model_response.tool_executions (a distinct object set) does not carry it.
+    The checkpoint sync must carry it over by tool_call_id.
+    """
+
+    def _model_response(self, tool_executions):
+        from agno.models.response import ModelResponse
+
+        return ModelResponse(tool_executions=tool_executions)
+
+    def _run_messages(self):
+        from agno.run.messages import RunMessages
+
+        rm = RunMessages()
+        rm.messages = [Message(role="assistant", content="delegating", tool_calls=[{"id": "tc-1"}])]
+        return rm
+
+    def test_child_run_id_survives_checkpoint_sync(self):
+        # run_response carries the delegation link (set during tool execution)...
+        run_response = TeamRunOutput(
+            run_id="team-1",
+            tools=[ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id="member-99")],
+        )
+        # ...but model_response.tool_executions is a DISTINCT object without it.
+        model_response = self._model_response(
+            [ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id=None)]
+        )
+
+        team_run._sync_team_run_response_with_model_response(run_response, self._run_messages(), model_response)
+
+        assert run_response.tools is not None
+        assert run_response.tools[0].child_run_id == "member-99", "delegation->member link dropped on checkpoint"
+
+    def test_does_not_clobber_child_run_id_already_on_model_response(self):
+        run_response = TeamRunOutput(
+            run_id="team-1",
+            tools=[ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id="stale")],
+        )
+        # If the model_response entry already has a (newer) child_run_id, keep it.
+        model_response = self._model_response(
+            [ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id="member-new")]
+        )
+
+        team_run._sync_team_run_response_with_model_response(run_response, self._run_messages(), model_response)
+
+        assert run_response.tools[0].child_run_id == "member-new"
+
+
 # ---------------------------------------------------------------------------
 # Continue dispatch sugar + auto-fork-on-COMPLETED
 #
