@@ -418,7 +418,7 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
     RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
-    # HITL pause — stream ends, router posts Block Kit approval card separately
+    # HITL pause — router posts approval card separately since appendStream rejects Block Kit
     RunEvent.run_paused.value: _on_run_paused,
     TeamRunEvent.run_paused.value: _on_run_paused,
     # -------------------------------------------------------------------------
