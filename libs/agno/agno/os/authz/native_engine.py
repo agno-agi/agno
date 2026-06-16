@@ -301,3 +301,34 @@ class NativePolicyEngine(PolicyEngine):
             if resource.startswith(prefix):
                 ids.add(resource[len(prefix) :])
         return ids
+
+    def denied_resource_ids(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        """Concrete ids of ``resource_type`` explicitly denied for ``action`` (the
+        deny rows). Lets the provider carve denials out of a wildcard-allow list so
+        list endpoints honour deny-overrides like the per-resource gate does."""
+        if not resource_type:
+            return set()
+        roots = list(roles) if roles else ([subject] if subject else [])
+        if not roots:
+            return set()
+        principals: Set[str] = set()
+        for root in roots:
+            principals |= self._closure(root)
+
+        prefix = f"{resource_type}/"
+        ids: Set[str] = set()
+        for (role, resource, policy_action), effect in self._policies.items():
+            if role not in principals or effect != _DENY:
+                continue
+            if action is not None and policy_action != action and policy_action != "*":
+                continue
+            if resource.startswith(prefix):
+                ids.add(resource[len(prefix) :])
+        return ids

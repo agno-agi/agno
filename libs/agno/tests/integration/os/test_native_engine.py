@@ -156,3 +156,45 @@ def test_persistence_round_trip(tmp_path):
     eng2.unassign("bob", "member")
     eng3 = NativePolicyEngine(db_url=url)
     assert eng3.roles_of("bob") == []
+
+
+def test_list_filter_honours_deny_overrides_like_the_gate():
+    """Regression: a wildcard allow + per-resource deny must hide the denied
+    resource from list endpoints, matching the per-resource gate (deny-overrides).
+    Previously accessible_resource_ids returned {'*'} and leaked the denied one."""
+    from agno.os.authz.engine import EngineAuthorizationProvider
+    from agno.os.authz.provider import AuthorizationContext
+
+    class R:
+        def __init__(self, rid):
+            self.id = rid
+
+    eng = NativePolicyEngine()
+    # "read every agent EXCEPT the secret one"
+    eng.set_role_scopes("analyst", [("agents:*:read", "allow"), ("agents:secret:read", "deny")])
+    eng.assign("bob", "analyst")
+
+    # engine surfaces the denied id even though the allow is a wildcard
+    assert eng.accessible_resource_ids("agents", "read", subject="bob") == {"*"}
+    assert eng.denied_resource_ids("agents", "read", subject="bob") == {"secret"}
+
+    prov = EngineAuthorizationProvider(eng)
+    resources = [R("public"), R("secret"), R("other")]
+    # production list path builds the ctx with action=None (any-action visibility)
+    list_ctx = AuthorizationContext(principal_id="bob", resource_type="agents")
+    visible = {r.id for r in prov.filter_accessible(list_ctx, resources)}
+    assert visible == {"public", "other"}  # secret carved out, not leaked
+
+    # list visibility is consistent with the per-resource read gate
+    for r in resources:
+        gate = prov.check(
+            AuthorizationContext(principal_id="bob", resource_type="agents", resource_id=r.id, action="read")
+        )
+        assert (r.id in visible) == gate
+
+
+def test_denied_resource_ids_empty_without_denies():
+    eng = NativePolicyEngine()
+    eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
+    eng.assign("v", "viewer")
+    assert eng.denied_resource_ids("agents", "read", subject="v") == set()

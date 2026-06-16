@@ -25,7 +25,7 @@ only affects which provider is consulted first, not the outcome;
 implementation detail — prefer the list form above.
 """
 
-from typing import List, Set
+from typing import Any, List, Set
 
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 
@@ -68,3 +68,14 @@ class CompositeAuthorizationProvider(AuthorizationProvider):
                 return {"*"}
             ids |= got
         return ids
+
+    def filter_accessible(self, ctx: AuthorizationContext, resources: List[Any]) -> List[Any]:
+        # Union of grants (OR): a resource is visible if ANY plane's deny-aware
+        # filter keeps it. This is why a deny belongs INSIDE a single provider (so it
+        # carves that provider's grant) and never as a peer plane — under the union a
+        # peer's allow still wins, exactly as the INVARIANT above requires.
+        keep: Set[Any] = set()
+        for p in self.providers:
+            for r in p.filter_accessible(ctx, resources):
+                keep.add(getattr(r, "id", None))
+        return [r for r in resources if getattr(r, "id", None) in keep]

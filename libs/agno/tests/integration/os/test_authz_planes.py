@@ -34,9 +34,7 @@ def test_allows_via_either_plane():
     comp = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), store.provider])
 
     # operator plane: scopes ride the token, nothing in the store for them
-    operator = AuthorizationContext(
-        principal_id="op", scopes=["agents:read"], resource_type="agents", action="read"
-    )
+    operator = AuthorizationContext(principal_id="op", scopes=["agents:read"], resource_type="agents", action="read")
     assert comp.authorize_route(operator, ["agents:read"]) is True
 
     # end-user plane: no token scopes, the store grants it
@@ -70,7 +68,8 @@ def test_accessible_ids_union_with_wildcard_winning():
 def _token(sub, scopes):
     return jwt.encode(
         {"sub": sub, "aud": OS_ID, "scopes": scopes, "exp": datetime.now(UTC) + timedelta(hours=1)},
-        SECRET, algorithm="HS256",
+        SECRET,
+        algorithm="HS256",
     )
 
 
@@ -128,9 +127,15 @@ def test_admin_gate_accepts_admin_from_token_scope():
     client = TestClient(app)
 
     # admin via token scope -> can manage
-    assert client.get("/authz/roles", headers={"Authorization": f"Bearer {_token('op', ['agent_os:admin'])}"}).status_code == 200
+    assert (
+        client.get("/authz/roles", headers={"Authorization": f"Bearer {_token('op', ['agent_os:admin'])}"}).status_code
+        == 200
+    )
     # no admin scope and not in store -> denied
-    assert client.get("/authz/roles", headers={"Authorization": f"Bearer {_token('joe', ['agents:read'])}"}).status_code == 403
+    assert (
+        client.get("/authz/roles", headers={"Authorization": f"Bearer {_token('joe', ['agents:read'])}"}).status_code
+        == 403
+    )
 
 
 def test_authorization_provider_rejects_a_string():
@@ -148,3 +153,36 @@ def test_authorization_provider_rejects_a_string():
                 authorization_provider="ScopeAuthorizationProvider",  # oops, a string
             ),
         ).get_app()
+
+
+def test_composite_filter_accessible_unions_and_respects_per_plane_deny():
+    """CompositeProvider.filter_accessible is a union (OR): each plane filters
+    deny-aware within itself, and a resource is visible if ANY plane keeps it —
+    so an engine deny carves the engine's grant but can't veto a scope-plane allow."""
+    from agno.os.authz._composite import CompositeAuthorizationProvider
+    from agno.os.authz.engine import EngineAuthorizationProvider
+    from agno.os.authz.native_engine import NativePolicyEngine
+    from agno.os.authz.provider import AuthorizationContext
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    class R:
+        def __init__(self, rid):
+            self.id = rid
+
+    resources = [R("a"), R("secret"), R("b")]
+
+    eng = NativePolicyEngine()
+    eng.set_role_scopes("analyst", [("agents:*:read", "allow"), ("agents:secret:read", "deny")])
+    eng.assign("bob", "analyst")
+    engine_prov = EngineAuthorizationProvider(eng)
+
+    # engine plane alone: deny-overrides carves out 'secret'
+    ctx = AuthorizationContext(principal_id="bob", resource_type="agents")
+    engine_only = CompositeAuthorizationProvider([engine_prov])
+    assert {r.id for r in engine_only.filter_accessible(ctx, resources)} == {"a", "b"}
+
+    # add a scope plane that grants all agents: union shows 'secret' again (OR;
+    # the engine's deny is per-plane and can't veto another plane's grant)
+    ctx_both = AuthorizationContext(principal_id="bob", scopes=["agents:read"], resource_type="agents")
+    both = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), engine_prov])
+    assert {r.id for r in both.filter_accessible(ctx_both, resources)} == {"a", "secret", "b"}
