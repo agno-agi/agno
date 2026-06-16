@@ -164,26 +164,6 @@ SPAN_COLLECTION_SCHEMA = [
 ]
 
 
-SCHEDULE_COLLECTION_SCHEMA = [
-    {"key": "id"},
-    {"key": "name"},
-    {"key": "enabled"},
-    {"key": "next_run_at"},
-    {"key": "user_id"},
-    # Composite for the poller (enabled, next_run_at) and the per-user list.
-    {"key": [("enabled", "ASCENDING"), ("next_run_at", "ASCENDING")], "collection_group": False},
-    {"key": [("user_id", "ASCENDING"), ("enabled", "ASCENDING")], "collection_group": False},
-]
-
-SCHEDULE_RUNS_COLLECTION_SCHEMA = [
-    {"key": "id"},
-    {"key": "schedule_id"},
-    {"key": "user_id"},
-    {"key": "created_at"},
-    {"key": [("schedule_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
-]
-
-
 def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
     index_definitions = {
@@ -195,8 +175,6 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "culture": CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,
         "spans": SPAN_COLLECTION_SCHEMA,
-        "schedules": SCHEDULE_COLLECTION_SCHEMA,
-        "schedule_runs": SCHEDULE_RUNS_COLLECTION_SCHEMA,
     }
 
     indexes = index_definitions.get(collection_type)
