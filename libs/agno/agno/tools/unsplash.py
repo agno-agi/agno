@@ -48,6 +48,7 @@ class UnsplashTools(Toolkit):
         enable_get_random_photo: bool = True,
         enable_download_photo: bool = False,
         all: bool = False,
+        timeout: int = 30,
         **kwargs: Any,
     ):
         """Initialize the Unsplash toolkit.
@@ -60,6 +61,7 @@ class UnsplashTools(Toolkit):
             enable_get_random_photo: Enable the get_random_photo tool. Default: True.
             enable_download_photo: Enable the download_photo tool. Default: False.
             all: Enable all tools. Default: False.
+            timeout: Timeout for Unsplash API requests in seconds. Default: 30.
             **kwargs: Additional arguments passed to the Toolkit base class.
         """
         self.access_key = access_key or getenv("UNSPLASH_ACCESS_KEY")
@@ -67,6 +69,7 @@ class UnsplashTools(Toolkit):
             logger.warning("No Unsplash API key provided. Set UNSPLASH_ACCESS_KEY environment variable.")
 
         self.base_url = "https://api.unsplash.com"
+        self.timeout = timeout
 
         tools: List[Any] = []
         if all or enable_search_photos:
@@ -103,7 +106,7 @@ class UnsplashTools(Toolkit):
         }
 
         request = Request(url, headers=headers)
-        with urlopen(request) as response:
+        with urlopen(request, timeout=self.timeout) as response:
             return json.loads(response.read().decode())
 
     def _format_photo(self, photo: Dict[str, Any]) -> Dict[str, Any]:

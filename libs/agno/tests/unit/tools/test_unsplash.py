@@ -95,6 +95,12 @@ class TestUnsplashToolsInit:
         """Test initialization with provided API key."""
         tools = UnsplashTools(access_key="provided_key")
         assert tools.access_key == "provided_key"
+        assert tools.timeout == 30
+
+    def test_init_with_custom_timeout(self):
+        """Test initialization with a custom request timeout."""
+        tools = UnsplashTools(access_key="provided_key", timeout=5)
+        assert tools.timeout == 5
 
     def test_init_without_api_key_logs_warning(self):
         """Test initialization without API key logs a warning."""
@@ -483,6 +489,16 @@ class TestMakeRequest:
         assert "/test?" in call_args.full_url
         assert "param1=value1" in call_args.full_url
         assert "param2=value2" in call_args.full_url
+        assert mock_urlopen.call_args.kwargs["timeout"] == 30
+
+    def test_make_request_uses_configured_timeout(self, mock_urlopen):
+        """Test request uses the configured timeout."""
+        mock_urlopen.return_value = create_mock_response({"test": "data"})
+        tools = UnsplashTools(access_key="provided_key", timeout=5)
+
+        tools._make_request("/test")
+
+        assert mock_urlopen.call_args.kwargs["timeout"] == 5
 
     def test_make_request_includes_auth_header(self, unsplash_tools, mock_urlopen):
         """Test request includes authorization header."""
