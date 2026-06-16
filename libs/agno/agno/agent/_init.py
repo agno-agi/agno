@@ -76,10 +76,12 @@ def set_checkpoint(agent: Agent) -> None:
         agent.checkpoint = "runs"
     elif agent.checkpoint == "tools":
         raise NotImplementedError(
-            'checkpoint="tools" is reserved for the 3.0 runs-table split and not available yet. Use "steps" or "runs".'
+            'checkpoint="tools" is reserved for the 3.0 runs-table split and not available yet. Use "tool-batch" or "runs".'
         )
-    elif agent.checkpoint not in ("runs", "steps"):
-        raise ValueError(f'Invalid checkpoint level: {agent.checkpoint!r}. Expected one of: "runs", "steps", "tools".')
+    elif agent.checkpoint not in ("runs", "tool-batch"):
+        raise ValueError(
+            f'Invalid checkpoint level: {agent.checkpoint!r}. Expected one of: "runs", "tool-batch", "tools".'
+        )
 
 
 def set_default_model(agent: Agent) -> None:

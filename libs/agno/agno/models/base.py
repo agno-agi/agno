@@ -674,7 +674,7 @@ class Model(ABC):
                 messages are appended to ``messages`` and before the next model call (or break).
                 Receives the current ``ModelResponse`` (with accumulated ``tool_executions``)
                 as its single argument. Used by Agent-level checkpointing
-                (``checkpoint="steps"``) to persist mid-run state. Exceptions are caught and
+                (``checkpoint="tool-batch"``) to persist mid-run state. Exceptions are caught and
                 logged — a failed callback must not kill the run.
         """
         try:
@@ -912,7 +912,7 @@ class Model(ABC):
         ``after_tool_results``: optional async callback invoked once per tool batch, after tool
         result messages are appended to ``messages`` and before the next model call (or break).
         Receives the current ``ModelResponse`` (with accumulated ``tool_executions``) as its
-        single argument. Used by Agent-level checkpointing (``checkpoint="steps"``) to persist
+        single argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist
         mid-run state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
 
@@ -1410,7 +1410,7 @@ class Model(ABC):
         ``after_tool_results``: optional callback invoked once per tool batch, after tool result
         messages are appended to ``messages`` and before the next model call (or break). Receives
         the current ``ModelResponse`` (with accumulated ``tool_executions``) as its single
-        argument. Used by Agent-level checkpointing (``checkpoint="steps"``) to persist mid-run
+        argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist mid-run
         state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
         try:
@@ -1705,7 +1705,7 @@ class Model(ABC):
         ``after_tool_results``: optional async callback invoked once per tool batch, after tool
         result messages are appended to ``messages`` and before the next model call (or break).
         Receives the current ``ModelResponse`` (with accumulated ``tool_executions``) as its
-        single argument. Used by Agent-level checkpointing (``checkpoint="steps"``) to persist
+        single argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist
         mid-run state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
         try:

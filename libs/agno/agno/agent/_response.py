@@ -999,12 +999,21 @@ def update_run_response(
     if model_response.provider_data is not None:
         run_response.model_provider_data = model_response.provider_data
 
-    # Update the run_response tools with the model response tool_executions
+    # Update the run_response tools with the model response tool_executions.
+    # Dedupe by tool_call_id: with checkpoint="tool-batch" the per-batch callback
+    # already wrote tools into run_response, so naive extend would duplicate
+    # every execution. Replace existing entries (in place, preserving order)
+    # and append only genuinely new ones.
     if model_response.tool_executions is not None:
         if run_response.tools is None:
-            run_response.tools = model_response.tool_executions
+            run_response.tools = list(model_response.tool_executions)
         else:
-            run_response.tools.extend(model_response.tool_executions)
+            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    run_response.tools[existing_by_id[tool.tool_call_id]] = tool
+                else:
+                    run_response.tools.append(tool)
 
         # For Reasoning/Thinking/Knowledge Tools update reasoning_content in RunOutput
         for tool_call in model_response.tool_executions:

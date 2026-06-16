@@ -196,6 +196,14 @@ class Team:
     # Database to use for this agent
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
+    # --- Checkpointing ---
+    # When to persist run state to the database. Mirrors Agent.checkpoint.
+    #   "runs"  — default, write only at terminal states (today's behavior)
+    #   "tool-batch" — write after each team-level model turn (post-gather barrier)
+    #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
+    # None during construction means "fall back to OS-level setting, else 'runs'".
+    checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None
+
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
 
@@ -510,6 +518,7 @@ class Team:
         use_json_mode: bool = False,
         parse_response: bool = True,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
         enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
@@ -632,6 +641,7 @@ class Team:
             use_json_mode=use_json_mode,
             parse_response=parse_response,
             db=db,
+            checkpoint=checkpoint,
             enable_agentic_memory=enable_agentic_memory,
             update_memory_on_run=update_memory_on_run,
             enable_user_memories=enable_user_memories,
@@ -744,6 +754,31 @@ class Team:
     @staticmethod
     async def acancel_run(run_id: str) -> bool:
         return await _run.acancel_run(run_id=run_id)
+
+    def branch_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Branch this team's session into a new independent session.
+
+        Deep-copies every run from the source session into a new session
+        with a fresh ``session_id`` and fresh ``run_id``s. The new session
+        can diverge without affecting the original.
+
+        Returns the new ``session_id``.
+        """
+        return _run.branch_session_dispatch(self, source_session_id=source_session_id, user_id=user_id)
+
+    async def abranch_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Async variant of :meth:`branch_session`."""
+        return await _run.abranch_session_dispatch(self, source_session_id=source_session_id, user_id=user_id)
 
     @overload
     def run(
@@ -1008,6 +1043,13 @@ class Team:
         *,
         run_id: Optional[str] = None,
         requirements: Optional[List[Any]] = None,
+        # --- Snapshot dispatch sugar (mirrors Agent.continue_run) ---
+        input: Optional[str] = None,
+        continue_from: Union[int, Literal["end", "last_user"]] = "end",
+        fork: bool = False,
+        regenerate: bool = False,
+        preserve_original: bool = False,
+        additional_instructions: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         user_id: Optional[str] = None,
@@ -1025,6 +1067,12 @@ class Team:
             run_response=run_response,
             run_id=run_id,
             requirements=requirements,
+            input=input,
+            continue_from=continue_from,
+            fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,
@@ -1080,6 +1128,13 @@ class Team:
         *,
         run_id: Optional[str] = None,
         requirements: Optional[List[Any]] = None,
+        # --- Snapshot dispatch sugar (mirrors Agent.acontinue_run) ---
+        input: Optional[str] = None,
+        continue_from: Union[int, Literal["end", "last_user"]] = "end",
+        fork: bool = False,
+        regenerate: bool = False,
+        preserve_original: bool = False,
+        additional_instructions: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1098,6 +1153,12 @@ class Team:
             run_response=run_response,
             run_id=run_id,
             requirements=requirements,
+            input=input,
+            continue_from=continue_from,
+            fork=fork,
+            regenerate=regenerate,
+            preserve_original=preserve_original,
+            additional_instructions=additional_instructions,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,

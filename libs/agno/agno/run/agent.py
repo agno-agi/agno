@@ -664,13 +664,21 @@ class RunOutput:
     requirements: Optional[list[RunRequirement]] = None
 
     # Checkpoint coordinate: index into messages at the most recent checkpoint write.
-    # Set when checkpoint="steps" (or any future non-default level) persists mid-run state.
+    # Set when checkpoint="tool-batch" (or any future non-default level) persists mid-run state.
     last_checkpoint_at_message_index: Optional[int] = None
 
     # Fork lineage. Distinct from parent_run_id (which carries team-member / workflow-step
     # parentage); see ADR-007 in specs/agno/features/checkpointing/decisions.md.
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
+
+    # Branching lineage: the source session_id this run was originally created in
+    # (set when a session is branched; preserved across nested branches).
+    branched_from: Optional[str] = None
+
+    # Regeneration lineage: the run_id of the immediate predecessor this run was
+    # regenerated from. Walk the chain via repeated lookups if you need full history.
+    regenerated_from: Optional[str] = None
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures

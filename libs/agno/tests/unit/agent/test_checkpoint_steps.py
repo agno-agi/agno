@@ -1,4 +1,4 @@
-"""Unit tests for level="steps" checkpointing (phase 2 of run-checkpointing).
+"""Unit tests for level="tool-batch" checkpointing (phase 2 of run-checkpointing).
 
 Scope covers:
 - Helper functions in _run.py (persist_run_in_session, checkpoint_run,
@@ -6,7 +6,7 @@ Scope covers:
 - The model-loop hook firing semantics in Model.response / aresponse /
   response_stream / aresponse_stream
 - End-to-end K+1 invariant: an agent run with K tool batches and
-  checkpoint="steps" produces K+1 DB writes (K hooks + 1 terminal).
+  checkpoint="tool-batch" produces K+1 DB writes (K hooks + 1 terminal).
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from agno.session import AgentSession
 # ---------------------------------------------------------------------------
 
 
-def _make_agent(checkpoint: str = "steps", db: Optional[InMemoryDb] = None) -> Agent:
+def _make_agent(checkpoint: str = "tool-batch", db: Optional[InMemoryDb] = None) -> Agent:
     """Build an initialized Agent with a stub OpenAI model.
 
     The model is not actually invoked in helper unit tests; integration tests
@@ -121,7 +121,7 @@ class TestBuildCallback:
         assert cb is None
 
     def test_returns_callable_when_checkpoint_steps(self):
-        agent = _make_agent(checkpoint="steps")
+        agent = _make_agent(checkpoint="tool-batch")
         cb = build_after_tool_results_callback(
             agent,
             run_response=_make_run_response(),
@@ -143,7 +143,7 @@ class TestBuildCallback:
 
     @pytest.mark.asyncio
     async def test_async_variant_returns_callable_when_checkpoint_steps(self):
-        agent = _make_agent(checkpoint="steps")
+        agent = _make_agent(checkpoint="tool-batch")
         cb = abuild_after_tool_results_callback(
             agent,
             run_response=_make_run_response(),
@@ -223,7 +223,7 @@ class TestCheckpointRun:
 
     def test_sets_status_running_when_steps(self):
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
         run_response = _make_run_response()
         run_response.messages = [
             Message(role="user", content="hi"),
@@ -237,7 +237,7 @@ class TestCheckpointRun:
 
     def test_sets_last_checkpoint_index(self):
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
         run_response = _make_run_response()
         run_response.messages = [
             Message(role="user", content="hi"),
@@ -249,10 +249,12 @@ class TestCheckpointRun:
         checkpoint_run(agent, run_response, session)
 
         assert run_response.last_checkpoint_at_message_index == 3
+        assert run_response.messages[-1].checkpoint_status == RunStatus.running.value
+        assert run_response.messages[-1].checkpoint_created_at is not None
 
     def test_writes_to_db(self):
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
         run_response = _make_run_response()
         run_response.messages = [Message(role="user", content="hi")]
         session = _make_session()
@@ -280,7 +282,7 @@ class TestCheckpointRun:
     @pytest.mark.asyncio
     async def test_async_writes_when_steps(self):
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
         run_response = _make_run_response()
         run_response.messages = [Message(role="user", content="hi")]
         session = _make_session()
@@ -357,7 +359,7 @@ class TestCallbackEndToEnd:
 
     def test_callback_writes_and_updates_state(self):
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
         run_response = _make_run_response()
         run_messages = _make_run_messages([Message(role="user", content="hi")])
         session = _make_session()
@@ -389,7 +391,7 @@ class TestCallbackEndToEnd:
     @pytest.mark.asyncio
     async def test_async_callback_writes_and_updates_state(self):
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
         run_response = _make_run_response()
         run_messages = _make_run_messages([Message(role="user", content="hi")])
         session = _make_session()
@@ -572,7 +574,7 @@ class TestModelLayerHookFailureContained:
         layer's try/except catches it → run still produces final output."""
         K = 2
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
 
         # Patch upsert_session to raise on every call. The hook will hit this
         # K times; the model layer must swallow each failure.
@@ -622,7 +624,7 @@ class TestKPlusOneInvariant:
     async def test_k_plus_one_writes_with_checkpoint_steps_async(self):
         K = 3
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
 
         with patch.object(agent.model, "aresponse", side_effect=_make_fake_aresponse(K)):
             write_count = _wrap_db_for_counting(db)
@@ -630,13 +632,13 @@ class TestKPlusOneInvariant:
 
         # K hook fires + 1 terminal write
         assert write_count[0] == K + 1, (
-            f"Expected {K + 1} writes for {K} tool batches with checkpoint='steps', got {write_count[0]}"
+            f"Expected {K + 1} writes for {K} tool batches with checkpoint='tool-batch', got {write_count[0]}"
         )
 
     def test_k_plus_one_writes_with_checkpoint_steps_sync(self):
         K = 3
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
 
         with patch.object(agent.model, "response", side_effect=_make_fake_response(K)):
             write_count = _wrap_db_for_counting(db)
@@ -661,7 +663,7 @@ class TestKPlusOneInvariant:
     async def test_one_write_for_single_turn_no_tools(self):
         """Single-turn run with no tool calls → 0 hook fires + 1 terminal = 1 write."""
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
 
         with patch.object(agent.model, "aresponse", side_effect=_make_fake_aresponse(0)):
             write_count = _wrap_db_for_counting(db)
@@ -678,7 +680,7 @@ class TestKPlusOneInvariant:
         COMPLETED at the end)."""
         K = 2
         db = InMemoryDb()
-        agent = _make_agent(checkpoint="steps", db=db)
+        agent = _make_agent(checkpoint="tool-batch", db=db)
 
         # Capture run_response state at hook fire time by mid-run inspection.
         snapshots: List[dict] = []
