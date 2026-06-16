@@ -132,9 +132,7 @@ def test_authentication_decorator():
 
     with patch("googleapiclient.discovery.build") as mock_build:
         mock_service = MagicMock()
-        mock_service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
-            "messages": []
-        }
+        mock_service.users.return_value.messages.return_value.list.return_value.execute.return_value = {"messages": []}
         mock_build.return_value = mock_service
 
         tools = GmailTools(creds=mock_creds)
@@ -165,10 +163,7 @@ def test_auth_with_expired_credentials():
 
         with (
             patch("pathlib.Path.exists", return_value=True),
-            patch(
-                "google.oauth2.credentials.Credentials.from_authorized_user_file",
-                return_value=mock_creds
-            ),
+            patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=mock_creds),
             patch("pathlib.Path.write_text"),
             patch("google.auth.transport.requests.Request"),
         ):
@@ -193,7 +188,10 @@ def test_auth_with_custom_paths():
             with patch("pathlib.Path.write_text"):
                 tools = GmailTools(credentials_path=custom_creds_path, token_path=custom_token_path)
                 result = tools._resolve_creds()
-                mock_from_file.assert_called_once_with(custom_token_path, tools.scopes)
+                mock_from_file.assert_called_once()
+                call_args = mock_from_file.call_args[0]
+                assert call_args[0] == custom_token_path
+                assert set(call_args[1]) == set(tools.scopes)
                 assert result == mock_loaded_creds
 
 

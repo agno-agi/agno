@@ -141,12 +141,12 @@ class TestGoogleCalendarToolsInitialization:
             service_account_path="/path/to/key.json",
             delegated_user="user@example.com",
         )
-        assert tools._legacy_service_account_path == "/path/to/key.json"
-        assert tools._legacy_delegated_user == "user@example.com"
+        assert tools._auth.service_account_path == "/path/to/key.json"
+        assert tools._auth.delegated_user == "user@example.com"
 
     def test_init_login_hint(self):
         tools = GoogleCalendarTools(login_hint="user@example.com")
-        assert tools._legacy_login_hint == "user@example.com"
+        assert tools._auth.login_hint == "user@example.com"
 
 
 class TestBackwardCompat:

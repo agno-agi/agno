@@ -205,7 +205,7 @@ def test_service_account():
     """Test setting service_account_path when instantiating a GoogleSheetsTools."""
     path = "/some/path"
     tool = GoogleSheetsTools(service_account_path=path)
-    assert tool._legacy_service_account_path == path
+    assert tool._auth.service_account_path == path
 
 
 def test_service_account_environment_variable(monkeypatch):

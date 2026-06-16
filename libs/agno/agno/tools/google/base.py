@@ -42,16 +42,24 @@ class GoogleToolkit(Toolkit):
         self.credentials_path = credentials_path
         self.oauth_port = oauth_port
 
-        self._auth = auth
+        # Create internal AuthConfig if none provided, populated with constructor params
+        if auth is None:
+            from agno.tools.google.auth import AuthConfig
+
+            # Only pass explicitly set params — let AuthConfig use env var defaults for None
+            auth_kwargs: Dict[str, Any] = {}
+            if service_account_path is not None:
+                auth_kwargs["service_account_path"] = service_account_path
+            if delegated_user is not None:
+                auth_kwargs["delegated_user"] = delegated_user
+            if login_hint is not None:
+                auth_kwargs["login_hint"] = login_hint
+            self._auth = AuthConfig(**auth_kwargs)
+        else:
+            self._auth = auth
 
         # Register scopes with shared auth for aggregation
-        if self._auth:
-            self._auth.register_scopes(self.scopes)
-
-        # Legacy params — only used if no auth config provided
-        self._legacy_service_account_path = service_account_path
-        self._legacy_delegated_user = delegated_user
-        self._legacy_login_hint = login_hint
+        self._auth.register_scopes(self.scopes)
 
     @property
     def service(self) -> Any:
@@ -65,16 +73,12 @@ class GoogleToolkit(Toolkit):
         return build(self.api_name, self.api_version, credentials=creds)
 
     def _get_service_account_path(self) -> Optional[str]:
-        """Resolve service account path from auth config or legacy params."""
-        if self._auth:
-            return self._auth.service_account_path
-        return self._legacy_service_account_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+        """Get service account path from auth config."""
+        return self._auth.service_account_path
 
     def _get_delegated_user(self) -> Optional[str]:
-        """Resolve delegated user from auth config or legacy params."""
-        if self._auth:
-            return self._auth.delegated_user
-        return self._legacy_delegated_user or os.getenv("GOOGLE_DELEGATED_USER")
+        """Get delegated user from auth config."""
+        return self._auth.delegated_user
 
     def _get_service_account_creds(self, service_account_path: str) -> Any:
         """Build service account credentials.
@@ -229,11 +233,9 @@ class GoogleToolkit(Toolkit):
             flow = InstalledAppFlow.from_client_config(client_config, oauth_scopes)
 
         oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-        login_hint = self._auth.login_hint if self._auth else self._legacy_login_hint
-        if login_hint:
-            oauth_kwargs["login_hint"] = login_hint
-        hosted_domain = self._auth.hosted_domain if self._auth else None
-        if hosted_domain:
+        if self._auth.login_hint:
+            oauth_kwargs["login_hint"] = self._auth.login_hint
+        if self._auth.hosted_domain:
             oauth_kwargs["hd"] = hosted_domain
         creds = flow.run_local_server(port=self.oauth_port or 0, **oauth_kwargs)
 
