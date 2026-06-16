@@ -15,7 +15,7 @@ No engine types (obj/act tuples, OpenFGA tuples) leak across it.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Set, Tuple
+from typing import Any, List, Optional, Set, Tuple
 
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 
@@ -99,6 +99,20 @@ class PolicyEngine(ABC):
         """Resource ids of ``resource_type`` the identity may access for ``action``
         (``{"*"}`` = all)."""
 
+    def denied_resource_ids(
+        self,
+        resource_type: str,
+        action: Optional[str],
+        *,
+        subject: Optional[str] = None,
+        roles: Optional[List[str]] = None,
+    ) -> Set[str]:
+        """Concrete resource ids of ``resource_type`` the identity is explicitly
+        DENIED for ``action`` (deny-overrides). Used to carve denials out of the
+        list-visibility set so a wildcard allow + per-resource deny doesn't leak the
+        denied resource into list endpoints. Default: no engine-level denies."""
+        return set()
+
 
 class EngineAuthorizationProvider(AuthorizationProvider):
     """An :class:`AuthorizationProvider` backed by any :class:`PolicyEngine`.
@@ -146,3 +160,20 @@ class EngineAuthorizationProvider(AuthorizationProvider):
             return set()
         subject, roles = self._identity(ctx)
         return self._engine.accessible_resource_ids(ctx.resource_type, ctx.action, subject=subject, roles=roles)
+
+    def filter_accessible(self, ctx: AuthorizationContext, resources: List[Any]) -> List[Any]:
+        """Deny-aware list filtering: accessible ids MINUS explicitly-denied ids, so a
+        wildcard allow with a per-resource deny (``agents:*:read`` + a deny on
+        ``agents:secret``) excludes the denied resource — keeping list endpoints
+        consistent with :meth:`check` / the per-resource gate (deny-overrides)."""
+        if not ctx.resource_type:
+            return resources
+        subject, roles = self._identity(ctx)
+        accessible = self._engine.accessible_resource_ids(ctx.resource_type, ctx.action, subject=subject, roles=roles)
+        denied = self._engine.denied_resource_ids(ctx.resource_type, ctx.action, subject=subject, roles=roles)
+        wildcard = "*" in accessible
+        return [
+            r
+            for r in resources
+            if getattr(r, "id", None) not in denied and (wildcard or getattr(r, "id", None) in accessible)
+        ]

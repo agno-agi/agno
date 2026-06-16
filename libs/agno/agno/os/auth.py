@@ -271,14 +271,14 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
         >>> filter_resources_by_access(request, agents, "agents")
         [Agent(id="agent-1"), Agent(id="agent-2"), Agent(id="agent-3")]
     """
-    accessible_ids = get_accessible_resources(request, resource_type)
-
-    # Wildcard access - return all resources
-    if "*" in accessible_ids:
-        return resources
-
-    # Filter to only accessible resources
-    return [r for r in resources if r.id in accessible_ids]
+    # Delegate to the provider's filter so list visibility goes through the SAME
+    # decision logic as the per-resource gate. The default (scope) provider filters
+    # by accessible-id set exactly as before; a provider with deny-overrides (managed
+    # roles) carves denied resources out here too, so a wildcard allow + per-resource
+    # deny can't leak the denied resource into the list (consistent with check()).
+    provider = _resolve_authorization_provider(request)
+    ctx = _build_authorization_context(request, resource_type=resource_type)
+    return provider.filter_accessible(ctx, resources)
 
 
 def check_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
