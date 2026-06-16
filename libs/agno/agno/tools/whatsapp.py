@@ -48,6 +48,7 @@ class WhatsAppTools(Toolkit):
         enable_send_location: bool = False,
         enable_send_reaction: bool = False,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.access_token = access_token or getenv("WHATSAPP_ACCESS_TOKEN")
@@ -64,6 +65,7 @@ class WhatsAppTools(Toolkit):
         self.default_recipient = recipient_waid or getenv("WHATSAPP_RECIPIENT_WAID")
         self.version = version or getenv("WHATSAPP_VERSION", "v22.0")
         self.base_url = "https://graph.facebook.com"
+        self.timeout = timeout
 
         # Register only enabled tools to keep the agent's tool list focused
         tools: List[Any] = []
@@ -101,7 +103,7 @@ class WhatsAppTools(Toolkit):
 
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Raise on 4xx/5xx with parsed error body for better diagnostics
-        response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data)
+        response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data, timeout=self.timeout)
         if response.status_code >= 400:
             error_body = (
                 response.json()

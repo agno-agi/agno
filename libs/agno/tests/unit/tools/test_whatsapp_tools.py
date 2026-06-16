@@ -46,6 +46,7 @@ def test_init_registers_default_tools():
         names = [f.name for f in tools.functions.values()]
         assert "send_text_message" in names
         assert "send_template_message" in names
+        assert tools.timeout == 30
         assert len(names) == 2
 
 
@@ -73,6 +74,23 @@ def test_send_text_message(whatsapp_tools):
     parsed = json.loads(result)
     assert parsed["ok"] is True
     assert parsed["message_id"] == "wamid.test123"
+    assert whatsapp_tools._mock_httpx.post.call_args.kwargs["timeout"] == 30
+
+
+def test_send_message_uses_configured_timeout():
+    with patch.dict("os.environ", ENV):
+        with patch("agno.tools.whatsapp.httpx") as mock_httpx:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"messages": [{"id": "wamid.test123"}]}
+            mock_httpx.post.return_value = mock_response
+            tools = WhatsAppTools(all=True, recipient_waid="+1234567890", timeout=5)
+
+            result = tools.send_text_message(text="Hello")
+
+            parsed = json.loads(result)
+            assert parsed["ok"] is True
+            assert mock_httpx.post.call_args.kwargs["timeout"] == 5
 
 
 def test_send_text_message_default_recipient(whatsapp_tools):
