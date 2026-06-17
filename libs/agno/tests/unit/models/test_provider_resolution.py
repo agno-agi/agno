@@ -135,6 +135,7 @@ def test_name_does_not_override_conflicting_provider(provider, name, expected_ke
 
 def test_user_named_model_reconstructs_correct_provider():
     """Regression: OpenAIChat(name="Gemini") must not rebuild as the Google Gemini class."""
+    pytest.importorskip("openai")  # openai is an optional extra, not a base dependency
     rebuilt = get_model_from_dict({"provider": "OpenAI", "name": "Gemini", "id": "gpt-4o"})
     assert type(rebuilt).__name__ != "Gemini"
     assert rebuilt.provider == "OpenAI"

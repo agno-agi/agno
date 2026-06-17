@@ -1016,6 +1016,7 @@ class TestAddModel:
         integrations (Chat Completions vs Responses API); the three Azure model classes likewise
         all report provider "Azure".
         """
+        pytest.importorskip("openai")  # openai is an optional extra, not a base dependency
         os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
         from agno.models.openai.chat import OpenAIChat
         from agno.models.openai.responses import OpenAIResponses
@@ -1029,6 +1030,7 @@ class TestAddModel:
         assert {m.provider for m in reg.models} == {"OpenAI"}
 
     def test_dedupes_same_class_provider_and_id(self):
+        pytest.importorskip("openai")  # openai is an optional extra, not a base dependency
         os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
         from agno.models.openai.responses import OpenAIResponses
 
