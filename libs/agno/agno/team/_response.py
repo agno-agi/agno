@@ -1772,7 +1772,9 @@ def generate_team_followups(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1804,7 +1806,9 @@ async def agenerate_team_followups(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1845,7 +1849,9 @@ def generate_team_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1894,7 +1900,9 @@ async def agenerate_team_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, team.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, team.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
