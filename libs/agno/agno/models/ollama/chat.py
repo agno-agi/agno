@@ -367,7 +367,9 @@ class Ollama(Model):
         if response_message.get("thinking") is not None:
             model_response.reasoning_content = response_message.get("thinking")
         # Fallback: extract thinking content between <think> or <thinking> tags if present
-        elif model_response.content and ("</think>" in model_response.content or "</thinking>" in model_response.content):
+        elif model_response.content and (
+            "</think>" in model_response.content or "</thinking>" in model_response.content
+        ):
             reasoning_content, clean_content = extract_thinking_content(model_response.content)
 
             if reasoning_content:

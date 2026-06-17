@@ -311,6 +311,46 @@ def test_vllm_matched_by_openai_checker():
     assert is_openai_reasoning_model(model) is True
 
 
+def test_vllm_without_enable_thinking_non_reasoning_model():
+    """VLLM without enable_thinking and non-reasoning model ID returns False."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="meta-llama/Llama-3.1-70B")
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_vllm_with_qwq_model_id():
+    """VLLM with qwq in model ID is auto-detected as reasoning."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="Qwen/QwQ-32B")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_vllm_with_deepseek_r1_model_id():
+    """VLLM with deepseek-r1 in model ID is auto-detected as reasoning."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="deepseek-ai/deepseek-r1-distill-qwen-32b")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_vllm_with_openthinker_model_id():
+    """VLLM with openthinker in model ID is auto-detected as reasoning."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="openthinker-7b")
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_vllm_enable_thinking_false():
+    """VLLM with enable_thinking=False and non-reasoning ID returns False."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="Llama-3.1-8B", enable_thinking=False)
+    assert is_openai_reasoning_model(model) is False
+
+
 def test_dashscope_with_enable_thinking():
     """DashScope extends OpenAILike, detected when enable_thinking=True."""
     from agno.models.dashscope import DashScope
