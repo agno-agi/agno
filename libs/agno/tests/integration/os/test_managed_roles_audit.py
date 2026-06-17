@@ -96,9 +96,7 @@ def test_db_audit_sink_is_append_only_table(tmp_path):
 
     eng = sa.create_engine(url)
     with eng.connect() as c:
-        rows = c.execute(
-            sa.text("select actor, action, target, before, after from authz_audit order by id")
-        ).fetchall()
+        rows = c.execute(sa.text("select actor, action, target, before, after from authz_audit order by id")).fetchall()
     assert [tuple(r[:3]) for r in rows] == [
         ("alice", "role.set_scopes", "member"),
         ("alice", "user.assigned", "bob"),
@@ -228,9 +226,7 @@ def test_decision_and_change_audit_go_to_separate_tables(tmp_path):
     eng = sa.create_engine(url)
     with eng.connect() as c:
         changes = c.execute(sa.text("select action, target from authz_audit order by id")).fetchall()
-        decisions = c.execute(
-            sa.text("select action, target, token_ref from authz_decisions order by id")
-        ).fetchall()
+        decisions = c.execute(sa.text("select action, target, token_ref from authz_decisions order by id")).fetchall()
 
     # change table holds only the role change, no access.* rows
     assert [tuple(r) for r in changes] == [("role.set_scopes", "viewer")]
@@ -331,3 +327,20 @@ def test_audit_endpoint_returns_trail(tmp_path):
     store.assign("bob", "runner")  # bob still isn't an admin
     assert client.get("/authz/audit", headers=_auth("bob")).status_code == 403
     assert client.get("/authz/audit").status_code == 401
+
+
+def test_db_audit_sink_never_raises_into_caller(tmp_path, monkeypatch):
+    """#7: DbAuditSink.record must swallow DB errors (contract) so a failing audit
+    write can't turn a successful role change into a 500."""
+    from agno.os.authz.audit import AuditEvent, DbAuditSink
+
+    sink = DbAuditSink(db_url=f"sqlite:///{tmp_path / 'audit.db'}")
+
+    def boom(_event):
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(sink, "_record_change", boom)
+    monkeypatch.setattr(sink, "_record_decision", boom)
+    # both trails: must not propagate
+    sink.record(AuditEvent(action="role.set_scopes", actor="alice", target="m"))
+    sink.record(AuditEvent(action="access.denied", actor="bob", target="GET /x"))
