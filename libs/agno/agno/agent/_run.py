@@ -36,6 +36,8 @@ from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
     RunCancelledException,
+    RunNotContinuableError,
+    RunNotFoundError,
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -78,6 +80,7 @@ from agno.utils.agent import (
     await_for_open_threads,
     await_for_thread_tasks_stream,
     collect_background_metrics,
+    isolate_media_scrub_targets,
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
@@ -3356,7 +3359,7 @@ def continue_run_dispatch(
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
         if run_response.status == RunStatus.cancelled:
-            raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+            raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
         # The run is continued from a provided run_response. This contains the updated tools.
         continue_index: Optional[int] = _resolve_continue_from(
             run_response,
@@ -3393,9 +3396,9 @@ def continue_run_dispatch(
         runs = agent_session.runs or []
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
-            raise RuntimeError(f"No runs found for run ID {run_id}")
+            raise RunNotFoundError(f"No runs found for run ID {run_id}")
         if run_response.status == RunStatus.cancelled:
-            raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+            raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
         continue_index = _resolve_continue_from(
             run_response,
@@ -4551,7 +4554,7 @@ async def _acontinue_run(
                 # 4. Prepare run response
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
-                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
                     continue_index: Optional[int] = _resolve_continue_from(
                         run_response,
@@ -4584,9 +4587,9 @@ async def _acontinue_run(
                     runs = agent_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
-                        raise RuntimeError(f"No runs found for run ID {run_id}")
+                        raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
-                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                     continue_index = _resolve_continue_from(
                         run_response,
@@ -5041,7 +5044,7 @@ async def _acontinue_run_stream(
                 # 4. Prepare run response
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
-                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
                     continue_index: Optional[int] = _resolve_continue_from(
                         run_response,
@@ -5075,9 +5078,9 @@ async def _acontinue_run_stream(
                     runs = agent_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
-                        raise RuntimeError(f"No runs found for run ID {run_id}")
+                        raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
-                        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                     continue_index = _resolve_continue_from(
                         run_response,
@@ -5714,6 +5717,7 @@ def _scrub_and_propagate_session_state(
     agent: Agent,
     run_response: RunOutput,
     run_context: Optional[RunContext],
+    isolate_inflight: bool = False,
 ) -> RunOutput:
     """Build a scrubbed shallow copy of ``run_response`` and propagate session_state.
 
@@ -5721,10 +5725,18 @@ def _scrub_and_propagate_session_state(
     (checkpoint). Scrubbing is in-place on the shallow copy; the original
     ``run_response`` is not mutated except for its session_state (mirrored from
     run_context so the caller sees the latest state).
+
+    ``isolate_inflight`` is set on the mid-run checkpoint path: media scrubbing
+    mutates Message/RunInput objects in place, and the shallow copy shares them
+    with the still-running run, so without isolation a checkpoint would strip
+    media off the live run before its next model turn. Off (terminal) the run is
+    finished, so the shared-object scrub is harmless and we avoid the copy.
     """
     import copy
 
     storage_copy = copy.copy(run_response)
+    if isolate_inflight and not agent.store_media:
+        isolate_media_scrub_targets(storage_copy)
     scrub_run_output_for_storage(agent, storage_copy)
 
     if run_context is not None and run_context.session_state is not None:
@@ -5754,7 +5766,7 @@ def persist_run_in_session(
     from agno.agent import _session
 
     if storage_copy is None:
-        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
+        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
@@ -5784,7 +5796,7 @@ async def apersist_run_in_session(
     from agno.agent import _session
 
     if storage_copy is None:
-        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
+        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     session.upsert_run(run=storage_copy)
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -6050,39 +6062,39 @@ def abuild_after_tool_results_callback(
 
 
 # ---------------------------------------------------------------------------
-# Session branching
+# Session forking
 # ---------------------------------------------------------------------------
 
 
-def _build_branched_session(source_session: AgentSession, new_user_id: Optional[str]) -> AgentSession:
+def _build_forked_session(source_session: AgentSession, new_user_id: Optional[str]) -> AgentSession:
     """Deep-copy ``source_session`` into a brand-new ``AgentSession`` with fresh
     ``session_id`` and ``run_id``s, recording lineage on both the session and
     each copied run.
 
     Lineage shape:
-    - ``session.session_data["branched_from"]`` is the **immediate** parent
-      session_id, overwritten on each re-branch.
-    - ``run.branched_from`` records each run's **original** session_id, set
-      only-if-empty so nested branches keep pointing at the root.
+    - ``session.session_data["forked_from_session_id"]`` is the **immediate** parent
+      session_id, overwritten on each re-fork.
+    - ``run.forked_from_session_id`` records each run's **original** session_id, set
+      only-if-empty so nested forks keep pointing at the root.
 
-    For root → mid → leaf: ``leaf.session.branched_from == mid``,
-    ``leaf.runs[*].branched_from == root``.
+    For root → mid → leaf: ``leaf.session.forked_from_session_id == mid``,
+    ``leaf.runs[*].forked_from_session_id == root``.
     """
     import copy
     import time as _time
 
     now = int(_time.time())
     new_session_id = str(uuid4())
-    branched_runs = copy.deepcopy(source_session.runs or [])
+    forked_runs = copy.deepcopy(source_session.runs or [])
 
-    for run in branched_runs:
+    for run in forked_runs:
         run.run_id = str(uuid4())
         run.session_id = new_session_id
-        if not run.branched_from:
-            run.branched_from = source_session.session_id
+        if not run.forked_from_session_id:
+            run.forked_from_session_id = source_session.session_id
 
     new_session_data = copy.deepcopy(source_session.session_data) or {}
-    new_session_data["branched_from"] = source_session.session_id
+    new_session_data["forked_from_session_id"] = source_session.session_id
 
     return AgentSession(
         session_id=new_session_id,
@@ -6093,14 +6105,14 @@ def _build_branched_session(source_session: AgentSession, new_user_id: Optional[
         session_data=new_session_data,
         metadata=copy.deepcopy(source_session.metadata),
         agent_data=copy.deepcopy(source_session.agent_data),
-        runs=branched_runs,
+        runs=forked_runs,
         summary=copy.deepcopy(source_session.summary),
         created_at=now,
         updated_at=now,
     )
 
 
-def branch_session_dispatch(
+def fork_session_dispatch(
     agent: Agent,
     *,
     source_session_id: Optional[str] = None,
@@ -6114,7 +6126,7 @@ def branch_session_dispatch(
     ``user_id`` to prevent cross-user access.
 
     Args:
-        source_session_id: The session to branch. Defaults to ``agent.session_id``.
+        source_session_id: The session to fork. Defaults to ``agent.session_id``.
         user_id: Caller user_id. Must own the source session. The new session
             inherits this user_id.
 
@@ -6127,37 +6139,37 @@ def branch_session_dispatch(
 
     if has_async_db(agent):
         raise RuntimeError(
-            "`branch_session` is not supported with an async database. Please use `abranch_session` instead."
+            "`fork_session` is not supported with an async database. Please use `afork_session` instead."
         )
 
     source_session_id = source_session_id or agent.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to branch a session.")
+        raise ValueError("source_session_id is required to fork a session.")
 
     agent.initialize_agent()
     source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
     if not source_session.runs:
-        raise ValueError("Source session has no runs to branch.")
+        raise ValueError("Source session has no runs to fork.")
 
-    new_session = _build_branched_session(source_session, new_user_id=user_id)
+    new_session = _build_forked_session(source_session, new_user_id=user_id)
     save_session(agent, session=new_session)
     return new_session.session_id
 
 
-async def abranch_session_dispatch(
+async def afork_session_dispatch(
     agent: Agent,
     *,
     source_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> str:
-    """Async variant of :func:`branch_session_dispatch`."""
+    """Async variant of :func:`fork_session_dispatch`."""
     from agno.agent._init import has_async_db
     from agno.agent._session import asave_session, save_session
     from agno.agent._storage import aread_or_create_session, read_or_create_session
 
     source_session_id = source_session_id or agent.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to branch a session.")
+        raise ValueError("source_session_id is required to fork a session.")
 
     agent.initialize_agent()
 
@@ -6167,9 +6179,9 @@ async def abranch_session_dispatch(
         source_session = read_or_create_session(agent, session_id=source_session_id, user_id=user_id)
 
     if not source_session.runs:
-        raise ValueError("Source session has no runs to branch.")
+        raise ValueError("Source session has no runs to fork.")
 
-    new_session = _build_branched_session(source_session, new_user_id=user_id)
+    new_session = _build_forked_session(source_session, new_user_id=user_id)
 
     if has_async_db(agent):
         await asave_session(agent, session=new_session)

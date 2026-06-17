@@ -1,49 +1,31 @@
-# Checkpointing Cookbook Test Log
-
-Tracks execution status of the checkpointing examples.
-
-## Setup
-
-```bash
-./scripts/demo_setup.sh
-```
-
-Requires `OPENAI_API_KEY` to be set.
-
-## Examples
+# Checkpointing & Crash Recovery — Test Log
 
 ### 01_crash_recovery.py
 
-**Status:** Not yet tested
+**Status:** NOT RUN (requires OPENAI_API_KEY)
 
-**Description:** Demonstrates `checkpoint="tool-batch"` writing mid-run state to the DB
-after each tool batch, and the unified `/continue` accepting any persisted run.
+**Description:** Cancels an in-flight run to simulate a crash, then resumes via `/continue`.
 
-**Expected:** Initial run completes; printed checkpoint marker is non-None; the
-follow-up `/continue` call resolves cleanly with status=COMPLETED.
+**Result:** Syntax/compile verified. Not executed in this environment (needs a live model). The `asyncio.sleep(5.0)` crash window is empirically tuned and may need adjustment on slower machines.
 
 ---
 
-### 02_time_travel.py
+### 02_tool_error_persistence.py
 
-**Status:** Not yet tested
+**Status:** NOT RUN (requires OPENAI_API_KEY)
 
-**Description:** Demonstrates `continue_from="end"` for follow-ups and
-`continue_from="last_user"` for rewinding to a symbolic message boundary.
+**Description:** Tool-exception (caught) vs model-call failure (escapes, flushed to ERROR row), then `/continue` retry.
 
-**Expected:** First run answers about Paris. Follow-up from `"end"` and rewind
-from `"last_user"` both auto-fork the completed run and preserve the source.
+**Result:** Syntax/compile verified. Scenario B mutates `OPENAI_API_KEY` to force an auth error and restores it in a `finally` block.
 
 ---
 
-### 03_forking.py
+### 03_checkpoint_endpoints.py
 
-**Status:** Not yet tested
+**Status:** NOT RUN (requires OPENAI_API_KEY)
 
-**Description:** Demonstrates `fork=true` cloning a run at a checkpoint into a
-new sibling within the same session.
+**Description:** Exercises the `/checkpoints` timeline and snapshot GET endpoints via an in-process TestClient.
 
-**Expected:** Original run answers about Paris. Forked run has a new run_id,
-`forked_from_run_id` set, different content. Session contains both runs.
+**Result:** Syntax/compile verified. Not executed.
 
 ---

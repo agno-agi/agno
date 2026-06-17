@@ -955,12 +955,26 @@ def _update_run_response(
     if model_response.citations is not None:
         run_response.citations = model_response.citations
 
-    # Update the run_response tools with the model response tool_executions
+    # Update the run_response tools with the model response tool_executions.
+    # Dedupe by tool_call_id: with checkpoint="tool-batch" the per-batch callback
+    # already wrote tools into run_response, so a naive extend would duplicate
+    # every execution. Replace existing entries in place (preserving order) and
+    # append only genuinely new ones. Carry over child_run_id (the delegation ->
+    # member-run link) when the incoming entry lacks it, since model_response
+    # tool_executions do not carry it.
     if model_response.tool_executions is not None:
         if run_response.tools is None:
-            run_response.tools = model_response.tool_executions
+            run_response.tools = list(model_response.tool_executions)
         else:
-            run_response.tools.extend(model_response.tool_executions)
+            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
+            for tool in model_response.tool_executions:
+                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
+                    index = existing_by_id[tool.tool_call_id]
+                    if tool.child_run_id is None and run_response.tools[index].child_run_id is not None:
+                        tool.child_run_id = run_response.tools[index].child_run_id
+                    run_response.tools[index] = tool
+                else:
+                    run_response.tools.append(tool)
 
     # Update the run_response audio with the model response audio
     if model_response.audio is not None:

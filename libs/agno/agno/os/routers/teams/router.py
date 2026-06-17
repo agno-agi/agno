@@ -17,7 +17,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -1145,8 +1145,64 @@ def get_team_router(
                 )
                 return run_response_obj.to_dict()
 
+            except RunNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except RunNotContinuableError as e:
+                raise HTTPException(status_code=409, detail=str(e))
             except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
+
+    @router.post(
+        "/teams/{team_id}/sessions/{session_id}/fork",
+        tags=["Teams"],
+        operation_id="fork_team_session",
+        summary="Fork Team Session",
+        description=(
+            "Deep-copy a team session into a new independent session. Every run is copied with a "
+            "fresh ``run_id``; the new session has a fresh ``session_id``. The original is "
+            "untouched. Use to explore alternative conversation paths without mutating the "
+            "source.\n\n"
+            "Distinct from ``/continue?fork=true``: that creates a sibling **run** inside the "
+            "**same** session. This creates a sibling **session**."
+        ),
+        responses={
+            200: {"description": "Session forked successfully"},
+            400: {"description": "Source session is empty or missing", "model": BadRequestResponse},
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def fork_team_session(
+        team_id: str,
+        session_id: str,
+        request: Request,
+        user_id: Optional[str] = None,
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        try:
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        except Exception as e:
+            logger.error(f"Error resolving team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        # Scope source-session read to the caller's user_id to prevent
+        # cross-user forking.
+        scoped_user_id = get_scoped_user_id(request)
+        effective_user_id = scoped_user_id or user_id
+
+        try:
+            new_session_id = await team.afork_session(  # type: ignore[union-attr]
+                source_session_id=session_id,
+                user_id=effective_user_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {"session_id": new_session_id, "forked_from_session_id": session_id}
 
     @router.get(
         "/teams",

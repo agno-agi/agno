@@ -19,6 +19,7 @@ import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
+from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
@@ -53,10 +54,10 @@ class TestTeamRunOutputLineage:
         restored = TeamRunOutput.from_dict(r.to_dict())
         assert restored.regenerated_from == "r0"
 
-    def test_branched_from_round_trips(self):
-        r = TeamRunOutput(run_id="r1", branched_from="sess-original")
+    def test_forked_from_session_id_round_trips(self):
+        r = TeamRunOutput(run_id="r1", forked_from_session_id="sess-original")
         restored = TeamRunOutput.from_dict(r.to_dict())
-        assert restored.branched_from == "sess-original"
+        assert restored.forked_from_session_id == "sess-original"
 
     def test_last_checkpoint_at_message_index_round_trips(self):
         r = TeamRunOutput(run_id="r1", last_checkpoint_at_message_index=5)
@@ -68,7 +69,7 @@ class TestTeamRunOutputLineage:
         assert r.forked_from_run_id is None
         assert r.forked_from_message_index is None
         assert r.regenerated_from is None
-        assert r.branched_from is None
+        assert r.forked_from_session_id is None
         assert r.last_checkpoint_at_message_index is None
 
 
@@ -448,6 +449,117 @@ class TestTeamFlushHelper:
         assert rr.messages[0].content == "kept"
 
 
+class TestTeamCheckpointSyncPreservesChildRunId:
+    """A mid-run checkpoint must not drop the delegation -> member-run link.
+
+    child_run_id is patched onto run_response.tools during tool execution, but
+    model_response.tool_executions (a distinct object set) does not carry it.
+    The checkpoint sync must carry it over by tool_call_id.
+    """
+
+    def _model_response(self, tool_executions):
+        from agno.models.response import ModelResponse
+
+        return ModelResponse(tool_executions=tool_executions)
+
+    def _run_messages(self):
+        from agno.run.messages import RunMessages
+
+        rm = RunMessages()
+        rm.messages = [Message(role="assistant", content="delegating", tool_calls=[{"id": "tc-1"}])]
+        return rm
+
+    def test_child_run_id_survives_checkpoint_sync(self):
+        # run_response carries the delegation link (set during tool execution)...
+        run_response = TeamRunOutput(
+            run_id="team-1",
+            tools=[ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id="member-99")],
+        )
+        # ...but model_response.tool_executions is a DISTINCT object without it.
+        model_response = self._model_response(
+            [ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id=None)]
+        )
+
+        team_run._sync_team_run_response_with_model_response(run_response, self._run_messages(), model_response)
+
+        assert run_response.tools is not None
+        assert run_response.tools[0].child_run_id == "member-99", "delegation->member link dropped on checkpoint"
+
+    def test_does_not_clobber_child_run_id_already_on_model_response(self):
+        run_response = TeamRunOutput(
+            run_id="team-1",
+            tools=[ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id="stale")],
+        )
+        # If the model_response entry already has a (newer) child_run_id, keep it.
+        model_response = self._model_response(
+            [ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id="member-new")]
+        )
+
+        team_run._sync_team_run_response_with_model_response(run_response, self._run_messages(), model_response)
+
+        assert run_response.tools[0].child_run_id == "member-new"
+
+
+class TestTeamCheckpointScrubIsolation:
+    """A mid-run team checkpoint with store_media=False must scrub the storage
+    copy without stripping media off the live team run or its live member runs."""
+
+    def _team_run_with_media(self) -> TeamRunOutput:
+        from agno.media import Image
+        from agno.run.agent import RunOutput
+
+        member = RunOutput(
+            run_id="m1",
+            agent_id="member-1",
+            messages=[Message(role="assistant", content="m", images=[Image(url="http://example.com/m.png")])],
+        )
+        return TeamRunOutput(
+            run_id="team-1",
+            messages=[Message(role="user", content="hi", images=[Image(url="http://example.com/t.png")])],
+            member_responses=[member],
+        )
+
+    def test_inflight_checkpoint_isolates_team_and_member_state(self, monkeypatch: pytest.MonkeyPatch):
+        from types import SimpleNamespace
+
+        monkeypatch.setattr("agno.team._session.update_session_metrics", lambda *a, **k: None)
+
+        run_response = self._team_run_with_media()
+        live_team_images = run_response.messages[0].images
+        live_members = run_response.member_responses
+        live_member0 = run_response.member_responses[0]
+
+        captured: dict = {}
+
+        class FakeSession:
+            session_data = None
+            runs: list = []
+
+            def upsert_run(self, run_response):
+                captured["copy"] = run_response
+
+        team = SimpleNamespace(
+            store_media=False,
+            store_tool_messages=True,
+            store_history_messages=True,
+            store_member_responses=True,
+            save_session=lambda session: None,
+        )
+
+        team_run._persist_team_run_in_session(team, run_response, FakeSession(), run_context=None)
+
+        storage_copy = captured["copy"]
+        # Team's own messages: storage copy scrubbed, live run untouched.
+        assert storage_copy.messages[0].images is None
+        assert run_response.messages[0].images is live_team_images
+        assert run_response.messages[0].images is not None
+        # member_responses deep-copied so the later in-place member scrub in
+        # save_session can't reach the live member runs.
+        assert storage_copy.member_responses is not live_members
+        assert storage_copy.member_responses[0] is not live_member0
+        assert run_response.member_responses[0].messages[0].images is not None
+
+
 # ---------------------------------------------------------------------------
 # Continue dispatch sugar + auto-fork-on-COMPLETED
 #
@@ -643,3 +755,112 @@ class TestTeamRegenerateSugar:
         agent_rows = [r for r in session.runs if isinstance(r, RunOutput)]
         assert len(agent_rows) == 1
         assert agent_rows[0].run_id == "member-1"
+
+
+class TestTeamUpdateRunResponseDedup:
+    """Terminal non-stream merge must not duplicate tools the checkpoint callback
+    already wrote, and must preserve the delegation -> member-run link."""
+
+    def test_dedupes_tools_and_preserves_child_run_id(self):
+        from agno.models.response import ModelResponse
+        from agno.run.messages import RunMessages
+
+        team = Team(members=[], name="t")
+        # checkpoint="tool-batch": the per-batch callback already wrote the
+        # delegate tool (with child_run_id) into run_response.tools.
+        run_response = TeamRunOutput(
+            run_id="team-1",
+            tools=[ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id="member-9")],
+        )
+        rm = RunMessages()
+        rm.messages = [Message(role="assistant", content="x")]
+        # Terminal merge sees the same execution in model_response (no child_run_id).
+        model_response = ModelResponse(
+            tool_executions=[ToolExecution(tool_call_id="tc-1", tool_name="delegate_task_to_member", child_run_id=None)]
+        )
+
+        team_response_mod._update_run_response(team, model_response, run_response, rm)
+
+        assert len(run_response.tools) == 1, "duplicate tool execution under checkpoint=tool-batch"
+        assert run_response.tools[0].child_run_id == "member-9"
+
+
+class TestTeamContinueErrorTypes:
+    """Continue dispatch raises typed exceptions the OS layer maps to 404/409."""
+
+    def test_missing_run_raises_run_not_found(self, monkeypatch: pytest.MonkeyPatch):
+        team = Team(members=[], name="t")
+        _patch_team_sync_dispatch(team, monkeypatch, runs=[])
+        with pytest.raises(RunNotFoundError):
+            team_run.continue_run_dispatch(team=team, run_id="nope", session_id="sess-1", stream=False)
+
+    def test_cancelled_run_raises_not_continuable(self, monkeypatch: pytest.MonkeyPatch):
+        cancelled = TeamRunOutput(
+            run_id="run-x",
+            session_id="sess-1",
+            status=RunStatus.cancelled,
+            messages=[Message(role="user", content="Q")],
+        )
+        team = Team(members=[], name="t")
+        _patch_team_sync_dispatch(team, monkeypatch, runs=[cancelled])
+        with pytest.raises(RunNotContinuableError):
+            team_run.continue_run_dispatch(team=team, run_id="run-x", session_id="sess-1", stream=False)
+
+
+class TestTeamForkEndpoint:
+    """Parity with the agent: the team session-fork HTTP endpoint must exist."""
+
+    def test_fork_session_route_registered(self):
+        from unittest.mock import MagicMock
+
+        from agno.os.routers.teams.router import get_team_router
+
+        router = get_team_router(MagicMock())
+        matches = [
+            route
+            for route in router.routes
+            if getattr(route, "path", "").endswith("/sessions/{session_id}/fork")
+            and "POST" in (getattr(route, "methods", None) or set())
+        ]
+        assert matches, "POST /teams/{team_id}/sessions/{session_id}/fork is not registered"
+
+
+class TestTeamRunningResumeCallsModel:
+    """Regression: a RUNNING team run with already-executed tools but no
+    unresolved requirements (crash recovery after a delegation) must resume via
+    the team-leader model, not fall through to terminal cleanup with content=None."""
+
+    def test_running_run_with_tools_invokes_model(self, monkeypatch: pytest.MonkeyPatch):
+        run = TeamRunOutput(
+            run_id="run-crashed",
+            session_id="sess-1",
+            status=RunStatus.running,
+            messages=[
+                Message(role="user", content="Q"),
+                Message(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[{"id": "tc1", "type": "function", "function": {"name": "delegate_task_to_member"}}],
+                ),
+                Message(role="tool", tool_call_id="tc1", content="member result"),
+            ],
+            tools=[ToolExecution(tool_call_id="tc1", tool_name="delegate_task_to_member")],
+        )
+        team = Team(members=[], name="t")
+        _patch_team_sync_dispatch(team, monkeypatch, runs=[run])
+        # The exact trigger: approval resolution finds nothing and returns silently
+        # (no RuntimeError). Pre-fix this left the model-call gate unset.
+        monkeypatch.setattr("agno.run.approval.check_and_apply_approval_resolution", lambda *a, **k: None)
+
+        captured: dict = {}
+
+        def fake_continue_run(team, run_response, run_messages, run_context, session, tools, **kw):
+            captured["called"] = True
+            run_response.status = RunStatus.completed
+            return run_response
+
+        monkeypatch.setattr(team_run, "_continue_run", fake_continue_run)
+
+        team_run.continue_run_dispatch(team=team, run_id="run-crashed", session_id="sess-1", stream=False)
+
+        assert captured.get("called"), "RUNNING resume skipped the model-call path (_continue_run)"

@@ -148,11 +148,10 @@ async def scenario_b_model_call_fails() -> str:
             msg_count = len(r.messages or [])
             print(f"\nDB run: status={r.status}, msgs={msg_count}")
             if msg_count == 0:
-                print("  ⚠ messages list is EMPTY — conversation that led to the")
-                print("    failure was lost. This is what Yash's review flagged.")
-                print("    If you see this, the flush helper was NOT applied.")
+                print("  [empty] messages list is EMPTY — the conversation that led")
+                print("          to the failure was lost (flush helper NOT applied).")
             else:
-                print("  ✓ messages preserved by the flush helper.")
+                print("  [ok] messages preserved by the flush helper.")
                 for i, m in enumerate(r.messages or []):
                     preview = (m.content or "")[:80] if m.content else ""
                     print(f"  [{i}] {m.role}: {preview}")

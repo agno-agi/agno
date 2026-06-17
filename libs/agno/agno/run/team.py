@@ -786,8 +786,8 @@ class TeamRunOutput:
     forked_from_message_index: Optional[int] = None
 
     # Branching lineage: the source session_id this team run was originally
-    # created in (set when a session is branched; preserved across nested branches).
-    branched_from: Optional[str] = None
+    # created in (set when a session is forked; preserved across nested forks).
+    forked_from_session_id: Optional[str] = None
 
     # Regeneration lineage: the run_id of the immediate predecessor this team
     # run was regenerated from.

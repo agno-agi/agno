@@ -21,7 +21,7 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -1151,14 +1151,18 @@ def get_agent_router(
                 )
                 return run_response_obj.to_dict()
 
-            except InputCheckError as e:
+            except RunNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except RunNotContinuableError as e:
+                raise HTTPException(status_code=409, detail=str(e))
+            except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
-        "/agents/{agent_id}/sessions/{session_id}/branch",
+        "/agents/{agent_id}/sessions/{session_id}/fork",
         tags=["Agents"],
-        operation_id="branch_agent_session",
-        summary="Branch Agent Session",
+        operation_id="fork_agent_session",
+        summary="Fork Agent Session",
         description=(
             "Deep-copy a session into a new independent session. Every run is copied with a "
             "fresh ``run_id``; the new session has a fresh ``session_id``. The original is "
@@ -1168,13 +1172,13 @@ def get_agent_router(
             "**same** session. This creates a sibling **session**."
         ),
         responses={
-            200: {"description": "Session branched successfully"},
+            200: {"description": "Session forked successfully"},
             400: {"description": "Source session is empty or missing", "model": BadRequestResponse},
             404: {"description": "Agent not found", "model": NotFoundResponse},
         },
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
-    async def branch_agent_session(
+    async def fork_agent_session(
         agent_id: str,
         session_id: str,
         request: Request,
@@ -1194,19 +1198,19 @@ def get_agent_router(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         # Scope source-session read to the caller's user_id to prevent
-        # cross-user branching.
+        # cross-user forking.
         scoped_user_id = get_scoped_user_id(request)
         effective_user_id = scoped_user_id or user_id
 
         try:
-            new_session_id = await agent.abranch_session(  # type: ignore[union-attr]
+            new_session_id = await agent.afork_session(  # type: ignore[union-attr]
                 source_session_id=session_id,
                 user_id=effective_user_id,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-        return {"session_id": new_session_id, "branched_from": session_id}
+        return {"session_id": new_session_id, "forked_from_session_id": session_id}
 
     @router.get(
         "/agents",

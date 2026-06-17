@@ -29,6 +29,8 @@ from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
     RunCancelledException,
+    RunNotContinuableError,
+    RunNotFoundError,
 )
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -4592,8 +4594,18 @@ def _persist_team_run_in_session(
     import copy
 
     from agno.team._session import update_session_metrics
+    from agno.utils.agent import isolate_media_scrub_targets
 
     storage_copy = copy.copy(run_response)
+    # Mid-run checkpoint: scrubbing mutates shared objects in place, and the
+    # shallow copy aliases the live run. Isolate what the scrubs touch so a
+    # checkpoint never strips state off the still-running team run.
+    if not team.store_media:
+        isolate_media_scrub_targets(storage_copy)
+    if storage_copy.member_responses and team.store_member_responses:
+        # save_session -> _scrub_member_responses scrubs each member in place;
+        # deep-copy so it operates on the storage copy, not the live member runs.
+        storage_copy.member_responses = copy.deepcopy(storage_copy.member_responses)
     scrub_run_output_for_storage(team, storage_copy)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4622,8 +4634,18 @@ async def _apersist_team_run_in_session(
     import copy
 
     from agno.team._session import update_session_metrics
+    from agno.utils.agent import isolate_media_scrub_targets
 
     storage_copy = copy.copy(run_response)
+    # Mid-run checkpoint: scrubbing mutates shared objects in place, and the
+    # shallow copy aliases the live run. Isolate what the scrubs touch so a
+    # checkpoint never strips state off the still-running team run.
+    if not team.store_media:
+        isolate_media_scrub_targets(storage_copy)
+    if storage_copy.member_responses and team.store_member_responses:
+        # save_session -> _scrub_member_responses scrubs each member in place;
+        # deep-copy so it operates on the storage copy, not the live member runs.
+        storage_copy.member_responses = copy.deepcopy(storage_copy.member_responses)
     scrub_run_output_for_storage(team, storage_copy)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4648,10 +4670,27 @@ def _sync_team_run_response_with_model_response(
     model_response: "ModelResponse",  # noqa: F821
 ) -> None:
     """Mirror the in-flight model_response state onto run_response for a team.
-    Same shape as the agent helper.
+
+    Same shape as the agent helper, with one team-specific concern: ``child_run_id``
+    (the delegation -> member-run link) is patched onto the existing
+    ``run_response.tools`` entries during tool execution, NOT onto
+    ``model_response.tool_executions``. A naive ``run_response.tools = list(...)``
+    would therefore drop the linkage on every mid-run checkpoint taken after a
+    delegation. Carry it over by ``tool_call_id``, mirroring the streaming merge
+    in :mod:`agno.team._response`.
     """
     if model_response.tool_executions is not None:
-        run_response.tools = list(model_response.tool_executions)
+        existing_child_run_ids = {
+            tool.tool_call_id: tool.child_run_id
+            for tool in (run_response.tools or [])
+            if tool.tool_call_id is not None and tool.child_run_id is not None
+        }
+        new_tools = list(model_response.tool_executions)
+        if existing_child_run_ids:
+            for tool in new_tools:
+                if tool.child_run_id is None and tool.tool_call_id in existing_child_run_ids:
+                    tool.child_run_id = existing_child_run_ids[tool.tool_call_id]
+        run_response.tools = new_tools
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 
@@ -6192,35 +6231,35 @@ def _maybe_append_input_message_team(
 
 
 # ---------------------------------------------------------------------------
-# Session branching — mirrors agent's branch_session_dispatch
+# Session forking — mirrors agent's fork_session_dispatch
 # ---------------------------------------------------------------------------
 
 
-def _build_branched_team_session(source_session: TeamSession, new_user_id: Optional[str]) -> TeamSession:
+def _build_forked_team_session(source_session: TeamSession, new_user_id: Optional[str]) -> TeamSession:
     """Deep-copy ``source_session`` into a brand-new ``TeamSession`` with a
     fresh ``session_id`` and fresh ``run_id``s for every copied run.
 
     Lineage shape mirrors the agent:
-    - ``session.session_data["branched_from"]``: the immediate parent
-      session_id (overwritten on each re-branch).
-    - ``run.branched_from``: each run's **original** session_id, set
-      only-if-empty so nested branches keep pointing at the root.
+    - ``session.session_data["forked_from_session_id"]``: the immediate parent
+      session_id (overwritten on each re-fork).
+    - ``run.forked_from_session_id``: each run's **original** session_id, set
+      only-if-empty so nested forks keep pointing at the root.
     """
     import copy
     import time as _time
 
     now = int(_time.time())
     new_session_id = str(uuid4())
-    branched_runs = copy.deepcopy(source_session.runs or [])
+    forked_runs = copy.deepcopy(source_session.runs or [])
 
-    for run in branched_runs:
+    for run in forked_runs:
         run.run_id = str(uuid4())
         run.session_id = new_session_id
-        if not getattr(run, "branched_from", None):
-            run.branched_from = source_session.session_id
+        if not getattr(run, "forked_from_session_id", None):
+            run.forked_from_session_id = source_session.session_id
 
     new_session_data = copy.deepcopy(source_session.session_data) or {}
-    new_session_data["branched_from"] = source_session.session_id
+    new_session_data["forked_from_session_id"] = source_session.session_id
 
     return TeamSession(
         session_id=new_session_id,
@@ -6230,14 +6269,14 @@ def _build_branched_team_session(source_session: TeamSession, new_user_id: Optio
         team_data=copy.deepcopy(source_session.team_data),
         session_data=new_session_data,
         metadata=copy.deepcopy(source_session.metadata),
-        runs=branched_runs,
+        runs=forked_runs,
         summary=copy.deepcopy(source_session.summary),
         created_at=now,
         updated_at=now,
     )
 
 
-def branch_session_dispatch(
+def fork_session_dispatch(
     team: "Team",
     *,
     source_session_id: Optional[str] = None,
@@ -6248,35 +6287,35 @@ def branch_session_dispatch(
     from agno.team._storage import _read_or_create_session
 
     if _has_async_db(team):
-        raise RuntimeError("`branch_session` is not supported with an async database. Use `abranch_session` instead.")
+        raise RuntimeError("`fork_session` is not supported with an async database. Use `afork_session` instead.")
 
     source_session_id = source_session_id or team.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to branch a session.")
+        raise ValueError("source_session_id is required to fork a session.")
 
     team.initialize_team()
     source_session = _read_or_create_session(team, session_id=source_session_id, user_id=user_id)
     if not source_session.runs:
-        raise ValueError("Source session has no runs to branch.")
+        raise ValueError("Source session has no runs to fork.")
 
-    new_session = _build_branched_team_session(source_session, new_user_id=user_id)
+    new_session = _build_forked_team_session(source_session, new_user_id=user_id)
     team.save_session(session=new_session)
     return new_session.session_id
 
 
-async def abranch_session_dispatch(
+async def afork_session_dispatch(
     team: "Team",
     *,
     source_session_id: Optional[str] = None,
     user_id: Optional[str] = None,
 ) -> str:
-    """Async variant of :func:`branch_session_dispatch`."""
+    """Async variant of :func:`fork_session_dispatch`."""
     from agno.team._init import _has_async_db
     from agno.team._storage import _aread_or_create_session, _read_or_create_session
 
     source_session_id = source_session_id or team.session_id
     if source_session_id is None:
-        raise ValueError("source_session_id is required to branch a session.")
+        raise ValueError("source_session_id is required to fork a session.")
 
     team.initialize_team()
 
@@ -6286,9 +6325,9 @@ async def abranch_session_dispatch(
         source_session = _read_or_create_session(team, session_id=source_session_id, user_id=user_id)
 
     if not source_session.runs:
-        raise ValueError("Source session has no runs to branch.")
+        raise ValueError("Source session has no runs to fork.")
 
-    new_session = _build_branched_team_session(source_session, new_user_id=user_id)
+    new_session = _build_forked_team_session(source_session, new_user_id=user_id)
     if _has_async_db(team):
         await team.asave_session(session=new_session)
     else:
@@ -6410,12 +6449,12 @@ def continue_run_dispatch(
         runs = team_session.runs or []
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
-            raise RuntimeError(f"No runs found for run ID {run_id}")
+            raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
     run_response = cast(TeamRunOutput, run_response)
 
     if run_response.status == RunStatus.cancelled:
-        raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+        raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
     # --- Snapshot dispatch (regenerate / fork / time-travel) ----------------
     continue_index: Optional[int] = _resolve_continue_from_team(
@@ -6565,11 +6604,15 @@ def continue_run_dispatch(
         try:
             check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
         except RuntimeError:
-            # No resolved approval found — fall through to bare-resume rather
-            # than raising. The run may be a crashed mid-flight run (RUNNING /
-            # ERROR / CANCELLED) where we want to resume from persisted
-            # messages, not insist on HITL requirements.
-            _did_snapshot_dispatch = True  # treat as resume-only; route to team-leader model call
+            # No resolved approval found — fall through to bare-resume.
+            pass
+        # A RUNNING/ERROR run with already-executed tools (e.g. crash recovery
+        # after a delegation, or an ERROR retry) is NOT a HITL pause: resume via
+        # the team-leader model regardless of whether an approval was applied.
+        # Without this, such a run falls through to terminal cleanup with no
+        # final turn (content=None). Unresolved requirements are re-paused
+        # downstream, so this does not bypass HITL.
+        _did_snapshot_dispatch = True  # route to team-leader model call
     else:
         # No requirements AND no tools — this is a bare resume of a mid-flight
         # run (RUNNING / ERROR / CANCELLED that crashed before any tool batch).
@@ -7856,12 +7899,12 @@ async def _acontinue_run(
                     runs = team_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
-                        raise RuntimeError(f"No runs found for run ID {run_id}")
+                        raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
 
                 if run_response.status == RunStatus.cancelled:
-                    raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                    raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                 # --- Snapshot dispatch (regenerate / fork / time-travel) ---
                 continue_index: Optional[int] = _resolve_continue_from_team(
@@ -7946,9 +7989,14 @@ async def _acontinue_run(
                             team.db, run_response.run_id or run_id or "", run_response
                         )
                     except RuntimeError:
-                        # Fall through to bare-resume rather than raising.
-                        # Same rationale as the sync dispatch — see comment there.
-                        _did_snapshot_dispatch = True
+                        # No resolved approval found — fall through to bare-resume.
+                        pass
+                    # A RUNNING/ERROR run with already-executed tools (e.g. crash
+                    # recovery after a delegation) is NOT a HITL pause: resume via
+                    # the team-leader model regardless of whether an approval was
+                    # applied. Without this it falls through to terminal cleanup
+                    # with content=None. Unresolved requirements re-pause downstream.
+                    _did_snapshot_dispatch = True  # route to team-leader model call
                 else:
                     # Bare resume of a mid-flight run (RUNNING/ERROR/CANCELLED)
                     # — no requirements, no tools. Let the team-leader model
@@ -8282,12 +8330,12 @@ async def _acontinue_run_stream(
                     runs = team_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
-                        raise RuntimeError(f"No runs found for run ID {run_id}")
+                        raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
 
                 if run_response.status == RunStatus.cancelled:
-                    raise ValueError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                    raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
                 # --- Snapshot dispatch (regenerate / fork / time-travel) ---
                 continue_index: Optional[int] = _resolve_continue_from_team(
@@ -8372,9 +8420,14 @@ async def _acontinue_run_stream(
                             team.db, run_response.run_id or run_id or "", run_response
                         )
                     except RuntimeError:
-                        # Fall through to bare-resume rather than raising.
-                        # Same rationale as the sync dispatch — see comment there.
-                        _did_snapshot_dispatch = True
+                        # No resolved approval found — fall through to bare-resume.
+                        pass
+                    # A RUNNING/ERROR run with already-executed tools (e.g. crash
+                    # recovery after a delegation) is NOT a HITL pause: resume via
+                    # the team-leader model regardless of whether an approval was
+                    # applied. Without this it falls through to terminal cleanup
+                    # with content=None. Unresolved requirements re-pause downstream.
+                    _did_snapshot_dispatch = True  # route to team-leader model call
                 else:
                     # Bare resume of a mid-flight run (RUNNING/ERROR/CANCELLED)
                     # — no requirements, no tools. Let the team-leader model

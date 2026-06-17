@@ -23,6 +23,7 @@ from agno.agent import _init, _response, _run, _storage, _tools
 from agno.agent._run import _fork_run, _truncate_run_to_checkpoint
 from agno.utils.message import safe_truncation_index
 from agno.agent.agent import Agent
+from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
@@ -918,6 +919,52 @@ class TestForkHelper:
         assert forked.tools == [], "No tool_call_ids referenced in surviving messages"
 
 
+class TestCheckpointScrubIsolation:
+    """A mid-run checkpoint with store_media=False must scrub the storage copy
+    without stripping media off the live, still-running run."""
+
+    def _run_with_media(self) -> RunOutput:
+        from agno.media import Image
+
+        return RunOutput(
+            run_id="r1",
+            session_id="s1",
+            messages=[Message(role="user", content="hi", images=[Image(url="http://example.com/x.png")])],
+        )
+
+    def test_inflight_checkpoint_isolates_media_from_live_run(self):
+        from types import SimpleNamespace
+
+        from agno.agent._run import _scrub_and_propagate_session_state
+
+        run = self._run_with_media()
+        live_images = run.messages[0].images
+        agent = SimpleNamespace(store_media=False, store_tool_messages=True, store_history_messages=True)
+
+        storage_copy = _scrub_and_propagate_session_state(agent, run, None, isolate_inflight=True)
+
+        # Storage copy is scrubbed for persistence...
+        assert storage_copy.messages[0].images is None
+        # ...but the live run keeps its media for the next model turn.
+        assert run.messages[0].images is live_images
+        assert run.messages[0].images is not None
+        assert storage_copy.messages[0] is not run.messages[0]
+
+    def test_terminal_scrub_shares_objects(self):
+        """Terminal path (isolate_inflight=False) keeps the existing in-place
+        behavior — the run is finished, so no isolating copy is taken."""
+        from types import SimpleNamespace
+
+        from agno.agent._run import _scrub_and_propagate_session_state
+
+        run = self._run_with_media()
+        agent = SimpleNamespace(store_media=False, store_tool_messages=True, store_history_messages=True)
+
+        storage_copy = _scrub_and_propagate_session_state(agent, run, None)
+
+        assert storage_copy.messages[0] is run.messages[0]
+
+
 # ---------------------------------------------------------------------------
 # Dispatch wiring for message_index and fork
 # ---------------------------------------------------------------------------
@@ -1517,6 +1564,35 @@ class TestRegenerateSugar:
         # Source stays COMPLETED — not hidden from history.
         assert run.status == RunStatus.completed
 
+    def test_replace_original_false_does_not_unhide_already_replaced_source(self, monkeypatch: pytest.MonkeyPatch):
+        """``replace_original`` governs only whether THIS regenerate hides its
+        source. A later ``replace_original=False`` does NOT resurrect a run an
+        earlier (default) regenerate already replaced — so it is only meaningful
+        when the source is still COMPLETED."""
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        # First regenerate (default) hides the source.
+        _run.continue_run_dispatch(agent=agent, run_id="run-A", session_id="s", regenerate=True, stream=False)
+        assert run.status == RunStatus.regenerated
+
+        # Regenerating the SAME (now hidden) source with replace_original=False
+        # does not bring it back to COMPLETED.
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            replace_original=False,
+            stream=False,
+        )
+        assert run.status == RunStatus.regenerated
+
     def test_regenerate_allows_default_end_boundary(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
@@ -1603,15 +1679,15 @@ class TestRegenerateSugar:
 
 
 # ---------------------------------------------------------------------------
-# Bug-fix tests: branch_session deep-copies + rewrites lineage
+# Bug-fix tests: fork_session deep-copies + rewrites lineage
 # ---------------------------------------------------------------------------
 
 
-class TestBranchSession:
-    """``Agent.branch_session()`` deep-copies all runs into a fresh session with
+class TestForkSession:
+    """``Agent.fork_session()`` deep-copies all runs into a fresh session with
     new run_ids and the lineage pointers set correctly."""
 
-    def _make_branching_agent(self, monkeypatch: pytest.MonkeyPatch, source: AgentSession) -> Agent:
+    def _make_forking_agent(self, monkeypatch: pytest.MonkeyPatch, source: AgentSession) -> Agent:
         agent = Agent(name="b")
         monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
         monkeypatch.setattr(
@@ -1627,16 +1703,16 @@ class TestBranchSession:
         agent._saved = saved  # type: ignore[attr-defined]
         return agent
 
-    def test_branch_creates_new_session_with_fresh_ids(self, monkeypatch: pytest.MonkeyPatch):
+    def test_fork_session_creates_new_session_with_fresh_ids(self, monkeypatch: pytest.MonkeyPatch):
         original_run = RunOutput(
             run_id="r-orig",
             session_id="s-orig",
             messages=[Message(role="user", content="hi")],
         )
         source = AgentSession(session_id="s-orig", user_id="u1", runs=[original_run])
-        agent = self._make_branching_agent(monkeypatch, source)
+        agent = self._make_forking_agent(monkeypatch, source)
 
-        new_sid = agent.branch_session(source_session_id="s-orig", user_id="u1")
+        new_sid = agent.fork_session(source_session_id="s-orig", user_id="u1")
 
         assert new_sid != "s-orig"
         assert len(agent._saved) == 1  # type: ignore[attr-defined]
@@ -1645,50 +1721,50 @@ class TestBranchSession:
         assert len(saved.runs) == 1
         assert saved.runs[0].run_id != "r-orig"
         assert saved.runs[0].session_id == new_sid
-        assert saved.runs[0].branched_from == "s-orig"
+        assert saved.runs[0].forked_from_session_id == "s-orig"
 
-    def test_branch_does_not_mutate_source(self, monkeypatch: pytest.MonkeyPatch):
+    def test_fork_session_does_not_mutate_source(self, monkeypatch: pytest.MonkeyPatch):
         original_run = RunOutput(
             run_id="r-orig",
             session_id="s-orig",
             messages=[Message(role="user", content="hi")],
         )
         source = AgentSession(session_id="s-orig", user_id="u1", runs=[original_run])
-        agent = self._make_branching_agent(monkeypatch, source)
+        agent = self._make_forking_agent(monkeypatch, source)
 
-        agent.branch_session(source_session_id="s-orig", user_id="u1")
+        agent.fork_session(source_session_id="s-orig", user_id="u1")
 
         # Source session and its run are untouched.
         assert source.session_id == "s-orig"
         assert source.runs[0].run_id == "r-orig"
         assert source.runs[0].session_id == "s-orig"
-        assert source.runs[0].branched_from is None
+        assert source.runs[0].forked_from_session_id is None
 
-    def test_branch_raises_on_empty_session(self, monkeypatch: pytest.MonkeyPatch):
+    def test_fork_session_raises_on_empty_session(self, monkeypatch: pytest.MonkeyPatch):
         source = AgentSession(session_id="s-orig", user_id="u1", runs=[])
-        agent = self._make_branching_agent(monkeypatch, source)
+        agent = self._make_forking_agent(monkeypatch, source)
 
         with pytest.raises(ValueError, match="no runs"):
-            agent.branch_session(source_session_id="s-orig", user_id="u1")
+            agent.fork_session(source_session_id="s-orig", user_id="u1")
 
-    def test_branch_preserves_branched_from_on_nested_branch(self, monkeypatch: pytest.MonkeyPatch):
-        # A run that was already branched once keeps its original source pointer.
+    def test_fork_session_preserves_forked_from_session_id_on_nested_fork(self, monkeypatch: pytest.MonkeyPatch):
+        # A run that was already forked once keeps its original source pointer.
         nested_run = RunOutput(
             run_id="r-nested",
             session_id="s-mid",
-            branched_from="s-root",  # root-level lineage already recorded
+            forked_from_session_id="s-root",  # root-level lineage already recorded
             messages=[Message(role="user", content="hi")],
         )
         source = AgentSession(session_id="s-mid", user_id="u1", runs=[nested_run])
-        agent = self._make_branching_agent(monkeypatch, source)
+        agent = self._make_forking_agent(monkeypatch, source)
 
-        agent.branch_session(source_session_id="s-mid", user_id="u1")
+        agent.fork_session(source_session_id="s-mid", user_id="u1")
 
         saved = agent._saved[0]  # type: ignore[attr-defined]
-        # Run-level branched_from preserved (points at root).
-        assert saved.runs[0].branched_from == "s-root"
-        # Session-level branched_from points at immediate parent.
-        assert saved.session_data["branched_from"] == "s-mid"
+        # Run-level forked_from_session_id preserved (points at root).
+        assert saved.runs[0].forked_from_session_id == "s-root"
+        # Session-level forked_from_session_id points at immediate parent.
+        assert saved.session_data["forked_from_session_id"] == "s-mid"
 
 
 # ---------------------------------------------------------------------------
@@ -2040,3 +2116,29 @@ class TestStreamingRealBody:
         assert rr.forked_from_run_id == "run-real"
         assert rr.forked_from_message_index == 1
         assert len(rr.messages or []) == 1
+
+
+class TestContinueErrorTypes:
+    """Continue dispatch raises typed exceptions the OS layer maps to 404/409
+    (instead of bubbling bare RuntimeError/ValueError into a 500)."""
+
+    def test_missing_run_raises_run_not_found(self, monkeypatch: pytest.MonkeyPatch):
+        agent = _make_agent(monkeypatch, runs=[])
+        with pytest.raises(RunNotFoundError):
+            _run.continue_run_dispatch(agent=agent, run_id="nope", session_id="s", stream=False)
+
+    def test_cancelled_run_raises_not_continuable(self, monkeypatch: pytest.MonkeyPatch):
+        cancelled = RunOutput(
+            run_id="run-x",
+            session_id="s",
+            status=RunStatus.cancelled,
+            messages=[Message(role="user", content="Q")],
+        )
+        agent = _make_agent(monkeypatch, runs=[cancelled])
+        with pytest.raises(RunNotContinuableError):
+            _run.continue_run_dispatch(agent=agent, run_id="run-x", session_id="s", stream=False)
+
+    def test_typed_exceptions_keep_sdk_compatible_bases(self):
+        # SDK callers that catch the standard bases still work.
+        assert issubclass(RunNotFoundError, RuntimeError)
+        assert issubclass(RunNotContinuableError, ValueError)

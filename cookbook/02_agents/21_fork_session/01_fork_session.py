@@ -1,26 +1,26 @@
-"""Branch a session via agent.branch_session().
+"""Fork a session via agent.fork_session().
 
-``branch_session`` deep-copies every run from the source session into a brand-
+``fork_session`` deep-copies every run from the source session into a brand-
 new session with a fresh ``session_id`` and fresh ``run_id``s. The source is
 untouched. Useful for spinning up an independent conversation that starts from
 a known-good state.
 
-Distinction from ``fork`` (03_forking.py):
+Distinction from ``fork`` (../20_time_travel/02_fork_run.py):
 - ``fork``           → new run inside the **same** session (run-level)
-- ``branch_session`` → new session containing copies of every run (session-level)
+- ``fork_session`` → new session containing copies of every run (session-level)
 
 Lineage:
-- ``run.branched_from``                       → the run's *original*
-  session_id, preserved across nested branches
-- ``session.session_data["branched_from"]``   → the *immediate* parent
-  session_id (overwritten on each re-branch)
+- ``run.forked_from_session_id``                       → the run's *original*
+  session_id, preserved across nested forks
+- ``session.session_data["forked_from_session_id"]``   → the *immediate* parent
+  session_id (overwritten on each re-fork)
 
 So for root → mid → leaf:
-- ``leaf.session.session_data["branched_from"] == mid``
-- ``leaf.runs[*].branched_from == root``
+- ``leaf.session.session_data["forked_from_session_id"] == mid``
+- ``leaf.runs[*].forked_from_session_id == root``
 
 The source session is read scoped to the caller's ``user_id`` — you can only
-branch your own sessions.
+fork your own sessions.
 """
 
 import asyncio
@@ -36,7 +36,7 @@ async def main() -> None:
         model=OpenAIResponses(id="gpt-5.4"),
         db=SqliteDb(
             session_table="checkpoint_demo",
-            db_file="tmp/checkpoint_branch_session.db",
+            db_file="tmp/checkpoint_fork_session.db",
         ),
         checkpoint="tool-batch",
         markdown=True,
@@ -59,21 +59,21 @@ async def main() -> None:
 
     # Branch the session. The original is untouched; we get a fresh session_id
     # containing copies of every run.
-    new_sid = await agent.abranch_session(
+    new_sid = await agent.afork_session(
         source_session_id=original_sid,
         user_id=user_id,
     )
     print(f"Branched: {original_sid} → {new_sid}")
     print()
 
-    # Continue the branched session in a different direction.
-    branched_run = await agent.arun(
+    # Continue the forked session in a different direction.
+    forked_run = await agent.arun(
         input="Actually, what about Osaka's street food scene?",
         session_id=new_sid,
         user_id=user_id,
     )
     print("--- Branched session continued ---")
-    print(branched_run.content[:200], "...")
+    print(forked_run.content[:200], "...")
     print()
 
     # The original session is unchanged — you can continue it independently.
@@ -87,12 +87,16 @@ async def main() -> None:
     print()
 
     # Inspect both sessions.
-    for sid, label in [(original_sid, "original"), (new_sid, "branched")]:
+    for sid, label in [(original_sid, "original"), (new_sid, "forked")]:
         s = agent.db.get_session(session_id=sid, session_type="agent")
-        branched_from = (s.session_data or {}).get("branched_from")
+        forked_from_session_id = (s.session_data or {}).get("forked_from_session_id")
         print(
             f"{label}: {sid}  ({len(s.runs or [])} runs)"
-            + (f"  branched_from={branched_from}" if branched_from else "")
+            + (
+                f"  forked_from_session_id={forked_from_session_id}"
+                if forked_from_session_id
+                else ""
+            )
         )
 
 
