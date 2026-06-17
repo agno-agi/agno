@@ -164,7 +164,9 @@ class TestSessionRoutesWithLocalAgent:
         """Test GET /sessions/{session_id}/runs returns the specific run we created."""
         response = client.get(f"/sessions/{agent_run_data['session_id']}/runs?type=agent&db_id={self.DB_ID}")
         assert response.status_code == 200
-        data = response.json()
+        body = response.json()
+        assert isinstance(body, dict)
+        data = body["data"]
         assert isinstance(data, list)
         assert len(data) >= 1
 
@@ -216,7 +218,7 @@ class TestSessionRoutesWithLocalAgent:
         # Get all runs for the session
         runs_response = client.get(f"/sessions/{session_id}/runs?type=agent&db_id={self.DB_ID}")
         assert runs_response.status_code == 200
-        runs = runs_response.json()
+        runs = runs_response.json()["data"]
 
         # Should have at least 2 runs now
         assert len(runs) >= 2
@@ -370,7 +372,9 @@ class TestSessionRoutesWithRemoteAgent:
         """Test GET /sessions/{session_id}/runs returns the run from remote agent."""
         response = client.get(f"/sessions/{agent_run_data['session_id']}/runs?type=agent&db_id={self.DB_ID}")
         assert response.status_code == 200
-        data = response.json()
+        body = response.json()
+        assert isinstance(body, dict)
+        data = body["data"]
         assert isinstance(data, list)
         assert len(data) >= 1
 
@@ -411,7 +415,7 @@ class TestSessionRoutesWithRemoteAgent:
         # Get all runs for the session
         runs_response = client.get(f"/sessions/{session_id}/runs?type=agent&db_id={self.DB_ID}")
         assert runs_response.status_code == 200
-        runs = runs_response.json()
+        runs = runs_response.json()["data"]
 
         # Should have at least 2 runs now
         assert len(runs) >= 2
