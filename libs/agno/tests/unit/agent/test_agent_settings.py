@@ -1,0 +1,535 @@
+"""
+Unit tests for grouped settings dataclasses on Agent.
+
+Tests cover:
+- Grouped construction: Agent(session_settings=SessionSettings(...)) sets the flat attributes
+- Equivalence: grouped construction produces the same agent as flat construction
+- Precedence: a set settings field wins over the flat kwarg, even when its value
+  equals the flat default; unset (None) settings fields fall back to the flat kwarg
+- Warnings: the conflict warning fires only when both values are set and differ
+- Parity: every settings field maps to an Agent.__init__ parameter with a matching
+  flat default, and every field is exercised by a test case (no drift)
+- Serialization: to_dict stays flat, from_dict and deep_copy round-trip unchanged
+"""
+
+from dataclasses import fields
+from inspect import signature
+from unittest.mock import patch
+
+from pydantic import BaseModel
+
+from agno.agent.agent import Agent
+from agno.compression.manager import CompressionManager
+from agno.culture.manager import CultureManager
+from agno.memory import MemoryManager
+from agno.models.fallback import FallbackConfig
+from agno.run.agent import RunEvent
+from agno.session import SessionSummaryManager
+from agno.settings import (
+    CacheSettings,
+    CompressionSettings,
+    ContextSettings,
+    CultureSettings,
+    DebugSettings,
+    EventSettings,
+    FollowupSettings,
+    HistorySettings,
+    KnowledgeSettings,
+    LearningSettings,
+    MemorySettings,
+    ModelSettings,
+    OutputSettings,
+    ReasoningSettings,
+    RetrySettings,
+    SessionSettings,
+    StorageSettings,
+    ToolSettings,
+    resolve_setting,
+)
+
+AGENT_SETTINGS_CLASSES = [
+    ModelSettings,
+    SessionSettings,
+    ContextSettings,
+    KnowledgeSettings,
+    MemorySettings,
+    HistorySettings,
+    OutputSettings,
+    ToolSettings,
+    ReasoningSettings,
+    StorageSettings,
+    EventSettings,
+    FollowupSettings,
+    RetrySettings,
+    DebugSettings,
+    CompressionSettings,
+    CacheSettings,
+    CultureSettings,
+    LearningSettings,
+]
+
+
+class OutputSchema(BaseModel):
+    answer: str
+
+
+class StubKnowledge:
+    pass
+
+
+def _knowledge_retriever(agent, query, num_documents=None, **kwargs):
+    return None
+
+
+def _tool_hook(function_name, function_call, arguments):
+    return function_call(**arguments)
+
+
+def _cache_key(*args, **kwargs):
+    return "cache-key"
+
+
+# Non-default values for every scalar settings field, grouped by settings kwarg.
+# Object fields (managers, models, callables) are covered by AGENT_OBJECT_CASES below.
+AGENT_GROUP_CASES = {
+    "session_settings": (
+        SessionSettings,
+        {
+            "session_id": "session-123",
+            "session_state": {"key": "value"},
+            "add_session_state_to_context": True,
+            "enable_agentic_state": True,
+            "overwrite_db_session_state": True,
+            "cache_session": True,
+            "search_past_sessions": True,
+            "num_past_sessions_to_search": 4,
+            "num_past_session_runs_in_search": 2,
+            "enable_session_summaries": True,
+            "add_session_summary_to_context": True,
+        },
+    ),
+    "context_settings": (
+        ContextSettings,
+        {
+            "markdown": True,
+            "add_name_to_context": True,
+            "add_datetime_to_context": True,
+            "add_location_to_context": True,
+            "datetime_format": "%Y-%m-%d",
+            "timezone_identifier": "Etc/UTC",
+            "resolve_in_context": False,
+            "additional_context": "extra context",
+            "additional_input": ["example input"],
+            "dependencies": {"dep": 1},
+            "add_dependencies_to_context": True,
+            "use_instruction_tags": True,
+            "system_message_role": "developer",
+            "user_message_role": "human",
+            "build_context": False,
+            "build_user_context": False,
+        },
+    ),
+    "knowledge_settings": (
+        KnowledgeSettings,
+        {
+            "knowledge_filters": {"topic": "ai"},
+            "enable_agentic_knowledge_filters": True,
+            "add_knowledge_to_context": True,
+            "references_format": "yaml",
+            "search_knowledge": False,
+            "add_search_knowledge_instructions": False,
+            "update_knowledge": True,
+        },
+    ),
+    "memory_settings": (
+        MemorySettings,
+        {
+            "enable_agentic_memory": True,
+            "update_memory_on_run": True,
+            "add_memories_to_context": True,
+        },
+    ),
+    "history_settings": (
+        HistorySettings,
+        {
+            "add_history_to_context": True,
+            "num_history_runs": 7,
+            "max_tool_calls_from_history": 5,
+            "read_chat_history": True,
+            "read_tool_call_history": True,
+        },
+    ),
+    "output_settings": (
+        OutputSettings,
+        {
+            "input_schema": OutputSchema,
+            "output_schema": OutputSchema,
+            "parser_model_prompt": "parse this",
+            "output_model_prompt": "structure this",
+            "parse_response": False,
+            "structured_outputs": True,
+            "use_json_mode": True,
+            "save_response_to_file": "/tmp/response.txt",
+        },
+    ),
+    "tool_settings": (
+        ToolSettings,
+        {
+            "tool_call_limit": 4,
+            "tool_choice": "auto",
+            "send_media_to_model": False,
+        },
+    ),
+    "reasoning_settings": (
+        ReasoningSettings,
+        {
+            "reasoning": True,
+            "reasoning_min_steps": 2,
+            "reasoning_max_steps": 7,
+        },
+    ),
+    "storage_settings": (
+        StorageSettings,
+        {
+            "store_media": False,
+            "store_tool_messages": False,
+            "store_history_messages": True,
+        },
+    ),
+    "event_settings": (
+        EventSettings,
+        {
+            "stream": True,
+            "stream_events": True,
+            "store_events": True,
+        },
+    ),
+    "followup_settings": (
+        FollowupSettings,
+        {
+            "followups": True,
+            "num_followups": 2,
+        },
+    ),
+    "retry_settings": (
+        RetrySettings,
+        {
+            "retries": 3,
+            "delay_between_retries": 2,
+            "exponential_backoff": True,
+        },
+    ),
+    "debug_settings": (
+        DebugSettings,
+        {
+            "debug_mode": True,
+            "debug_level": 2,
+            "telemetry": False,
+        },
+    ),
+    "compression_settings": (
+        CompressionSettings,
+        {
+            "compress_tool_results": True,
+        },
+    ),
+    "cache_settings": (
+        CacheSettings,
+        {
+            "cache_callables": False,
+        },
+    ),
+    "culture_settings": (
+        CultureSettings,
+        {
+            "enable_agentic_culture": True,
+            "update_cultural_knowledge": True,
+            "add_culture_to_context": True,
+        },
+    ),
+    "learning_settings": (
+        LearningSettings,
+        {
+            "learning": True,
+            "add_learnings_to_context": False,
+        },
+    ),
+}
+
+# Object values for the settings fields not covered by the scalar cases above.
+# Factories so each test gets fresh instances.
+AGENT_OBJECT_CASES = {
+    "model_settings": (ModelSettings, lambda: {"model": "openai:gpt-5.4"}),
+    "session_settings": (SessionSettings, lambda: {"session_summary_manager": SessionSummaryManager()}),
+    "knowledge_settings": (
+        KnowledgeSettings,
+        lambda: {"knowledge": StubKnowledge(), "knowledge_retriever": _knowledge_retriever},
+    ),
+    "memory_settings": (MemorySettings, lambda: {"memory_manager": MemoryManager()}),
+    # num_history_messages is mutually exclusive with num_history_runs, so it gets its own case
+    "history_settings": (HistorySettings, lambda: {"num_history_messages": 9}),
+    "tool_settings": (ToolSettings, lambda: {"tool_hooks": [_tool_hook]}),
+    "reasoning_settings": (
+        ReasoningSettings,
+        lambda: {"reasoning_model": "openai:gpt-5.4", "reasoning_agent": Agent(name="reasoning-agent")},
+    ),
+    "output_settings": (OutputSettings, lambda: {"parser_model": "openai:gpt-5.4", "output_model": "openai:gpt-5.4"}),
+    "event_settings": (EventSettings, lambda: {"events_to_skip": [RunEvent.run_started]}),
+    "followup_settings": (FollowupSettings, lambda: {"followup_model": "openai:gpt-5.4"}),
+    "compression_settings": (CompressionSettings, lambda: {"compression_manager": CompressionManager()}),
+    "cache_settings": (
+        CacheSettings,
+        lambda: {"callable_tools_cache_key": _cache_key, "callable_knowledge_cache_key": _cache_key},
+    ),
+    "culture_settings": (CultureSettings, lambda: {"culture_manager": CultureManager()}),
+}
+
+# Settings fields that intentionally have no matching Agent.__init__ parameter
+AGENT_PARITY_EXCEPTIONS = {"callable_members_cache_key", "stream_executor_events"}
+
+# Settings fields intentionally not exercised by the cases above
+AGENT_COVERAGE_EXCEPTIONS = {
+    # Team only
+    "callable_members_cache_key",
+    # Workflow only
+    "stream_executor_events",
+    # fallback_models is folded into fallback_config by the model wiring; covered by dedicated tests
+    "fallback_models",
+    "fallback_config",
+}
+
+
+# =============================================================================
+# Grouped construction and equivalence
+# =============================================================================
+
+
+def test_grouped_construction_sets_flat_attributes():
+    for group_kwarg, (settings_cls, values) in AGENT_GROUP_CASES.items():
+        agent = Agent(**{group_kwarg: settings_cls(**values)})
+        for name, expected in values.items():
+            assert getattr(agent, name) == expected, f"{group_kwarg}.{name}"
+
+
+def test_grouped_construction_matches_flat_construction():
+    for group_kwarg, (settings_cls, values) in AGENT_GROUP_CASES.items():
+        grouped = Agent(**{group_kwarg: settings_cls(**values)})
+        flat = Agent(**values)
+        for name in values:
+            assert getattr(grouped, name) == getattr(flat, name), f"{group_kwarg}.{name}"
+
+
+def test_object_fields_match_flat_construction():
+    for group_kwarg, (settings_cls, make_values) in AGENT_OBJECT_CASES.items():
+        values = make_values()
+        grouped = Agent(**{group_kwarg: settings_cls(**values)})
+        flat = Agent(**values)
+        for name in values:
+            assert getattr(grouped, name) == getattr(flat, name), f"{group_kwarg}.{name}"
+
+
+def test_model_settings_resolves_model_string():
+    agent = Agent(model_settings=ModelSettings(model="openai:gpt-5.4"))
+    assert agent.model is not None
+    assert agent.model.id == "gpt-5.4"
+
+
+def test_model_settings_fallback_models_match_flat_construction():
+    grouped = Agent(model_settings=ModelSettings(model="openai:gpt-5.4", fallback_models=["openai:gpt-5.4-mini"]))
+    flat = Agent(model="openai:gpt-5.4", fallback_models=["openai:gpt-5.4-mini"])
+    assert grouped.fallback_config == flat.fallback_config
+
+
+def test_flat_fallback_config_wins_over_grouped_fallback_models():
+    # Cross-parameter normalization runs on the resolved values: fallback_config
+    # takes precedence over fallback_models regardless of how they were passed
+    fallback_config = FallbackConfig(on_error=["openai:gpt-5.4-mini"])
+    agent = Agent(
+        model="openai:gpt-5.4",
+        fallback_config=fallback_config,
+        model_settings=ModelSettings(fallback_models=["openai:gpt-5.4-nano"]),
+    )
+    assert agent.fallback_config is fallback_config
+
+
+def test_cross_parameter_validation_runs_on_resolved_values():
+    # num_history_runs/num_history_messages mutual exclusion applies to grouped values too
+    agent = Agent(history_settings=HistorySettings(num_history_runs=4, num_history_messages=9))
+    assert agent.num_history_messages is None
+    assert agent.num_history_runs == 4
+
+
+def test_mutating_settings_after_construction_does_not_affect_agent():
+    settings = SessionSettings(session_id="before")
+    agent = Agent(session_settings=settings)
+    settings.session_id = "after"
+    assert agent.session_id == "before"
+
+
+# =============================================================================
+# Precedence
+# =============================================================================
+
+
+def test_settings_object_wins_over_flat_kwarg():
+    agent = Agent(session_id="flat-id", session_settings=SessionSettings(session_id="grouped-id"))
+    assert agent.session_id == "grouped-id"
+
+
+def test_settings_value_wins_even_when_it_equals_the_flat_default():
+    agent = Agent(retries=3, retry_settings=RetrySettings(retries=0))
+    assert agent.retries == 0
+    agent = Agent(markdown=True, context_settings=ContextSettings(markdown=False))
+    assert agent.markdown is False
+    agent = Agent(search_knowledge=False, knowledge_settings=KnowledgeSettings(search_knowledge=True))
+    assert agent.search_knowledge is True
+    agent = Agent(resolve_in_context=False, context_settings=ContextSettings(resolve_in_context=True))
+    assert agent.resolve_in_context is True
+
+
+def test_flat_kwarg_used_when_settings_field_unset():
+    agent = Agent(session_id="flat-id", session_settings=SessionSettings(cache_session=True))
+    assert agent.session_id == "flat-id"
+    assert agent.cache_session is True
+
+
+def test_flat_defaults_used_when_settings_object_is_empty():
+    agent = Agent(session_settings=SessionSettings(), context_settings=ContextSettings())
+    assert agent.markdown is False
+    assert agent.resolve_in_context is True
+    assert agent.search_knowledge is True
+
+
+def test_resolve_setting_returns_flat_value_without_settings():
+    assert resolve_setting(None, "session_id", "flat-id") == "flat-id"
+
+
+# =============================================================================
+# Warnings
+# =============================================================================
+
+
+def test_conflict_warning_fires_when_values_differ():
+    with patch("agno.settings.log_warning") as mock_warning:
+        Agent(session_id="flat-id", session_settings=SessionSettings(session_id="grouped-id"))
+    assert any("session_id" in str(call) for call in mock_warning.call_args_list)
+
+
+def test_no_warning_when_values_agree():
+    with patch("agno.settings.log_warning") as mock_warning:
+        Agent(markdown=True, context_settings=ContextSettings(markdown=True))
+    assert mock_warning.call_count == 0
+
+
+def test_no_warning_when_only_settings_set():
+    with patch("agno.settings.log_warning") as mock_warning:
+        Agent(context_settings=ContextSettings(markdown=True))
+    assert mock_warning.call_count == 0
+
+
+def test_settings_none_field_cannot_clear_flat_value():
+    # None means "not set", so a settings field can never clear a flat value
+    agent = Agent(tool_choice="auto", tool_settings=ToolSettings(tool_choice=None))
+    assert agent.tool_choice == "auto"
+
+
+def test_silent_override_when_flat_value_equals_flat_default():
+    # A flat value explicitly passed as its default is indistinguishable from an
+    # omitted one, so the settings value wins without a warning
+    with patch("agno.settings.log_warning") as mock_warning:
+        agent = Agent(markdown=False, context_settings=ContextSettings(markdown=True))
+    assert agent.markdown is True
+    assert mock_warning.call_count == 0
+
+
+def test_unsupported_field_warns_on_agent():
+    with patch("agno.settings.log_warning") as mock_warning:
+        Agent(cache_settings=CacheSettings(callable_members_cache_key=_cache_key))
+    assert any("callable_members_cache_key" in str(call) for call in mock_warning.call_args_list)
+
+
+# =============================================================================
+# Parity: settings fields must not drift from Agent.__init__ parameters
+# =============================================================================
+
+
+def test_settings_fields_match_agent_init_params():
+    init_params = set(signature(Agent.__init__).parameters) - {"self"}
+    for settings_cls in AGENT_SETTINGS_CLASSES:
+        for f in fields(settings_cls):
+            if f.name in AGENT_PARITY_EXCEPTIONS:
+                continue
+            assert f.name in init_params, f"{settings_cls.__name__}.{f.name} is not an Agent.__init__ param"
+
+
+def test_settings_flat_defaults_match_agent_init_defaults():
+    init_params = signature(Agent.__init__).parameters
+    for settings_cls in AGENT_SETTINGS_CLASSES:
+        for f in fields(settings_cls):
+            if f.name not in init_params:
+                continue
+            assert f.default is None, f"{settings_cls.__name__}.{f.name} must default to None (unset)"
+            flat_default = f.metadata.get("flat_default")
+            init_default = init_params[f.name].default
+            assert flat_default == init_default, (
+                f"{settings_cls.__name__}.{f.name} flat_default {flat_default!r} != Agent default {init_default!r}"
+            )
+
+
+def test_every_settings_field_is_covered_by_a_case():
+    covered = {cls: set() for cls in AGENT_SETTINGS_CLASSES}
+    for _, (settings_cls, values) in AGENT_GROUP_CASES.items():
+        covered[settings_cls].update(values)
+    for _, (settings_cls, make_values) in AGENT_OBJECT_CASES.items():
+        covered[settings_cls].update(make_values())
+    for settings_cls in AGENT_SETTINGS_CLASSES:
+        for f in fields(settings_cls):
+            assert f.name in covered[settings_cls] or f.name in AGENT_COVERAGE_EXCEPTIONS, (
+                f"{settings_cls.__name__}.{f.name} is not exercised by any test case"
+            )
+
+
+def test_group_kwargs_exist_on_agent_init():
+    init_params = set(signature(Agent.__init__).parameters)
+    for group_kwarg in list(AGENT_GROUP_CASES) + ["model_settings"]:
+        assert group_kwarg in init_params
+
+
+# =============================================================================
+# Serialization and copying stay flat
+# =============================================================================
+
+
+def test_to_dict_stays_flat_with_grouped_construction():
+    agent = Agent(
+        id="agent-1",
+        session_settings=SessionSettings(session_id="session-456", cache_session=True),
+        context_settings=ContextSettings(markdown=True),
+        retry_settings=RetrySettings(retries=2),
+    )
+    config = agent.to_dict()
+    assert config["session_id"] == "session-456"
+    assert config["cache_session"] is True
+    assert config["markdown"] is True
+    assert config["retries"] == 2
+    assert "session_settings" not in config
+    assert "context_settings" not in config
+
+
+def test_from_dict_round_trip_after_grouped_construction():
+    agent = Agent(id="agent-1", session_settings=SessionSettings(session_id="session-456"))
+    restored = Agent.from_dict(agent.to_dict())
+    assert restored.session_id == "session-456"
+
+
+def test_deep_copy_preserves_grouped_values():
+    agent = Agent(
+        id="agent-1",
+        session_settings=SessionSettings(session_id="session-456", cache_session=True),
+        retry_settings=RetrySettings(retries=2, exponential_backoff=True),
+    )
+    copied = agent.deep_copy()
+    assert copied.session_id == "session-456"
+    assert copied.cache_session is True
+    assert copied.retries == 2
+    assert copied.exponential_backoff is True

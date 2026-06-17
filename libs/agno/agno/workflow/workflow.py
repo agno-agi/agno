@@ -95,6 +95,13 @@ from agno.run.workflow import (
     WorkflowStartedEvent,
 )
 from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
+from agno.settings import (
+    DebugSettings,
+    EventSettings,
+    SessionSettings,
+    resolve_setting,
+    warn_unsupported_setting,
+)
 from agno.team.team import Team
 from agno.utils.agent import validate_input
 from agno.utils.log import (
@@ -407,9 +414,13 @@ class Workflow:
     session_state: Optional[Dict[str, Any]] = None
     # Set to True to overwrite the stored session_state with the session_state provided in the run
     overwrite_db_session_state: bool = False
+    # If True, cache the current Workflow session in memory for faster access
+    cache_session: bool = False
 
     # If True, the workflow runs in debug mode
     debug_mode: Optional[bool] = False
+    # Debug level: 1 = basic, 2 = detailed
+    debug_level: Literal[1, 2] = 1
 
     # --- Workflow Streaming ---
     # Stream the response from the Workflow
@@ -483,7 +494,41 @@ class Workflow:
         telemetry: bool = True,
         add_workflow_history_to_steps: bool = False,
         num_history_runs: int = 3,
+        # --- Grouped settings (alternative to the flat parameters above) ---
+        session_settings: Optional[SessionSettings] = None,
+        event_settings: Optional[EventSettings] = None,
+        debug_settings: Optional[DebugSettings] = None,
     ):
+        # Resolve grouped settings into the flat parameters.
+        # If a parameter is set both ways, the settings object wins (a warning is logged if the values differ).
+        if session_settings is not None:
+            session_id = resolve_setting(session_settings, "session_id", session_id)
+            session_state = resolve_setting(session_settings, "session_state", session_state)
+            add_session_state_to_context = resolve_setting(
+                session_settings, "add_session_state_to_context", add_session_state_to_context, flat_default=None
+            )
+            overwrite_db_session_state = resolve_setting(
+                session_settings, "overwrite_db_session_state", overwrite_db_session_state
+            )
+            cache_session = resolve_setting(session_settings, "cache_session", cache_session)
+            warn_unsupported_setting(session_settings, "enable_agentic_state", "Workflow")
+            warn_unsupported_setting(session_settings, "search_past_sessions", "Workflow")
+            warn_unsupported_setting(session_settings, "num_past_sessions_to_search", "Workflow")
+            warn_unsupported_setting(session_settings, "num_past_session_runs_in_search", "Workflow")
+            warn_unsupported_setting(session_settings, "enable_session_summaries", "Workflow")
+            warn_unsupported_setting(session_settings, "add_session_summary_to_context", "Workflow")
+            warn_unsupported_setting(session_settings, "session_summary_manager", "Workflow")
+        if event_settings is not None:
+            stream = resolve_setting(event_settings, "stream", stream)
+            stream_events = resolve_setting(event_settings, "stream_events", stream_events, flat_default=False)
+            stream_executor_events = resolve_setting(event_settings, "stream_executor_events", stream_executor_events)
+            store_events = resolve_setting(event_settings, "store_events", store_events)
+            events_to_skip = resolve_setting(event_settings, "events_to_skip", events_to_skip)
+        if debug_settings is not None:
+            debug_mode = resolve_setting(debug_settings, "debug_mode", debug_mode)
+            debug_level = resolve_setting(debug_settings, "debug_level", debug_level)
+            telemetry = resolve_setting(debug_settings, "telemetry", telemetry)
+
         self.id = id
         self.name = name
         self.description = description
