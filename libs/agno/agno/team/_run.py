@@ -6604,11 +6604,15 @@ def continue_run_dispatch(
         try:
             check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
         except RuntimeError:
-            # No resolved approval found — fall through to bare-resume rather
-            # than raising. The run may be a crashed mid-flight run (RUNNING /
-            # ERROR / CANCELLED) where we want to resume from persisted
-            # messages, not insist on HITL requirements.
-            _did_snapshot_dispatch = True  # treat as resume-only; route to team-leader model call
+            # No resolved approval found — fall through to bare-resume.
+            pass
+        # A RUNNING/ERROR run with already-executed tools (e.g. crash recovery
+        # after a delegation, or an ERROR retry) is NOT a HITL pause: resume via
+        # the team-leader model regardless of whether an approval was applied.
+        # Without this, such a run falls through to terminal cleanup with no
+        # final turn (content=None). Unresolved requirements are re-paused
+        # downstream, so this does not bypass HITL.
+        _did_snapshot_dispatch = True  # route to team-leader model call
     else:
         # No requirements AND no tools — this is a bare resume of a mid-flight
         # run (RUNNING / ERROR / CANCELLED that crashed before any tool batch).
@@ -7985,9 +7989,14 @@ async def _acontinue_run(
                             team.db, run_response.run_id or run_id or "", run_response
                         )
                     except RuntimeError:
-                        # Fall through to bare-resume rather than raising.
-                        # Same rationale as the sync dispatch — see comment there.
-                        _did_snapshot_dispatch = True
+                        # No resolved approval found — fall through to bare-resume.
+                        pass
+                    # A RUNNING/ERROR run with already-executed tools (e.g. crash
+                    # recovery after a delegation) is NOT a HITL pause: resume via
+                    # the team-leader model regardless of whether an approval was
+                    # applied. Without this it falls through to terminal cleanup
+                    # with content=None. Unresolved requirements re-pause downstream.
+                    _did_snapshot_dispatch = True  # route to team-leader model call
                 else:
                     # Bare resume of a mid-flight run (RUNNING/ERROR/CANCELLED)
                     # — no requirements, no tools. Let the team-leader model
@@ -8411,9 +8420,14 @@ async def _acontinue_run_stream(
                             team.db, run_response.run_id or run_id or "", run_response
                         )
                     except RuntimeError:
-                        # Fall through to bare-resume rather than raising.
-                        # Same rationale as the sync dispatch — see comment there.
-                        _did_snapshot_dispatch = True
+                        # No resolved approval found — fall through to bare-resume.
+                        pass
+                    # A RUNNING/ERROR run with already-executed tools (e.g. crash
+                    # recovery after a delegation) is NOT a HITL pause: resume via
+                    # the team-leader model regardless of whether an approval was
+                    # applied. Without this it falls through to terminal cleanup
+                    # with content=None. Unresolved requirements re-pause downstream.
+                    _did_snapshot_dispatch = True  # route to team-leader model call
                 else:
                     # Bare resume of a mid-flight run (RUNNING/ERROR/CANCELLED)
                     # — no requirements, no tools. Let the team-leader model

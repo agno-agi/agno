@@ -823,3 +823,44 @@ class TestTeamForkEndpoint:
             and "POST" in (getattr(route, "methods", None) or set())
         ]
         assert matches, "POST /teams/{team_id}/sessions/{session_id}/fork is not registered"
+
+
+class TestTeamRunningResumeCallsModel:
+    """Regression: a RUNNING team run with already-executed tools but no
+    unresolved requirements (crash recovery after a delegation) must resume via
+    the team-leader model, not fall through to terminal cleanup with content=None."""
+
+    def test_running_run_with_tools_invokes_model(self, monkeypatch: pytest.MonkeyPatch):
+        run = TeamRunOutput(
+            run_id="run-crashed",
+            session_id="sess-1",
+            status=RunStatus.running,
+            messages=[
+                Message(role="user", content="Q"),
+                Message(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[{"id": "tc1", "type": "function", "function": {"name": "delegate_task_to_member"}}],
+                ),
+                Message(role="tool", tool_call_id="tc1", content="member result"),
+            ],
+            tools=[ToolExecution(tool_call_id="tc1", tool_name="delegate_task_to_member")],
+        )
+        team = Team(members=[], name="t")
+        _patch_team_sync_dispatch(team, monkeypatch, runs=[run])
+        # The exact trigger: approval resolution finds nothing and returns silently
+        # (no RuntimeError). Pre-fix this left the model-call gate unset.
+        monkeypatch.setattr("agno.run.approval.check_and_apply_approval_resolution", lambda *a, **k: None)
+
+        captured: dict = {}
+
+        def fake_continue_run(team, run_response, run_messages, run_context, session, tools, **kw):
+            captured["called"] = True
+            run_response.status = RunStatus.completed
+            return run_response
+
+        monkeypatch.setattr(team_run, "_continue_run", fake_continue_run)
+
+        team_run.continue_run_dispatch(team=team, run_id="run-crashed", session_id="sess-1", stream=False)
+
+        assert captured.get("called"), "RUNNING resume skipped the model-call path (_continue_run)"
