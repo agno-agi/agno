@@ -132,6 +132,7 @@ class SlackTools(Toolkit):
     def __init__(
         self,
         token: Optional[str] = None,
+        user_token: Optional[str] = None,
         markdown: bool = True,
         output_directory: Optional[str] = None,
         save_downloads: bool = False,
@@ -158,6 +159,7 @@ class SlackTools(Toolkit):
 
         Args:
             token (str): The Slack API token. Defaults to the SLACK_TOKEN environment variable.
+            user_token (str): User token (xoxp-) for search_messages. Defaults to SLACK_USER_TOKEN env var.
             markdown (bool): Whether to enable Slack markdown formatting. Defaults to True.
             output_directory (str): Directory for saving downloaded files. Only used when save_downloads=True.
             save_downloads (bool): Whether to save downloaded files to disk. Defaults to False (base64 only).
@@ -185,6 +187,19 @@ class SlackTools(Toolkit):
             raise ValueError("SLACK_TOKEN is not set")
         self.token: str = _token
         self.client = WebClient(token=self.token, ssl=ssl)
+
+        # 1. Resolve user token from param, env, or primary token (backward compat)
+        _user_token = user_token or getenv("SLACK_USER_TOKEN")
+        if not _user_token and ("xoxp-" in _token):
+            # Backward compat: primary token is a user token, use it for search
+            # Handles both xoxp-... and rotated xoxe.xoxp-... formats
+            _user_token = _token
+        self._user_token: Optional[str] = _user_token
+
+        # 2. Create user client for search_messages if we have a user token
+        self._user_client: Optional[WebClient] = (
+            WebClient(token=self._user_token, ssl=ssl) if self._user_token else None
+        )
         self.markdown = markdown
         self.max_file_size = max_file_size
         self.thread_message_limit = thread_message_limit
@@ -215,7 +230,11 @@ class SlackTools(Toolkit):
         if enable_download_file or all:
             tools.append(self.download_file)
         if enable_search_messages or all:
-            tools.append(self.search_messages)
+            if self._user_client:
+                tools.append(self.search_messages)
+            elif enable_search_messages:
+                # Only warn when explicitly requested, not via all=True
+                log_warning("search_messages disabled: no user token (SLACK_USER_TOKEN) provided")
         if enable_search_workspace or all:
             tools.append(self.search_workspace)
         if enable_get_thread or all:
@@ -762,7 +781,7 @@ class SlackTools(Toolkit):
             str: A JSON string containing the count and list of matching messages with text, user, channel, timestamp, and permalink.
         """
         try:
-            response = self.client.search_messages(query=query, count=min(limit, 100))
+            response = self._user_client.search_messages(query=query, count=min(limit, 100))  # type: ignore[union-attr]
             message_results = cast(Dict[str, Any], response.get("messages") or {})
             matches = cast(List[Dict[str, Any]], message_results.get("matches") or [])
             messages = [

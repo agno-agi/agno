@@ -29,6 +29,9 @@ from agno.os.config import (
     KnowledgeDatabaseConfig,
     KnowledgeDomainConfig,
     KnowledgeInstanceConfig,
+    LearningConfig,
+    LearningDomainConfig,
+    MCPServerConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -48,6 +51,7 @@ from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
+from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
@@ -234,6 +238,7 @@ class AgentOS:
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
         enable_mcp_server: bool = False,
+        mcp_config: Optional[MCPServerConfig] = None,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
@@ -264,6 +269,10 @@ class AgentOS:
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
+            mcp_config: Optional configuration for the MCP server. Register custom tools via
+                ``tools=[...]`` and/or scope the built-in tools via ``enable_builtin_tools`` /
+                ``include_tags`` / ``exclude_tags``. Ignored when ``enable_mcp_server`` is False.
+                When omitted, the MCP server exposes all built-in tools (unchanged behavior).
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
@@ -319,6 +328,7 @@ class AgentOS:
         self.tracing = tracing
 
         self.enable_mcp_server = enable_mcp_server
+        self.mcp_config = mcp_config
         self.lifespan = lifespan
 
         self.registry = registry
@@ -435,6 +445,7 @@ class AgentOS:
             get_home_router(self),
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
@@ -890,6 +901,7 @@ class AgentOS:
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
@@ -1316,6 +1328,7 @@ class AgentOS:
             "session_table_name": db.session_table_name,
             "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
+            "learnings_table_name": db.learnings_table_name,
             "metrics_table_name": db.metrics_table_name,
             "evals_table_name": db.eval_table_name,
             "knowledge_table_name": db.knowledge_table_name,
@@ -1458,6 +1471,28 @@ class AgentOS:
                 )
 
         return memory_config
+
+    def _get_learning_config(self) -> LearningConfig:
+        learning_config = self.config.learning if self.config and self.config.learning else LearningConfig()
+
+        if learning_config.dbs is None:
+            learning_config.dbs = []
+
+        dbs_with_specific_config = [db.db_id for db in learning_config.dbs]
+
+        for db_id, dbs in self.dbs.items():
+            if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.learnings_table_name for db in dbs))
+                learning_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=LearningDomainConfig(display_name=db_id),
+                        tables=unique_tables,
+                    )
+                )
+
+        return learning_config
 
     def _get_knowledge_config(self) -> KnowledgeConfig:
         knowledge_config = self.config.knowledge if self.config and self.config.knowledge else KnowledgeConfig()
