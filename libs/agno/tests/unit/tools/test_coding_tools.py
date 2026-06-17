@@ -669,6 +669,82 @@ def test_default_allowed_commands():
         assert "pytest" in tools.allowed_commands
 
 
+def test_run_shell_blocks_python_inline_code():
+    """Restricted mode must block `python -c` arbitrary code execution.
+
+    `python`/`python3` are in the default allowlist, so the command name and the
+    lexical path check on argument tokens both pass. The `-c` payload, however,
+    can import os, open files outside base_dir, and spawn subprocesses — none of
+    which the allowlist or path-containment check can inspect. It must be rejected
+    before reaching subprocess.run.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+
+        # Interpreter execution smuggling (the documented PoC shape, de-weaponized).
+        result = tools.run_shell('python3 -c "print(1)"')
+        assert "Error" in result
+        assert "restricted mode" in result
+
+        result = tools.run_shell('python -c "print(1)"')
+        assert "Error" in result
+        assert "restricted mode" in result
+
+        # Outside-base file access encoded inside the interpreter expression must
+        # also be rejected before execution (workspace-isolation regression).
+        outside_sentinel = str((base_dir.parent / "outside_secret.txt").resolve())
+        result = tools.run_shell(f"python3 -c \"open('{outside_sentinel}')\"")
+        assert "Error" in result
+        assert "restricted mode" in result
+
+
+def test_run_shell_blocks_other_interpreter_inline_code():
+    """Inline-code flags on other interpreters/shells must also be blocked."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        # Allow these interpreter names so the allowlist alone does not reject them;
+        # the inline-code guard is what must reject the dangerous invocation.
+        tools = CodingTools(
+            base_dir=base_dir,
+            allowed_commands=["python3", "bash", "sh", "node", "perl"],
+        )
+
+        for cmd in (
+            'bash -c "echo hi"',
+            'sh -c "echo hi"',
+            'node -e "1"',
+            'node --eval="1"',
+            'perl -e "1"',
+        ):
+            result = tools.run_shell(cmd)
+            assert "Error" in result, cmd
+            assert "restricted mode" in result, cmd
+
+
+def test_run_shell_inline_code_allowed_when_unrestricted():
+    """Inline-code execution remains available when restriction is disabled."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, restrict_to_base_dir=False)
+
+        result = tools.run_shell("python3 -c \"print('works')\"")
+        assert "Exit code: 0" in result
+        assert "works" in result
+
+
+def test_run_shell_allows_python_script_invocation():
+    """Running a script file (not inline code) stays allowed in restricted mode."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+
+        (base_dir / "ok.py").write_text("print('script works')\n")
+        result = tools.run_shell("python3 ok.py")
+        assert "Exit code: 0" in result
+        assert "script works" in result
+
+
 # --- instruction generation tests ---
 
 
