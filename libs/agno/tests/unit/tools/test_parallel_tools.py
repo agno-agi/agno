@@ -40,7 +40,7 @@ def test_parallel_search(parallel_tools):
         }
     )
 
-    parallel_tools.parallel_client.beta.search = Mock(return_value=mock_result)
+    parallel_tools.parallel_client.search = Mock(return_value=mock_result)
 
     # Execute test
     result = parallel_tools.parallel_search(objective="Test objective")
@@ -57,18 +57,33 @@ def test_parallel_search_with_queries(parallel_tools):
     mock_result = Mock()
     mock_result.model_dump = Mock(return_value={"search_id": "test-id", "results": []})
 
-    parallel_tools.parallel_client.beta.search = Mock(return_value=mock_result)
+    parallel_tools.parallel_client.search = Mock(return_value=mock_result)
 
     parallel_tools.parallel_search(objective="Test", search_queries=["query1", "query2"])
 
     # Verify search_queries was passed
-    call_args = parallel_tools.parallel_client.beta.search.call_args
+    call_args = parallel_tools.parallel_client.search.call_args
     assert call_args[1]["search_queries"] == ["query1", "query2"]
+
+
+def test_parallel_search_auto_populates_search_queries(parallel_tools):
+    """Test that search_queries is auto-populated from objective when not provided."""
+    mock_result = Mock()
+    mock_result.model_dump = Mock(return_value={"search_id": "test-id", "results": []})
+
+    parallel_tools.parallel_client.search = Mock(return_value=mock_result)
+
+    parallel_tools.parallel_search(objective="Find AI trends")
+
+    # GA API requires search_queries — should be auto-populated from objective
+    call_args = parallel_tools.parallel_client.search.call_args
+    assert call_args[1]["search_queries"] == ["Find AI trends"]
+    assert call_args[1]["mode"] == "advanced"
 
 
 def test_parallel_search_error(parallel_tools):
     """Test parallel_search error handling."""
-    parallel_tools.parallel_client.beta.search = Mock(side_effect=Exception("API Error"))
+    parallel_tools.parallel_client.search = Mock(side_effect=Exception("API Error"))
 
     result = parallel_tools.parallel_search(objective="Test")
     result_dict = json.loads(result)
@@ -95,7 +110,7 @@ def test_parallel_extract(parallel_tools):
         }
     )
 
-    parallel_tools.parallel_client.beta.extract = Mock(return_value=mock_result)
+    parallel_tools.parallel_client.extract = Mock(return_value=mock_result)
 
     # Execute test
     result = parallel_tools.parallel_extract(urls=["https://example.com"])
@@ -112,19 +127,19 @@ def test_parallel_extract_with_full_content(parallel_tools):
     mock_result = Mock()
     mock_result.model_dump = Mock(return_value={"extract_id": "test-id", "results": [], "errors": []})
 
-    parallel_tools.parallel_client.beta.extract = Mock(return_value=mock_result)
+    parallel_tools.parallel_client.extract = Mock(return_value=mock_result)
 
     parallel_tools.parallel_extract(urls=["https://example.com"], excerpts=False, full_content=True)
 
     # Verify parameters
-    call_args = parallel_tools.parallel_client.beta.extract.call_args
+    call_args = parallel_tools.parallel_client.extract.call_args
     assert call_args[1]["excerpts"] is False
     assert call_args[1]["full_content"] is True
 
 
 def test_parallel_extract_error(parallel_tools):
     """Test parallel_extract error handling."""
-    parallel_tools.parallel_client.beta.extract = Mock(side_effect=Exception("API Error"))
+    parallel_tools.parallel_client.extract = Mock(side_effect=Exception("API Error"))
 
     result = parallel_tools.parallel_extract(urls=["https://example.com"])
     result_dict = json.loads(result)

@@ -40,8 +40,7 @@ class ParallelTools(Toolkit):
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         max_results (int): Default maximum number of results for search operations. Default is 10.
         max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
-        beta_version (str): Beta API version header. Default is "search-extract-2025-10-10".
-        mode (Optional[str]): Default search mode. Options: "one-shot" or "agentic". Default is None.
+        mode (Optional[str]): Default search mode. Options: "turbo", "basic", or "advanced". Default is None (uses "advanced").
         include_domains (Optional[List[str]]): Default domains to restrict results to. Default is None.
         exclude_domains (Optional[List[str]]): Default domains to exclude from results. Default is None.
         max_age_seconds (Optional[int]): Default cache age threshold (minimum 600). Default is None.
@@ -63,7 +62,6 @@ class ParallelTools(Toolkit):
         all: bool = False,
         max_results: int = 10,
         max_chars_per_result: int = 10000,
-        beta_version: str = "search-extract-2025-10-10",
         mode: Optional[str] = None,
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
@@ -82,7 +80,6 @@ class ParallelTools(Toolkit):
 
         self.max_results = max_results
         self.max_chars_per_result = max_chars_per_result
-        self.beta_version = beta_version
         self.mode = mode
         self.include_domains = include_domains
         self.exclude_domains = exclude_domains
@@ -94,9 +91,7 @@ class ParallelTools(Toolkit):
         self.default_timeout = default_timeout
         self.default_output_schema = default_output_schema
 
-        self.parallel_client = ParallelClient(
-            api_key=self.api_key, default_headers={"parallel-beta": self.beta_version}
-        )
+        self.parallel_client = ParallelClient(api_key=self.api_key)
 
         tools: List[Any] = []
         if all or enable_search:
@@ -145,30 +140,28 @@ class ParallelTools(Toolkit):
             # Use instance defaults if not provided
             final_max_results = max_results if max_results is not None else self.max_results
 
-            search_params: Dict[str, Any] = {
-                "max_results": final_max_results,
-            }
+            search_params: Dict[str, Any] = {}
 
             # Add objective if provided
             if objective:
                 search_params["objective"] = objective
 
-            # Add search_queries if provided
+            # search_queries is required in GA API
             if search_queries:
                 search_params["search_queries"] = search_queries
+            elif objective:
+                search_params["search_queries"] = [objective]
 
-            # Add mode from constructor default
-            if self.mode:
-                search_params["mode"] = self.mode
+            # Add mode from constructor default (GA modes: turbo, basic, advanced)
+            search_params["mode"] = self.mode if self.mode else "advanced"
 
-            # Add excerpts configuration
-            excerpts_config: Dict[str, Any] = {}
+            # GA API: all config goes under advanced_settings
+            advanced_settings: Dict[str, Any] = {"max_results": final_max_results}
+
+            # Add excerpt_settings
             final_max_chars = max_chars_per_result if max_chars_per_result is not None else self.max_chars_per_result
             if final_max_chars is not None:
-                excerpts_config["max_chars_per_result"] = final_max_chars
-
-            if excerpts_config:
-                search_params["excerpts"] = excerpts_config
+                advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_max_chars}
 
             # Add source_policy from constructor defaults
             source_policy: Dict[str, Any] = {}
@@ -176,9 +169,8 @@ class ParallelTools(Toolkit):
                 source_policy["include_domains"] = self.include_domains
             if self.exclude_domains:
                 source_policy["exclude_domains"] = self.exclude_domains
-
             if source_policy:
-                search_params["source_policy"] = source_policy
+                advanced_settings["source_policy"] = source_policy
 
             # Add fetch_policy from constructor defaults
             fetch_policy: Dict[str, Any] = {}
@@ -186,11 +178,12 @@ class ParallelTools(Toolkit):
                 fetch_policy["max_age_seconds"] = self.max_age_seconds
             if self.disable_cache_fallback is not None:
                 fetch_policy["disable_cache_fallback"] = self.disable_cache_fallback
-
             if fetch_policy:
-                search_params["fetch_policy"] = fetch_policy
+                advanced_settings["fetch_policy"] = fetch_policy
 
-            search_result = self.parallel_client.beta.search(**search_params)
+            search_params["advanced_settings"] = advanced_settings
+
+            search_result = self.parallel_client.search(**search_params)
 
             # Use model_dump() if available, otherwise convert to dict
             try:
@@ -207,7 +200,8 @@ class ParallelTools(Toolkit):
 
             if hasattr(search_result, "results") and search_result.results:
                 results_list: List[Dict[str, Any]] = []
-                for result in search_result.results:
+                # GA API doesn't support max_results param, so slice client-side
+                for result in search_result.results[:final_max_results]:
                     formatted_result: Dict[str, Any] = {
                         "title": getattr(result, "title", ""),
                         "url": getattr(result, "url", ""),
@@ -291,7 +285,7 @@ class ParallelTools(Toolkit):
             if fetch_policy:
                 extract_params["fetch_policy"] = fetch_policy
 
-            extract_result = self.parallel_client.beta.extract(**extract_params)
+            extract_result = self.parallel_client.extract(**extract_params)
 
             # Use model_dump() if available, otherwise convert to dict
             try:
