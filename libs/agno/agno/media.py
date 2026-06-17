@@ -469,7 +469,7 @@ class File(BaseModel):
         import base64
 
         try:
-            content_bytes = base64.b64decode(base64_content)
+            content_bytes = base64.b64decode(base64_content, validate=True)
         except Exception:
             # If not valid base64, it might be plain text content (text/csv, text/plain, etc.)
             # which is stored as UTF-8 strings, not base64

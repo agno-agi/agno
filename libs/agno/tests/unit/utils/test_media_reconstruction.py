@@ -398,3 +398,26 @@ def test_session_persistence_simulation():
     # Both images should have valid content
     assert retrieved_input_1.images[0].content == original_content
     assert retrieved_input_2.images[0].content == second_content
+
+
+def test_reconstruct_file_from_plain_text():
+    """Test that plain text content (csv/txt/json) is preserved byte-for-byte.
+
+    Regression test for https://github.com/agno-agi/agno/issues/8451:
+    base64.b64decode without validate=True silently corrupts plain text
+    by discarding non-alphabet characters and decoding the remainder.
+    """
+    # CSV content — the exact case from the issue
+    csv_text = "col_a,col_b,col_c\n1,x,y\n2,x,y\n3,x,y\n4,x,y\n"
+    restored = File.from_base64(csv_text, mime_type="text/csv", filename="data.csv")
+    assert restored.content == csv_text.encode("utf-8")
+
+    # JSON content
+    json_text = '{"key": "value", "items": [1, 2, 3]}'
+    restored_json = File.from_base64(json_text, mime_type="application/json")
+    assert restored_json.content == json_text.encode("utf-8")
+
+    # Markdown with special characters
+    md_text = "# Title\n\nSome **bold** and *italic* text.\n- item 1\n- item 2\n"
+    restored_md = File.from_base64(md_text, mime_type="text/markdown")
+    assert restored_md.content == md_text.encode("utf-8")
