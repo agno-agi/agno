@@ -228,7 +228,6 @@ class ParallelTools(Toolkit):
         urls: List[str],
         objective: Optional[str] = None,
         search_queries: Optional[List[str]] = None,
-        excerpts: bool = True,
         max_chars_per_excerpt: Optional[int] = None,
         full_content: bool = False,
         max_chars_for_full_content: Optional[int] = None,
@@ -239,8 +238,7 @@ class ParallelTools(Toolkit):
             urls (List[str]): List of public URLs to extract content from.
             objective (Optional[str]): Search focus to guide content extraction.
             search_queries (Optional[List[str]]): Keywords for targeting relevant content.
-            excerpts (bool): Include relevant text snippets.
-            max_chars_per_excerpt (Optional[int]): Upper bound on total characters per url. Only used when excerpts is True.
+            max_chars_per_excerpt (Optional[int]): Upper bound on characters per URL for excerpts.
             full_content (bool): Include complete page text.
             max_chars_for_full_content (Optional[int]): Limit on characters per url. Only used when full_content is True.
 
@@ -262,14 +260,10 @@ class ParallelTools(Toolkit):
             # GA API: all config goes under advanced_settings
             advanced_settings: Dict[str, Any] = {}
 
-            # Add excerpt_settings (replaces top-level excerpts param)
-            if excerpts:
-                if max_chars_per_excerpt is not None:
-                    advanced_settings["excerpt_settings"] = {"max_chars_per_result": max_chars_per_excerpt}
-                else:
-                    final_max_chars = self.max_chars_per_result
-                    if final_max_chars is not None:
-                        advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_max_chars}
+            # Add excerpt_settings if size limit specified
+            final_excerpt_chars = max_chars_per_excerpt if max_chars_per_excerpt is not None else self.max_chars_per_result
+            if final_excerpt_chars is not None:
+                advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_excerpt_chars}
 
             # Add full_content (replaces top-level full_content param)
             if full_content:
@@ -315,7 +309,7 @@ class ParallelTools(Toolkit):
                         "publish_date": getattr(result, "publish_date", ""),
                     }
 
-                    if excerpts and hasattr(result, "excerpts"):
+                    if hasattr(result, "excerpts"):
                         formatted_result["excerpts"] = result.excerpts
 
                     if full_content and hasattr(result, "full_content"):
