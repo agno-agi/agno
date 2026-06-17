@@ -235,6 +235,33 @@ class TestTeamFork:
         # team's original metrics unchanged
         assert team.metrics.input_tokens == 500
 
+    def test_fork_resets_events_to_none(self):
+        """The forked team run should NOT inherit the parent's events
+        transcript — without this reset, the regenerated team run's
+        RunCompleted event would carry every event from the source."""
+        from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+
+        team = self._build_team_with_members()
+        team.events = [TeamRunCompletedEvent(run_id=team.run_id, session_id=team.session_id)]
+
+        forked = team_run._fork_team_run(team, message_index=5)
+
+        assert forked.events is None
+        # Parent untouched
+        assert team.events is not None and len(team.events) == 1
+
+    def test_fork_starts_metrics_timer(self):
+        """The fork's fresh metrics object must have its timer started so
+        ``stop_timer()`` at run end yields a non-None ``duration``.
+        Without this, the regenerated team run's RunCompleted event has
+        duration=None."""
+        team = self._build_team_with_members()
+        forked = team_run._fork_team_run(team, message_index=5)
+
+        forked.metrics.stop_timer()
+        assert forked.metrics.duration is not None
+        assert forked.metrics.duration >= 0
+
     def test_fork_does_not_clone_members_or_reparent(self):
         """Members are out of scope for team fork (parity with agent surface
         for fallback / parser / followups). The forked team's

@@ -1298,6 +1298,43 @@ class TestForkMetricsReset:
         assert forked.created_at > old_t, "Fork should have a fresh created_at"
         assert original.created_at == old_t, "Parent's created_at must not be touched"
 
+    def test_fork_resets_events_to_none(self):
+        """The forked run should NOT inherit the parent's events transcript.
+        Without this reset, the regenerated run's RunCompleted event would
+        carry every event from the source run."""
+        from agno.run.agent import RunCompletedEvent
+
+        original = RunOutput(
+            run_id="origin",
+            session_id="s",
+            messages=[Message(role="user", content="q")],
+            events=[RunCompletedEvent(run_id="origin", session_id="s")],
+        )
+
+        forked = _fork_run(original, message_index=1)
+
+        assert forked.events is None, "Fork must start with no events"
+        # Parent untouched
+        assert original.events is not None and len(original.events) == 1
+
+    def test_fork_starts_metrics_timer(self):
+        """The fresh metrics object on a fork must have its timer started so
+        that ``stop_timer()`` at run end produces a non-None ``duration``.
+        Without this, RunCompleted on regenerate has duration=None."""
+        original = RunOutput(
+            run_id="origin",
+            session_id="s",
+            messages=[Message(role="user", content="q")],
+        )
+
+        forked = _fork_run(original, message_index=1)
+
+        # Internal contract: stop_timer needs a start to compute duration.
+        # Simulate the terminal-cleanup path and assert duration is populated.
+        forked.metrics.stop_timer()
+        assert forked.metrics.duration is not None
+        assert forked.metrics.duration >= 0
+
 
 # ---------------------------------------------------------------------------
 # Bug-fix tests: regenerate sugar normalizes to canonical params

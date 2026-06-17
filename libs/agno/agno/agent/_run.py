@@ -3050,8 +3050,12 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     # Reset lineage-irrelevant accumulators so the fork reports its own work,
-    # not the parent's. Without this, token counts and durations double-count.
+    # not the parent's. Without this, token counts and durations double-count
+    # and the fork's RunCompleted event would carry the parent's transcript of
+    # events.
     forked.metrics = RunMetrics()
+    forked.metrics.start_timer()
+    forked.events = None
     forked.created_at = int(_time())
     _truncate_run_to_checkpoint(forked, message_index)
     return forked

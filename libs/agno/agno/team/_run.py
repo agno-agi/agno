@@ -6082,7 +6082,13 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     forked.run_id = str(uuid4())
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
+    # Reset lineage-irrelevant accumulators so the fork reports its own work,
+    # not the parent's. Without this, token counts and durations double-count
+    # and the fork's RunCompleted event would carry the parent's transcript of
+    # events.
     forked.metrics = RunMetrics()
+    forked.metrics.start_timer()
+    forked.events = None
     forked.created_at = int(_time())
 
     _truncate_team_run_to_checkpoint(forked, message_index)
