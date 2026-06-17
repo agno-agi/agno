@@ -19,51 +19,39 @@ from agno.models.utils import (
     get_model_from_dict,
 )
 
-# Providers whose model classes require an optional SDK at construction time. We cannot
-# instantiate them in the base test environment, so they are covered by the
-# resolution-only test below using their known serialized (provider, name) pairs.
-SDK_GATED_KEYS = {
-    "anthropic",  # anthropic SDK (not in the base .[dev] extras)
-    "aws-bedrock",
-    "aws-claude",
-    "azure-ai-foundry",
-    "azure-foundry-claude",  # anthropic SDK
-    "cerebras",
-    "cerebras-openai",
-    "cohere",
-    "groq",
-    "huggingface",
-    "ibm",
-    "litellm",
-    "litellm-openai",
-    "llama-openai",
-    "meta",
-    "mistral",
-    "ollama",
-    "ollama-responses",
-    "portkey",
-    "vertexai-claude",  # anthropic SDK
-}
-
-CONSTRUCTABLE_KEYS = [k for k in MODEL_PROVIDER_CLASSES if k not in SDK_GATED_KEYS]
+ALL_PROVIDER_KEYS = sorted(MODEL_PROVIDER_CLASSES)
 
 
-@pytest.mark.parametrize("key", CONSTRUCTABLE_KEYS)
+def _construct_or_skip(key):
+    """Construct a provider's model, or skip if its optional SDK is not installed.
+
+    The base test env (the ``dev`` extra) ships only the ``openai`` SDK, while the demo env ships
+    all of them. Skipping on ImportError keeps these tests correct in any environment instead of
+    hardcoding which providers are installable; resolution itself (no construction) is covered for
+    every provider by the parametrized resolution tests below.
+    """
+    try:
+        return _get_model_class("test-id", key)
+    except ImportError as e:
+        pytest.skip(f"optional SDK for '{key}' not installed: {e}")
+
+
+@pytest.mark.parametrize("key", ALL_PROVIDER_KEYS)
 def test_to_dict_round_trip_preserves_class(key):
-    """Every constructable provider rebuilds as the same class through to_dict/from_dict."""
-    model = _get_model_class("test-id", key)
+    """Every installable provider rebuilds as the same class through to_dict/from_dict."""
+    model = _construct_or_skip(key)
     rebuilt = get_model_from_dict(model.to_dict())
     assert type(rebuilt) is type(model)
     assert rebuilt.id == "test-id"
 
 
-@pytest.mark.parametrize("key", CONSTRUCTABLE_KEYS)
+@pytest.mark.parametrize("key", ALL_PROVIDER_KEYS)
 def test_canonical_provider_display_matches_class(key):
     """Drift guard: the provider-display override table matches what each class actually reports.
 
     Keeps name-vs-provider disambiguation correct if a provider's display string ever changes.
     """
-    model = _get_model_class("test-id", key)
+    model = _construct_or_skip(key)
     assert _canonical_provider_display(key) == (model.provider or "").strip().lower()
 
 
