@@ -181,32 +181,6 @@ class RedisDB(VectorDb):
                     break
         return names
 
-    def _migrate_index_if_needed(self) -> None:
-        """Recreate the index definition in place if it predates user_id.
-
-        overwrite=True, drop=False re-applies the schema and re-indexes existing
-        keys without deleting data; legacy chunks surface via ismissing(@user_id).
-        """
-        try:
-            existing = self._indexed_field_names(self.index.info())
-            if self.USER_ID_FIELD not in existing:
-                log_debug(f"Migrating Redis index '{self.index_name}' to add '{self.USER_ID_FIELD}' field")
-                self.index.create(overwrite=True, drop=False)
-        except Exception as e:
-            log_error(f"Error migrating Redis index: {str(e)}")
-            raise
-
-    async def _async_migrate_index_if_needed(self, async_index: "AsyncSearchIndex") -> None:
-        """Async version of _migrate_index_if_needed method."""
-        try:
-            existing = self._indexed_field_names(await async_index.info())
-            if self.USER_ID_FIELD not in existing:
-                log_debug(f"Migrating Redis index '{self.index_name}' to add '{self.USER_ID_FIELD}' field")
-                await async_index.create(overwrite=True, drop=False)
-        except Exception as e:
-            log_error(f"Error migrating Redis index: {str(e)}")
-            raise
-
     def _get_schema(self):
         """Get default redis schema"""
         distance_mapping = {
@@ -272,8 +246,6 @@ class RedisDB(VectorDb):
                 self.index.create()
                 log_debug(f"Created Redis index: {self.index_name}")
             else:
-                # Index predating isolation lacks the user_id field; add it in place.
-                self._migrate_index_if_needed()
                 log_debug(f"Redis index already exists: {self.index_name}")
         except Exception as e:
             log_error(f"Error creating Redis index: {str(e)}")
@@ -284,8 +256,6 @@ class RedisDB(VectorDb):
         try:
             async_index = await self._get_async_index()
             if await async_index.exists():
-                # Index predating isolation lacks the user_id field; add it in place.
-                await self._async_migrate_index_if_needed(async_index)
                 log_debug(f"Redis index already exists: {self.index_name}")
             else:
                 await async_index.create(overwrite=False, drop=False)

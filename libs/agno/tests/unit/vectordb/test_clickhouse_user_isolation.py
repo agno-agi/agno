@@ -131,9 +131,6 @@ class TestSchema:
     def test_shared_owner_sentinel_is_empty_string(self):
         assert SHARED_OWNER == ""
 
-    def test_user_id_column_created(self, ch_db):
-        assert ch_db._user_id_column_exists() is True
-
     def test_explicit_user_id_persisted_in_column(self, ch_db):
         ch_db.insert(content_hash="h1", documents=[_doc("alice", "alice content")], user_id="alice")
         assert _owners_final(ch_db) == ["alice"]
@@ -147,59 +144,6 @@ class TestSchema:
         shared sentinel — opting out of isolation."""
         ch_db.insert(content_hash="h1", documents=[_doc("shared", "shared content")])
         assert _owners_final(ch_db) == [SHARED_OWNER]
-
-
-class TestMigration:
-    """A table created before per-user isolation lacks ``user_id``. ``create()``
-    must add it in place so old deployments keep working instead of hard-failing
-    on insert or silently returning ``[]`` on scoped search."""
-
-    @pytest.fixture
-    def legacy_db(self):
-        """A table built WITHOUT the user_id column — the pre-isolation schema."""
-        table = f"legacy_{uuid.uuid4().hex[:12]}"
-        db = Clickhouse(
-            table_name=table,
-            host=CLICKHOUSE_HOST,
-            port=CLICKHOUSE_PORT,
-            username=CLICKHOUSE_USERNAME,
-            password=CLICKHOUSE_PASSWORD,
-            database_name=TEST_DB,
-            embedder=_DeterministicEmbedder(),
-        )
-        db.client.command("SET allow_experimental_vector_similarity_index = 1")
-        db.client.command("SET enable_json_type = 1")
-        db.client.command(
-            f"""CREATE TABLE {TEST_DB}.{table} (
-                id String, name String, meta_data JSON DEFAULT '{{}}', filters JSON DEFAULT '{{}}',
-                content String, content_id String, embedding Array(Float32), usage JSON,
-                created_at DateTime('UTC') DEFAULT now(), content_hash String,
-                INDEX embedding_index embedding TYPE vector_similarity('hnsw','L2Distance',8,'bf16',64,512)
-            ) ENGINE = ReplacingMergeTree ORDER BY id"""
-        )
-        yield db
-        try:
-            db.drop()
-        except Exception:
-            pass
-
-    def test_legacy_table_missing_user_id(self, legacy_db):
-        assert legacy_db._user_id_column_exists() is False
-
-    def test_create_migrates_in_place(self, legacy_db):
-        legacy_db.create()
-        assert legacy_db._user_id_column_exists() is True
-
-    def test_migration_is_idempotent(self, legacy_db):
-        legacy_db.create()
-        legacy_db.create()  # must not raise
-        assert legacy_db._user_id_column_exists() is True
-
-    def test_scoped_search_works_after_migration(self, legacy_db):
-        legacy_db.create()
-        legacy_db.insert(content_hash="h", documents=[_doc("alice", "alice content")], user_id="alice")
-        results = legacy_db.search("alice content", limit=5, user_id="alice")
-        assert "alice" in _names(results)
 
 
 # ---------------------------------------------------------------------------

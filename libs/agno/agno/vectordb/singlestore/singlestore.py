@@ -119,8 +119,6 @@ class SingleStore(VectorDb):
                 )
             # Call optimize to create indexes
             self.optimize()
-        else:
-            self._migrate_user_id_column()
 
     def table_exists(self) -> bool:
         """
@@ -135,30 +133,6 @@ class SingleStore(VectorDb):
         except Exception as e:
             log_error(f"Unexpected error: {str(e)}")
             return False
-
-    def _user_id_column_exists(self) -> bool:
-        """Check whether the existing table already has the user_id column."""
-        try:
-            columns = inspect(self.db_engine).get_columns(self.table.name, schema=self.schema)
-            return any(col["name"] == "user_id" for col in columns)
-        except Exception as e:
-            log_error(f"Error inspecting columns for table '{self.table.name}': {str(e)}")
-            return False
-
-    def _migrate_user_id_column(self) -> None:
-        """Add the user_id column if the table doesn't already have it (SingleStore
-        has no ADD COLUMN IF NOT EXISTS, hence the existence check).
-        """
-        if self._user_id_column_exists():
-            return
-        try:
-            with self.db_engine.connect() as connection:
-                log_info(f"Migrating table '{self.collection}': adding 'user_id' column.")
-                connection.execute(text(f"ALTER TABLE {self.schema}.{self.collection} ADD COLUMN user_id VARCHAR(255)"))
-                connection.commit()
-        except Exception as e:
-            log_error(f"Error migrating 'user_id' column on table '{self.collection}': {str(e)}")
-            raise
 
     def _record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
         """Deterministic primary key. Folds in user_id so two users' copies

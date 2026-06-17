@@ -240,9 +240,7 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
-
-        # Ensure the tenant index exists, also for collections predating isolation.
-        self._ensure_user_id_payload_index_sync()
+            self._ensure_user_id_payload_index_sync()
 
     def _ensure_user_id_payload_index_sync(self) -> None:
         """Create the tenant-style (is_tenant=True) payload index on user_id."""
@@ -288,9 +286,7 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
-
-        # Ensure the tenant index exists, also for collections predating isolation.
-        await self._ensure_user_id_payload_index_async()
+            await self._ensure_user_id_payload_index_async()
 
     async def _ensure_user_id_payload_index_async(self) -> None:
         """Async counterpart to _ensure_user_id_payload_index_sync."""

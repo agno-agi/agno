@@ -114,7 +114,6 @@ class LanceDb(VectorDb):
                 self.table_name = self.table.name
                 self._vector_col = self.table.schema.names[0]
                 self._id = self.table.schema.names[1]  # type: ignore
-                self._ensure_user_id_column()
             except ValueError as e:
                 # Table might have been dropped by async operations but sync connection hasn't updated
                 if "was not found" in str(e):
@@ -129,7 +128,6 @@ class LanceDb(VectorDb):
                 self.table_name = self.table.name
                 self._vector_col = self.table.schema.names[0]
                 self._id = self.table.schema.names[1]  # type: ignore
-                self._ensure_user_id_column()
             except ValueError as e:
                 if "was not found" in str(e) or "not found" in str(e).lower():
                     log_debug(f"Table {table_name} not found on cloud, will create")
@@ -150,7 +148,6 @@ class LanceDb(VectorDb):
                 self.table_name = self.table.name
                 self._vector_col = self.table.schema.names[0]
                 self._id = self.table.schema.names[1]  # type: ignore
-                self._ensure_user_id_column()
             else:
                 if not table_name:
                     raise ValueError("Either table or table_name should be provided.")
@@ -298,23 +295,6 @@ class LanceDb(VectorDb):
         else:
             tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
-
-    def _ensure_user_id_column(self) -> None:
-        """Add the user_id column to tables created before isolation; existing rows
-        become NULL (shared). Does nothing if already present."""
-        if self.table is None:
-            return
-        if self.USER_ID_COL in self.table.schema.names:
-            return
-
-        try:
-            self.table.add_columns(pa.field(self.USER_ID_COL, pa.string(), nullable=True))
-            # Re-open so the live handle reflects the new schema.
-            self.table = self.connection.open_table(name=self.table_name)
-            log_info(f"Migrated table '{self.table_name}': added '{self.USER_ID_COL}' column for per-user isolation.")
-        except Exception:
-            logger.exception(f"Failed to add '{self.USER_ID_COL}' column to table '{self.table_name}'")
-            raise
 
     def insert(
         self,

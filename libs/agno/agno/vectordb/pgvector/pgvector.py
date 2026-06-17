@@ -231,7 +231,12 @@ class PgVector(VectorDb):
         """
         Create the table if it does not exist.
 
-        Existing tables that predate the ``user_id`` column are migrated in place.
+        Schema upgrades for existing tables (e.g. the ``user_id`` column added
+        with per-user isolation) are NOT applied here — ``create()`` only
+        provisions the table for new deployments. Existing deployments must
+        amend the schema explicitly (a one-line ``ALTER TABLE ... ADD COLUMN
+        IF NOT EXISTS user_id VARCHAR`` plus a matching index) so we don't
+        silently mutate a production schema on app startup.
         """
         if not self.table_exists():
             with self.Session() as sess, sess.begin():
@@ -245,39 +250,10 @@ class PgVector(VectorDb):
                         log_warning(f"Could not create schema {self.schema}: {str(e)}")
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
-        else:
-            self._migrate_user_id_column()
 
     async def async_create(self) -> None:
         """Create the table asynchronously by running in a thread."""
         await asyncio.to_thread(self.create)
-
-    def _user_id_column_exists(self) -> bool:
-        """Check whether the existing table already has the ``user_id`` column."""
-        try:
-            columns = inspect(self.db_engine).get_columns(self.table_name, schema=self.schema)
-            return any(col["name"] == "user_id" for col in columns)
-        except Exception as e:
-            log_error(f"Error inspecting columns for table '{self.table.fullname}': {str(e)}")
-            return False
-
-    def _migrate_user_id_column(self) -> None:
-        """Add the ``user_id`` column and its index if the table doesn't already have them."""
-        if self._user_id_column_exists():
-            return
-        try:
-            with self.Session() as sess, sess.begin():
-                log_info(f"Migrating table '{self.table.fullname}': adding 'user_id' column.")
-                sess.execute(text(f"ALTER TABLE {self.table.fullname} ADD COLUMN IF NOT EXISTS user_id VARCHAR;"))
-                sess.execute(
-                    text(
-                        f'CREATE INDEX IF NOT EXISTS "idx_{self.table_name}_user_id" '
-                        f"ON {self.table.fullname} (user_id);"
-                    )
-                )
-        except Exception as e:
-            log_error(f"Error migrating 'user_id' column on table '{self.table.fullname}': {str(e)}")
-            raise
 
     def _record_exists(self, column, value) -> bool:
         """

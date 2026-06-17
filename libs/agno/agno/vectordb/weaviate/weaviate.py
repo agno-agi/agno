@@ -179,16 +179,11 @@ class Weaviate(VectorDb):
                 inverted_index_config=Configure.inverted_index(index_null_state=True),
             )
             log_debug(f"Collection '{self.collection}' created in Weaviate.")
-        else:
-            # Migrate a collection that predates per-user isolation
-            self._ensure_user_id_property_sync()
 
     async def async_create(self) -> None:
         client = await self.get_async_client()
         try:
             if await client.collections.exists(self.collection):
-                # Migrate a pre-existing collection that lacks user_id.
-                await self._ensure_user_id_property_async(client)
                 return
             await client.collections.create(
                 name=self.collection,
@@ -201,37 +196,6 @@ class Weaviate(VectorDb):
             log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
         finally:
             await client.close()
-
-    def _ensure_user_id_property_sync(self) -> None:
-        """Add the user_id property to an existing collection if missing.
-
-        Pre-isolation rows keep a NULL user_id and land in the shared bucket.
-        """
-        try:
-            collection = self.get_client().collections.get(self.collection)
-            config = collection.config.get()
-            if any(prop.name == self.USER_ID_KEY for prop in config.properties):
-                return
-            log_debug(f"Adding '{self.USER_ID_KEY}' property to existing collection '{self.collection}'.")
-            collection.config.add_property(
-                Property(name=self.USER_ID_KEY, data_type=DataType.TEXT, tokenization=Tokenization.FIELD)
-            )
-        except Exception as e:
-            log_debug(f"Skipping user_id property migration: {e}")
-
-    async def _ensure_user_id_property_async(self, client) -> None:
-        """Async counterpart to _ensure_user_id_property_sync."""
-        try:
-            collection = client.collections.get(self.collection)
-            config = await collection.config.get()
-            if any(prop.name == self.USER_ID_KEY for prop in config.properties):
-                return
-            log_debug(f"Adding '{self.USER_ID_KEY}' property to existing collection '{self.collection}'.")
-            await collection.config.add_property(
-                Property(name=self.USER_ID_KEY, data_type=DataType.TEXT, tokenization=Tokenization.FIELD)
-            )
-        except Exception as e:
-            log_debug(f"Skipping async user_id property migration: {e}")
 
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document with the given content hash exists in the collection.

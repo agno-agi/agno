@@ -39,14 +39,6 @@ class SurrealDb(VectorDb):
         DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
     """
 
-    # Migration for tables created before per-user isolation: the SCHEMAFUL
-    # table drops writes to undefined fields, so define the owner field in
-    # place. IF NOT EXISTS keeps this idempotent.
-    ADD_USER_ID_FIELD_QUERY: Final[str] = """
-        DEFINE FIELD IF NOT EXISTS content_id ON {collection} TYPE option<string>;
-        DEFINE FIELD IF NOT EXISTS user_id ON {collection} TYPE option<string>;
-    """
-
     NAME_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
         WHERE meta_data.name = $name
@@ -277,9 +269,6 @@ class SurrealDb(VectorDb):
                 m=self.m,
             )
             self.client.query(query)
-        else:
-            # Migrate a collection created before per-user isolation.
-            self.client.query(self.ADD_USER_ID_FIELD_QUERY.format(collection=self.collection))
 
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by its name.
@@ -665,8 +654,6 @@ class SurrealDb(VectorDb):
                 m=self.m,
             ),
         )
-        # Migrate the owner field for tables created before per-user isolation.
-        await self.async_client.query(self.ADD_USER_ID_FIELD_QUERY.format(collection=self.collection))
 
     async def async_content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document exists by its content hash asynchronously.

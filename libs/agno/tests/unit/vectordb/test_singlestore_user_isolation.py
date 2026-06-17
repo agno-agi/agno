@@ -396,35 +396,6 @@ class TestLiveDeleteScoping:
 
 
 @_live
-class TestLiveSchemaMigration:
-    """A table created before this feature lacks ``user_id``. ``create()`` on a
-    pre-existing legacy table must add the column in place (idempotently)."""
-
-    def test_create_adds_user_id_to_legacy_table(self, live_db):
-        # Drop and recreate a legacy-shaped table (no user_id column).
-        live_db.drop()
-        eng = sqlalchemy.create_engine(live_db.db_url)
-        with eng.connect() as conn:
-            conn.execute(
-                sqlalchemy.text(
-                    f"CREATE TABLE {LIVE_DB}.{TEST_COLLECTION} "
-                    "(id TEXT, name TEXT, meta_data TEXT, content TEXT, "
-                    f"embedding VECTOR({live_db.dimensions}) NOT NULL, `usage` TEXT, "
-                    "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, content_hash TEXT, content_id TEXT)"
-                )
-            )
-            conn.commit()
-        assert live_db._user_id_column_exists() is False
-
-        live_db.create()  # should migrate
-        assert live_db._user_id_column_exists() is True
-
-        # Idempotent: a second create() changes nothing, not an error.
-        live_db.create()
-        assert live_db._user_id_column_exists() is True
-
-
-@_live
 class TestLiveAsyncIsolation:
     async def test_async_insert_and_search_isolated(self, live_db):
         await live_db.async_insert(

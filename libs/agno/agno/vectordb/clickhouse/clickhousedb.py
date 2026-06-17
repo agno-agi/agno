@@ -179,39 +179,6 @@ class Clickhouse(VectorDb):
                 ) ENGINE = ReplacingMergeTree ORDER BY id""",
                 parameters=parameters,
             )
-        else:
-            self._migrate_user_id_column()
-
-    def _user_id_column_exists(self) -> bool:
-        """Check whether the existing table already has the user_id column."""
-        try:
-            parameters = self._get_base_parameters()
-            parameters["column_name"] = "user_id"
-            result = self.client.query(
-                "SELECT name FROM system.columns WHERE database = {database_name:String} "
-                "AND table = {table_name:String} AND name = {column_name:String}",
-                parameters=parameters,
-            )
-            return len(result.result_rows) > 0 if result.result_rows else False
-        except Exception as e:
-            log_error(f"Error inspecting columns for table '{self.table_name}': {str(e)}")
-            return False
-
-    def _migrate_user_id_column(self) -> None:
-        """Add the user_id column if the table doesn't already have it."""
-        if self._user_id_column_exists():
-            return
-        try:
-            log_info(f"Migrating table '{self.table_name}': adding 'user_id' column.")
-            parameters = self._get_base_parameters()
-            self.client.command(
-                "ALTER TABLE {database_name:Identifier}.{table_name:Identifier} "
-                "ADD COLUMN IF NOT EXISTS user_id String DEFAULT ''",
-                parameters=parameters,
-            )
-        except Exception as e:
-            log_error(f"Error migrating 'user_id' column on table '{self.table_name}': {str(e)}")
-            raise
 
     def _record_id(self, base_content: str, user_id: Optional[str]) -> str:
         """Deterministic primary key. Folds in user_id so two users' copies
@@ -267,41 +234,6 @@ class Clickhouse(VectorDb):
                 ) ENGINE = ReplacingMergeTree ORDER BY id""",
                 parameters=parameters,
             )
-        else:
-            await self._async_migrate_user_id_column()
-
-    async def _async_user_id_column_exists(self) -> bool:
-        """Async variant of _user_id_column_exists."""
-        try:
-            async_client = await self._ensure_async_client()
-            parameters = self._get_base_parameters()
-            parameters["column_name"] = "user_id"
-            result = await async_client.query(
-                "SELECT name FROM system.columns WHERE database = {database_name:String} "
-                "AND table = {table_name:String} AND name = {column_name:String}",
-                parameters=parameters,
-            )
-            return len(result.result_rows) > 0 if result.result_rows else False
-        except Exception as e:
-            log_error(f"Error inspecting columns for table '{self.table_name}': {str(e)}")
-            return False
-
-    async def _async_migrate_user_id_column(self) -> None:
-        """Async variant of _migrate_user_id_column."""
-        if await self._async_user_id_column_exists():
-            return
-        try:
-            log_info(f"Migrating table '{self.table_name}': adding 'user_id' column.")
-            async_client = await self._ensure_async_client()
-            parameters = self._get_base_parameters()
-            await async_client.command(
-                "ALTER TABLE {database_name:Identifier}.{table_name:Identifier} "
-                "ADD COLUMN IF NOT EXISTS user_id String DEFAULT ''",
-                parameters=parameters,
-            )
-        except Exception as e:
-            log_error(f"Error migrating 'user_id' column on table '{self.table_name}': {str(e)}")
-            raise
 
     def name_exists(self, name: str) -> bool:
         """

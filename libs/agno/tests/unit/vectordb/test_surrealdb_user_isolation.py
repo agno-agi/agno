@@ -380,34 +380,6 @@ class TestUpdateMetadataOwnershipGuard:
         assert "metadata content" in alice
         assert "metadata content" not in bob
 
-
-# ---------------------------------------------------------------------------
-# Schema migration for tables created before per-user isolation
-# ---------------------------------------------------------------------------
-class TestSchemaMigration:
-    def test_legacy_table_migrated_and_rows_shared(self, surreal_db):
-        """A table created without the owner field is migrated in place by
-        ``create()``; pre-existing rows read as NONE and stay searchable as the
-        shared bucket so old deployments keep working."""
-        coll = surreal_db.collection
-        # Simulate a legacy table: drop the owner fields, write a legacy row.
-        surreal_db.client.query(f"REMOVE FIELD user_id ON {coll}; REMOVE FIELD content_id ON {coll};")
-        surreal_db.client.query(
-            f"CREATE {coll} SET content = $c, embedding = $e, meta_data = $m;",
-            {
-                "c": "legacy shared doc",
-                "e": _DeterministicEmbedder().get_embedding("legacy shared doc"),
-                "m": {"content_hash": "old"},
-            },
-        )
-        # Re-open and create() -> idempotent migration of the owner field.
-        surreal_db.create()
-        surreal_db.insert(content_hash="ha", documents=[_doc("Alice new doc")], user_id="alice")
-        contents = {d.content for d in surreal_db.search("doc", limit=10, user_id="alice")}
-        assert "Alice new doc" in contents
-        assert "legacy shared doc" in contents
-
-
 # ---------------------------------------------------------------------------
 # Async parity — the isolation must hold identically on the async surface
 # ---------------------------------------------------------------------------
