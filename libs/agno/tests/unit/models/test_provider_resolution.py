@@ -125,7 +125,9 @@ def test_resolve_provider_aliases(provider, name, expected_key):
         ("Anthropic", "OpenAIChat", "anthropic"),
         # Within-family disambiguation still works (these share a display provider string).
         ("OpenAI", "OpenAIChat", "openai-chat"),
-        ("OpenAI", "OpenAIResponses", "openai-responses"),
+        # "OpenAIResponses" is the default name for both the "openai" and "openai-responses" keys
+        # (same class), so it resolves to the canonical "openai" key -- still the OpenAIResponses class.
+        ("OpenAI", "OpenAIResponses", "openai"),
         ("Azure", "AzureAIFoundry", "azure-ai-foundry"),
     ],
 )

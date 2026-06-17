@@ -1,186 +1,111 @@
 import importlib
+from collections import Counter
 from typing import Any, Dict, Optional, Tuple, Union
 
 from agno.models.base import Model
 
-# Single source of truth mapping a stable provider key to the (module, class name) that
-# implements it. `_get_model_class` constructs from this and the round-trip resolver below
-# maps a serialized model back to the correct key. Add new providers here only.
-MODEL_PROVIDER_CLASSES: Dict[str, Tuple[str, str]] = {
-    "aimlapi": ("agno.models.aimlapi", "AIMLAPI"),
-    "anthropic": ("agno.models.anthropic", "Claude"),
-    "aws-bedrock": ("agno.models.aws", "AwsBedrock"),
-    "aws-claude": ("agno.models.aws", "Claude"),
-    "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry"),
-    "azure-foundry-claude": ("agno.models.azure", "AzureFoundryClaude"),
-    "azure-openai": ("agno.models.azure", "AzureOpenAI"),
-    "cerebras": ("agno.models.cerebras", "Cerebras"),
-    "cerebras-openai": ("agno.models.cerebras", "CerebrasOpenAI"),
-    "cohere": ("agno.models.cohere", "Cohere"),
-    "cometapi": ("agno.models.cometapi", "CometAPI"),
-    "cloudflare": ("agno.models.cloudflare", "Cloudflare"),
-    "dashscope": ("agno.models.dashscope", "DashScope"),
-    "deepinfra": ("agno.models.deepinfra", "DeepInfra"),
-    "deepseek": ("agno.models.deepseek", "DeepSeek"),
-    "fireworks": ("agno.models.fireworks", "Fireworks"),
-    "google": ("agno.models.google", "Gemini"),
-    "google-interactions": ("agno.models.google", "GeminiInteractions"),
-    "groq": ("agno.models.groq", "Groq"),
-    "huggingface": ("agno.models.huggingface", "HuggingFace"),
-    "ibm": ("agno.models.ibm", "WatsonX"),
-    "inception": ("agno.models.inception", "Inception"),
-    "internlm": ("agno.models.internlm", "InternLM"),
-    "langdb": ("agno.models.langdb", "LangDB"),
-    "litellm": ("agno.models.litellm", "LiteLLM"),
-    "litellm-openai": ("agno.models.litellm", "LiteLLMOpenAI"),
-    "llama-cpp": ("agno.models.llama_cpp", "LlamaCpp"),
-    "llama-openai": ("agno.models.meta", "LlamaOpenAI"),
-    "lmstudio": ("agno.models.lmstudio", "LMStudio"),
-    "meta": ("agno.models.meta", "Llama"),
-    "minimax": ("agno.models.minimax", "MiniMax"),
-    "mistral": ("agno.models.mistral", "MistralChat"),
-    "moonshot": ("agno.models.moonshot", "MoonShot"),
-    "n1n": ("agno.models.n1n", "N1N"),
-    "nebius": ("agno.models.nebius", "Nebius"),
-    "neosantara": ("agno.models.neosantara", "Neosantara"),
-    "nexus": ("agno.models.nexus", "Nexus"),
-    "nvidia": ("agno.models.nvidia", "Nvidia"),
-    "ollama": ("agno.models.ollama", "Ollama"),
-    "ollama-responses": ("agno.models.ollama", "OllamaResponses"),
-    "openai": ("agno.models.openai", "OpenAIResponses"),
-    "openai-chat": ("agno.models.openai", "OpenAIChat"),
-    "openai-responses": ("agno.models.openai", "OpenAIResponses"),
-    "open-responses": ("agno.models.openai", "OpenResponses"),
-    "openrouter": ("agno.models.openrouter", "OpenRouter"),
-    "openrouter-responses": ("agno.models.openrouter", "OpenRouterResponses"),
-    "perplexity": ("agno.models.perplexity", "Perplexity"),
-    "portkey": ("agno.models.portkey", "Portkey"),
-    "requesty": ("agno.models.requesty", "Requesty"),
-    "sambanova": ("agno.models.sambanova", "Sambanova"),
-    "siliconflow": ("agno.models.siliconflow", "Siliconflow"),
-    "together": ("agno.models.together", "Together"),
-    "tuning-engines": ("agno.models.tuning_engines", "TuningEngines"),
-    "vercel": ("agno.models.vercel", "V0"),
-    "vertexai-claude": ("agno.models.vertexai.claude", "Claude"),
-    "vllm": ("agno.models.vllm", "VLLM"),
-    "xai": ("agno.models.xai", "xAI"),
-    "xiaomi": ("agno.models.xiaomi", "MiMo"),
+# Single source of truth for every supported model provider. One row per stable provider key:
+#   key -> (module, class_name, default_name, default_provider_display)
+# `default_name` and `default_provider_display` are the class's default `name` and (lowercased)
+# `provider` attributes. The construction registry and the (provider, name) resolution indices
+# below are all derived from this table, so adding a provider means adding exactly one row here.
+_PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
+    "aimlapi": ("agno.models.aimlapi", "AIMLAPI", "AIMLAPI", "aimlapi"),
+    "anthropic": ("agno.models.anthropic", "Claude", "Claude", "anthropic"),
+    "aws-bedrock": ("agno.models.aws", "AwsBedrock", "AwsBedrock", "awsbedrock"),
+    "aws-claude": ("agno.models.aws", "Claude", "AwsBedrockAnthropicClaude", "awsbedrock"),
+    "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry", "AzureAIFoundry", "azure"),
+    "azure-foundry-claude": ("agno.models.azure", "AzureFoundryClaude", "AzureFoundryClaude", "azurefoundry"),
+    "azure-openai": ("agno.models.azure", "AzureOpenAI", "AzureOpenAI", "azure"),
+    "cerebras": ("agno.models.cerebras", "Cerebras", "Cerebras", "cerebras"),
+    "cerebras-openai": ("agno.models.cerebras", "CerebrasOpenAI", "CerebrasOpenAI", "cerebrasopenai"),
+    "cohere": ("agno.models.cohere", "Cohere", "cohere", "cohere"),
+    "cometapi": ("agno.models.cometapi", "CometAPI", "CometAPI", "openai"),
+    "cloudflare": ("agno.models.cloudflare", "Cloudflare", "Cloudflare", "cloudflare"),
+    "dashscope": ("agno.models.dashscope", "DashScope", "Qwen", "dashscope"),
+    "deepinfra": ("agno.models.deepinfra", "DeepInfra", "DeepInfra", "deepinfra"),
+    "deepseek": ("agno.models.deepseek", "DeepSeek", "DeepSeek", "deepseek"),
+    "fireworks": ("agno.models.fireworks", "Fireworks", "Fireworks", "fireworks"),
+    "google": ("agno.models.google", "Gemini", "Gemini", "google"),
+    "google-interactions": ("agno.models.google", "GeminiInteractions", "GeminiInteractions", "google"),
+    "groq": ("agno.models.groq", "Groq", "Groq", "groq"),
+    "huggingface": ("agno.models.huggingface", "HuggingFace", "HuggingFace", "huggingface"),
+    "ibm": ("agno.models.ibm", "WatsonX", "WatsonX", "ibm"),
+    "inception": ("agno.models.inception", "Inception", "Inception", "inceptionlabs"),
+    "internlm": ("agno.models.internlm", "InternLM", "InternLM", "internlm"),
+    "langdb": ("agno.models.langdb", "LangDB", "LangDB", "langdb"),
+    "litellm": ("agno.models.litellm", "LiteLLM", "LiteLLM", "litellm"),
+    "litellm-openai": ("agno.models.litellm", "LiteLLMOpenAI", "LiteLLMOpenAI", "litellm"),
+    "llama-cpp": ("agno.models.llama_cpp", "LlamaCpp", "LlamaCpp", "llamacpp"),
+    "llama-openai": ("agno.models.meta", "LlamaOpenAI", "LlamaOpenAI", "llamaopenai"),
+    "lmstudio": ("agno.models.lmstudio", "LMStudio", "LMStudio", "lmstudio"),
+    "meta": ("agno.models.meta", "Llama", "Llama", "llama"),
+    "minimax": ("agno.models.minimax", "MiniMax", "MiniMax", "minimax"),
+    "mistral": ("agno.models.mistral", "MistralChat", "MistralChat", "mistral"),
+    "moonshot": ("agno.models.moonshot", "MoonShot", "Moonshot", "moonshot"),
+    "n1n": ("agno.models.n1n", "N1N", "N1N", "n1n"),
+    "nebius": ("agno.models.nebius", "Nebius", "Nebius", "nebius"),
+    "neosantara": ("agno.models.neosantara", "Neosantara", "Neosantara", "neosantara"),
+    "nexus": ("agno.models.nexus", "Nexus", "Nexus", "nexus"),
+    "nvidia": ("agno.models.nvidia", "Nvidia", "Nvidia", "nvidia"),
+    "ollama": ("agno.models.ollama", "Ollama", "Ollama", "ollama"),
+    "ollama-responses": ("agno.models.ollama", "OllamaResponses", "OllamaResponses", "ollama"),
+    "openai": ("agno.models.openai", "OpenAIResponses", "OpenAIResponses", "openai"),
+    "openai-chat": ("agno.models.openai", "OpenAIChat", "OpenAIChat", "openai"),
+    "openai-responses": ("agno.models.openai", "OpenAIResponses", "OpenAIResponses", "openai"),
+    "open-responses": ("agno.models.openai", "OpenResponses", "OpenResponses", "openresponses"),
+    "openrouter": ("agno.models.openrouter", "OpenRouter", "OpenRouter", "openrouter"),
+    "openrouter-responses": ("agno.models.openrouter", "OpenRouterResponses", "OpenRouterResponses", "openrouter"),
+    "perplexity": ("agno.models.perplexity", "Perplexity", "Perplexity", "perplexity"),
+    "portkey": ("agno.models.portkey", "Portkey", "Portkey", "portkey"),
+    "requesty": ("agno.models.requesty", "Requesty", "Requesty", "requesty"),
+    "sambanova": ("agno.models.sambanova", "Sambanova", "Sambanova", "sambanova"),
+    "siliconflow": ("agno.models.siliconflow", "Siliconflow", "Siliconflow", "siliconflow"),
+    "together": ("agno.models.together", "Together", "Together", "together"),
+    "tuning-engines": ("agno.models.tuning_engines", "TuningEngines", "Tuning Engines", "tuning engines"),
+    "vercel": ("agno.models.vercel", "V0", "v0", "vercel"),
+    "vertexai-claude": ("agno.models.vertexai.claude", "Claude", "Claude", "vertexai"),
+    "vllm": ("agno.models.vllm", "VLLM", "VLLM", "vllm"),
+    "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
+    "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
 }
 
-# Maps a serialized model `name` (the per-class default name attribute) to its provider key.
-# `name` is the most specific discriminator and is needed when two providers share the same
-# display `provider` string (e.g. all Azure models report provider "Azure"). Names that are
-# shared across classes (e.g. "Claude", "LiteLLM") are intentionally omitted here and fall back
-# to provider-based resolution.
+# key -> (module, class_name): the construction registry consumed by `_get_model_class`, the
+# CONTRIBUTING guide, and the registry-drift test.
+MODEL_PROVIDER_CLASSES: Dict[str, Tuple[str, str]] = {key: (mod, cls) for key, (mod, cls, _n, _p) in _PROVIDERS.items()}
+
+# key -> lowercased display `provider` string the class reports.
+_KEY_TO_PROVIDER: Dict[str, str] = {key: prov for key, (_m, _c, _n, prov) in _PROVIDERS.items()}
+
+# Serialized `name` -> key, but only for names that identify exactly one provider. Names shared
+# across classes (e.g. "Claude") are ambiguous and omitted, so those fall back to the provider.
+_name_counts = Counter(name for (_m, _c, name, _p) in _PROVIDERS.values())
 _NAME_TO_PROVIDER_KEY: Dict[str, str] = {
-    "AIMLAPI": "aimlapi",
-    "AwsBedrock": "aws-bedrock",
-    "AwsBedrockAnthropicClaude": "aws-claude",
-    "AzureAIFoundry": "azure-ai-foundry",
-    "AzureFoundryClaude": "azure-foundry-claude",
-    "AzureOpenAI": "azure-openai",
-    "Cerebras": "cerebras",
-    "CerebrasOpenAI": "cerebras-openai",
-    "Cloudflare": "cloudflare",
-    "CometAPI": "cometapi",
-    "cohere": "cohere",
-    "Qwen": "dashscope",
-    "DeepInfra": "deepinfra",
-    "DeepSeek": "deepseek",
-    "Fireworks": "fireworks",
-    "Gemini": "google",
-    "GeminiInteractions": "google-interactions",
-    "Groq": "groq",
-    "HuggingFace": "huggingface",
-    "WatsonX": "ibm",
-    "Inception": "inception",
-    "InternLM": "internlm",
-    "LangDB": "langdb",
-    "LiteLLMOpenAI": "litellm-openai",
-    "LlamaCpp": "llama-cpp",
-    "LMStudio": "lmstudio",
-    "Llama": "meta",
-    "LlamaOpenAI": "llama-openai",
-    "MiniMax": "minimax",
-    "MistralChat": "mistral",
-    "Moonshot": "moonshot",
-    "N1N": "n1n",
-    "Nebius": "nebius",
-    "Neosantara": "neosantara",
-    "Nexus": "nexus",
-    "Nvidia": "nvidia",
-    "Ollama": "ollama",
-    "OllamaResponses": "ollama-responses",
-    "OpenAIChat": "openai-chat",
-    "OpenAIResponses": "openai-responses",
-    "OpenResponses": "open-responses",
-    "OpenRouter": "openrouter",
-    "OpenRouterResponses": "openrouter-responses",
-    "Perplexity": "perplexity",
-    "Portkey": "portkey",
-    "Requesty": "requesty",
-    "Sambanova": "sambanova",
-    "Siliconflow": "siliconflow",
-    "Together": "together",
-    "Tuning Engines": "tuning-engines",
-    "v0": "vercel",
-    "VLLM": "vllm",
-    "xAI": "xai",
-    "MiMo": "xiaomi",
+    name: key for key, (_m, _c, name, _p) in _PROVIDERS.items() if _name_counts[name] == 1
 }
 
-# Maps a lowercased serialized `provider` display string to its provider key, for providers
-# whose display string does not already equal a key. Used as a fallback when `name` is missing
-# or shared. Keeps the string form (e.g. "azure:gpt-4o") working too.
-_PROVIDER_ALIASES: Dict[str, str] = {
-    "awsbedrock": "aws-bedrock",
-    "azure": "azure-openai",
-    "azurefoundry": "azure-foundry-claude",
-    "cerebrasopenai": "cerebras-openai",
-    "inceptionlabs": "inception",
-    "llama": "meta",
-    "llamacpp": "llama-cpp",
-    "llamaopenai": "llama-openai",
-    "openresponses": "open-responses",
-    "tuning engines": "tuning-engines",
-    "vertexai": "vertexai-claude",
-    "xiaomi mimo": "xiaomi",
-}
+# Default key for a display `provider` string that is not itself a key. Where several classes
+# share such a string (e.g. "azure" -> AzureOpenAI/AzureAIFoundry), the default is the variant
+# used when `name` does not disambiguate.
+_AMBIGUOUS_PROVIDER_DEFAULTS: Dict[str, str] = {"azure": "azure-openai", "awsbedrock": "aws-bedrock"}
 
 
-# The lowercased display `provider` string each key's class reports, listed only where it differs
-# from the key itself (most keys equal their provider string). Several distinct classes share a
-# provider string -- e.g. OpenAIResponses, OpenAIChat, and OpenAI-compatible providers like
-# CometAPI all report "OpenAI" -- so this is what tells whether a serialized `name` legitimately
-# belongs to the serialized provider.
-_PROVIDER_DISPLAY_OVERRIDES: Dict[str, str] = {
-    "openai-chat": "openai",
-    "openai-responses": "openai",
-    "cometapi": "openai",
-    "google-interactions": "google",
-    "openrouter-responses": "openrouter",
-    "azure-openai": "azure",
-    "azure-ai-foundry": "azure",
-    "azure-foundry-claude": "azurefoundry",
-    "aws-bedrock": "awsbedrock",
-    "aws-claude": "awsbedrock",
-    "ollama-responses": "ollama",
-    "litellm-openai": "litellm",
-    "cerebras-openai": "cerebrasopenai",
-    "inception": "inceptionlabs",
-    "llama-cpp": "llamacpp",
-    "meta": "llama",
-    "llama-openai": "llamaopenai",
-    "vertexai-claude": "vertexai",
-    "xiaomi": "xiaomi mimo",
-    "open-responses": "openresponses",
-    "tuning-engines": "tuning engines",
-}
+def _build_provider_to_key() -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for key, (_m, _c, _n, prov) in _PROVIDERS.items():
+        if prov not in MODEL_PROVIDER_CLASSES:  # display strings that already equal a key resolve directly
+            mapping.setdefault(prov, key)
+    mapping.update(_AMBIGUOUS_PROVIDER_DEFAULTS)
+    return mapping
+
+
+# Display `provider` string -> key, used as a fallback when `name` is missing or shared.
+_PROVIDER_TO_KEY: Dict[str, str] = _build_provider_to_key()
 
 
 def _canonical_provider_display(key: str) -> str:
     """The lowercased display `provider` string a given provider key's class reports."""
-    return _PROVIDER_DISPLAY_OVERRIDES.get(key, key)
+    return _KEY_TO_PROVIDER.get(key, key)
 
 
 def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[str] = None) -> str:
@@ -193,7 +118,7 @@ def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[st
     OpenAI rather than Google.
     """
     provider = (model_provider or "").strip().lower()
-    provider_key = provider if provider in MODEL_PROVIDER_CLASSES else _PROVIDER_ALIASES.get(provider)
+    provider_key = provider if provider in MODEL_PROVIDER_CLASSES else _PROVIDER_TO_KEY.get(provider)
     name_key = _NAME_TO_PROVIDER_KEY.get(model_name) if model_name else None
 
     if provider_key is None:

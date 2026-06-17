@@ -99,26 +99,25 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or open an issue to discuss the best way to integrate your LLM provider.
    - Checkout [`agno/models/anthropic/claude.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/anthropic/claude.py) or [`agno/models/cohere/chat.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/models/cohere/chat.py) for inspiration.
 5. Register your model provider in `libs/agno/agno/models/utils.py`:
-   - Add an entry to the `MODEL_PROVIDER_CLASSES` dict mapping a stable provider key to the
-     `(module, class_name)` that implements it. This is the single source of truth used both for
-     the string format (`model="yourprovider:model-name"`) and for rebuilding a model saved to the
-     database. Use a lowercase, hyphenated key, typically matching your module directory (e.g.
-     `"meta"` for `models/meta/`, `"openai-chat"` for the chat variant).
+   - Add exactly one row to the `_PROVIDERS` table, keyed by a stable provider key, with the value
+     `(module, class_name, default_name, default_provider)`. `default_name` and `default_provider`
+     are your class's default `name` and (lowercased) `provider` attributes. This single table is
+     the source of truth: the construction registry (`MODEL_PROVIDER_CLASSES`) and the
+     `(provider, name)` resolution indices are all derived from it, so you do not edit any other
+     map. Use a lowercase, hyphenated key, typically matching your module directory (e.g. `"meta"`
+     for `models/meta/`, `"openai-chat"` for the chat variant).
      ```python
-     "yourprovider": ("agno.models.yourprovider", "YourModel"),
+     "yourprovider": ("agno.models.yourprovider", "YourModel", "YourModel", "yourprovider"),
      ```
-   - Models are reconstructed from their serialized `(provider, name)` pair (see
-     `get_model_from_dict` / `_resolve_provider_key`). Two extra maps keep that lossless; update
-     them only if your class needs them:
-     - `_PROVIDER_ALIASES`: add an entry if your class's display `provider` string, lowercased,
-       does not already equal your key (e.g. provider `"InceptionLabs"` -> key `"inception"`).
-     - `_NAME_TO_PROVIDER_KEY` and `_PROVIDER_DISPLAY_OVERRIDES`: add entries only if your class
-       shares a display `provider` string with another class (so the serialized `name` is needed
-       to tell them apart, as with `OpenAIChat` vs `OpenAIResponses`, both reporting `"OpenAI"`).
-   - CI enforces this: `test_every_model_subclass_is_registered` statically discovers every
-     concrete `Model` subclass and fails if one is missing from `MODEL_PROVIDER_CLASSES`. If your
-     class is an abstract base rather than a user-selectable provider, add it to that test's
-     allowlist instead.
+   - This covers both the string format (`model="yourprovider:model-name"`) and rebuilding a model
+     saved to the database. If your class shares a display `provider` string with another class
+     (e.g. an OpenAI-compatible provider reporting `"openai"`), the serialized `name` you list is
+     what tells them apart; if its display string differs from the key (e.g. `"inceptionlabs"` vs
+     key `"inception"`), the alias is derived automatically. Only the default key for an ambiguous
+     display string (e.g. `"azure"` -> AzureOpenAI) lives in `_AMBIGUOUS_PROVIDER_DEFAULTS`.
+   - CI enforces registration: `test_every_model_subclass_is_registered` statically discovers every
+     concrete `Model` subclass and fails if one is missing. If your class is an abstract base rather
+     than a user-selectable provider, add it to that test's allowlist instead.
 6. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
    - Checkout [`agno/cookbook/90_models/aws/claude`](https://github.com/agno-agi/agno/tree/main/cookbook/90_models/aws/claude) for an example.
    - Show both the model class and string syntax in your examples
