@@ -59,6 +59,7 @@ MODEL_PROVIDER_CLASSES: Dict[str, Tuple[str, str]] = {
     "sambanova": ("agno.models.sambanova", "Sambanova"),
     "siliconflow": ("agno.models.siliconflow", "Siliconflow"),
     "together": ("agno.models.together", "Together"),
+    "tuning-engines": ("agno.models.tuning_engines", "TuningEngines"),
     "vercel": ("agno.models.vercel", "V0"),
     "vertexai-claude": ("agno.models.vertexai.claude", "Claude"),
     "vllm": ("agno.models.vllm", "VLLM"),
@@ -121,6 +122,7 @@ _NAME_TO_PROVIDER_KEY: Dict[str, str] = {
     "Sambanova": "sambanova",
     "Siliconflow": "siliconflow",
     "Together": "together",
+    "Tuning Engines": "tuning-engines",
     "v0": "vercel",
     "VLLM": "vllm",
     "xAI": "xai",
@@ -140,6 +142,7 @@ _PROVIDER_ALIASES: Dict[str, str] = {
     "llamacpp": "llama-cpp",
     "llamaopenai": "llama-openai",
     "openresponses": "open-responses",
+    "tuning engines": "tuning-engines",
     "vertexai": "vertexai-claude",
     "xiaomi mimo": "xiaomi",
 }
