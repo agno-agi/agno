@@ -8,6 +8,7 @@ Tests cover:
 - get_schema() for retrieving schemas by name
 """
 
+import os
 from typing import Optional
 from unittest.mock import MagicMock
 
@@ -1007,6 +1008,34 @@ class TestAddModel:
         reg.add_model(_model("m", provider="openai"))
         reg.add_model(_model("m", provider="azure"))
         assert len(reg.models) == 2
+
+    def test_keeps_distinct_classes_sharing_provider_and_id(self):
+        """Different classes that report the same provider string and id are not collapsed.
+
+        OpenAIChat and OpenAIResponses both report provider "OpenAI" but are genuinely different
+        integrations (Chat Completions vs Responses API); the three Azure model classes likewise
+        all report provider "Azure".
+        """
+        os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+        from agno.models.openai.chat import OpenAIChat
+        from agno.models.openai.responses import OpenAIResponses
+
+        reg = Registry()
+        reg.add_model(OpenAIChat(id="gpt-5.4"))
+        reg.add_model(OpenAIResponses(id="gpt-5.4"))
+        assert len(reg.models) == 2
+        assert {type(m).__name__ for m in reg.models} == {"OpenAIChat", "OpenAIResponses"}
+        # Both report the same display provider, confirming the class is what disambiguates.
+        assert {m.provider for m in reg.models} == {"OpenAI"}
+
+    def test_dedupes_same_class_provider_and_id(self):
+        os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+        from agno.models.openai.responses import OpenAIResponses
+
+        reg = Registry()
+        reg.add_model(OpenAIResponses(id="gpt-5.4"))
+        reg.add_model(OpenAIResponses(id="gpt-5.4"))  # genuine duplicate
+        assert len(reg.models) == 1
 
     def test_ignores_non_model(self):
         reg = Registry()

@@ -19,6 +19,17 @@ if TYPE_CHECKING:
     from agno.team import Team
 
 
+def _model_identity(model: Model) -> tuple:
+    """Stable identity for catalog dedup: the provider class, display provider, and model id.
+
+    The class (module + qualname) is included alongside the display ``provider`` string so that
+    distinct classes sharing a provider string (e.g. OpenAIChat vs OpenAIResponses, or the Azure
+    model classes -- all report provider "Azure") are not collapsed into a single catalog entry.
+    """
+    cls = type(model)
+    return (cls.__module__, cls.__qualname__, getattr(model, "provider", None), getattr(model, "id", None))
+
+
 @dataclass
 class Registry:
     """
@@ -79,15 +90,18 @@ class Registry:
         return func
 
     def add_model(self, model: Any) -> None:
-        """Add a model unless an equivalent one (same provider and id) is already present.
+        """Add a model unless an equivalent one (same provider class and id) is already present.
 
-        Models that share a provider and id are interchangeable catalog entries,
-        so duplicates are collapsed. Non-Model values (e.g. plain string ids) are ignored.
+        Models of the same class that share an id are interchangeable catalog entries, so
+        duplicates are collapsed. Models of different classes are kept separate even when their
+        display ``provider`` string and id match -- e.g. ``OpenAIChat`` vs ``OpenAIResponses``
+        (both report provider "OpenAI") or the three distinct Azure model classes (all report
+        provider "Azure"). Non-Model values (e.g. plain string ids) are ignored.
         """
         if not isinstance(model, Model):
             return
-        key = (getattr(model, "provider", None), getattr(model, "id", None))
-        if any((getattr(m, "provider", None), getattr(m, "id", None)) == key for m in self.models):
+        key = _model_identity(model)
+        if any(_model_identity(m) == key for m in self.models):
             return
         self.models.append(model)
 
