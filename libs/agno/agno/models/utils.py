@@ -59,6 +59,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return CometAPI(id=model_id)
 
+    elif model_provider == "cloudflare":
+        from agno.models.cloudflare import Cloudflare
+
+        return Cloudflare(id=model_id)
+
     elif model_provider == "dashscope":
         from agno.models.dashscope import DashScope
 
@@ -84,6 +89,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Gemini(id=model_id)
 
+    elif model_provider == "google-interactions":
+        from agno.models.google import GeminiInteractions
+
+        return GeminiInteractions(id=model_id)
+
     elif model_provider == "groq":
         from agno.models.groq import Groq
 
@@ -98,6 +108,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
         from agno.models.ibm import WatsonX
 
         return WatsonX(id=model_id)
+
+    elif model_provider == "inception":
+        from agno.models.inception import Inception
+
+        return Inception(id=model_id)
 
     elif model_provider == "internlm":
         from agno.models.internlm import InternLM
@@ -139,6 +154,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Llama(id=model_id)
 
+    elif model_provider == "minimax":
+        from agno.models.minimax import MiniMax
+
+        return MiniMax(id=model_id)
+
     elif model_provider == "mistral":
         from agno.models.mistral import MistralChat
 
@@ -148,6 +168,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
         from agno.models.moonshot import MoonShot
 
         return MoonShot(id=model_id)
+
+    elif model_provider == "xiaomi":
+        from agno.models.xiaomi import MiMo
+
+        return MiMo(id=model_id)
 
     elif model_provider == "n1n":
         from agno.models.n1n import N1N

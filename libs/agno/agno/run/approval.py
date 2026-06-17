@@ -438,6 +438,13 @@ def _collect_all_approval_tools(run_response: Any) -> List[Any]:
     return result
 
 
+def _attach_resolved_approval(run_response: Any, approval: Dict[str, Any]) -> None:
+    """Expose the resolved approval record to post-hooks via run_response.metadata["approval"]."""
+    if run_response.metadata is None:
+        run_response.metadata = {}
+    run_response.metadata["approval"] = approval
+
+
 def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
     """Gate: if any tool has approval_type='required', verify the approval is resolved before continuing.
 
@@ -472,6 +479,8 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     resolution_data = approval.get("resolution_data")
     _apply_approval_to_tools(all_approval_tools, status, resolution_data)
 
+    _attach_resolved_approval(run_response, approval)
+
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
     """Async variant of check_and_apply_approval_resolution."""
@@ -500,6 +509,8 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
 
     resolution_data = approval.get("resolution_data")
     _apply_approval_to_tools(all_approval_tools, status, resolution_data)
+
+    _attach_resolved_approval(run_response, approval)
 
 
 async def acreate_audit_approval(
@@ -630,3 +641,57 @@ async def aupdate_approval_run_status(db: Any, run_id: str, run_status: RunStatu
         pass
     except Exception as e:
         log_warning(f"Error updating approval run_status (async): {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Resolve approval record (for interface HITL resume)
+# ---------------------------------------------------------------------------
+
+
+async def aresolve_approval(
+    db: Any,
+    approval_id: str,
+    status: str,
+    resolved_by: Optional[str],
+    resolved_at: int,
+    resolution_data: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Resolve an approval record by stamping status and resolution fields.
+
+    Called by interface HITL handlers (Slack, etc.) when a user approves or
+    rejects a paused tool. Completes the audit trail for the approval record.
+
+    Args:
+        db: Database adapter instance.
+        approval_id: The approval record ID.
+        status: New status ("approved" or "rejected").
+        resolved_by: User ID of the resolver.
+        resolved_at: Unix timestamp of resolution.
+        resolution_data: Optional dict with note/values/result/feedback.
+    """
+    if db is None or not hasattr(db, "update_approval"):
+        return None
+
+    from agno.db.base import AsyncBaseDb
+
+    kwargs: Dict[str, Any] = {
+        "status": status,
+        "resolved_by": resolved_by,
+        "resolved_at": resolved_at,
+    }
+    if resolution_data:
+        kwargs["resolution_data"] = resolution_data
+
+    try:
+        if isinstance(db, AsyncBaseDb):
+            result = await db.update_approval(approval_id, expected_status="pending", **kwargs)
+        else:
+            result = db.update_approval(approval_id, expected_status="pending", **kwargs)
+        if result is None:
+            log_debug(f"Approval {approval_id} already resolved or missing")
+        return result
+    except NotImplementedError:
+        return None
+    except Exception as e:
+        log_warning(f"Error resolving approval {approval_id}: {str(e)}")
+        return None
