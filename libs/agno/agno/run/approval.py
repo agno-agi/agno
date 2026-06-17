@@ -641,3 +641,57 @@ async def aupdate_approval_run_status(db: Any, run_id: str, run_status: RunStatu
         pass
     except Exception as e:
         log_warning(f"Error updating approval run_status (async): {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Resolve approval record (for interface HITL resume)
+# ---------------------------------------------------------------------------
+
+
+async def aresolve_approval(
+    db: Any,
+    approval_id: str,
+    status: str,
+    resolved_by: Optional[str],
+    resolved_at: int,
+    resolution_data: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Resolve an approval record by stamping status and resolution fields.
+
+    Called by interface HITL handlers (Slack, etc.) when a user approves or
+    rejects a paused tool. Completes the audit trail for the approval record.
+
+    Args:
+        db: Database adapter instance.
+        approval_id: The approval record ID.
+        status: New status ("approved" or "rejected").
+        resolved_by: User ID of the resolver.
+        resolved_at: Unix timestamp of resolution.
+        resolution_data: Optional dict with note/values/result/feedback.
+    """
+    if db is None or not hasattr(db, "update_approval"):
+        return None
+
+    from agno.db.base import AsyncBaseDb
+
+    kwargs: Dict[str, Any] = {
+        "status": status,
+        "resolved_by": resolved_by,
+        "resolved_at": resolved_at,
+    }
+    if resolution_data:
+        kwargs["resolution_data"] = resolution_data
+
+    try:
+        if isinstance(db, AsyncBaseDb):
+            result = await db.update_approval(approval_id, expected_status="pending", **kwargs)
+        else:
+            result = db.update_approval(approval_id, expected_status="pending", **kwargs)
+        if result is None:
+            log_debug(f"Approval {approval_id} already resolved or missing")
+        return result
+    except NotImplementedError:
+        return None
+    except Exception as e:
+        log_warning(f"Error resolving approval {approval_id}: {str(e)}")
+        return None
