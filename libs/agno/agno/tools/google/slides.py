@@ -180,10 +180,9 @@ class GoogleSlidesTools(GoogleToolkit):
         )
 
     def _build_service(self, creds: Any) -> Any:
-        from googleapiclient.discovery import build
-
-        self.slides_service = build("slides", "v1", credentials=creds)
-        self.drive_service = build("drive", "v3", credentials=creds)
+        # Slides needs both Slides API and Drive API (for listing/deleting presentations)
+        self.slides_service = self._build_google_service("slides", "v1", creds)
+        self.drive_service = self._build_google_service("drive", "v3", creds)
         return self.slides_service
 
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:

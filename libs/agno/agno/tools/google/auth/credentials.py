@@ -29,6 +29,9 @@ class AuthConfig:
     db: Optional["BaseDb"] = None
     token_encryption_key: Optional[str] = field(default_factory=lambda: getenv("GOOGLE_TOKEN_ENCRYPTION_KEY"))
 
+    # --- HTTP timeout for API calls ---
+    http_timeout: Optional[float] = None
+
     # --- Scope aggregation (internal) ---
     _scopes: Set[str] = field(default_factory=set, repr=False)
     _creds: Any = field(default=None, repr=False)

@@ -369,12 +369,12 @@ class GoogleDriveTools(GoogleToolkit):
         )
 
     def _build_service(self, creds: Any) -> Any:
-        from googleapiclient.discovery import build
-
+        # Apply quota project for billing isolation if configured
         creds_to_use = creds
         if self.quota_project_id and hasattr(creds_to_use, "with_quota_project"):
             creds_to_use = cast(Any, creds_to_use).with_quota_project(self.quota_project_id)
-        return build("drive", "v3", credentials=creds_to_use)
+
+        return self._build_google_service("drive", "v3", creds_to_use)
 
     def _get_file_metadata(self, file_id: str, fields: str) -> dict:
         service = cast(Resource, self.service)

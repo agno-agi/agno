@@ -533,7 +533,12 @@ def test_service_initialization():
         # Call a method that requires authentication
         with patch.object(tools, "_auth"):
             tools.get_latest_emails(count=1)
-            mock_build.assert_called_once_with("gmail", "v1", credentials=mock_creds)
+            # Verify build was called with correct API name and version
+            # (uses http=AuthorizedHttp for timeout support)
+            mock_build.assert_called_once()
+            call_args = mock_build.call_args
+            assert call_args[0] == ("gmail", "v1")
+            assert "http" in call_args[1]
 
 
 def test_send_email_with_single_attachment(gmail_tools, mock_gmail_service):

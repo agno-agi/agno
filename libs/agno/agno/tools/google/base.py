@@ -8,6 +8,9 @@ from agno.utils.log import log_debug
 if TYPE_CHECKING:
     from agno.tools.google.auth import AuthConfig
 
+# Default HTTP timeout for Google API calls (seconds)
+DEFAULT_GOOGLE_API_TIMEOUT = 30
+
 
 class GoogleToolkit(Toolkit):
     """Base class for Google Workspace API toolkits."""
@@ -66,11 +69,56 @@ class GoogleToolkit(Toolkit):
         """Get the Google API service client."""
         return self._service
 
-    def _build_service(self, creds: Any) -> Any:
-        """Build the Google API service client."""
+    def _build_google_service(self, api_name: str, api_version: str, creds: Any) -> Any:
+        """Build a Google API service client with timeout-aware HTTP transport.
+
+        This is the single place for httplib2/AuthorizedHttp construction.
+        Subclasses should call this instead of duplicating the import/setup.
+        """
+        import httplib2
+        from google_auth_httplib2 import AuthorizedHttp
         from googleapiclient.discovery import build
 
-        return build(self.api_name, self.api_version, credentials=creds)
+        timeout = self._get_http_timeout()
+        http = httplib2.Http(timeout=timeout)
+        authed_http = AuthorizedHttp(creds, http=http)
+
+        return build(api_name, api_version, http=authed_http)
+
+    def _build_service(self, creds: Any) -> Any:
+        """Build the primary Google API service client.
+
+        Subclasses can override to transform creds or build companion services.
+        """
+        return self._build_google_service(self.api_name, self.api_version, creds)
+
+    def _get_http_timeout(self) -> float:
+        """Get HTTP timeout from AuthConfig, env, or default.
+
+        Priority: auth.http_timeout > GOOGLE_API_TIMEOUT env > 30s default
+        """
+        # 1. Check AuthConfig
+        if self._auth and self._auth.http_timeout is not None:
+            return self._auth.http_timeout
+        # 2. Check env var
+        env_timeout = os.getenv("GOOGLE_API_TIMEOUT")
+        if env_timeout:
+            try:
+                return float(env_timeout)
+            except (TypeError, ValueError):
+                pass
+        # 3. Default
+        return DEFAULT_GOOGLE_API_TIMEOUT
+
+    def _make_auth_request(self) -> Any:
+        """Create Request for credential refresh operations.
+
+        google.auth.transport.requests.Request uses 120s default timeout internally.
+        httplib2-based API calls use _build_google_service with configurable timeout.
+        """
+        from google.auth.transport.requests import Request
+
+        return Request()
 
     def _get_service_account_path(self) -> Optional[str]:
         """Get service account path from auth config."""
@@ -85,7 +133,6 @@ class GoogleToolkit(Toolkit):
 
         Override for service-specific logic (e.g., Gmail's delegated_user requirement).
         """
-        from google.auth.transport.requests import Request
         from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
         delegated_user = self._get_delegated_user()
@@ -105,12 +152,11 @@ class GoogleToolkit(Toolkit):
         if delegated_user:
             creds = creds.with_subject(delegated_user)
 
-        creds.refresh(Request())
+        creds.refresh(self._make_auth_request())
         return creds
 
     def _load_from_db(self, db: Any, user_id: Optional[str]) -> Any:
         """Load and refresh credentials from DB."""
-        from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
         from agno.utils.encryption import decrypt_dict, is_encrypted
@@ -144,7 +190,7 @@ class GoogleToolkit(Toolkit):
 
         if creds.expired and creds.refresh_token:
             try:
-                creds.refresh(Request())
+                creds.refresh(self._make_auth_request())
                 # Save refreshed token back to DB
                 self._save_to_db(db, creds, user_id)
             except Exception:
@@ -158,7 +204,6 @@ class GoogleToolkit(Toolkit):
         When using shared GoogleAuth, credentials are cached on the auth object
         and scopes are aggregated across all toolkits sharing that auth.
         """
-        from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
         from google_auth_oauthlib.flow import InstalledAppFlow
 
@@ -203,7 +248,7 @@ class GoogleToolkit(Toolkit):
 
         if creds and creds.expired and creds.refresh_token:
             try:
-                creds.refresh(Request())
+                creds.refresh(self._make_auth_request())
                 token_file.write_text(creds.to_json())
             except Exception:
                 creds = None

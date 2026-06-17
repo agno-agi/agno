@@ -286,14 +286,13 @@ class GoogleSheetsTools(GoogleToolkit):
             return "Service not initialized"
 
         try:
-            from googleapiclient.discovery import build
-
             # Ensure the drive scope is included
             if "https://www.googleapis.com/auth/drive" not in self.scopes:
                 self.scopes.append("https://www.googleapis.com/auth/drive")
                 self.creds = self._resolve_creds()
 
-            drive_service = build("drive", "v3", credentials=self.creds)
+            # Use shared helper for timeout-aware service construction
+            drive_service = self._build_google_service("drive", "v3", self.creds)
 
             # Use new_title if provided, otherwise fetch the title from the source spreadsheet
             if not new_title:
