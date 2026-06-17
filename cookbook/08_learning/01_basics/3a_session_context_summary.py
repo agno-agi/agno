@@ -25,7 +25,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # Summary mode: Just tracks what's been discussed, no planning overhead.
 # Good for general conversations where you want continuity without structure.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions="Be very concise. Give brief answers in 1-2 sentences.",
     learning=LearningMachine(session_context=True),

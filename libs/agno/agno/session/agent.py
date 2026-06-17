@@ -59,7 +59,7 @@ class AgentSession:
 
         runs = data.get("runs")
         serialized_runs: List[Union[RunOutput, TeamRunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
+        if runs and isinstance(runs[0], dict):
             for run in runs:
                 if "agent_id" in run:
                     serialized_runs.append(RunOutput.from_dict(run))
