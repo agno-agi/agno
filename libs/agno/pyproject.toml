@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.6.9"
+version = "2.6.16"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -119,6 +119,7 @@ duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py>=2.0.0"]
+you-com = []
 seltz = ["seltz>=0.2.0"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
@@ -137,7 +138,7 @@ memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
-parallel = ["parallel-web"]
+parallel = ["parallel-web>=1.0"]
 psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
@@ -169,7 +170,7 @@ mysql = ["pymysql", "asyncmy"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb>=0.26.0", "tantivy"]
+lancedb = ["lancedb>=0.26.0"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
@@ -196,7 +197,7 @@ chonkie = [
 ]
 
 # Dependencies for AG-UI integration
-agui = ["ag-ui-protocol"]
+agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
 
 # Dependencies for A2A integration
 a2a = ["a2a-sdk>=0.3.0,<1.0"]
@@ -392,7 +393,7 @@ demo = [
     "opentelemetry-api",
     "opentelemetry-sdk",
     "pandas",
-    "parallel-web",
+    "parallel-web>=1.0",
     "pgvector",
     "pillow",
     "psycopg[binary]",
@@ -506,6 +507,7 @@ module = [
   "imghdr.*",
   "infinity_client.*",
   "jira.*",
+  "jsonpatch.*",
   "jwt.*",
   "kubernetes.*",
   "lancedb.*",
@@ -561,7 +563,6 @@ module = [
   "sqlalchemy.*",
   "starlette.*",
   "streamlit.*",
-  "tantivy.*",
   "tavily.*",
   "telebot.*",
   "textract.*",

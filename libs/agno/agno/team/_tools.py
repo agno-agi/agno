@@ -331,7 +331,12 @@ def _determine_tools_for_model(
 
     # Check if we need strict mode for the model
     strict = False
-    if output_schema is not None and not team.use_json_mode and model.supports_native_structured_outputs:
+    if (
+        output_schema is not None
+        and team.parser_model is None
+        and not team.use_json_mode
+        and model.supports_native_structured_outputs
+    ):
         strict = True
 
     for tool in _tools:

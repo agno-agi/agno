@@ -782,7 +782,7 @@ class Claude(Model):
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
-        log_error("Unexpected error calling Claude API")
+        log_error(f"Unexpected error calling Claude API: {e}")
         raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke(
