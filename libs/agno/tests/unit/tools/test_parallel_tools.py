@@ -81,6 +81,22 @@ def test_parallel_search_auto_populates_search_queries(parallel_tools):
     assert call_args[1]["mode"] == "advanced"
 
 
+def test_parallel_search_advanced_settings_structure(parallel_tools):
+    """Test that search uses advanced_settings for max_results and excerpt_settings."""
+    mock_result = Mock()
+    mock_result.model_dump = Mock(return_value={"search_id": "test-id", "results": []})
+
+    parallel_tools.parallel_client.search = Mock(return_value=mock_result)
+
+    parallel_tools.parallel_search(objective="Test", max_results=5, max_chars_per_result=3000)
+
+    # GA API: config goes under advanced_settings
+    call_args = parallel_tools.parallel_client.search.call_args
+    assert "advanced_settings" in call_args[1]
+    assert call_args[1]["advanced_settings"]["max_results"] == 5
+    assert call_args[1]["advanced_settings"]["excerpt_settings"] == {"max_chars_per_result": 3000}
+
+
 def test_parallel_search_error(parallel_tools):
     """Test parallel_search error handling."""
     parallel_tools.parallel_client.search = Mock(side_effect=Exception("API Error"))
@@ -131,10 +147,31 @@ def test_parallel_extract_with_full_content(parallel_tools):
 
     parallel_tools.parallel_extract(urls=["https://example.com"], excerpts=False, full_content=True)
 
-    # Verify parameters
+    # Verify GA API structure: full_content goes under advanced_settings
     call_args = parallel_tools.parallel_client.extract.call_args
-    assert call_args[1]["excerpts"] is False
-    assert call_args[1]["full_content"] is True
+    assert "advanced_settings" in call_args[1]
+    assert call_args[1]["advanced_settings"]["full_content"] is True
+    # When excerpts=False, no excerpt_settings should be present
+    assert "excerpt_settings" not in call_args[1]["advanced_settings"]
+
+
+def test_parallel_extract_with_excerpts(parallel_tools):
+    """Test parallel_extract with excerpts uses advanced_settings."""
+    mock_result = Mock()
+    mock_result.model_dump = Mock(return_value={"extract_id": "test-id", "results": [], "errors": []})
+
+    parallel_tools.parallel_client.extract = Mock(return_value=mock_result)
+
+    parallel_tools.parallel_extract(
+        urls=["https://example.com"],
+        excerpts=True,
+        max_chars_per_excerpt=5000,
+    )
+
+    # GA API: excerpt_settings goes under advanced_settings
+    call_args = parallel_tools.parallel_client.extract.call_args
+    assert "advanced_settings" in call_args[1]
+    assert call_args[1]["advanced_settings"]["excerpt_settings"] == {"max_chars_per_result": 5000}
 
 
 def test_parallel_extract_error(parallel_tools):

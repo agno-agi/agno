@@ -251,29 +251,32 @@ class ParallelTools(Toolkit):
             if not urls:
                 return json.dumps({"error": "Please provide at least one URL to extract"}, indent=2)
 
-            extract_params: Dict[str, Any] = {
-                "urls": urls,
-            }
+            extract_params: Dict[str, Any] = {"urls": urls}
 
-            # Add objective if provided
             if objective:
                 extract_params["objective"] = objective
 
-            # Add search_queries if provided
             if search_queries:
                 extract_params["search_queries"] = search_queries
 
-            # Add excerpts configuration
-            if excerpts and max_chars_per_excerpt is not None:
-                extract_params["excerpts"] = {"max_chars_per_result": max_chars_per_excerpt}
-            else:
-                extract_params["excerpts"] = excerpts
+            # GA API: all config goes under advanced_settings
+            advanced_settings: Dict[str, Any] = {}
 
-            # Add full_content configuration
-            if full_content and max_chars_for_full_content is not None:
-                extract_params["full_content"] = {"max_chars_per_result": max_chars_for_full_content}
-            else:
-                extract_params["full_content"] = full_content
+            # Add excerpt_settings (replaces top-level excerpts param)
+            if excerpts:
+                if max_chars_per_excerpt is not None:
+                    advanced_settings["excerpt_settings"] = {"max_chars_per_result": max_chars_per_excerpt}
+                else:
+                    final_max_chars = self.max_chars_per_result
+                    if final_max_chars is not None:
+                        advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_max_chars}
+
+            # Add full_content (replaces top-level full_content param)
+            if full_content:
+                if max_chars_for_full_content is not None:
+                    advanced_settings["full_content"] = {"max_chars_per_result": max_chars_for_full_content}
+                else:
+                    advanced_settings["full_content"] = True
 
             # Add fetch_policy from constructor defaults
             fetch_policy: Dict[str, Any] = {}
@@ -281,9 +284,11 @@ class ParallelTools(Toolkit):
                 fetch_policy["max_age_seconds"] = self.max_age_seconds
             if self.disable_cache_fallback is not None:
                 fetch_policy["disable_cache_fallback"] = self.disable_cache_fallback
-
             if fetch_policy:
-                extract_params["fetch_policy"] = fetch_policy
+                advanced_settings["fetch_policy"] = fetch_policy
+
+            if advanced_settings:
+                extract_params["advanced_settings"] = advanced_settings
 
             extract_result = self.parallel_client.extract(**extract_params)
 
