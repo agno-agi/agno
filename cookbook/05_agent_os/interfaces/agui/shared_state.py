@@ -1,9 +1,10 @@
 """
-State Events
+Shared State
 ============
 
-Demonstrates AG-UI state synchronization with enable_agentic_state.
-The LLM uses the generic update_session_state tool to modify recipe state.
+Demonstrates AG-UI shared state synchronization with enable_agentic_state.
+The LLM uses the generic update_session_state tool to modify recipe state,
+mirroring the dojo's shared_state feature page.
 """
 
 from agno.agent.agent import Agent
@@ -50,4 +51,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="state_events:app", reload=True, port=9001)
+    agent_os.serve(app="shared_state:app", reload=True, port=9001)

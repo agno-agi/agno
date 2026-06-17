@@ -9,6 +9,7 @@ pytest.importorskip("ag_ui", reason="ag_ui not installed")
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
+from agno.agent._storage import load_session_state
 from agno.os.app import AgentOS
 from agno.os.interfaces.agui import AGUI
 from agno.run.agent import (
@@ -18,6 +19,7 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.session.agent import AgentSession
 from agno.team import Team
 
 
@@ -125,7 +127,8 @@ class TestAgentStateSnapshot:
         final_snapshot = events[last_snapshot_idx]
         assert final_snapshot["snapshot"] == {"counter": 5}
 
-    def test_no_state_events_when_state_is_none(self, agent_client):
+    def test_emits_empty_snapshot_when_state_is_none(self, agent_client):
+        # Emit empty STATE_SNAPSHOT on first run so the frontend's state atom initializes.
         client, agent = agent_client
 
         async def mock_stream() -> AsyncIterator[RunOutputEvent]:
@@ -142,38 +145,32 @@ class TestAgentStateSnapshot:
         events = parse_sse_events(response.text)
         types = get_event_types(events)
 
-        assert "STATE_SNAPSHOT" not in types
+        assert "STATE_SNAPSHOT" in types
+        # No mutations happened so no deltas should fire.
         assert "STATE_DELTA" not in types
         assert "RUN_FINISHED" in types
+        # First (initial) snapshot should be empty dict.
+        first_snapshot = next(e for e in events if e.get("type") == "STATE_SNAPSHOT")
+        assert first_snapshot["snapshot"] == {}
 
-    def test_no_state_events_when_state_omitted(self, agent_client):
-        client, agent = agent_client
+    def test_request_with_omitted_state_field_returns_422(self, agent_client):
+        # `state` is required by Pydantic; omitting it (not null) is malformed.
+        client, _agent = agent_client
 
-        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
-            yield RunContentEvent(content="Hello")
-            yield RunCompletedEvent(content="")
+        body = {
+            "threadId": "test-thread",
+            "runId": "test-run",
+            "messages": [{"id": "msg-1", "role": "user", "content": "Hi"}],
+            "tools": [],
+            "context": [],
+            "forwardedProps": {},
+        }
+        response = client.post("/agui", json=body)
 
-        with patch.object(
-            agent,
-            "arun",
-        ) as mock_arun:
-            mock_arun.return_value = mock_stream()
-            # No state field at all
-            body = {
-                "threadId": "test-thread",
-                "runId": "test-run",
-                "messages": [{"id": "msg-1", "role": "user", "content": "Hi"}],
-                "tools": [],
-                "context": [],
-                "forwardedProps": {},
-            }
-            response = client.post("/agui", json=body)
-
-        events = parse_sse_events(response.text)
-        types = get_event_types(events)
-
-        assert "STATE_SNAPSHOT" not in types
-        assert "STATE_DELTA" not in types
+        assert response.status_code == 422
+        # Confirm the missing field is what Pydantic flagged.
+        detail = response.json()["detail"]
+        assert any(err.get("loc") == ["body", "state"] for err in detail)
 
     def test_session_state_passed_to_agent_arun(self, agent_client):
         client, agent = agent_client
@@ -441,7 +438,8 @@ class TestTeamStateSnapshot:
         final_snapshot = events[last_snapshot_idx]
         assert final_snapshot["snapshot"] == {"task": "completed"}
 
-    def test_team_no_state_events_without_state(self, team_client):
+    def test_team_emits_empty_snapshot_without_state(self, team_client):
+        # Team variant: emit empty STATE_SNAPSHOT on first run so the frontend's state atom initializes.
         client, team = team_client
 
         async def mock_stream() -> AsyncIterator[RunOutputEvent]:
@@ -458,5 +456,42 @@ class TestTeamStateSnapshot:
         events = parse_sse_events(response.text)
         types = get_event_types(events)
 
-        assert "STATE_SNAPSHOT" not in types
+        assert "STATE_SNAPSHOT" in types
         assert "STATE_DELTA" not in types
+        first_snapshot = next(e for e in events if e.get("type") == "STATE_SNAPSHOT")
+        assert first_snapshot["snapshot"] == {}
+
+
+class TestSessionStateReferencePreservation:
+    """Lock in `load_session_state`'s reference-passing contract that #6080's STATE_DELTA computation depends on."""
+
+    def test_load_session_state_returns_same_reference(self):
+        # Direct unit test on the load_session_state contract: returning the
+        # same dict object the caller passed in is load-bearing for STATE_DELTA.
+        agent = Agent(name="Ref")
+        session = AgentSession(session_id="test-session", session_data={})
+
+        passed_in = {"counter": 0}
+        returned = load_session_state(agent, session, passed_in)
+
+        # Returned dict must BE the same object — not a copy, not a merge into new dict.
+        assert returned is passed_in
+        # The session's stored state must also be the same object so future loads
+        # don't lose the reference chain.
+        assert session.session_data is not None
+        assert session.session_data["session_state"] is passed_in
+
+    def test_load_session_state_propagates_mutation_via_reference(self):
+        # If we mutate the returned dict, the session_data view must reflect it.
+        # This is the reverse direction of the contract: writes through any holder
+        # of the alias must be visible to all other holders.
+        agent = Agent(name="Ref")
+        session = AgentSession(session_id="test-session", session_data={})
+
+        state = {"counter": 0}
+        load_session_state(agent, session, state)
+
+        state["counter"] = 42
+
+        assert session.session_data is not None
+        assert session.session_data["session_state"]["counter"] == 42

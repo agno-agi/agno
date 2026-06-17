@@ -48,13 +48,14 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
             user_id = run_input.forwarded_props.get("user_id")
 
-        # Validating the session state is of the expected type (dict)
-        session_state = validate_agui_state(run_input.state, run_input.thread_id)
+        # Validating the session state is of the expected type (dict).
+        # Coerce None -> {} so STATE_SNAPSHOT is emitted unconditionally on first run:
+        # without this, the frontend's state atom never initializes when no prior state exists.
+        session_state = validate_agui_state(run_input.state, run_input.thread_id) or {}
 
-        # Emit initial state snapshot if state is provided
-        if session_state is not None:
-            # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
-            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+        # Emit initial state snapshot (always, even when empty) so the frontend has a baseline.
+        # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
+        yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
         # Request streaming response from agent
         response_stream = agent.arun(  # type: ignore
@@ -101,13 +102,14 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         if input.forwarded_props and isinstance(input.forwarded_props, dict):
             user_id = input.forwarded_props.get("user_id")
 
-        # Validating the session state is of the expected type (dict)
-        session_state = validate_agui_state(input.state, input.thread_id)
+        # Validating the session state is of the expected type (dict).
+        # Coerce None -> {} so STATE_SNAPSHOT is emitted unconditionally on first run:
+        # without this, the frontend's state atom never initializes when no prior state exists.
+        session_state = validate_agui_state(input.state, input.thread_id) or {}
 
-        # Emit initial state snapshot if state is provided
-        if session_state is not None:
-            # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
-            yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+        # Emit initial state snapshot (always, even when empty) so the frontend has a baseline.
+        # Deep-copy so the emitted event doesn't alias the live agent state (consistent with final snapshot).
+        yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
         # Request streaming response from team
         response_stream = team.arun(  # type: ignore

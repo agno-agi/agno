@@ -1,9 +1,10 @@
 """
-Team State Events
+Team Shared State
 =================
 
-Demonstrates AG-UI state synchronization with a Team using enable_agentic_state.
-The team coordinates multiple agents while maintaining shared session state.
+Demonstrates AG-UI shared state synchronization with a Team using enable_agentic_state.
+The team coordinates multiple agents while maintaining shared session state,
+mirroring the dojo's shared_state feature page for the multi-agent case.
 """
 
 from agno.agent.agent import Agent
@@ -69,4 +70,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="team_state_events:app", reload=True, port=9001)
+    agent_os.serve(app="team_shared_state:app", reload=True, port=9001)
