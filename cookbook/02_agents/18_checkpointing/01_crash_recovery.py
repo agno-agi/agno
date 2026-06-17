@@ -138,8 +138,8 @@ async def main() -> None:
     #
     # The crashed run is RUNNING (its model loop never completed), so we
     # resume in-place — same run_id. (If the run had been COMPLETED already,
-    # /continue would auto-fork to preserve the original — see 04_regenerate
-    # for that flow.)
+    # /continue would auto-fork to preserve the original — see
+    # ../19_regenerate/01_regenerate.py for that flow.)
     # -------------------------------------------------------------------
     print("=" * 70)
     print("STEP 3: /continue resumes from the last checkpoint")

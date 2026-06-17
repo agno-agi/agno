@@ -16,7 +16,8 @@ assistant reply) requires a specific index — count back from
 ``len(run.messages)`` and pass that as ``continue_from=K``.
 
 To discover valid indices for a run, either inspect ``run.messages`` directly
-or call the checkpoint timeline endpoint (see ``07_checkpoint_endpoints.py``).
+or call the checkpoint timeline endpoint (see
+``../18_checkpointing/03_checkpoint_endpoints.py``).
 """
 
 import asyncio

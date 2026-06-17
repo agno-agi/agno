@@ -29,7 +29,7 @@ These compose. ``regenerate=True, additional_instructions="be more concise"``
 is the typical "let me try that again with guidance, replace the old one"
 pattern.
 
-Compare to ``continue_from="last_user"`` (02_time_travel.py): both rewind, but
+Compare to ``continue_from="last_user"`` (../20_time_travel/01_continue_from.py): both rewind, but
 ``"last_user"`` drops the whole post-user tail including tool exchanges,
 forcing tools to be re-invoked. ``regenerate=True`` keeps the tool exchange
 so only the final summary is regenerated.

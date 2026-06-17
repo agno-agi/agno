@@ -15,20 +15,22 @@ Use forks to:
 The session's ``runs`` array becomes a DAG (each fork points at its origin via
 ``forked_from_run_id``).
 
-Fork vs fork_session (see 05_fork_session.py):
+Fork vs fork_session (see ../21_fork_session/01_fork_session.py):
 - **fork**         → new run inside the **same** session (run-level)
 - **fork_session** → new session containing copies of every run (session-level)
 
 If you just want "redo the last response, keeping the old one visible," the
 friendlier alias is ``regenerate=True, replace_original=False`` - same
-mechanic, no message index math required. See 04_regenerate.py.
+mechanic, no message index math required. See ../19_regenerate/01_regenerate.py.
 """
 
 import asyncio
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 
 def get_weather(city: str) -> str:
@@ -41,9 +43,9 @@ async def main() -> None:
     agent = Agent(
         name="weather-agent",
         model=OpenAIResponses(id="gpt-5.4"),
-        db=SqliteDb(
+        db=PostgresDb(
+            db_url=db_url,
             session_table="checkpoint_demo",
-            db_file="tmp/checkpoint_forking.db",
         ),
         checkpoint="tool-batch",
         tools=[get_weather],
@@ -61,7 +63,6 @@ async def main() -> None:
         run_id=original.run_id,
         session_id=original.session_id,
         continue_from="last_user",
-        fork=True,
         input="What's the weather in Tokyo and Lagos?",
     )
     print("Forked run")
@@ -88,7 +89,6 @@ async def main() -> None:
         run_id=original.run_id,
         session_id=original.session_id,
         continue_from=1,
-        fork=True,
         input="What's the weather in Sydney?",
     )
     print("Forked at index 1")

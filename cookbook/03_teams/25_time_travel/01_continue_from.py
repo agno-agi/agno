@@ -9,8 +9,8 @@ For a COMPLETED team run, /continue auto-forks into a new sibling run so the
 source run remains a durable record of the completed model loop.
 
 Related variants:
-- Pair with ``fork=True`` to make the fork explicit (see ``02_fork.py``)
-- Use ``regenerate=True`` to drop the last assistant turn only (see ``01_regenerate.py``)
+- Pair with ``fork=True`` to make the fork explicit (see ``02_fork_run.py``)
+- Use ``regenerate=True`` to drop the last assistant turn only (see ``../24_regenerate/01_regenerate.py``)
 """
 
 import asyncio

@@ -5,7 +5,7 @@ new session with a fresh ``session_id`` and fresh ``run_id``s. The source is
 untouched. Useful for spinning up an independent conversation that starts from
 a known-good state.
 
-Distinction from ``fork`` (03_forking.py):
+Distinction from ``fork`` (../20_time_travel/02_fork_run.py):
 - ``fork``           → new run inside the **same** session (run-level)
 - ``fork_session`` → new session containing copies of every run (session-level)
 
@@ -92,7 +92,11 @@ async def main() -> None:
         forked_from_session_id = (s.session_data or {}).get("forked_from_session_id")
         print(
             f"{label}: {sid}  ({len(s.runs or [])} runs)"
-            + (f"  forked_from_session_id={forked_from_session_id}" if forked_from_session_id else "")
+            + (
+                f"  forked_from_session_id={forked_from_session_id}"
+                if forked_from_session_id
+                else ""
+            )
         )
 
 
