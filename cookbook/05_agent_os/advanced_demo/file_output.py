@@ -19,7 +19,7 @@ db = SqliteDb(db_file="tmp/agentos.db")
 
 file_agent = Agent(
     name="File Output Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.4-mini"),
     db=db,
     send_media_to_model=False,
     tools=[FileGenerationTools(output_directory="tmp")],
