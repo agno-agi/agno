@@ -52,11 +52,11 @@ def _extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
     if hasattr(response, "member_responses") and response.member_responses:  # type: ignore
         for member_resp in response.member_responses:  # type: ignore
             if isinstance(member_resp, RunContentEvent):
-                member_content = _extract_response_content(member_resp)
+                member_content = _extract_response_chunk_content(member_resp)
                 if member_content:
                     members_content.append(f"Team member: {member_content}")
             elif isinstance(member_resp, TeamRunContentEvent):
-                member_content = _extract_team_response_content(member_resp)
+                member_content = _extract_team_response_chunk_content(member_resp)
                 if member_content:
                     members_content.append(f"Team member: {member_content}")
     members_response = "\n".join(members_content) if members_content else ""
