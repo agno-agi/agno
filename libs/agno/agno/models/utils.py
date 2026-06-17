@@ -84,6 +84,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return Fireworks(id=model_id)
 
+    elif model_provider == "futurmix":
+        from agno.models.futurmix import FuturMix
+
+        return FuturMix(id=model_id)
+
     elif model_provider == "google":
         from agno.models.google import Gemini
 
