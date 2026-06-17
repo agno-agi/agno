@@ -4,31 +4,36 @@ Team parity with ../../02_agents/18_checkpointing/01_crash_recovery.py.
 
 A team persists its own run only at terminal states unless ``checkpoint`` is
 raised. With ``checkpoint="tool-batch"`` the team writes after each team-level
-tool batch (a delegation to a member IS a tool batch), so if the worker dies
-mid-run the DB has everything through the last completed batch and ``/continue``
-resumes from there.
+tool batch (a delegation to a member IS a tool batch) with status RUNNING, so a
+worker that dies mid-run leaves the last RUNNING checkpoint behind and
+``/continue`` resumes it in place.
 
-We simulate the crash with ``asyncio.Task.cancel()``: the synchronous checkpoint
-write from the first delegation has already landed, but the task dies before the
-terminal cleanup — mirroring an OOM-kill / SIGTERM / unhandled exception.
+Why a subprocess + SIGKILL and not ``asyncio.Task.cancel()``: a cancel is
+handled gracefully — the run is marked CANCELLED and re-persisted, and a
+cancelled run is intentionally NOT continuable. A real crash runs no cleanup, so
+the last RUNNING checkpoint is what survives. SIGKILL of a child reproduces that.
 
 Flow:
-1. Start a team run that delegates to a member doing slow work.
-2. Cancel the task mid-flight (after the first checkpoint, before terminal).
-3. Read the DB directly to prove a partial team run exists with status=RUNNING.
-4. Call ``/continue`` to finish the work (in place — same run_id).
+1. A worker subprocess starts a team run that delegates to a member (shared DB).
+2. The parent polls the DB until the first RUNNING checkpoint lands.
+3. The parent SIGKILLs the worker — a true crash, no cleanup.
+4. ``/continue`` resumes the RUNNING team run and finishes the work.
 """
 
 import asyncio
+import os
+import subprocess
+import sys
 import time
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
+from agno.run.base import RunStatus
 from agno.team import Team
 
-# Unique DB file per run so the example is idempotent.
-DB_FILE = f"tmp/team_crash_recovery_{int(time.time())}.db"
+DB_FILE = os.environ.get("CRASH_DB") or f"tmp/team_crash_recovery_{int(time.time())}.db"
+SESSION_ID = "team-crash-demo-session"
 
 
 async def slow_search(query: str) -> str:
@@ -65,74 +70,82 @@ def build_team() -> Team:
     )
 
 
-async def main() -> None:
+async def _worker() -> None:
+    """Runs inside the subprocess. Executes the team run until SIGKILL'd mid-flight."""
     team = build_team()
-    session_id = "team-crash-demo-session"
+    await team.arun(input="Research the topic 'agno checkpointing'.", session_id=SESSION_ID)
 
+
+async def main() -> None:
     # -------------------------------------------------------------------
-    # 1. Start the run as a cancellable task, let it run a few seconds.
+    # 1. Launch a worker subprocess sharing this DB file.
     # -------------------------------------------------------------------
     print("=" * 70)
-    print("STEP 1: Start the team run, then cancel it mid-flight (simulated crash)")
+    print("STEP 1: Start the team run in a worker subprocess, then SIGKILL it")
     print("=" * 70)
 
-    run_task = asyncio.create_task(
-        team.arun(
-            input="Research the topic 'agno checkpointing'.",
-            session_id=session_id,
-        )
+    env = {**os.environ, "CRASH_DB": DB_FILE}
+    worker = subprocess.Popen(
+        [sys.executable, __file__, "--worker"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
-    # Long enough for the first delegation + its checkpoint to land, not long
-    # enough for the whole run to finish.
-    await asyncio.sleep(6.0)
-
-    print("\n>>> Cancelling the in-flight team run (simulates a worker crash)\n")
-    run_task.cancel()
-    try:
-        await run_task
-    except asyncio.CancelledError:
-        pass
+    # -------------------------------------------------------------------
+    # 2. Poll the DB until the first checkpoint lands (RUNNING + >=1 tool batch).
+    # -------------------------------------------------------------------
+    reader = build_team()
+    crashed_run = None
+    for _ in range(80):  # up to ~40s
+        time.sleep(0.5)
+        if worker.poll() is not None:
+            break
+        session = reader.db.get_session(session_id=SESSION_ID, session_type="team")
+        if session and session.runs:
+            run = session.runs[-1]
+            if run.status == RunStatus.running and run.tools:
+                crashed_run = run
+                break
 
     # -------------------------------------------------------------------
-    # 2. Read the DB directly to prove the checkpointed state is persisted.
+    # 3. SIGKILL the worker — a true crash, no graceful cleanup.
     # -------------------------------------------------------------------
-    print("=" * 70)
-    print("STEP 2: Inspect the DB. Was the partial team run persisted?")
-    print("=" * 70)
+    print("\n>>> SIGKILL the worker subprocess (simulates an OOM-kill / hard crash)\n")
+    worker.kill()
+    worker.wait()
 
-    recovery_team = build_team()
-    session = recovery_team.db.get_session(session_id=session_id, session_type="team")
-
-    if not session or not session.runs:
-        print("No runs persisted. With checkpoint='runs' (the default), this is")
-        print("what you'd see — the crash lost the work entirely.")
+    if crashed_run is None:
+        print("Did not catch a RUNNING checkpoint before the worker finished.")
+        print("Re-run (the model occasionally answers without enough tool batches).")
         return
 
+    # -------------------------------------------------------------------
+    # 4. Inspect the DB — the partial team run survived the crash.
+    # -------------------------------------------------------------------
+    print("=" * 70)
+    print("STEP 2: Inspect the DB. The partial team run survived the crash.")
+    print("=" * 70)
+    session = reader.db.get_session(session_id=SESSION_ID, session_type="team")
     crashed_run = session.runs[-1]
     print(f"  run_id:                          {crashed_run.run_id}")
     print(f"  status:                          {crashed_run.status}")
     print(f"  tool batches in DB:              {len(crashed_run.tools or [])}")
     print(f"  message count:                   {len(crashed_run.messages or [])}")
-    print(
-        f"  last_checkpoint_at_message_idx:  {crashed_run.last_checkpoint_at_message_index}"
-    )
+    print(f"  last_checkpoint_at_message_idx:  {crashed_run.last_checkpoint_at_message_index}")
     print()
-    print("Note: status is RUNNING — the team's model loop never completed.")
-    print("For /continue purposes, RUNNING and ERROR are equivalent: both resume.")
+    print("Status is RUNNING — the team loop never reached terminal cleanup.")
+    print("For /continue, RUNNING and ERROR are equivalent: both resume.")
     print()
 
     # -------------------------------------------------------------------
-    # 3. Resume the crashed team run via /continue (in place — same run_id).
+    # 5. Resume the crashed team run via /continue (in place — same run_id).
     # -------------------------------------------------------------------
     print("=" * 70)
     print("STEP 3: /continue resumes the team run from the last checkpoint")
     print("=" * 70)
-
-    resumed = await recovery_team.acontinue_run(
-        run_id=crashed_run.run_id,
-        session_id=session_id,
-    )
+    recovery_team = build_team()
+    resumed = await recovery_team.acontinue_run(run_id=crashed_run.run_id, session_id=SESSION_ID)
     print(f"  run_id:              {resumed.run_id}  (same as crashed run)")
     print(f"  status:              {resumed.status}")
     print(f"  total tool batches:  {len(resumed.tools or [])}")
@@ -143,4 +156,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if "--worker" in sys.argv:
+        asyncio.run(_worker())
+    else:
+        asyncio.run(main())

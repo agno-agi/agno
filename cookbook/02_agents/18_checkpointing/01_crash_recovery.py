@@ -1,43 +1,46 @@
-"""Crash Recovery with checkpoint="tool-batch".
+"""Crash recovery with checkpoint="tool-batch".
 
-This example **actually crashes** an in-flight run, then demonstrates that
-``/continue`` picks up from the last persisted checkpoint.
+This example **actually crashes** an in-flight run (SIGKILL of a worker
+subprocess), then shows that ``/continue`` picks up from the last persisted
+checkpoint.
 
-Without ``checkpoint="tool-batch"`` the run only persists at terminal states
+Without ``checkpoint="tool-batch"`` a run only persists at terminal states
 (COMPLETED, PAUSED, ERROR, CANCELLED). A worker that dies between tool batches
 loses everything — the session row exists, but this ``run_id`` was never
 recorded under it.
 
-``checkpoint="tool-batch"`` writes after each tool batch (post-gather barrier).
-If the process crashes between the J-th and (J+1)-th tool batch, the DB row
-contains everything through turn J. ``/continue`` resumes from there.
+``checkpoint="tool-batch"`` writes after each tool batch (post-gather barrier)
+with status RUNNING. If the process is killed between batch J and J+1, the DB
+row contains everything through batch J, still marked RUNNING. ``/continue``
+resumes a RUNNING run in place (same ``run_id``).
 
-We simulate the crash with ``asyncio.Task.cancel()``: previous synchronous
-checkpoint writes have already landed in the DB, but the task dies before the
-terminal cleanup. That mirrors what happens when a worker is OOM-killed,
-SIGTERM'd, or hits an unhandled exception — DB state through the most recent
-checkpoint survives.
+Why a subprocess + SIGKILL and not ``asyncio.Task.cancel()``: a cancel is
+handled gracefully — the run is marked CANCELLED and re-persisted, and a
+cancelled run is intentionally NOT continuable. A real crash (OOM-kill,
+SIGKILL, power loss) runs no cleanup, so the last RUNNING checkpoint is what
+survives. SIGKILL of a child process reproduces exactly that.
 
 Flow:
-1. Start a run that calls multiple tools (each tool sleeps briefly).
-2. Cancel the task mid-flight (after the first checkpoint, before terminal).
-3. Read the DB directly to prove a partial row exists with status=RUNNING.
-4. Call ``/continue`` to finish the work.
-
-To see the contrast, you can toggle ``checkpoint="tool-batch"`` to ``"runs"`` and
-watch step 3 print "no run persisted" — without per-step writes, the crashed
-run is unrecoverable.
+1. A worker subprocess starts a run that calls slow tools (shared DB file).
+2. The parent polls the DB until the first RUNNING checkpoint lands.
+3. The parent SIGKILLs the worker — a true crash, no cleanup.
+4. ``/continue`` resumes the RUNNING run and finishes the work.
 """
 
 import asyncio
+import os
+import subprocess
+import sys
 import time
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
+from agno.run.base import RunStatus
 
-# Use a unique DB file per run so the example is idempotent.
-DB_FILE = f"tmp/checkpoint_crash_recovery_{int(time.time())}.db"
+# Shared across parent + worker via env so both hit the same DB file.
+DB_FILE = os.environ.get("CRASH_DB") or f"tmp/checkpoint_crash_recovery_{int(time.time())}.db"
+SESSION_ID = "crash-demo-session"
 
 
 async def slow_search(query: str) -> str:
@@ -56,10 +59,7 @@ def build_agent() -> Agent:
     return Agent(
         name="research-agent",
         model=OpenAIResponses(id="gpt-5.4"),
-        db=SqliteDb(
-            session_table="checkpoint_demo",
-            db_file=DB_FILE,
-        ),
+        db=SqliteDb(session_table="checkpoint_demo", db_file=DB_FILE),
         checkpoint="tool-batch",
         tools=[slow_search, slow_fetch_detail],
         instructions=(
@@ -69,97 +69,94 @@ def build_agent() -> Agent:
     )
 
 
-async def main() -> None:
+async def _worker() -> None:
+    """Runs inside the subprocess. Executes the run until SIGKILL'd mid-flight."""
     agent = build_agent()
-    session_id = "crash-demo-session"
+    await agent.arun(input="Research the topic 'agno checkpointing'.", session_id=SESSION_ID)
 
+
+async def main() -> None:
     # -------------------------------------------------------------------
-    # 1. Start the run as a cancellable task and let it run for a few seconds.
+    # 1. Launch a worker subprocess that shares this DB file.
     # -------------------------------------------------------------------
     print("=" * 70)
-    print("STEP 1: Start the run, then cancel it mid-flight to simulate a crash")
+    print("STEP 1: Start the run in a worker subprocess, then SIGKILL it mid-flight")
     print("=" * 70)
 
-    run_task = asyncio.create_task(
-        agent.arun(
-            input="Research the topic 'agno checkpointing'.",
-            session_id=session_id,
-        )
+    env = {**os.environ, "CRASH_DB": DB_FILE}
+    worker = subprocess.Popen(
+        [sys.executable, __file__, "--worker"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
-    # Wait long enough for the first tool batch to complete AND its checkpoint
-    # to land in the DB, but not long enough for the run to finish.
-    # Empirically: model API call ~1.5-2s, slow_search ~1s, checkpoint write
-    # is fast — so by t=5s the first checkpoint is reliably persisted, and the
-    # second batch (the parallel fetches) hasn't started yet.
-    await asyncio.sleep(5.0)
-
-    print("\n>>> Cancelling the in-flight run task (simulates a worker crash)\n")
-    run_task.cancel()
-
-    try:
-        await run_task
-    except asyncio.CancelledError:
-        pass
+    # -------------------------------------------------------------------
+    # 2. Poll the DB until the first checkpoint lands (RUNNING + >=1 tool batch).
+    #    This is robust — we wait for the actual checkpoint, not a fixed sleep.
+    # -------------------------------------------------------------------
+    reader = build_agent()
+    crashed_run = None
+    for _ in range(80):  # up to ~40s
+        time.sleep(0.5)
+        if worker.poll() is not None:
+            break  # worker exited on its own (model finished before we caught it)
+        session = reader.db.get_session(session_id=SESSION_ID, session_type="agent")
+        if session and session.runs:
+            run = session.runs[-1]
+            if run.status == RunStatus.running and run.tools:
+                crashed_run = run
+                break
 
     # -------------------------------------------------------------------
-    # 2. Read the DB directly to prove the checkpointed state is persisted.
+    # 3. SIGKILL the worker — a true crash, no graceful cleanup.
     # -------------------------------------------------------------------
-    print("=" * 70)
-    print("STEP 2: Inspect the DB. Was the partial state persisted?")
-    print("=" * 70)
+    print("\n>>> SIGKILL the worker subprocess (simulates an OOM-kill / hard crash)\n")
+    worker.kill()
+    worker.wait()
 
-    # Fresh agent instance — same DB. This is what a new worker process would do
-    # after the original one died.
-    recovery_agent = build_agent()
-    session = recovery_agent.db.get_session(session_id=session_id, session_type="agent")
-
-    if not session or not session.runs:
-        print("No runs persisted. With checkpoint='runs' (the default), this is")
-        print("what you'd see — the crash lost the work entirely.")
+    if crashed_run is None:
+        print("Did not catch a RUNNING checkpoint before the worker finished.")
+        print("Re-run (the model occasionally answers without enough tool batches).")
         return
 
+    # -------------------------------------------------------------------
+    # 4. Inspect the DB — the partial state survived the crash.
+    # -------------------------------------------------------------------
+    print("=" * 70)
+    print("STEP 2: Inspect the DB. The partial state survived the crash.")
+    print("=" * 70)
+    session = reader.db.get_session(session_id=SESSION_ID, session_type="agent")
     crashed_run = session.runs[-1]
     print(f"  run_id:                          {crashed_run.run_id}")
     print(f"  status:                          {crashed_run.status}")
     print(f"  tool batches in DB:              {len(crashed_run.tools or [])}")
     print(f"  message count:                   {len(crashed_run.messages or [])}")
-    print(
-        f"  last_checkpoint_at_message_idx:  {crashed_run.last_checkpoint_at_message_index}"
-    )
+    print(f"  last_checkpoint_at_message_idx:  {crashed_run.last_checkpoint_at_message_index}")
     print()
-    print("Note: status is RUNNING (the checkpoint marks active runs that way).")
-    print("In a real deployment a startup sweep could relabel stale RUNNING rows;")
-    print("for /continue purposes, RUNNING + ERROR are equivalent — both resume.")
+    print("Status is RUNNING — the loop never reached terminal cleanup. For")
+    print("/continue, RUNNING and ERROR are equivalent: both resume in place.")
     print()
 
     # -------------------------------------------------------------------
-    # 3. Resume the crashed run via /continue.
-    #
-    # The crashed run is RUNNING (its model loop never completed), so we
-    # resume in-place — same run_id. (If the run had been COMPLETED already,
-    # /continue would auto-fork to preserve the original — see
-    # ../19_regenerate/01_regenerate.py for that flow.)
+    # 5. Resume the crashed run via /continue (in place — same run_id).
     # -------------------------------------------------------------------
     print("=" * 70)
     print("STEP 3: /continue resumes from the last checkpoint")
     print("=" * 70)
-
-    resumed = await recovery_agent.acontinue_run(
-        run_id=crashed_run.run_id,
-        session_id=session_id,
-    )
-
-    print(
-        f"  run_id:                          {resumed.run_id}  (same as crashed run — in-place resume)"
-    )
-    print(f"  status:                          {resumed.status}")
-    print(f"  total tool batches:              {len(resumed.tools or [])}")
-    print(f"  total messages:                  {len(resumed.messages or [])}")
+    recovery_agent = build_agent()
+    resumed = await recovery_agent.acontinue_run(run_id=crashed_run.run_id, session_id=SESSION_ID)
+    print(f"  run_id:              {resumed.run_id}  (same as crashed run — in-place resume)")
+    print(f"  status:              {resumed.status}")
+    print(f"  total tool batches:  {len(resumed.tools or [])}")
+    print(f"  total messages:      {len(resumed.messages or [])}")
     print()
     print("Final answer:")
     print(resumed.content)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if "--worker" in sys.argv:
+        asyncio.run(_worker())
+    else:
+        asyncio.run(main())
