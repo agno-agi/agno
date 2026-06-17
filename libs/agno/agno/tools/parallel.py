@@ -137,33 +137,27 @@ class ParallelTools(Toolkit):
             if not objective and not search_queries:
                 return json.dumps({"error": "Please provide at least one of: objective or search_queries"}, indent=2)
 
-            # Use instance defaults if not provided
             final_max_results = max_results if max_results is not None else self.max_results
 
             search_params: Dict[str, Any] = {}
 
-            # Add objective if provided
             if objective:
                 search_params["objective"] = objective
 
-            # search_queries is required in GA API
+            # search_queries is required — auto-populate from objective if not provided
             if search_queries:
                 search_params["search_queries"] = search_queries
             elif objective:
                 search_params["search_queries"] = [objective]
 
-            # Add mode from constructor default (GA modes: turbo, basic, advanced)
             search_params["mode"] = self.mode if self.mode else "advanced"
 
-            # GA API: all config goes under advanced_settings
             advanced_settings: Dict[str, Any] = {"max_results": final_max_results}
 
-            # Add excerpt_settings
             final_max_chars = max_chars_per_result if max_chars_per_result is not None else self.max_chars_per_result
             if final_max_chars is not None:
                 advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_max_chars}
 
-            # Add source_policy from constructor defaults
             source_policy: Dict[str, Any] = {}
             if self.include_domains:
                 source_policy["include_domains"] = self.include_domains
@@ -172,7 +166,6 @@ class ParallelTools(Toolkit):
             if source_policy:
                 advanced_settings["source_policy"] = source_policy
 
-            # Add fetch_policy from constructor defaults
             fetch_policy: Dict[str, Any] = {}
             if self.max_age_seconds is not None:
                 fetch_policy["max_age_seconds"] = self.max_age_seconds
@@ -185,14 +178,12 @@ class ParallelTools(Toolkit):
 
             search_result = self.parallel_client.search(**search_params)
 
-            # Use model_dump() if available, otherwise convert to dict
+            # Prefer SDK's model_dump() for complete response, fall back to manual formatting
             try:
                 if hasattr(search_result, "model_dump"):
                     return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
             except Exception:
                 pass
-
-            # Manually format the results
             formatted_results: Dict[str, Any] = {
                 "search_id": getattr(search_result, "search_id", ""),
                 "results": [],
@@ -200,7 +191,6 @@ class ParallelTools(Toolkit):
 
             if hasattr(search_result, "results") and search_result.results:
                 results_list: List[Dict[str, Any]] = []
-                # GA API doesn't support max_results param, so slice client-side
                 for result in search_result.results[:final_max_results]:
                     formatted_result: Dict[str, Any] = {
                         "title": getattr(result, "title", ""),
@@ -257,22 +247,18 @@ class ParallelTools(Toolkit):
             if search_queries:
                 extract_params["search_queries"] = search_queries
 
-            # GA API: all config goes under advanced_settings
             advanced_settings: Dict[str, Any] = {}
 
-            # Add excerpt_settings if size limit specified
             final_excerpt_chars = max_chars_per_excerpt if max_chars_per_excerpt is not None else self.max_chars_per_result
             if final_excerpt_chars is not None:
                 advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_excerpt_chars}
 
-            # Add full_content (replaces top-level full_content param)
             if full_content:
                 if max_chars_for_full_content is not None:
                     advanced_settings["full_content"] = {"max_chars_per_result": max_chars_for_full_content}
                 else:
                     advanced_settings["full_content"] = True
 
-            # Add fetch_policy from constructor defaults
             fetch_policy: Dict[str, Any] = {}
             if self.max_age_seconds is not None:
                 fetch_policy["max_age_seconds"] = self.max_age_seconds
@@ -286,14 +272,13 @@ class ParallelTools(Toolkit):
 
             extract_result = self.parallel_client.extract(**extract_params)
 
-            # Use model_dump() if available, otherwise convert to dict
+            # Prefer SDK's model_dump() for complete response, fall back to manual formatting
             try:
                 if hasattr(extract_result, "model_dump"):
                     return json.dumps(extract_result.model_dump(), cls=CustomJSONEncoder)
             except Exception:
                 pass
 
-            # Manually format the results
             formatted_results: Dict[str, Any] = {
                 "extract_id": getattr(extract_result, "extract_id", ""),
                 "results": [],
