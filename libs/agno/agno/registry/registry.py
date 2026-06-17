@@ -11,7 +11,7 @@ from agno.db.base import BaseDb
 from agno.models.base import Model
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.vectordb.base import VectorDb
 
 if TYPE_CHECKING:
@@ -52,6 +52,13 @@ class Registry:
     # Code-defined agents and teams (for workflow rehydration)
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
+    # Internal: whether add_* should log when a duplicate component is skipped.
+    # AgentOS turns this off for registries it auto-creates while wiring up
+    # components from primitives -- there, dedup is an internal step the user did
+    # not ask for, so duplicate chatter would be noise. A user-constructed
+    # Registry keeps it on, so clashes against explicitly declared components are
+    # surfaced.
+    _emit_dedup_logs: bool = field(default=True, repr=False, compare=False)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -101,24 +108,79 @@ class Registry:
         if not isinstance(model, Model):
             return
         key = _model_identity(model)
-        if any(_model_identity(m) == key for m in self.models):
-            return
+        for existing in self.models:
+            if existing is model:
+                return
+            if _model_identity(existing) == key:
+                if self._emit_dedup_logs:
+                    log_debug(
+                        f"Registry: skipped a duplicate model "
+                        f"'{getattr(model, 'provider', None)}/{getattr(model, 'id', None)}'; keeping the registered instance."
+                    )
+                return
         self.models.append(model)
 
     def add_tool(self, tool: Any) -> None:
-        """Add a tool unless the exact same object is already present.
+        """Add a tool unless an equivalent one is already present.
 
-        Tools dedupe by object identity, never by name: two distinct tools that
-        share a name (two toolkit instances with the same name, or multiple
-        ``<lambda>``/``functools.partial`` callables) must both be kept, otherwise
-        one is silently dropped and rehydration of the agent that uses it breaks.
+        Deduplication depends on the kind of tool, because they duplicate for
+        different reasons:
+
+        - ``Toolkit`` instances are re-created at call sites (``DuckDuckGoTools()``
+          written in two places yields two distinct objects), so they dedupe
+          structurally by ``(type, name, function names)``. The first matching
+          instance wins deterministically: user-declared registry tools are added
+          before primitives are walked, and primitives are walked in order, so a
+          later matching instance is skipped. This is expected (re-instantiating a
+          default toolkit in two places is common), so the skip is logged at debug
+          rather than warned -- and only when ``_emit_dedup_logs`` is set (i.e. the
+          user explicitly defined this registry); for registries AgentOS
+          auto-creates to wire up primitives the skip is silent. The trade-off is
+          accepted: rehydration resolves
+          entrypoints by function name globally (see ``_entrypoint_lookup``), so
+          only one instance can ever back a given name regardless of dedup -- two
+          toolkits that differ only in non-functional config (api keys, timeouts,
+          region) collapse to the first, and that is the instance used at
+          rehydration.
+        - ``Function`` and plain callables are defined once, so referencing them in
+          two places yields the *same* object; they dedupe by equality. ``==``
+          falls back to identity for functions, lambdas and ``functools.partial``
+          (so genuinely distinct callables are never merged on a shared name) while
+          additionally catching bound methods, which build a fresh object on every
+          attribute access but compare equal by ``(__self__, __func__)``.
+
         Adding a tool invalidates the ``_entrypoint_lookup`` cache so that
         ``rehydrate_function`` rebuilds it and sees the new tool.
         """
         if not (isinstance(tool, (Toolkit, Function)) or callable(tool)):
             return
-        if any(existing is tool for existing in self.tools):
-            return
+
+        if isinstance(tool, Toolkit):
+            key = (type(tool), tool.name, frozenset(tool.functions))
+            for existing in self.tools:
+                if existing is tool:
+                    return
+                if (
+                    isinstance(existing, Toolkit)
+                    and (type(existing), existing.name, frozenset(existing.functions)) == key
+                ):
+                    if self._emit_dedup_logs:
+                        log_debug(
+                            f"Registry: skipped a duplicate '{tool.name}' toolkit; keeping the registered instance."
+                        )
+                    return
+        else:
+            for existing in self.tools:
+                if existing is tool:
+                    return
+                try:
+                    if existing == tool:
+                        return
+                except Exception:
+                    # A callable with a pathological __eq__ should not block the add;
+                    # fall back to keeping both, which is the safe direction.
+                    continue
+
         self.tools.append(tool)
         self.__dict__.pop("_entrypoint_lookup", None)
 
@@ -132,8 +194,15 @@ class Registry:
             return
         db_id = getattr(db, "id", None)
         if db_id is not None:
-            if any(getattr(d, "id", None) == db_id for d in self.dbs):
-                return
+            for existing in self.dbs:
+                if existing is db:
+                    return
+                if getattr(existing, "id", None) == db_id:
+                    log_warning(
+                        f"Registry: multiple distinct databases share id '{db_id}'; keeping the first. "
+                        "Give them distinct ids to avoid one shadowing the other."
+                    )
+                    return
         elif any(d is db for d in self.dbs):
             return
         self.dbs.append(db)
@@ -144,8 +213,15 @@ class Registry:
             return
         key = getattr(vector_db, "id", None) or getattr(vector_db, "name", None)
         if key is not None:
-            if any((getattr(v, "id", None) or getattr(v, "name", None)) == key for v in self.vector_dbs):
-                return
+            for existing in self.vector_dbs:
+                if existing is vector_db:
+                    return
+                if (getattr(existing, "id", None) or getattr(existing, "name", None)) == key:
+                    log_warning(
+                        f"Registry: multiple distinct vector dbs share '{key}'; keeping the first. "
+                        "Give them distinct ids/names to avoid one shadowing the other."
+                    )
+                    return
         elif any(v is vector_db for v in self.vector_dbs):
             return
         self.vector_dbs.append(vector_db)
