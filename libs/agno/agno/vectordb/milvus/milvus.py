@@ -14,7 +14,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -407,7 +407,7 @@ class Milvus(VectorDb):
             bool: True if a document with the given content hash exists, False otherwise.
         """
         if self.client:
-            expr = self._content_hash_expr(content_hash, normalize_user_id(user_id))
+            expr = self._content_hash_expr(content_hash, user_id)
             scroll_result = self.client.query(
                 collection_name=self.collection,
                 filter=expr,
@@ -429,7 +429,7 @@ class Milvus(VectorDb):
             bool: True if documents were deleted, False otherwise.
         """
         if self.client:
-            expr = self._content_hash_expr(content_hash, normalize_user_id(user_id), scope_none_to_shared=True)
+            expr = self._content_hash_expr(content_hash, user_id, scope_none_to_shared=True)
             self.client.delete(collection_name=self.collection, filter=expr)
             log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
             return True
@@ -485,7 +485,6 @@ class Milvus(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents")
 
         if self.search_type == SearchType.hybrid:
@@ -540,7 +539,6 @@ class Milvus(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_info(f"Inserting {len(documents)} documents asynchronously")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -653,7 +651,6 @@ class Milvus(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Upserting {len(documents)} documents")
 
         # Dedupe-delete scoped to the owner: replace only the caller's stale chunks for this content_hash.
@@ -711,7 +708,6 @@ class Milvus(VectorDb):
         Args:
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
         # Mirror sync upsert: dedupe-delete the owner's stale chunks before re-inserting.
@@ -1295,7 +1291,6 @@ class Milvus(VectorDb):
         Returns:
             bool: True if documents were actually deleted, False otherwise.
         """
-        user_id = normalize_user_id(user_id)
         try:
             log_debug(f"Milvus VectorDB : Deleting documents with content_id {content_id} (user_id={user_id})")
 
@@ -1398,7 +1393,6 @@ class Milvus(VectorDb):
         The owner scope is OR-based (own OR shared), so it is parenthesized and
         AND-ed with the metadata filter rather than flattened into it.
         """
-        user_id = normalize_user_id(user_id)
         base = self._build_expr(filters)
         scope = self._user_scope_expr(user_id)
         if base and scope:
@@ -1407,7 +1401,7 @@ class Milvus(VectorDb):
 
     async def _async_content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Async counterpart to content_hash_exists used by async_upsert."""
-        expr = self._content_hash_expr(content_hash, normalize_user_id(user_id))
+        expr = self._content_hash_expr(content_hash, user_id)
         scroll_result = await self.async_client.query(
             collection_name=self.collection,
             filter=expr,
@@ -1418,7 +1412,7 @@ class Milvus(VectorDb):
 
     async def _async_delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Async counterpart to _delete_by_content_hash used by async_upsert."""
-        expr = self._content_hash_expr(content_hash, normalize_user_id(user_id), scope_none_to_shared=True)
+        expr = self._content_hash_expr(content_hash, user_id, scope_none_to_shared=True)
         await self.async_client.delete(collection_name=self.collection, filter=expr)
         log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
         return True

@@ -7,8 +7,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, normalize_user_id
-
+from agno.vectordb.base import VectorDb
 try:
     from hashlib import md5
 
@@ -328,7 +327,6 @@ class CouchbaseSearch(VectorDb):
             filters: Optional filters to apply to the documents
             user_id: Owner of the chunks. None => shared / org-wide bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents")
 
         docs_to_insert: Dict[str, Any] = {}
@@ -415,7 +413,6 @@ class CouchbaseSearch(VectorDb):
         """
         Update existing documents or insert new ones into the Couchbase bucket.
         """
-        user_id = normalize_user_id(user_id)
         # Scope the dedupe-delete to the caller's own chunks so re-upserting doesn't wipe another owner's chunk
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -436,7 +433,6 @@ class CouchbaseSearch(VectorDb):
             filters: Optional filters to apply to the documents
             user_id: Owner of the chunks. None => shared / org-wide bucket.
         """
-        user_id = normalize_user_id(user_id)
         logger.info(f"Upserting {len(documents)} documents")
 
         # Scope the dedupe-delete to the caller's own chunks (see _upsert).
@@ -520,7 +516,6 @@ class CouchbaseSearch(VectorDb):
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
             filters = None
-        user_id = normalize_user_id(user_id)
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Failed to generate embedding for query: {query}")
@@ -796,7 +791,6 @@ class CouchbaseSearch(VectorDb):
         With user_id set the check is scoped to the caller's own chunks; None is the
         unscoped existence gate matching any owner.
         """
-        user_id = normalize_user_id(user_id)
         try:
             # Use N1QL query to check if document with given content_hash exists
             named_parameters: Dict[str, Any] = {"content_hash": content_hash}
@@ -1038,7 +1032,6 @@ class CouchbaseSearch(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        user_id = normalize_user_id(user_id)
         logger.info(f"[async] Inserting {len(documents)} documents")
 
         async_collection_instance = await self.get_async_collection()
@@ -1138,7 +1131,6 @@ class CouchbaseSearch(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
-        user_id = normalize_user_id(user_id)
         # Scope the dedupe-delete to the caller's own chunks (see _upsert).
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -1151,7 +1143,6 @@ class CouchbaseSearch(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        user_id = normalize_user_id(user_id)
         logger.info(f"[async] Upserting {len(documents)} documents")
 
         async_collection_instance = await self.get_async_collection()
@@ -1258,7 +1249,6 @@ class CouchbaseSearch(VectorDb):
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
             filters = None
-        user_id = normalize_user_id(user_id)
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"[async] Failed to generate embedding for query: {query}")
@@ -1507,7 +1497,6 @@ class CouchbaseSearch(VectorDb):
         Returns:
             bool: True if documents were deleted, False otherwise
         """
-        user_id = normalize_user_id(user_id)
         try:
             log_debug(f"Couchbase VectorDB : Deleting documents with content_id {content_id}")
 
@@ -1546,7 +1535,6 @@ class CouchbaseSearch(VectorDb):
         Returns:
             bool: True if documents were deleted, False otherwise
         """
-        user_id = normalize_user_id(user_id)
         try:
             log_debug(f"Couchbase VectorDB : Deleting documents with content_hash {content_hash}")
 

@@ -29,8 +29,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning, logger
-from agno.vectordb.base import VectorDb, normalize_user_id
-
+from agno.vectordb.base import VectorDb
 # Per-user RAG isolation. Owner is stored as a top-level metadata field
 # user_id and reads/deletes are scoped with a metadata filter.
 # * Upserts with user_id stamp the field; user_id=None omits it (shared bucket).
@@ -255,7 +254,6 @@ class PineconeDb(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        user_id = normalize_user_id(user_id)
         # Scope the dedupe-delete to the owner's stale chunks
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -284,7 +282,6 @@ class PineconeDb(VectorDb):
 
         """
 
-        user_id = normalize_user_id(user_id)
         vectors = []
         for document in documents:
             document.embed(embedder=self.embedder)
@@ -330,7 +327,6 @@ class PineconeDb(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents into the index asynchronously with batching."""
-        user_id = normalize_user_id(user_id)
         # Scope the dedupe-delete to the owner's stale chunks (mirrors sync upsert)
         if self.content_hash_exists(content_hash, user_id=user_id):
             await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
@@ -370,7 +366,6 @@ class PineconeDb(VectorDb):
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Prepare vectors for upsert."""
-        user_id = normalize_user_id(user_id)
         vectors = []
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -523,7 +518,7 @@ class PineconeDb(VectorDb):
             log_warning("Filters Expressions are not supported in PineconeDB. No filters will be applied.")
             filters = None
         # AND the own-OR-shared scope onto the caller's metadata filter
-        filters = self._scoped_filter(filters, normalize_user_id(user_id))
+        filters = self._scoped_filter(filters, user_id)
         dense_embedding = self.embedder.get_embedding(query)
 
         if self.use_hybrid_search:
@@ -644,7 +639,6 @@ class PineconeDb(VectorDb):
             content_id (str): The content ID to delete.
             user_id (Optional[str]): Restrict the delete to the owner's chunks. None deletes all chunks.
         """
-        user_id = normalize_user_id(user_id)
         delete_filter = self._scoped_content_id_filter(content_id, user_id)
         return self._delete_by_filter(delete_filter)
 
@@ -735,7 +729,7 @@ class PineconeDb(VectorDb):
                 vector=dummy_vector,
                 top_k=1,
                 namespace=self.namespace,
-                filter=self._content_hash_filter(content_hash, normalize_user_id(user_id)),
+                filter=self._content_hash_filter(content_hash, user_id),
                 include_metadata=False,
                 include_values=False,
             )
@@ -756,7 +750,7 @@ class PineconeDb(VectorDb):
             bool: True if documents were deleted, False otherwise.
         """
         return self._delete_by_filter(
-            self._content_hash_filter(content_hash, normalize_user_id(user_id), scope_none_to_shared=True)
+            self._content_hash_filter(content_hash, user_id, scope_none_to_shared=True)
         )
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:

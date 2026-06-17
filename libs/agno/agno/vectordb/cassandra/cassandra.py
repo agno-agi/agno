@@ -6,7 +6,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
 # Per-user isolation. cassio's metadata filter is equality/AND only, so the owner is a
@@ -133,7 +133,6 @@ class Cassandra(VectorDb):
         When user_id is set the check is scoped to the owner's bucket, so an
         upsert dedupes only the caller's own stale chunks.
         """
-        user_id = normalize_user_id(user_id)
         if user_id is not None:
             query = (
                 f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
@@ -155,7 +154,6 @@ class Cassandra(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
-        user_id = normalize_user_id(user_id)
         log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
         futures = []
         for doc in documents:
@@ -182,7 +180,6 @@ class Cassandra(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert documents asynchronously by running in a thread."""
-        user_id = normalize_user_id(user_id)
         log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -256,7 +253,6 @@ class Cassandra(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert or update documents based on primary key."""
-        user_id = normalize_user_id(user_id)
         # Scope the dedupe-delete to the owner bucket (the __shared__ sentinel for None).
         owner = self._owner_value(user_id)
         if self.content_hash_exists(content_hash, user_id=owner):
@@ -271,7 +267,6 @@ class Cassandra(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously by running in a thread."""
-        user_id = normalize_user_id(user_id)
         # Scope the dedupe to the owner bucket (the __shared__ sentinel for None);
         # see the sync upsert for why.
         owner = self._owner_value(user_id)
@@ -330,7 +325,6 @@ class Cassandra(VectorDb):
         * user_id set  -> own OR shared (merge two equality-filtered searches).
         * user_id=None -> one unfiltered search; admin sees everything.
         """
-        user_id = normalize_user_id(user_id)
         query_embedding = self.embedder.get_embedding(query)
 
         if user_id is None:
@@ -498,7 +492,6 @@ class Cassandra(VectorDb):
         Returns:
             bool: True if documents were deleted, False otherwise
         """
-        user_id = normalize_user_id(user_id)
         try:
             log_debug(f"Cassandra VectorDB : Deleting documents with content_id {content_id}")
             # Query to find documents with matching content_id in metadata
@@ -536,7 +529,6 @@ class Cassandra(VectorDb):
         Returns:
             bool: True if documents were deleted, False otherwise
         """
-        user_id = normalize_user_id(user_id)
         try:
             log_debug(f"Cassandra VectorDB : Deleting documents with content_hash {content_hash}")
             # Query to find documents with matching content_hash in metadata

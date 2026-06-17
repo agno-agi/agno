@@ -15,7 +15,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
 # Sentinel stored in the user_id column for shared chunks. ClickHouse
@@ -360,7 +360,6 @@ class Clickhouse(VectorDb):
         user_id is the owner for per-user isolation; None means shared
         (stored as the empty-string sentinel).
         """
-        user_id = normalize_user_id(user_id)
         owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         for document in documents:
@@ -412,7 +411,6 @@ class Clickhouse(VectorDb):
         user_id is the explicit owner; None means shared / unscoped
         (stored as the empty-string sentinel). See insert.
         """
-        user_id = normalize_user_id(user_id)
         owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         async_client = await self._ensure_async_client()
@@ -508,7 +506,6 @@ class Clickhouse(VectorDb):
         user_id is the explicit owner; None means shared. The dedupe
         delete is scoped to this owner.
         """
-        user_id = normalize_user_id(user_id)
         if self.content_hash_exists(content_hash):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -550,7 +547,6 @@ class Clickhouse(VectorDb):
         user_id is the explicit owner; None means shared. The dedupe
         delete is scoped to this owner. See upsert.
         """
-        user_id = normalize_user_id(user_id)
         if self.content_hash_exists(content_hash):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -578,7 +574,6 @@ class Clickhouse(VectorDb):
         user_id = '') (own + shared) and bind its param. Returns "" when
         unscoped. user_id is bound, never f-string interpolated.
         """
-        user_id = normalize_user_id(user_id)
         if user_id is None:
             return ""
         parameters["user_id"] = user_id
@@ -872,7 +867,6 @@ class Clickhouse(VectorDb):
         """
         try:
             log_debug(f"ClickHouse VectorDB : Deleting documents with content_id {content_id}")
-            user_id = normalize_user_id(user_id)
             parameters = self._get_base_parameters()
             parameters["content_id"] = content_id
 
@@ -926,7 +920,6 @@ class Clickhouse(VectorDb):
         f-string interpolated.
         """
         try:
-            user_id = normalize_user_id(user_id)
             parameters = self._get_base_parameters()
             parameters["content_hash"] = content_hash
 

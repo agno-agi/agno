@@ -14,7 +14,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -366,7 +366,6 @@ class Qdrant(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents")
         points = []
         for document in documents:
@@ -443,7 +442,6 @@ class Qdrant(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents asynchronously")
 
         # Apply batch embedding when needed for vector or hybrid search
@@ -561,7 +559,6 @@ class Qdrant(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
-        user_id = normalize_user_id(user_id)
         log_debug("Redirecting the request to insert")
         # Scope the dedupe-delete to the owner's stale chunks
         if self.content_hash_exists(content_hash, user_id=user_id):
@@ -576,7 +573,6 @@ class Qdrant(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
-        user_id = normalize_user_id(user_id)
         log_debug("Redirecting the async request to async_insert")
         # Scope the dedupe-delete to the owner's stale chunks (mirrors sync upsert)
         if await self._async_content_hash_exists(content_hash, user_id=user_id):
@@ -1118,7 +1114,7 @@ class Qdrant(VectorDb):
             bool: True if points with the content hash exist, False otherwise.
         """
         try:
-            filter_condition = self._content_hash_filter(content_hash, normalize_user_id(user_id))
+            filter_condition = self._content_hash_filter(content_hash, user_id)
 
             # Count how many points match the filter
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
@@ -1130,7 +1126,7 @@ class Qdrant(VectorDb):
     async def _async_content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Async counterpart to content_hash_exists used by async_upsert."""
         try:
-            filter_condition = self._content_hash_filter(content_hash, normalize_user_id(user_id))
+            filter_condition = self._content_hash_filter(content_hash, user_id)
             count_result = await self.async_client.count(
                 collection_name=self.collection, count_filter=filter_condition, exact=True
             )
@@ -1153,7 +1149,7 @@ class Qdrant(VectorDb):
             log_info(f"Attempting to delete all points with content_hash: {content_hash}")
 
             filter_condition = self._content_hash_filter(
-                content_hash, normalize_user_id(user_id), scope_none_to_shared=True
+                content_hash, user_id, scope_none_to_shared=True
             )
 
             # First, count how many points will be deleted
@@ -1190,7 +1186,7 @@ class Qdrant(VectorDb):
             log_info(f"Attempting to delete all points with content_hash: {content_hash}")
 
             filter_condition = self._content_hash_filter(
-                content_hash, normalize_user_id(user_id), scope_none_to_shared=True
+                content_hash, user_id, scope_none_to_shared=True
             )
 
             count_result = await self.async_client.count(

@@ -15,7 +15,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -331,7 +331,6 @@ class LanceDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to add as metadata to documents
             user_id (Optional[str]): Owner for per-user isolation; None means shared.
         """
-        user_id = normalize_user_id(user_id)
 
         if len(documents) <= 0:
             log_info("No documents to insert")
@@ -478,7 +477,6 @@ class LanceDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): See insert.
         """
-        user_id = normalize_user_id(user_id)
         # Scope the dedupe delete to this owner.
         if self.content_hash_exists(content_hash):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -570,7 +568,6 @@ class LanceDb(VectorDb):
             log_error("Table not initialized")
             return []
 
-        user_id = normalize_user_id(user_id)
         results = None
 
         if isinstance(filters, list):
@@ -659,7 +656,6 @@ class LanceDb(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> Optional[List[Dict[str, Any]]]:
-        user_id = normalize_user_id(user_id)
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
@@ -692,7 +688,6 @@ class LanceDb(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        user_id = normalize_user_id(user_id)
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
@@ -733,7 +728,6 @@ class LanceDb(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        user_id = normalize_user_id(user_id)
         if self.table is None:
             log_error("Table not initialized. Please create the table first")
             return []
@@ -975,7 +969,6 @@ class LanceDb(VectorDb):
             log_error("Table not initialized")
             return False
 
-        user_id = normalize_user_id(user_id)
 
         try:
             total_count = self.table.count_rows()

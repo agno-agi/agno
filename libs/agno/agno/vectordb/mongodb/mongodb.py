@@ -9,7 +9,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -56,7 +56,12 @@ class MongoDb(VectorDb):
         embedder: Optional[Embedder] = None,
         distance_metric: str = Distance.cosine,
         overwrite: bool = False,
-        wait_until_index_ready_in_seconds: Optional[float] = 3,
+        # Atlas Search builds run in the background after ``createSearchIndex``
+        # returns; the index reports ``queryable: False`` until the build
+        # finishes. Atlas-Local typically takes 20-60s, cloud Atlas can be
+        # faster. 90s is a reasonable default that won't time out under
+        # normal conditions; bump higher on slow hosts.
+        wait_until_index_ready_in_seconds: Optional[float] = 90,
         wait_after_insert_in_seconds: Optional[float] = 3,
         max_pool_size: int = 100,
         retry_writes: bool = True,
@@ -481,16 +486,35 @@ class MongoDb(VectorDb):
             self._wait_for_index_ready()
 
     def _wait_for_index_ready(self) -> None:
-        """Wait until the Atlas Search index is ready."""
+        """Wait until the Atlas Search index is actually queryable.
+
+        Important: ``_search_index_exists`` only checks name presence, but
+        Atlas reports the index as soon as the metadata record is written
+        — it's still in ``status: PENDING`` and ``queryable: False`` while
+        the background build runs. If we only checked existence we'd
+        return immediately and every subsequent ``$vectorSearch`` would
+        find 0 rows even after writes succeed. We poll the actual
+        ``queryable`` flag from ``$listSearchIndexes``.
+        """
+        start_time = time.time()
         index_name = self.search_index_name
         while True:
             try:
-                if self._search_index_exists():
-                    log_info(f"Search index '{index_name}' is ready.")
-                    break
+                collection = self._get_collection()
+                for index in collection.list_search_indexes():  # type: ignore
+                    if index.get("name") == index_name and index.get("queryable") is True:
+                        log_info(f"Search index '{index_name}' is queryable.")
+                        return
             except Exception:
                 logger.exception("Error checking index status")
-                raise TimeoutError("Timeout waiting for search index to become ready.")
+
+            if time.time() - start_time > self.wait_until_index_ready_in_seconds:  # type: ignore
+                raise TimeoutError(
+                    f"Timeout waiting for search index '{index_name}' to become queryable. "
+                    f"Increase ``wait_until_index_ready_in_seconds`` (current: "
+                    f"{self.wait_until_index_ready_in_seconds}s) — Atlas-Local typically "
+                    f"takes 20-60s to finish the background build."
+                )
             time.sleep(1)
 
     async def _async_search_index_has_user_id_filter(self) -> bool:
@@ -523,21 +547,40 @@ class MongoDb(VectorDb):
             await self._wait_for_index_ready_async()
 
     async def _wait_for_index_ready_async(self) -> None:
-        """Wait until the Atlas Search index is ready asynchronously."""
+        """Wait until the Atlas Search index is actually queryable.
+
+        Two prior bugs combined to make every cookbook query return 0
+        results: (1) iterating ``await collection.list_search_indexes()``
+        with a plain ``for`` raised ``TypeError`` and silently masked the
+        check, and (2) the check itself only verified name presence, not
+        the ``queryable`` flag. Atlas reports the index as soon as the
+        metadata record exists, but it stays ``status: PENDING`` until
+        the background build finishes — so we have to poll for
+        ``queryable: True`` explicitly.
+        """
         start_time = time.time()
         index_name = self.search_index_name
         while True:
             try:
                 collection = await self._get_async_collection()
-                indexes = await collection.list_search_indexes()
-                if any(index["name"] == index_name for index in indexes):
-                    log_info(f"Search index '{index_name}' is ready.")
-                    break
+                ready = False
+                async for index in await collection.list_search_indexes():
+                    if index.get("name") == index_name and index.get("queryable") is True:
+                        ready = True
+                        break
+                if ready:
+                    log_info(f"Search index '{index_name}' is queryable.")
+                    return
             except Exception:
                 logger.exception("Error checking index status asynchronously")
 
             if time.time() - start_time > self.wait_until_index_ready_in_seconds:  # type: ignore
-                raise TimeoutError("Timeout waiting for search index to become ready.")
+                raise TimeoutError(
+                    f"Timeout waiting for search index '{index_name}' to become queryable. "
+                    f"Increase ``wait_until_index_ready_in_seconds`` (current: "
+                    f"{self.wait_until_index_ready_in_seconds}s) — Atlas-Local typically "
+                    f"takes 20-60s to finish the background build."
+                )
             await asyncio.sleep(1)
 
     def collection_exists(self) -> bool:
@@ -641,7 +684,7 @@ class MongoDb(VectorDb):
         """
         try:
             collection = self._get_collection()
-            result = collection.find_one(self._content_hash_query(content_hash, normalize_user_id(user_id)))
+            result = collection.find_one(self._content_hash_query(content_hash, user_id))
             exists = result is not None
             log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
             return exists
@@ -665,7 +708,6 @@ class MongoDb(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents")
         collection = self._get_collection()
 
@@ -706,7 +748,6 @@ class MongoDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters merged into each chunk's metadata.
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
-        user_id = normalize_user_id(user_id)
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
 
@@ -754,7 +795,6 @@ class MongoDb(VectorDb):
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
             filters = None
-        user_id = normalize_user_id(user_id)
         if self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit=limit, filters=filters, user_id=user_id)
 
@@ -892,7 +932,7 @@ class MongoDb(VectorDb):
             collection = self._get_collection()
             # Scope the keyword find: own chunks OR the shared bucket.
             find_query: Dict[str, Any] = {"content": {"$regex": query, "$options": "i"}}
-            scope_filter = self._user_scope_filter(normalize_user_id(user_id))
+            scope_filter = self._user_scope_filter(user_id)
             if scope_filter is not None:
                 find_query = {"$and": [find_query, scope_filter]}
             cursor = collection.find(
@@ -937,7 +977,6 @@ class MongoDb(VectorDb):
             log_warning("Hybrid search is not implemented for Cosmos DB compatibility mode. Returning empty list.")
             return []
 
-        user_id = normalize_user_id(user_id)
         log_debug(f"Performing hybrid search for query: '{query}' with limit: {limit}")
 
         query_embedding = self.embedder.get_embedding(query)
@@ -1195,7 +1234,6 @@ class MongoDb(VectorDb):
             meta_data.update(filters)
             document.meta_data = meta_data
 
-        user_id = normalize_user_id(user_id)
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = self._doc_id(cleaned_content, user_id)
         doc_data = {
@@ -1214,7 +1252,6 @@ class MongoDb(VectorDb):
 
     def _apply_owner(self, doc_data: Dict[str, Any], user_id: Optional[str]) -> Dict[str, Any]:
         """Stamp the owner field and owner-folded _id onto a prepared doc."""
-        user_id = normalize_user_id(user_id)
         doc_data[USER_ID_FIELD] = user_id
         doc_data["_id"] = self._doc_id(doc_data["content"], user_id)
         return doc_data
@@ -1243,7 +1280,6 @@ class MongoDb(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
@@ -1317,7 +1353,6 @@ class MongoDb(VectorDb):
         Args:
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
-        user_id = normalize_user_id(user_id)
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
@@ -1392,7 +1427,6 @@ class MongoDb(VectorDb):
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
             filters = None
-        user_id = normalize_user_id(user_id)
         query_embedding = await self.embedder.async_get_embedding(query)
         if query_embedding is None:
             log_error(f"Failed to generate embedding for query: {query}")
@@ -1588,7 +1622,7 @@ class MongoDb(VectorDb):
         try:
             collection = self._get_collection()
             result = collection.delete_many(
-                self._content_hash_query(content_hash, normalize_user_id(user_id), scope_none_to_shared=True)
+                self._content_hash_query(content_hash, user_id, scope_none_to_shared=True)
             )
             log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
             return True
@@ -1600,7 +1634,7 @@ class MongoDb(VectorDb):
         """Async counterpart to content_hash_exists used by async_upsert."""
         try:
             collection = await self._get_async_collection()
-            result = await collection.find_one(self._content_hash_query(content_hash, normalize_user_id(user_id)))
+            result = await collection.find_one(self._content_hash_query(content_hash, user_id))
             return result is not None
         except Exception:
             logger.exception("Error checking content_hash existence asynchronously")
@@ -1611,7 +1645,7 @@ class MongoDb(VectorDb):
         try:
             collection = await self._get_async_collection()
             result = await collection.delete_many(
-                self._content_hash_query(content_hash, normalize_user_id(user_id), scope_none_to_shared=True)
+                self._content_hash_query(content_hash, user_id, scope_none_to_shared=True)
             )
             log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
             return True
@@ -1628,7 +1662,6 @@ class MongoDb(VectorDb):
                 deletes all chunks with this content_id regardless of owner.
         """
         try:
-            user_id = normalize_user_id(user_id)
             collection = self._get_collection()
             query: Dict[str, Any] = {"content_id": content_id}
             if user_id:

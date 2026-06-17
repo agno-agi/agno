@@ -20,7 +20,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -155,13 +155,24 @@ class ChromaDb(VectorDb):
     # A scoped search reads the caller's collection and the base; admin
     # (user_id=None) reads across all collections.
 
+    # Chroma's hard limit on collection names is 63 chars total. With the
+    # ``{base}__{sanitized}`` shape the sanitized suffix needs a budget,
+    # not the full sha256 hex. 16 hex chars = 64 bits of collision space,
+    # which is plenty for tenant-scoping at any realistic user count.
+    _USER_ID_HASH_LEN = 16
+
     def _sanitize_user_id_for_collection(self, user_id: str) -> str:
-        """sha256 hex of user_id for a Chroma-safe collection-name component."""
-        return sha256(user_id.encode("utf-8")).hexdigest()
+        """16-hex-char prefix of sha256(user_id) for a Chroma-safe suffix.
+
+        The truncation is essential — Chroma rejects collection names
+        longer than 63 chars, so the full 64-char hex digest would push
+        any non-empty base collection over the limit (and the previous
+        cookbook + isolation suite would crash on the first scoped insert).
+        """
+        return sha256(user_id.encode("utf-8")).hexdigest()[: self._USER_ID_HASH_LEN]
 
     def _collection_name_for(self, user_id: Optional[str]) -> str:
         """Resolve the physical collection name for a scope. Empty/None uses the base collection."""
-        user_id = normalize_user_id(user_id)
         if user_id is None:
             return self.collection_name
         safe = self._sanitize_user_id_for_collection(user_id)
@@ -788,7 +799,6 @@ class ChromaDb(VectorDb):
         collection (admin view, sees all owners). user_id is set: the caller's collection
         plus the base/shared collection. Collections that don't exist yet are skipped.
         """
-        user_id = normalize_user_id(user_id)
         if user_id is None:
             # Admin/unscoped view: fan out across base + all per-user collections
             result: List[Collection] = []
@@ -1550,7 +1560,6 @@ class ChromaDb(VectorDb):
             log_error("Client not initialized")
             return False
 
-        user_id = normalize_user_id(user_id)
 
         if user_id is None:
             # Admin/unscoped delete: fan out across base + every per-user collection

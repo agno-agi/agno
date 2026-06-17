@@ -138,7 +138,11 @@ class Knowledge(RemoteKnowledge):
         # Strip reserved _agno key from user-provided metadata
         safe_metadata = strip_agno_metadata(metadata)
 
-        from agno.vectordb.base import normalize_user_id
+        # Per-user isolation boundary: collapse blank/whitespace owner ids
+        # to None so the downstream contract is just (None | non-empty str).
+        # Backends rely on this normalization happening once, here.
+        if user_id is not None and not user_id.strip():
+            user_id = None
 
         content = None
         file_data = None
@@ -156,7 +160,7 @@ class Knowledge(RemoteKnowledge):
             remote_content=remote_content,
             reader=reader,
             auth=auth,
-            user_id=normalize_user_id(user_id),
+            user_id=user_id,
         )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
@@ -219,7 +223,11 @@ class Knowledge(RemoteKnowledge):
         # Strip reserved _agno key from user-provided metadata
         safe_metadata = strip_agno_metadata(metadata)
 
-        from agno.vectordb.base import normalize_user_id
+        # Per-user isolation boundary: collapse blank/whitespace owner ids
+        # to None so the downstream contract is just (None | non-empty str).
+        # Backends rely on this normalization happening once, here.
+        if user_id is not None and not user_id.strip():
+            user_id = None
 
         content = None
         file_data = None
@@ -237,7 +245,7 @@ class Knowledge(RemoteKnowledge):
             remote_content=remote_content,
             reader=reader,
             auth=auth,
-            user_id=normalize_user_id(user_id),
+            user_id=user_id,
         )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
@@ -595,6 +603,11 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
+            # Per-user isolation boundary: collapse blank/whitespace owner
+            # ids to None. Backends rely on receiving (None | non-empty str).
+            if user_id is not None and not user_id.strip():
+                user_id = None
+
             search_filters = self._inject_instance_scope_filter(filters)
 
             _max_results = max_results or self.max_results
@@ -627,6 +640,11 @@ class Knowledge(RemoteKnowledge):
             if self.vector_db is None:
                 log_warning("No vector db provided")
                 return []
+
+            # Per-user isolation boundary: collapse blank/whitespace owner
+            # ids to None. Backends rely on receiving (None | non-empty str).
+            if user_id is not None and not user_id.strip():
+                user_id = None
 
             search_filters = self._inject_instance_scope_filter(filters)
 

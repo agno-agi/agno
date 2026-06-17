@@ -30,7 +30,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
@@ -371,7 +371,6 @@ class PgVector(VectorDb):
             batch_size (int): Number of documents to insert in each batch.
             user_id (Optional[str]): Owner for per-user isolation; ``None`` means shared.
         """
-        user_id = normalize_user_id(user_id)
         try:
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
@@ -412,7 +411,6 @@ class PgVector(VectorDb):
         ``user_id`` is the explicit owner of these chunks for per-user RAG
         isolation; ``None`` means shared / unscoped. See ``insert``.
         """
-        user_id = normalize_user_id(user_id)
         try:
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
@@ -490,7 +488,6 @@ class PgVector(VectorDb):
 
         ``user_id`` is the explicit owner; ``None`` means shared. See ``insert``.
         """
-        user_id = normalize_user_id(user_id)
         try:
             if self.content_hash_exists(content_hash):
                 # Scope the dedupe delete to this owner.
@@ -696,7 +693,6 @@ class PgVector(VectorDb):
 
         ``user_id`` is the explicit owner; ``None`` means shared. See ``insert``.
         """
-        user_id = normalize_user_id(user_id)
         try:
             if self.content_hash_exists(content_hash):
                 # Scope the dedupe delete to this owner.
@@ -896,7 +892,6 @@ class PgVector(VectorDb):
 
         Adds no predicate when ``user_id`` is ``None`` (unscoped).
         """
-        user_id = normalize_user_id(user_id)
         if user_id is None:
             return stmt
         return stmt.where(or_(self.table.c.user_id == user_id, self.table.c.user_id.is_(None)))
@@ -1664,7 +1659,6 @@ class PgVector(VectorDb):
 
         Returns ``True`` only when at least one row was deleted.
         """
-        user_id = normalize_user_id(user_id)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_id == content_id)
