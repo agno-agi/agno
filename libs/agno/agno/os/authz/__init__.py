@@ -19,14 +19,17 @@ from agno.os.authz.audit import AuditEvent, AuditSink, DbAuditSink, LoggingAudit
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, ScopeEntry
 from agno.os.authz.native_engine import NativePolicyEngine
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
+from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
 __all__ = [
     "AuthorizationContext",
     "AuthorizationProvider",
     "ScopeAuthorizationProvider",
-    # Swappable managed-roles backend: the port, its generic provider, and the
-    # native (default, dependency-free) engine.
+    # Managed roles: the product surface + swappable backend (port, generic
+    # provider, native default engine). get_roles_router lives in role_router and
+    # is imported directly to keep this package import FastAPI-free.
+    "ManagedRoleStore",
     "PolicyEngine",
     "ScopeEntry",
     "EngineAuthorizationProvider",

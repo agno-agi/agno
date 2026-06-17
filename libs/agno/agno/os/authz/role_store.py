@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.os.authz._db import engine_from_db as _engine_from_db
 from agno.os.authz.audit import DEFAULT_AUDIT_SORT_FIELD, DEFAULT_AUDIT_SORT_ORDER
-from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine
+from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, normalize_roles_claim
 
 if TYPE_CHECKING:
     from agno.os.authz.audit import AuditSink
@@ -477,13 +477,7 @@ class ManagedRoleStore:
         Intentionally NOT the generic provider ``check`` (which defers non-resource
         decisions and would let any authenticated caller through).
         """
-        roles: Optional[List[str]] = None
-        if self._roles_claim and claims:
-            raw = claims.get(self._roles_claim)
-            if isinstance(raw, str):  # WorkOS sends a single "role" string
-                raw = [raw]
-            if isinstance(raw, list) and raw:
-                roles = raw
+        roles = normalize_roles_claim(claims, self._roles_claim)
         return self._engine.check_scope("agent_os:admin", subject=principal_id, roles=roles)
 
     # --------------------------------------------------------------- provider

@@ -226,7 +226,7 @@ def _page(items: list, page: int, limit: int) -> PaginatedResponse:
 def get_roles_router(
     store: "ManagedRoleStore",
     prefix: str = "/authz",
-    tags: List[Union[str, Enum]] = ["Authorization"],
+    tags: Optional[List[Union[str, Enum]]] = None,
     user_store: "Optional[ManagedUserStore]" = None,
 ) -> APIRouter:
     """Build the admin-only roles-management router bound to ``store``.
@@ -235,6 +235,8 @@ def get_roles_router(
     (``/authz/users``) for the no-IdP case: list/create/update/remove users and
     disable (revoke) them. User views merge in each user's roles from ``store``.
     """
+    if tags is None:
+        tags = ["Authorization"]
 
     def require_admin(request: Request) -> str:
         """Gate: caller must be authenticated and an admin.

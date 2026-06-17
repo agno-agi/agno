@@ -28,7 +28,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 # The audit-trail read contract (shared by both trails — change and decision):
 # which fields a page can be sorted by / searched over, and the defaults. The
@@ -61,7 +61,7 @@ class AuditEvent:
     before: Optional[List[Any]] = None
     after: Optional[List[Any]] = None
     timestamp: int = 0
-    metadata: dict = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -171,10 +171,17 @@ class DbAuditSink(AuditSink):
             metadata.create_all(self._engine)
 
     def record(self, event: AuditEvent) -> None:
-        if _is_decision(event.action):
-            self._record_decision(event)
-        else:
-            self._record_change(event)
+        # The AuditSink contract is that record() must NOT raise into the caller's
+        # path: a role change (or a request) must still succeed even if its audit row
+        # can't be written. Log and swallow DB errors rather than turning a
+        # successful mutation into a 500 with no audit row.
+        try:
+            if _is_decision(event.action):
+                self._record_decision(event)
+            else:
+                self._record_change(event)
+        except Exception:
+            logging.getLogger("agno.authz.audit").exception("failed to write audit event %r", event.action)
 
     def _record_change(self, event: AuditEvent) -> None:
         with self._engine.begin() as conn:

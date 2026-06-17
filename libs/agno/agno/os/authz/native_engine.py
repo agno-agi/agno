@@ -40,6 +40,16 @@ _ALLOW = "allow"
 _PolicyKey = Tuple[str, str, str]
 
 
+def _normalize_effect(effect: str) -> str:
+    """Validate/lowercase a policy effect. Reject anything but allow/deny so a
+    typo'd effect can't silently become an *allow* (deny-overrides keys off the
+    exact string ``"deny"``)."""
+    e = effect.lower() if isinstance(effect, str) else effect
+    if e not in (_ALLOW, _DENY):
+        raise ValueError(f"effect must be 'allow' or 'deny', got {effect!r}")
+    return e
+
+
 class NativePolicyEngine(PolicyEngine):
     """agno-native :class:`PolicyEngine`. In-memory, or SQLAlchemy-persisted when
     given ``db``/``db_url``."""
@@ -197,7 +207,7 @@ class NativePolicyEngine(PolicyEngine):
         staged: Dict[Tuple[str, str], str] = {}
         for scope, effect in entries:
             resource, action = scope_to_resource_action(scope)
-            staged[(resource, action)] = effect
+            staged[(resource, action)] = _normalize_effect(effect)
         rows = [(resource, action, effect) for (resource, action), effect in staged.items()]
         # DB first (one transaction); only swap the cache once it has committed, so a
         # persist failure leaves the cache matching the DB instead of half-applied.
@@ -209,6 +219,7 @@ class NativePolicyEngine(PolicyEngine):
 
     def add_scope(self, role: str, scope: str, effect: str = _ALLOW) -> None:
         resource, action = scope_to_resource_action(scope)  # validate before mutating
+        effect = _normalize_effect(effect)
         self._persist_policy(role, resource, action, effect)
         self._policies[(role, resource, action)] = effect
 
