@@ -23,9 +23,11 @@ from agno.models.utils import (
 # instantiate them in the base test environment, so they are covered by the
 # resolution-only test below using their known serialized (provider, name) pairs.
 SDK_GATED_KEYS = {
+    "anthropic",  # anthropic SDK (not in the base .[dev] extras)
     "aws-bedrock",
     "aws-claude",
     "azure-ai-foundry",
+    "azure-foundry-claude",  # anthropic SDK
     "cerebras",
     "cerebras-openai",
     "cohere",
@@ -40,6 +42,7 @@ SDK_GATED_KEYS = {
     "ollama",
     "ollama-responses",
     "portkey",
+    "vertexai-claude",  # anthropic SDK
 }
 
 CONSTRUCTABLE_KEYS = [k for k in MODEL_PROVIDER_CLASSES if k not in SDK_GATED_KEYS]
@@ -88,6 +91,10 @@ def test_canonical_provider_display_matches_class(key):
         ("Ollama", "Ollama", "ollama"),
         ("Ollama", "OllamaResponses", "ollama-responses"),
         ("Portkey", "Portkey", "portkey"),
+        # Anthropic-backed providers (anthropic SDK not in base test env).
+        ("Anthropic", "Claude", "anthropic"),
+        ("AzureFoundry", "AzureFoundryClaude", "azure-foundry-claude"),
+        ("VertexAI", "Claude", "vertexai-claude"),
     ],
 )
 def test_resolve_sdk_gated_providers(provider, name, expected_key):
@@ -105,8 +112,8 @@ def test_resolve_sdk_gated_providers(provider, name, expected_key):
         ("VertexAI", None, "vertexai-claude"),
         ("LlamaCpp", None, "llama-cpp"),
         ("Xiaomi MiMo", None, "xiaomi"),
-        # CometAPI sets provider to "CometAPI (<id>)" via post-init; name still resolves it.
-        ("CometAPI (gpt-x)", "CometAPI", "cometapi"),
+        # CometAPI inherits provider "OpenAI" from OpenAILike; its name disambiguates it.
+        ("OpenAI", "CometAPI", "cometapi"),
         # Tuning Engines: provider/name carry a space; both the name and string paths resolve.
         ("Tuning Engines", "Tuning Engines", "tuning-engines"),
         ("Tuning Engines", None, "tuning-engines"),
@@ -143,6 +150,26 @@ def test_user_named_model_reconstructs_correct_provider():
     rebuilt = get_model_from_dict({"provider": "OpenAI", "name": "Gemini", "id": "gpt-4o"})
     assert type(rebuilt).__name__ != "Gemini"
     assert rebuilt.provider == "OpenAI"
+
+
+@pytest.mark.parametrize(
+    "provider, name",
+    [
+        ("my-gateway", "Gemini"),  # unknown provider must not be re-routed by a colliding name
+        ("totally-custom", "OpenAIChat"),
+    ],
+)
+def test_unrecognized_provider_not_overridden_by_name(provider, name):
+    """A non-empty unsupported provider stays authoritative and is rejected, not name-routed."""
+    assert _resolve_provider_key(provider, name) == provider
+    with pytest.raises(ValueError, match="is not supported"):
+        get_model_from_dict({"provider": provider, "name": name, "id": "x"})
+
+
+def test_empty_provider_falls_back_to_name():
+    """With no provider string, the serialized name is the only signal and is used."""
+    assert _resolve_provider_key("", "Groq") == "groq"
+    assert _resolve_provider_key(None, "OpenAIChat") == "openai-chat"
 
 
 def test_unsupported_provider_raises():

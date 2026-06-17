@@ -196,10 +196,12 @@ def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[st
     provider_key = provider if provider in MODEL_PROVIDER_CLASSES else _PROVIDER_ALIASES.get(provider)
     name_key = _NAME_TO_PROVIDER_KEY.get(model_name) if model_name else None
 
-    # Provider string is unknown (e.g. CometAPI's post-init "CometAPI (<id>)" when name is absent,
-    # or a custom provider): the name is the only reliable signal left.
     if provider_key is None:
-        return name_key or provider
+        # An empty provider string (older data, or a model whose provider was never set) leaves the
+        # name as the only signal. A non-empty but unrecognized provider stays authoritative so an
+        # unsupported/custom provider is rejected by _get_model_class rather than being silently
+        # re-routed to a built-in class by a colliding name.
+        return (name_key or provider) if not provider else provider
 
     # Otherwise trust the name only when its class reports this same provider string.
     if name_key is not None and _canonical_provider_display(name_key) == provider:
