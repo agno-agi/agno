@@ -683,15 +683,30 @@ class Clickhouse(VectorDb):
             log_debug(f"ClickHouse VectorDB : Deleting documents with metadata {metadata}")
             parameters = self._get_base_parameters()
 
-            # Build WHERE clause for metadata matching using proper ClickHouse JSON syntax
+            # Build WHERE clause for metadata matching using parameterized ClickHouse bindings
+            # to prevent SQL injection (fixes #7866)
             where_conditions = []
-            for key, value in metadata.items():
+            for i, (key, value) in enumerate(metadata.items()):
+                param_key = f"filter_key_{i}"
+                param_val = f"filter_val_{i}"
                 if isinstance(value, bool):
-                    where_conditions.append(f"JSONExtractBool(toString(filters), '{key}') = {str(value).lower()}")
+                    where_conditions.append(
+                        f"JSONExtractBool(toString(filters), {{{param_key}:String}}) = {{{param_val}:Bool}}"
+                    )
+                    parameters[param_key] = key
+                    parameters[param_val] = value
                 elif isinstance(value, (int, float)):
-                    where_conditions.append(f"JSONExtractFloat(toString(filters), '{key}') = {value}")
+                    where_conditions.append(
+                        f"JSONExtractFloat(toString(filters), {{{param_key}:String}}) = {{{param_val}:Float64}}"
+                    )
+                    parameters[param_key] = key
+                    parameters[param_val] = float(value)
                 else:
-                    where_conditions.append(f"JSONExtractString(toString(filters), '{key}') = '{value}'")
+                    where_conditions.append(
+                        f"JSONExtractString(toString(filters), {{{param_key}:String}}) = {{{param_val}:String}}"
+                    )
+                    parameters[param_key] = key
+                    parameters[param_val] = str(value)
 
             if not where_conditions:
                 return False

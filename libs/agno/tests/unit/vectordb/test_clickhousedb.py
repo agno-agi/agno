@@ -517,26 +517,44 @@ def test_delete_by_name(mock_clickhouse):
 
 def test_delete_by_metadata(mock_clickhouse):
     """Test delete_by_metadata method."""
-    # Test successful deletion with simple metadata
+    # Test successful deletion with simple metadata (parameterized for SQL injection prevention)
     result = mock_clickhouse.delete_by_metadata({"type": "test"})
     assert result is True
 
-    # Verify the delete command was executed with proper WHERE clause
-    mock_clickhouse.client.command.assert_called_with(
-        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), 'type') = 'test'",
-        parameters={"table_name": mock_clickhouse.table_name, "database_name": mock_clickhouse.database_name},
-    )
+    # Verify the delete command uses parameterized bindings, not raw interpolation
+    call_args = mock_clickhouse.client.command.call_args
+    query = call_args[0][0]
+    params = call_args[1]["parameters"]
+    assert "{filter_key_0:String}" in query
+    assert "{filter_val_0:String}" in query
+    assert params["filter_key_0"] == "type"
+    assert params["filter_val_0"] == "test"
+    # Ensure raw values are NOT in the query string
+    assert "'type'" not in query
+    assert "'test'" not in query
 
-    # Test deletion with complex metadata
+    # Test deletion with complex metadata (string + bool, parameterized)
     mock_clickhouse.client.command.reset_mock()
     result = mock_clickhouse.delete_by_metadata({"cuisine": "Thai", "spicy": True})
     assert result is True
 
-    # Verify the delete command was executed with multiple conditions
-    mock_clickhouse.client.command.assert_called_with(
-        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), 'cuisine') = 'Thai' AND JSONExtractBool(toString(filters), 'spicy') = true",
-        parameters={"table_name": mock_clickhouse.table_name, "database_name": mock_clickhouse.database_name},
-    )
+    call_args = mock_clickhouse.client.command.call_args
+    query = call_args[0][0]
+    params = call_args[1]["parameters"]
+    # String condition
+    assert "{filter_key_0:String}" in query
+    assert "{filter_val_0:String}" in query
+    assert params["filter_key_0"] == "cuisine"
+    assert params["filter_val_0"] == "Thai"
+    # Bool condition
+    assert "{filter_key_1:String}" in query
+    assert "{filter_val_1:Bool}" in query
+    assert params["filter_key_1"] == "spicy"
+    assert params["filter_val_1"] is True
+    # Ensure raw values are NOT in the query string
+    assert "'cuisine'" not in query
+    assert "'Thai'" not in query
+    assert "'spicy'" not in query
 
     # Test deletion with empty metadata
     mock_clickhouse.client.command.reset_mock()
