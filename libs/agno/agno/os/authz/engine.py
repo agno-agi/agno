@@ -15,12 +15,27 @@ No engine types (obj/act tuples, OpenFGA tuples) leak across it.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from agno.os.authz.provider import AuthorizationContext, AuthorizationProvider
 
 # A scope with its effect, e.g. ("agents:*:read", "allow") / ("agents:x:run", "deny").
 ScopeEntry = Tuple[str, str]
+
+
+def normalize_roles_claim(claims: Optional[Dict[str, Any]], roles_claim: Optional[str]) -> Optional[List[str]]:
+    """A caller's roles from a JWT claim, or None when absent/unusable. Accepts a
+    single string (e.g. WorkOS sends one ``role``) or a list. One owner for this
+    coercion so the gate (``EngineAuthorizationProvider``) and the admin check
+    (``ManagedRoleStore.can_manage``) can't drift — both are security-relevant."""
+    if not roles_claim or not claims:
+        return None
+    raw = claims.get(roles_claim)
+    if isinstance(raw, str):
+        raw = [raw]
+    if isinstance(raw, list) and raw:
+        return raw
+    return None
 
 
 class PolicyEngine(ABC):
@@ -131,14 +146,7 @@ class EngineAuthorizationProvider(AuthorizationProvider):
         """(subject, roles) for the engine. ``roles`` is the token-carried list
         when a ``roles_claim`` is configured and present; otherwise None so the
         subject's stored assignments decide."""
-        roles: Optional[List[str]] = None
-        if self._roles_claim:
-            raw = ctx.claims.get(self._roles_claim)
-            if isinstance(raw, str):  # WorkOS sends a single "role" string
-                raw = [raw]
-            if isinstance(raw, list) and raw:
-                roles = raw
-        return ctx.principal_id, roles
+        return ctx.principal_id, normalize_roles_claim(ctx.claims, self._roles_claim)
 
     def check(self, ctx: AuthorizationContext) -> bool:
         subject, roles = self._identity(ctx)

@@ -27,7 +27,7 @@ Endpoints (default prefix ``/authz``):
 """
 
 from enum import Enum
-from typing import TYPE_CHECKING, List, Union
+from typing import TYPE_CHECKING, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -45,9 +45,11 @@ class AssignRoleRequest(BaseModel):
 
 
 def get_roles_router(
-    store: "ManagedRoleStore", prefix: str = "/authz", tags: List[Union[str, Enum]] = ["Authorization"]
+    store: "ManagedRoleStore", prefix: str = "/authz", tags: Optional[List[Union[str, Enum]]] = None
 ) -> APIRouter:
     """Build the admin-only roles-management router bound to ``store``."""
+    if tags is None:
+        tags = ["Authorization"]
 
     def require_admin(request: Request) -> str:
         """Gate: caller must be authenticated and an admin of the store."""

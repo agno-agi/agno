@@ -35,7 +35,7 @@ Example::
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine
+from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, normalize_roles_claim
 
 if TYPE_CHECKING:
     from agno.os.authz.audit import AuditSink
@@ -203,13 +203,9 @@ class ManagedRoleStore:
         defers non-resource decisions to route scope mappings and would let any
         authenticated caller through).
         """
-        if self._roles_claim and claims:
-            roles = claims.get(self._roles_claim)
-            if isinstance(roles, str):  # e.g. WorkOS sends a single "role" string
-                roles = [roles]
-            if isinstance(roles, list) and roles:
-                if self._engine.check_scope("agent_os:admin", roles=roles):
-                    return True
+        roles = normalize_roles_claim(claims, self._roles_claim)
+        if roles and self._engine.check_scope("agent_os:admin", roles=roles):
+            return True
         if principal_id:
             return self._engine.check_scope("agent_os:admin", subject=principal_id)
         return False
