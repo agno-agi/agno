@@ -29,6 +29,9 @@ from agno.os.config import (
     KnowledgeDatabaseConfig,
     KnowledgeDomainConfig,
     KnowledgeInstanceConfig,
+    LearningConfig,
+    LearningDomainConfig,
+    MCPServerConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -48,6 +51,7 @@ from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
+from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
@@ -59,6 +63,7 @@ from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
+    collect_components_from_os,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -233,6 +238,7 @@ class AgentOS:
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
         enable_mcp_server: bool = False,
+        mcp_config: Optional[MCPServerConfig] = None,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
@@ -263,6 +269,10 @@ class AgentOS:
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
+            mcp_config: Optional configuration for the MCP server. Register custom tools via
+                ``tools=[...]`` and/or scope the built-in tools via ``enable_builtin_tools`` /
+                ``include_tags`` / ``exclude_tags``. Ignored when ``enable_mcp_server`` is False.
+                When omitted, the MCP server exposes all built-in tools (unchanged behavior).
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
@@ -318,6 +328,7 @@ class AgentOS:
         self.tracing = tracing
 
         self.enable_mcp_server = enable_mcp_server
+        self.mcp_config = mcp_config
         self.lifespan = lifespan
 
         self.registry = registry
@@ -359,6 +370,9 @@ class AgentOS:
         # (not only after get_app()/resync()).
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
+
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
@@ -415,6 +429,9 @@ class AgentOS:
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
+
         if self.enable_mcp_server:
             from agno.os.mcp import get_mcp_server
 
@@ -428,6 +445,7 @@ class AgentOS:
             get_home_router(self),
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
@@ -654,22 +672,42 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
+            # Auto-created purely to wire up primitives; suppress duplicate chatter.
+            self.registry._emit_dedup_logs = False
 
         if self._agents:
-            existing_agent_ids = {getattr(a, "id", None) for a in self.registry.agents}
+            existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
             for agent in self._agents:
                 agent_id = getattr(agent, "id", None)
-                if agent_id is not None and agent_id not in existing_agent_ids:
-                    self.registry.agents.append(agent)
-                    existing_agent_ids.add(agent_id)
+                if agent_id is None:
+                    continue
+                existing_agent = existing_agents.get(agent_id)
+                if existing_agent is not None:
+                    if existing_agent is not agent:
+                        log_warning(
+                            f"Registry: multiple distinct agents share id '{agent_id}'; keeping the "
+                            "first. Give them distinct ids to avoid one shadowing the other."
+                        )
+                    continue
+                self.registry.agents.append(agent)
+                existing_agents[agent_id] = agent
 
         if self._teams:
-            existing_team_ids = {getattr(t, "id", None) for t in self.registry.teams}
+            existing_teams = {tid: t for t in self.registry.teams if (tid := getattr(t, "id", None)) is not None}
             for team in self._teams:
                 team_id = getattr(team, "id", None)
-                if team_id is not None and team_id not in existing_team_ids:
-                    self.registry.teams.append(team)
-                    existing_team_ids.add(team_id)
+                if team_id is None:
+                    continue
+                existing_team = existing_teams.get(team_id)
+                if existing_team is not None:
+                    if existing_team is not team:
+                        log_warning(
+                            f"Registry: multiple distinct teams share id '{team_id}'; keeping the "
+                            "first. Give them distinct ids to avoid one shadowing the other."
+                        )
+                    continue
+                self.registry.teams.append(team)
+                existing_teams[team_id] = team
 
     def _populate_registry_knowledge(self) -> None:
         """Add discovered knowledge instances to the registry.
@@ -683,14 +721,27 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
+            # Auto-created purely to wire up primitives; suppress duplicate chatter.
+            self.registry._emit_dedup_logs = False
 
         if self.knowledge_instances:
-            existing_names = {getattr(k, "name", None) for k in self.registry.knowledge}
+            existing_knowledge = {
+                name: k for k in self.registry.knowledge if (name := getattr(k, "name", None)) is not None
+            }
             for kb in self.knowledge_instances:
                 kb_name = getattr(kb, "name", None)
-                if kb_name is not None and kb_name not in existing_names:
-                    self.registry.knowledge.append(kb)
-                    existing_names.add(kb_name)
+                if kb_name is None:
+                    continue
+                existing = existing_knowledge.get(kb_name)
+                if existing is not None:
+                    if existing is not kb:
+                        log_warning(
+                            f"Registry: multiple distinct knowledge instances share name '{kb_name}'; "
+                            "keeping the first. Give them distinct names to avoid one shadowing the other."
+                        )
+                    continue
+                self.registry.knowledge.append(kb)
+                existing_knowledge[kb_name] = kb
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.
@@ -700,10 +751,14 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
+            # Auto-created purely to wire up primitives; suppress duplicate chatter.
+            self.registry._emit_dedup_logs = False
 
         registry = self.registry
-        memory_ids = registry.get_memory_manager_ids()
-        summary_ids = registry.get_session_summary_manager_ids()
+        memory_by_id = {mid: m for m in registry.memory_managers if (mid := getattr(m, "id", None)) is not None}
+        summary_by_id = {
+            sid: s for s in registry.session_summary_managers if (sid := getattr(s, "id", None)) is not None
+        }
 
         def _register(owner: Any, owner_type: str) -> None:
             owner_id = getattr(owner, "id", None)
@@ -711,25 +766,68 @@ class AgentOS:
             mm = getattr(owner, "memory_manager", None)
             if mm is not None:
                 mm_id = getattr(mm, "id", None)
-                if mm_id is not None and mm_id not in memory_ids:
-                    mm.owner_id = owner_id
-                    mm.owner_type = owner_type
-                    registry.memory_managers.append(mm)
-                    memory_ids.add(mm_id)
+                if mm_id is not None:
+                    existing = memory_by_id.get(mm_id)
+                    if existing is not None:
+                        if existing is not mm:
+                            log_warning(
+                                f"Registry: multiple distinct memory managers share id '{mm_id}'; keeping "
+                                "the first. Give them distinct ids to avoid one shadowing the other."
+                            )
+                    else:
+                        mm.owner_id = owner_id
+                        mm.owner_type = owner_type
+                        registry.memory_managers.append(mm)
+                        memory_by_id[mm_id] = mm
 
             sm = getattr(owner, "session_summary_manager", None)
             if sm is not None:
                 sm_id = getattr(sm, "id", None)
-                if sm_id is not None and sm_id not in summary_ids:
-                    sm.owner_id = owner_id
-                    sm.owner_type = owner_type
-                    registry.session_summary_managers.append(sm)
-                    summary_ids.add(sm_id)
+                if sm_id is not None:
+                    existing = summary_by_id.get(sm_id)
+                    if existing is not None:
+                        if existing is not sm:
+                            log_warning(
+                                f"Registry: multiple distinct session summary managers share id '{sm_id}'; "
+                                "keeping the first. Give them distinct ids to avoid one shadowing the other."
+                            )
+                    else:
+                        sm.owner_id = owner_id
+                        sm.owner_type = owner_type
+                        registry.session_summary_managers.append(sm)
+                        summary_by_id[sm_id] = sm
 
         for agent in self._agents:
             _register(agent, "agent")
         for team in self._teams:
             _register(team, "team")
+
+    def _populate_registry_components(self) -> None:
+        """Auto-populate the registry with components found in agents, teams and workflows.
+
+        Recursively walks every agent, team and workflow (including nested teams,
+        workflow steps and branch/route steps) and collects the models, tools,
+        databases and vector databases they reference. This keeps the registry,
+        and therefore ``GET /registry``, consistent with what is actually wired
+        into the AgentOS without requiring components to be declared twice.
+
+        The registry owns deduplication and cache invalidation (see
+        ``Registry.add_*``): models/dbs/vector dbs dedupe by id/name, toolkits by
+        (type, name, function set), and other callables by equality. User-provided
+        registry components and instances shared across many agents are never
+        duplicated, and user objects are only referenced, never mutated. The walk
+        degrades gracefully: a malformed node is skipped rather than failing
+        AgentOS construction.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+            # Auto-created purely to wire up primitives; suppress duplicate chatter.
+            self.registry._emit_dedup_logs = False
+
+        try:
+            collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
+        except Exception as e:
+            log_debug(f"Registry auto-population skipped: {e}")
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
@@ -853,9 +951,13 @@ class AgentOS:
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
+
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
@@ -1282,6 +1384,7 @@ class AgentOS:
             "session_table_name": db.session_table_name,
             "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
+            "learnings_table_name": db.learnings_table_name,
             "metrics_table_name": db.metrics_table_name,
             "evals_table_name": db.eval_table_name,
             "knowledge_table_name": db.knowledge_table_name,
@@ -1424,6 +1527,28 @@ class AgentOS:
                 )
 
         return memory_config
+
+    def _get_learning_config(self) -> LearningConfig:
+        learning_config = self.config.learning if self.config and self.config.learning else LearningConfig()
+
+        if learning_config.dbs is None:
+            learning_config.dbs = []
+
+        dbs_with_specific_config = [db.db_id for db in learning_config.dbs]
+
+        for db_id, dbs in self.dbs.items():
+            if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.learnings_table_name for db in dbs))
+                learning_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=LearningDomainConfig(display_name=db_id),
+                        tables=unique_tables,
+                    )
+                )
+
+        return learning_config
 
     def _get_knowledge_config(self) -> KnowledgeConfig:
         knowledge_config = self.config.knowledge if self.config and self.config.knowledge else KnowledgeConfig()

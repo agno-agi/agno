@@ -124,6 +124,7 @@ def test_config_endpoint_with_databases(test_os_client_with_dbs: TestClient):
     assert response_data["session"]["dbs"]
     assert response_data["metrics"]["dbs"]
     assert response_data["memory"]["dbs"]
+    assert response_data["learning"]["dbs"]
     assert response_data["evals"]["dbs"]
 
 
@@ -141,6 +142,31 @@ def test_config_endpoint_with_databases_with_multiple_tables(test_os_client_with
     assert response_data["session"]["dbs"][1]["tables"] == ["team_sessions"]
     assert response_data["session"]["dbs"][2]["db_id"] == "workflow-test-db"
     assert response_data["session"]["dbs"][2]["tables"] == ["workflow_sessions"]
+
+
+def test_config_endpoint_exposes_learnings_tables():
+    """Test that the config endpoint reports the learnings domain with its configured table names."""
+    agent = Agent(
+        name="test-agent-with-db",
+        db=SqliteDb(
+            "tmp/test.db", id="agent-test-db", session_table="agent_sessions", learnings_table="agent_learnings"
+        ),
+    )
+    agent_os = AgentOS(
+        id="test-os-learnings",
+        name="Test AgentOS with Learnings",
+        agents=[agent],
+    )
+    client = TestClient(agent_os.get_app())
+
+    response = client.get("/config")
+    assert response.status_code == 200
+
+    response_data = response.json()
+    assert "learning" in response_data
+    assert response_data["learning"]["dbs"]
+    learning_db = next(db for db in response_data["learning"]["dbs"] if db["db_id"] == "agent-test-db")
+    assert learning_db["tables"] == ["agent_learnings"]
 
 
 @pytest.fixture

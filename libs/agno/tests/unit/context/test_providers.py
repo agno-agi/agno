@@ -452,6 +452,26 @@ def test_slack_read_surfaces_are_split_by_mode():
     assert "get_thread" in assisted_tools.functions
 
 
+def test_slack_bot_token_without_user_token_excludes_search_messages():
+    """Without a user token, search_messages should not be registered."""
+    p = SlackContextProvider(token="xoxb-x")
+    bot_tools = p._ensure_bot_read_tools()
+    assisted_tools = p._ensure_assisted_read_tools()
+
+    assert "search_messages" not in bot_tools.functions
+    assert "search_messages" not in assisted_tools.functions
+
+
+def test_slack_user_token_enables_search_messages():
+    """With a user token, search_messages should be registered."""
+    p = SlackContextProvider(token="xoxb-x", user_token="xoxp-user")
+    bot_tools = p._ensure_bot_read_tools()
+    assisted_tools = p._ensure_assisted_read_tools()
+
+    assert "search_messages" in bot_tools.functions
+    assert "search_messages" in assisted_tools.functions
+
+
 def test_slack_read_instructions_override_both_read_agents(monkeypatch):
     import agno.context.slack.provider as slack_provider
 

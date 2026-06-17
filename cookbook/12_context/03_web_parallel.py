@@ -2,8 +2,8 @@
 Web Context Provider with Parallel
 ==================================
 
-`ParallelBackend` speaks directly to Parallel's beta web API via the
-`parallel-web` SDK. Two tools: `web_search(objective)` returns
+`ParallelBackend` speaks directly to Parallel's web API via the
+`parallel-web` SDK (>= 1.0). Two tools: `web_search(objective)` returns
 URL + excerpt pairs for a natural-language objective; `web_extract(url)`
 fetches full-page content.
 
