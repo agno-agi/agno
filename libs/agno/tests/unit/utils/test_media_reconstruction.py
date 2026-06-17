@@ -1,6 +1,8 @@
 import base64
+import json
 
 from agno.media import Audio, File, Image, Video
+from agno.models.message import Message
 from agno.run.agent import RunInput, RunOutput
 from agno.utils.media import (
     reconstruct_audio_from_dict,
@@ -398,3 +400,55 @@ def test_session_persistence_simulation():
     # Both images should have valid content
     assert retrieved_input_1.images[0].content == original_content
     assert retrieved_input_2.images[0].content == second_content
+
+
+def test_reconstruct_file_from_plain_text():
+    """Plain text File content must survive from_base64 byte-for-byte.
+
+    Regression test for https://github.com/agno-agi/agno/issues/8451: text/* content is
+    persisted as raw UTF-8 (see File._normalise_content), and from_base64 must not run it
+    through base64.b64decode. This also covers content that is *coincidentally* valid
+    base64 (all-alphabet, length a multiple of 4), which a bare validate=True does not fix.
+    """
+    cases = [
+        b"col_a,col_b,col_c\n1,x,y\n2,x,y\n3,x,y\n4,x,y\n",  # the issue's CSV
+        b"# Title\n\nSome **bold** and *italic* text.\n",
+        b"TestData",  # coincidentally valid base64
+        b"abcdefgh",  # coincidentally valid base64
+        b"DEADBEEF",  # coincidentally valid base64
+    ]
+    for original in cases:
+        restored = File.from_base64(original.decode("utf-8"), mime_type="text/csv", filename="data.csv")
+        assert restored.content == original
+
+
+def test_file_text_roundtrip_through_to_dict():
+    """Full persistence round-trip (to_dict -> json -> reconstruct) preserves text files.
+
+    This is the exact path session history takes; a text/* File is stored as raw UTF-8 and
+    must come back byte-for-byte. application/pdf is stored as base64 and must also survive.
+    """
+    original = b"col_a,col_b,col_c\n1,x,y\n2,x,y\n3,x,y\n4,x,y\n"
+
+    text_src = File(content=original, mime_type="text/csv", filename="data.csv")
+    text_restored = reconstruct_file_from_dict(json.loads(json.dumps(text_src.to_dict())))
+    assert text_restored.content == original
+
+    pdf_src = File(content=original, mime_type="application/pdf", filename="data.pdf")
+    pdf_restored = reconstruct_file_from_dict(json.loads(json.dumps(pdf_src.to_dict())))
+    assert pdf_restored.content == original
+
+
+def test_file_text_roundtrip_through_message():
+    """Text File survives the Message.to_dict -> Message.from_dict history-replay path."""
+    original = b"col_a,col_b,col_c\n1,x,y\n2,x,y\n3,x,y\n4,x,y\n"
+
+    message = Message(
+        role="user",
+        content="see attached",
+        files=[File(content=original, mime_type="text/csv", filename="data.csv")],
+    )
+    restored = Message.from_dict(json.loads(json.dumps(message.to_dict())))
+
+    assert restored.files is not None
+    assert restored.files[0].content == original

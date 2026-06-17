@@ -101,7 +101,7 @@ class Image(BaseModel):
         import base64
 
         try:
-            content_bytes = base64.b64decode(base64_content)
+            content_bytes = base64.b64decode(base64_content, validate=True)
         except Exception:
             content_bytes = base64_content.encode("utf-8")
 
@@ -220,7 +220,7 @@ class Audio(BaseModel):
         import base64
 
         try:
-            content_bytes = base64.b64decode(base64_content)
+            content_bytes = base64.b64decode(base64_content, validate=True)
         except Exception:
             # If not valid base64, encode as UTF-8 bytes
             content_bytes = base64_content.encode("utf-8")
@@ -349,7 +349,7 @@ class Video(BaseModel):
         import base64
 
         try:
-            content_bytes = base64.b64decode(base64_content)
+            content_bytes = base64.b64decode(base64_content, validate=True)
         except Exception:
             content_bytes = base64_content.encode("utf-8")
 
@@ -463,17 +463,24 @@ class File(BaseModel):
     ) -> "File":
         """Create File from base64 encoded content or plain text.
 
-        Handles both base64-encoded binary content and plain text content
-        (which is stored as UTF-8 strings for text/* MIME types).
+        Handles both base64-encoded binary content and plain text content. This mirrors
+        ``File._normalise_content``: ``text/*`` content is persisted as raw UTF-8 strings
+        (never base64), everything else is base64-encoded. The decode therefore keys off
+        ``mime_type`` rather than guessing, so plain text that happens to be valid base64
+        (e.g. "TestData") is not silently corrupted.
         """
         import base64
 
-        try:
-            content_bytes = base64.b64decode(base64_content)
-        except Exception:
-            # If not valid base64, it might be plain text content (text/csv, text/plain, etc.)
-            # which is stored as UTF-8 strings, not base64
+        if mime_type and mime_type.startswith("text/"):
+            # Symmetric with _normalise_content: text/* content is stored as raw UTF-8,
+            # so decoding it as base64 would corrupt it.
             content_bytes = base64_content.encode("utf-8")
+        else:
+            try:
+                content_bytes = base64.b64decode(base64_content, validate=True)
+            except Exception:
+                # Not valid base64 - fall back to treating it as raw UTF-8 text.
+                content_bytes = base64_content.encode("utf-8")
 
         return cls(
             content=content_bytes,
