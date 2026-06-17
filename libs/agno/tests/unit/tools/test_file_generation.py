@@ -184,6 +184,97 @@ def test_code_generation_can_be_disabled():
     assert "generate_code_file" not in disabled.functions
 
 
+def test_code_file_registered_with_all_flag():
+    """The `all=True` shorthand registers generate_code_file even if the flag is off."""
+    tools = FileGenerationTools(enable_code_generation=False, all=True)
+    assert "generate_code_file" in tools.functions
+
+
+def test_generate_code_file_uppercase_extension_not_doubled():
+    """An uppercase filename extension matching the language must not be doubled."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("print('hi')\n", language="python", filename="Main.PY")
+
+    file_artifact = _get_single_file(result)
+    # Extension preserved as-is, not turned into "Main.PY.py"
+    assert file_artifact.filename == "Main.PY"
+    assert file_artifact.file_type == "py"
+    # Matching extension keeps the dedicated MIME type
+    assert file_artifact.mime_type == "text/x-python"
+
+
+def test_generate_code_file_conflicting_extension_is_not_doubled():
+    """An explicit filename extension takes precedence over the language extension."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("print('hi')\n", language="python", filename="foo.txt")
+
+    file_artifact = _get_single_file(result)
+    # The explicit ".txt" wins; no "foo.txt.py"
+    assert file_artifact.filename == "foo.txt"
+    assert file_artifact.file_type == "txt"
+    assert file_artifact.mime_type == "text/plain"
+
+
+def test_generate_code_file_matching_extension_keeps_dedicated_mime():
+    """A lowercase filename extension matching the language keeps the dedicated MIME."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("print('hi')\n", language="python", filename="main.py")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.filename == "main.py"
+    assert file_artifact.file_type == "py"
+    assert file_artifact.mime_type == "text/x-python"
+
+
+def test_generate_code_file_empty_code():
+    """Empty code produces a valid zero-byte artifact."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("", language="python", filename="empty")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.filename == "empty.py"
+    assert file_artifact.content == b""
+    assert file_artifact.size == 0
+
+
+def test_generate_code_file_unicode_content_preserved():
+    """Non-ASCII source content round-trips through UTF-8 encoding."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = FileGenerationTools(output_directory=tmp_dir)
+        code = "# café ☕\nname = 'José'\nprint('héllo wörld')\n"
+        result = tools.generate_code_file(code, language="python", filename="unicode")
+
+        file_artifact = _get_single_file(result)
+        assert file_artifact.content.decode("utf-8") == code
+
+        saved_path = Path(file_artifact.filepath)
+        assert saved_path.read_text(encoding="utf-8") == code
+
+
+def test_generate_code_file_filename_trailing_dot():
+    """A filename ending in a dot has no real extension and falls back to txt."""
+    tools = FileGenerationTools()
+    result = tools.generate_code_file("x", filename="foo.")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.file_type == "txt"
+    assert file_artifact.mime_type == "text/plain"
+    assert file_artifact.filename.endswith(".txt")
+
+
+def test_generate_code_file_traversal_filename_sanitized():
+    """Path components in the filename are stripped before saving to disk."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = FileGenerationTools(output_directory=tmp_dir)
+        result = tools.generate_code_file("print('x')\n", language="python", filename="../../etc/passwd")
+
+        file_artifact = _get_single_file(result)
+        assert file_artifact.filename == "passwd.py"
+        saved_path = Path(file_artifact.filepath)
+        # The saved file stays inside the output directory
+        assert saved_path.parent == Path(tmp_dir).resolve()
+
+
 def test_generate_pdf_file_when_unavailable():
     """Test PDF generation returns install message when reportlab is missing."""
     if PDF_AVAILABLE:

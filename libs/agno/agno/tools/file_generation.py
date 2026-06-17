@@ -177,10 +177,11 @@ class FileGenerationTools(Toolkit):
         display_name: str,
     ) -> ToolResult:
         """Build a File artifact and optionally save to disk."""
-        # Resolve filename: default if empty, ensure correct extension
+        # Resolve filename: default if empty, ensure correct extension.
+        # The extension check is case-insensitive so "Main.PY" is not turned into "Main.PY.py".
         if not filename:
             filename = f"generated_file_{str(uuid4())[:8]}.{file_type}"
-        elif not filename.endswith(f".{file_type}"):
+        elif not filename.lower().endswith(f".{file_type.lower()}"):
             filename += f".{file_type}"
         file_name = sanitize_filename(filename)
 
@@ -504,18 +505,25 @@ class FileGenerationTools(Toolkit):
             file_type: Optional[str] = None
             mime_type: Optional[str] = None
 
-            # Resolve from the language argument first
+            # Resolve from the language argument first (this is what gives us the
+            # dedicated MIME types, e.g. text/x-python).
             if language:
                 normalized = language.strip().lower()
                 if normalized in CODE_LANGUAGE_MAP:
                     file_type, mime_type = CODE_LANGUAGE_MAP[normalized]
 
-            # Fall back to the extension from the filename
-            if file_type is None and filename and "." in filename:
-                ext = filename.rsplit(".", 1)[-1].strip().lower()
-                if ext:
-                    file_type = ext
-                    mime_type = "text/plain"
+            # An explicit extension on the filename takes precedence over the language's
+            # default extension. This both honours an explicit choice and avoids doubled
+            # extensions like "foo.txt.py" when the filename and language disagree.
+            # Use only the basename so path-like filenames ("../../etc/passwd") don't
+            # leak separators into the extension.
+            if filename:
+                basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+                if "." in basename:
+                    ext = basename.rsplit(".", 1)[-1].strip().lower()
+                    if ext and ext != file_type:
+                        file_type = ext
+                        mime_type = "text/plain"
 
             # Final fallback: plain text file
             if file_type is None:

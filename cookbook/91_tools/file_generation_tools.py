@@ -146,4 +146,4 @@ if __name__ == "__main__":
     print("=" * 50)
 
     example_pdf_generation()
-    example_code_generation()
+    
