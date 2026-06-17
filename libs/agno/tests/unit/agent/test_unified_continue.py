@@ -1564,6 +1564,35 @@ class TestRegenerateSugar:
         # Source stays COMPLETED — not hidden from history.
         assert run.status == RunStatus.completed
 
+    def test_replace_original_false_does_not_unhide_already_replaced_source(self, monkeypatch: pytest.MonkeyPatch):
+        """``replace_original`` governs only whether THIS regenerate hides its
+        source. A later ``replace_original=False`` does NOT resurrect a run an
+        earlier (default) regenerate already replaced — so it is only meaningful
+        when the source is still COMPLETED."""
+        run = self._build_run_with_assistant_tail()
+        agent = _make_agent(monkeypatch, runs=[run])
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        # First regenerate (default) hides the source.
+        _run.continue_run_dispatch(agent=agent, run_id="run-A", session_id="s", regenerate=True, stream=False)
+        assert run.status == RunStatus.regenerated
+
+        # Regenerating the SAME (now hidden) source with replace_original=False
+        # does not bring it back to COMPLETED.
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-A",
+            session_id="s",
+            regenerate=True,
+            replace_original=False,
+            stream=False,
+        )
+        assert run.status == RunStatus.regenerated
+
     def test_regenerate_allows_default_end_boundary(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
         agent = _make_agent(monkeypatch, runs=[run])
