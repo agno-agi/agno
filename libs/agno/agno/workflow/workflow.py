@@ -10565,9 +10565,11 @@ class Workflow:
                 step_kwargs["workflow"] = (
                     step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
                 )
-            # Copy Step configuration attributes
+            # Copy Step configuration attributes.
+            # NOTE: step_id is intentionally omitted so each copy gets a fresh uuid. Workflows are
+            # deep-copied per request for isolation, and reusing a step_id across copies would make
+            # concurrent runs collide on step identity in events/telemetry.
             for attr in [
-                "step_id",
                 "max_retries",
                 "timeout_seconds",
                 "skip_on_failure",

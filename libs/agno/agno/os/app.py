@@ -482,8 +482,10 @@ class AgentOS:
             route
             for route in app.router.routes
             if hasattr(route, "path")
-            and route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
-            or route.path.startswith("/mcp")  # type: ignore
+            and (
+                route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
+                or route.path.startswith("/mcp")
+            )
         ]
 
         # Add the built-in routes
