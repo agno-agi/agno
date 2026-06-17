@@ -297,3 +297,16 @@ def test_authorize_route_requires_all_scopes_and_no_blanket_allow():
     assert prov.authorize_route(mixed, ["agents:read", "agents:run"]) is False  # has read, not run
     eng.set_role_scopes("reader", [("agents:secret:read", "allow"), ("agents:secret:run", "allow")])
     assert prov.authorize_route(mixed, ["agents:read", "agents:run"]) is True
+
+
+def test_effect_must_be_allow_or_deny_fail_closed():
+    """A typo'd effect must raise, not silently become an allow (deny-overrides
+    keys off the exact string 'deny')."""
+    eng = NativePolicyEngine()
+    with pytest.raises(ValueError):
+        eng.add_scope("r", "agents:read", effect="denied")  # typo
+    with pytest.raises(ValueError):
+        eng.set_role_scopes("r", [("agents:read", "allw")])  # typo
+    # canonical effects (any case) are accepted
+    eng.add_scope("r", "agents:read", effect="DENY")
+    assert eng.get_role_scopes("r") == [("agents:read", "deny")]
