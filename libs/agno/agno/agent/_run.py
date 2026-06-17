@@ -3054,6 +3054,11 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     # and (with store_events=True) the fork's events list would be the parent's
     # events with the new run's events appended onto it.
     forked.metrics = RunMetrics()
+    # Start the fork's duration timer now (dispatch-level, same granularity as
+    # run_dispatch). The fresh RunMetrics has no timer, and the continue path
+    # never starts one, so without this the fork's RunCompleted event has no
+    # duration (stop_timer only sets duration when a timer was started).
+    forked.metrics.start_timer()
     forked.created_at = int(_time())
     forked.events = None
     _truncate_run_to_checkpoint(forked, message_index)

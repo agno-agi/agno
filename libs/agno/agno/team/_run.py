@@ -6083,6 +6083,11 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     forked.forked_from_run_id = run_response.run_id
     forked.forked_from_message_index = message_index
     forked.metrics = RunMetrics()
+    # Start the fork's duration timer now (dispatch-level, same granularity as
+    # the run path). The fresh RunMetrics has no timer and the continue path
+    # never starts one, so without this the fork's RunCompleted event has no
+    # duration (stop_timer only sets duration when a timer was started).
+    forked.metrics.start_timer()
     forked.created_at = int(_time())
     # Fork is a new run — don't inherit the parent's events. With
     # store_events=True the new run's events would otherwise be the parent's

@@ -247,6 +247,17 @@ class TestTeamFork:
         assert forked.events is None, "fork must start with no events"
         assert run.events == ["evt-1"], "original run must be untouched"
 
+    def test_fork_starts_duration_timer(self):
+        """A forked team run must start its own duration timer so the resumed
+        run's RunCompleted event reports a duration."""
+        run = TeamRunOutput(
+            run_id="r1",
+            messages=[Message(role="user", content="a"), Message(role="assistant", content="b")],
+        )
+        forked = team_run._fork_team_run(run, message_index=1)
+        forked.metrics.stop_timer()
+        assert forked.metrics.duration is not None, "forked team run has no duration"
+
     def test_fork_does_not_clone_members_or_reparent(self):
         """Members are out of scope for team fork (parity with agent surface
         for fallback / parser / followups). The forked team's

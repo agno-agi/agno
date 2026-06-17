@@ -927,6 +927,14 @@ class TestForkHelper:
         assert forked.events is None, "fork must start with no events"
         assert original.events == ["evt-1", "evt-2"], "original run must be untouched"
 
+    def test_fork_starts_duration_timer(self):
+        """A fork must start its own duration timer — the continue path never
+        starts one, so without this the resumed run's RunCompleted event has no
+        duration (stop_timer only sets duration when a timer was started)."""
+        forked = _fork_run(self._build_run(), 3)
+        forked.metrics.stop_timer()
+        assert forked.metrics.duration is not None, "fork run has no duration"
+
 
 class TestCheckpointScrubIsolation:
     """A mid-run checkpoint with store_media=False must scrub the storage copy
