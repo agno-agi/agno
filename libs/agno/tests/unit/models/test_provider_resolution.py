@@ -13,6 +13,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.models.utils import (
     MODEL_PROVIDER_CLASSES,
+    _canonical_provider_display,
     _get_model_class,
     _resolve_provider_key,
     get_model_from_dict,
@@ -51,6 +52,16 @@ def test_to_dict_round_trip_preserves_class(key):
     rebuilt = get_model_from_dict(model.to_dict())
     assert type(rebuilt) is type(model)
     assert rebuilt.id == "test-id"
+
+
+@pytest.mark.parametrize("key", CONSTRUCTABLE_KEYS)
+def test_canonical_provider_display_matches_class(key):
+    """Drift guard: the provider-display override table matches what each class actually reports.
+
+    Keeps name-vs-provider disambiguation correct if a provider's display string ever changes.
+    """
+    model = _get_model_class("test-id", key)
+    assert _canonical_provider_display(key) == (model.provider or "").strip().lower()
 
 
 @pytest.mark.parametrize(
@@ -106,6 +117,32 @@ def test_resolve_sdk_gated_providers(provider, name, expected_key):
 )
 def test_resolve_provider_aliases(provider, name, expected_key):
     assert _resolve_provider_key(provider, name) == expected_key
+
+
+@pytest.mark.parametrize(
+    "provider, name, expected_key",
+    [
+        # A user-supplied name that collides with another provider's default name must NOT
+        # override the provider string. The name only disambiguates within the same family.
+        ("OpenAI", "Gemini", "openai"),
+        ("OpenAI", "Groq", "openai"),
+        ("Groq", "Gemini", "groq"),
+        ("Anthropic", "OpenAIChat", "anthropic"),
+        # Within-family disambiguation still works (these share a display provider string).
+        ("OpenAI", "OpenAIChat", "openai-chat"),
+        ("OpenAI", "OpenAIResponses", "openai-responses"),
+        ("Azure", "AzureAIFoundry", "azure-ai-foundry"),
+    ],
+)
+def test_name_does_not_override_conflicting_provider(provider, name, expected_key):
+    assert _resolve_provider_key(provider, name) == expected_key
+
+
+def test_user_named_model_reconstructs_correct_provider():
+    """Regression: OpenAIChat(name="Gemini") must not rebuild as the Google Gemini class."""
+    rebuilt = get_model_from_dict({"provider": "OpenAI", "name": "Gemini", "id": "gpt-4o"})
+    assert type(rebuilt).__name__ != "Gemini"
+    assert rebuilt.provider == "OpenAI"
 
 
 def test_unsupported_provider_raises():

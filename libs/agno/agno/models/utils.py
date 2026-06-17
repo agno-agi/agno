@@ -148,21 +148,63 @@ _PROVIDER_ALIASES: Dict[str, str] = {
 }
 
 
+# The lowercased display `provider` string each key's class reports, listed only where it differs
+# from the key itself (most keys equal their provider string). Several distinct classes share a
+# provider string -- e.g. OpenAIResponses, OpenAIChat, and OpenAI-compatible providers like
+# CometAPI all report "OpenAI" -- so this is what tells whether a serialized `name` legitimately
+# belongs to the serialized provider.
+_PROVIDER_DISPLAY_OVERRIDES: Dict[str, str] = {
+    "openai-chat": "openai",
+    "openai-responses": "openai",
+    "cometapi": "openai",
+    "google-interactions": "google",
+    "openrouter-responses": "openrouter",
+    "azure-openai": "azure",
+    "azure-ai-foundry": "azure",
+    "azure-foundry-claude": "azurefoundry",
+    "aws-bedrock": "awsbedrock",
+    "aws-claude": "awsbedrock",
+    "ollama-responses": "ollama",
+    "litellm-openai": "litellm",
+    "cerebras-openai": "cerebrasopenai",
+    "inception": "inceptionlabs",
+    "llama-cpp": "llamacpp",
+    "meta": "llama",
+    "llama-openai": "llamaopenai",
+    "vertexai-claude": "vertexai",
+    "xiaomi": "xiaomi mimo",
+    "open-responses": "openresponses",
+    "tuning-engines": "tuning engines",
+}
+
+
+def _canonical_provider_display(key: str) -> str:
+    """The lowercased display `provider` string a given provider key's class reports."""
+    return _PROVIDER_DISPLAY_OVERRIDES.get(key, key)
+
+
 def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[str] = None) -> str:
     """Resolve a serialized (provider, name) pair to a stable provider key.
 
-    `name` is preferred because it disambiguates providers that share a display `provider`
-    string (e.g. Azure). Falls back to the provider string and known aliases.
+    The provider string is authoritative. `name` is used only to disambiguate among classes that
+    report the same display `provider` (e.g. AzureOpenAI vs AzureAIFoundry, or OpenAIResponses vs
+    the OpenAI-compatible CometAPI). A `name` whose class reports a different provider is treated
+    as a user-supplied label and ignored, so e.g. OpenAIChat(name="Gemini") still resolves to
+    OpenAI rather than Google.
     """
-    if model_name and model_name in _NAME_TO_PROVIDER_KEY:
-        return _NAME_TO_PROVIDER_KEY[model_name]
-
     provider = (model_provider or "").strip().lower()
-    if provider in MODEL_PROVIDER_CLASSES:
-        return provider
-    if provider in _PROVIDER_ALIASES:
-        return _PROVIDER_ALIASES[provider]
-    return provider
+    provider_key = provider if provider in MODEL_PROVIDER_CLASSES else _PROVIDER_ALIASES.get(provider)
+    name_key = _NAME_TO_PROVIDER_KEY.get(model_name) if model_name else None
+
+    # Provider string is unknown (e.g. CometAPI's post-init "CometAPI (<id>)" when name is absent,
+    # or a custom provider): the name is the only reliable signal left.
+    if provider_key is None:
+        return name_key or provider
+
+    # Otherwise trust the name only when its class reports this same provider string.
+    if name_key is not None and _canonical_provider_display(name_key) == provider:
+        return name_key
+    return provider_key
 
 
 def _get_model_class(model_id: str, model_provider: str) -> Model:
