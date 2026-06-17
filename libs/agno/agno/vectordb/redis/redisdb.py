@@ -18,7 +18,7 @@ from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -401,7 +401,6 @@ class RedisDB(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert documents into the Redis index."""
-        user_id = normalize_user_id(user_id)
         try:
             # Store content hash for tracking
             parsed_documents = []
@@ -424,7 +423,6 @@ class RedisDB(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Async version of insert method."""
-        user_id = normalize_user_id(user_id)
         try:
             async_index = await self._get_async_index()
             parsed_documents = []
@@ -465,7 +463,6 @@ class RedisDB(VectorDb):
         Strategy: delete existing docs with the same content_hash (scoped to the
         caller's bucket), then insert new docs.
         """
-        user_id = normalize_user_id(user_id)
         try:
             # Find existing docs for this content_hash in the caller's bucket and delete them
             query = FilterQuery(
@@ -497,7 +494,6 @@ class RedisDB(VectorDb):
         Strategy: delete existing docs with the same content_hash (scoped to the
         caller's bucket), then insert new docs.
         """
-        user_id = normalize_user_id(user_id)
         try:
             async_index = await self._get_async_index()
 
@@ -552,7 +548,6 @@ class RedisDB(VectorDb):
         search mode as a PRE-filter, so scoped callers never see other owners'
         chunks in any mode and shared chunks stay visible to everyone.
         """
-        user_id = normalize_user_id(user_id)
 
         if filters and isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Redis. No filters will be applied.")
@@ -818,7 +813,6 @@ class RedisDB(VectorDb):
         user_id set  -> delete only the caller's own chunks (must NOT touch
         the shared bucket). None -> delete across all owners (legacy/admin).
         """
-        user_id = normalize_user_id(user_id)
         try:
             # Find documents with the given content_id, scoped to the caller's bucket.
             if user_id is None:

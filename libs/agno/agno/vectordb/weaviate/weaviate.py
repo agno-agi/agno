@@ -23,7 +23,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
 
@@ -244,7 +244,7 @@ class Weaviate(VectorDb):
         collection = self.get_client().collections.get(self.collection)
         result = collection.query.fetch_objects(
             limit=1,
-            filters=self._content_hash_filter(content_hash, normalize_user_id(user_id)),
+            filters=self._content_hash_filter(content_hash, user_id),
         )
         return len(result.objects) > 0
 
@@ -302,7 +302,6 @@ class Weaviate(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents into Weaviate.")
         collection = self.get_client().collections.get(self.collection)
 
@@ -356,7 +355,6 @@ class Weaviate(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents into Weaviate asynchronously.")
         if not documents:
             return
@@ -461,7 +459,6 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         # Scope the dedupe-delete to the owner: replace only the caller's stale chunks.
         if self.content_hash_exists(content_hash, user_id=user_id):
@@ -485,7 +482,6 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
-        user_id = normalize_user_id(user_id)
         # Scope the dedupe-delete to the owner: replace only the caller's stale chunks.
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -927,7 +923,6 @@ class Weaviate(VectorDb):
             user_id (Optional[str]): Restrict the delete to the owner's chunks. None
                 deletes all chunks with this content_id regardless of owner.
         """
-        user_id = normalize_user_id(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)
 
@@ -1075,7 +1070,7 @@ class Weaviate(VectorDb):
     ):
         """AND the per-user scope into the user-supplied metadata filter."""
         base = self._build_filter_expression(filters)
-        scope = self._user_scope_filter(normalize_user_id(user_id))
+        scope = self._user_scope_filter(user_id)
         if scope is None:
             return base
         if base is None:
@@ -1188,7 +1183,7 @@ class Weaviate(VectorDb):
             collection = self.get_client().collections.get(self.collection)
 
             # Build filter for content_hash search
-            filter_expr = self._content_hash_filter(content_hash, normalize_user_id(user_id), scope_none_to_shared=True)
+            filter_expr = self._content_hash_filter(content_hash, user_id, scope_none_to_shared=True)
 
             collection.data.delete_many(where=filter_expr)
 

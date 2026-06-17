@@ -161,13 +161,6 @@ class TestUserScopePredicate:
         stmt = select(db.table.c.id)
         assert db._apply_user_scope(stmt, None) is stmt
 
-    def test_empty_string_user_id_normalizes_to_no_predicate(self):
-        from sqlalchemy import select
-
-        db = self._db()
-        stmt = select(db.table.c.id)
-        assert db._apply_user_scope(stmt, "") is stmt
-
     def test_scoped_user_id_adds_predicate(self):
         from sqlalchemy import select
 
@@ -196,12 +189,6 @@ class TestInsertPopulatesUserIdColumn:
 
     def test_user_id_omitted_defaults_to_null(self, pgvector_db):
         pgvector_db.insert(content_hash="h1", documents=_shared_docs())
-        assert _owners(pgvector_db) == [None]
-
-    def test_empty_string_user_id_normalized_to_null(self, pgvector_db):
-        """An empty-string owner collapses to shared (NULL) — uniform with
-        every other backend via normalize_user_id."""
-        pgvector_db.insert(content_hash="h1", documents=_shared_docs(), user_id="")
         assert _owners(pgvector_db) == [None]
 
 

@@ -16,7 +16,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
 # Per-user isolation: the owner is stamped into a first-class user_id field and
@@ -321,7 +321,6 @@ class SurrealDb(VectorDb):
             True if the document exists, False otherwise.
 
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Checking if document exists by content hash: {content_hash}")
         params: Dict[str, Any] = {"content_hash": content_hash}
         if user_id:
@@ -401,7 +400,6 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
-        user_id = normalize_user_id(user_id)
         for doc in documents:
             doc.embed(embedder=self.embedder)
             data = self._build_record(doc, content_hash, filters, user_id)
@@ -427,7 +425,6 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
-        user_id = normalize_user_id(user_id)
         # Replace only the caller's own stale chunks for this content_hash;
         # other owners and the shared bucket are left intact.
         self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -480,7 +477,6 @@ class SurrealDb(VectorDb):
             A list of documents that are similar to the query.
 
         """
-        user_id = normalize_user_id(user_id)
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
             filters = None
@@ -608,7 +604,6 @@ class SurrealDb(VectorDb):
             True if documents were deleted, False otherwise.
 
         """
-        user_id = normalize_user_id(user_id)
         log_debug(f"Deleting documents by content ID: {content_id}")
         params: Dict[str, Any] = {"content_id": content_id}
         if user_id:
@@ -684,7 +679,6 @@ class SurrealDb(VectorDb):
             True if the document exists, False otherwise.
 
         """
-        user_id = normalize_user_id(user_id)
         params: Dict[str, Any] = {"content_hash": content_hash}
         if user_id:
             params["user_id"] = user_id
@@ -726,7 +720,6 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
-        user_id = normalize_user_id(user_id)
         for doc in documents:
             doc.embed(embedder=self.embedder)
             data = self._build_record(doc, content_hash, filters, user_id)
@@ -751,7 +744,6 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
-        user_id = normalize_user_id(user_id)
         # Replace only the caller's own stale chunks (see sync upsert).
         await self._async_delete_by_content_hash(content_hash, user_id=user_id)
         for doc in documents:
@@ -781,7 +773,6 @@ class SurrealDb(VectorDb):
             A list of documents that are similar to the query.
 
         """
-        user_id = normalize_user_id(user_id)
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in SurrealDB. No filters will be applied.")
             filters = None

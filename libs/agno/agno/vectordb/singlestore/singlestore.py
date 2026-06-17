@@ -19,7 +19,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, normalize_user_id
+from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
 
@@ -172,7 +172,6 @@ class SingleStore(VectorDb):
         """AND user_id = :uid OR user_id IS NULL into stmt when scoped
         (user_id is bound, never interpolated). Adds no predicate when user_id is None.
         """
-        user_id = normalize_user_id(user_id)
         if user_id is None:
             return stmt
         return stmt.where((self.table.c.user_id == user_id) | (self.table.c.user_id.is_(None)))
@@ -230,7 +229,6 @@ class SingleStore(VectorDb):
             batch_size (int): Number of documents to insert in each batch.
             user_id (Optional[str]): Owner for per-user isolation; None means shared.
         """
-        user_id = normalize_user_id(user_id)
         with self.Session.begin() as sess:
             counter = 0
             for document in documents:
@@ -282,7 +280,6 @@ class SingleStore(VectorDb):
         user_id is the explicit owner; None means shared. The dedupe
         delete is scoped to the owner.
         """
-        user_id = normalize_user_id(user_id)
         if self.content_hash_exists(content_hash):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self._upsert(
@@ -528,7 +525,6 @@ class SingleStore(VectorDb):
         """
         from sqlalchemy import delete
 
-        user_id = normalize_user_id(user_id)
         try:
             with self.Session.begin() as sess:
                 stmt = delete(self.table).where(self.table.c.content_id == content_id)
@@ -593,7 +589,6 @@ class SingleStore(VectorDb):
         user_id is the explicit owner of these chunks for per-user RAG
         isolation; None means shared / unscoped. See insert.
         """
-        user_id = normalize_user_id(user_id)
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
@@ -683,7 +678,6 @@ class SingleStore(VectorDb):
             user_id (Optional[str]): Explicit owner; None means shared. The
                 dedupe delete is scoped to the owner. See upsert.
         """
-        user_id = normalize_user_id(user_id)
         if self.content_hash_exists(content_hash):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -805,7 +799,6 @@ class SingleStore(VectorDb):
         """
         from sqlalchemy import delete
 
-        user_id = normalize_user_id(user_id)
         try:
             with self.Session.begin() as sess:
                 stmt = delete(self.table).where(self.table.c.content_hash == content_hash)

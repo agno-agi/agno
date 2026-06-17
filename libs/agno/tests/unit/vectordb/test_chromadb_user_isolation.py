@@ -72,7 +72,11 @@ class TestCollectionNaming:
     a crafted id can't forge another user's collection name.
     """
 
-    SHA_LEN = 64  # sha256 hex digest length
+    # Chroma's hard limit on collection names is 63 chars total. The wrapper
+    # truncates the sha256 hex to a budget that fits inside ``{base}__{suffix}``
+    # while still leaving enough entropy to be collision-free at any realistic
+    # tenant count.
+    SHA_LEN = 16  # truncated sha256 prefix length
 
     def _suffix_of(self, chroma_db, user_id: str) -> str:
         name = chroma_db._collection_name_for(user_id)
@@ -81,10 +85,6 @@ class TestCollectionNaming:
 
     def test_none_resolves_to_base_collection_name(self, chroma_db):
         assert chroma_db._collection_name_for(None) == TEST_COLLECTION
-
-    def test_empty_string_resolves_to_base_collection_name(self, chroma_db):
-        # Empty string is treated the same as None — both mean "no scope".
-        assert chroma_db._collection_name_for("") == TEST_COLLECTION
 
     def test_simple_user_id_is_hashed_not_passed_through(self, chroma_db):
         # No passthrough path: even a clean alphanumeric id is hashed, so a
@@ -97,6 +97,8 @@ class TestCollectionNaming:
     def test_suffix_is_always_sha256_hex(self, chroma_db):
         # Adversarial id zoo: emails, unicode, spaces, uppercase, 1-char,
         # 80-char. Every one yields a fixed-length lowercase-hex suffix.
+        # Empty/whitespace ids are normalized to None at the Knowledge
+        # boundary; backends only ever see (None | non-empty str).
         adversarial = [
             "alice@corp.com",
             "üñîçødé-名前",
@@ -105,13 +107,9 @@ class TestCollectionNaming:
             "a",
             "x" * 80,
             "../../etc/passwd",
-            "",  # empty -> base (handled separately, but shouldn't crash)
         ]
         for uid in adversarial:
             name = chroma_db._collection_name_for(uid)
-            if not uid:
-                assert name == TEST_COLLECTION
-                continue
             suffix = name[len(TEST_COLLECTION) + 2 :]
             assert len(suffix) == self.SHA_LEN
             assert all(c in "0123456789abcdef" for c in suffix)
@@ -147,8 +145,8 @@ class TestCollectionNaming:
         attacker_coll = chroma_db._collection_name_for(crafted)
 
         assert attacker_coll != victim_coll
-        # And it resolves to the attacker's own sha256 namespace.
-        expected = f"{TEST_COLLECTION}__{sha256(crafted.encode()).hexdigest()}"
+        # And it resolves to the attacker's own truncated-sha256 namespace.
+        expected = f"{TEST_COLLECTION}__{sha256(crafted.encode()).hexdigest()[: self.SHA_LEN]}"
         assert attacker_coll == expected
 
 

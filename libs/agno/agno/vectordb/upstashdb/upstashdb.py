@@ -15,8 +15,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, normalize_user_id
-
+from agno.vectordb.base import VectorDb
 DEFAULT_NAMESPACE = ""
 
 # Per-user RAG isolation: Upstash has no per-tenant column, so the owner is
@@ -264,7 +263,6 @@ class UpstashVectorDb(VectorDb):
         try:
             # Use query with a filter to check if any documents exist with this content_hash
             # We only need to check existence, so limit to 1 result
-            user_id = normalize_user_id(user_id)
             filter_str = _combine_filter_strs(
                 _build_filter_str({"content_hash": content_hash}),
                 _build_filter_str({self.USER_ID_KEY: user_id}) if user_id else "",
@@ -349,7 +347,6 @@ class UpstashVectorDb(VectorDb):
             user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
         vectors = []
 
@@ -461,7 +458,6 @@ class UpstashVectorDb(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
-        user_id = normalize_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in UpstashDB. No filters will be applied.")
@@ -611,7 +607,6 @@ class UpstashVectorDb(VectorDb):
         Returns:
             bool: True if deletion was successful, False otherwise
         """
-        user_id = normalize_user_id(user_id)
         try:
             filter_str = _combine_filter_strs(
                 _build_filter_str({"content_id": content_id}),
@@ -664,7 +659,6 @@ class UpstashVectorDb(VectorDb):
             user_id (Optional[str], optional): Owner of these chunks for per-user isolation.
                 None (default) writes to the shared bucket.
         """
-        user_id = normalize_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
         vectors = []
 
@@ -811,7 +805,6 @@ class UpstashVectorDb(VectorDb):
             bool: True if deletion was successful, False otherwise.
         """
         try:
-            user_id = normalize_user_id(user_id)
             # None scopes to the shared bucket so a shared dedupe never wipes a scoped owner
             filter_str = _combine_filter_strs(
                 _build_filter_str({"content_hash": content_hash}),

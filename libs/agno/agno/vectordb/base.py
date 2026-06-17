@@ -6,13 +6,15 @@ from agno.utils.log import log_warning
 from agno.utils.string import generate_id
 
 
-def normalize_user_id(user_id: Optional[str]) -> Optional[str]:
-    """Collapse an empty owner id to None so all backends treat "no owner" the same."""
-    return user_id or None
-
-
 class VectorDb(ABC):
-    """Base class for Vector Databases"""
+    """Base class for Vector Databases.
+
+    Per-user isolation contract:
+      * ``user_id=None`` means "no scope" (admin / RBAC-off / unscoped view).
+        Reads see everything; writes go to the shared bucket.
+      * ``user_id="..."`` (non-empty string) scopes to that owner. Reads
+        return own + shared; writes stamp ownership.
+    """
 
     def __init__(
         self,
