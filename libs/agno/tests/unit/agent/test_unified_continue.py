@@ -918,6 +918,15 @@ class TestForkHelper:
         assert len(forked.messages) == 1
         assert forked.tools == [], "No tool_call_ids referenced in surviving messages"
 
+    def test_fork_resets_events(self):
+        """A fork is a new run — it must not inherit the parent's events (with
+        store_events=True the new run would otherwise append onto the parent's)."""
+        original = self._build_run()
+        original.events = ["evt-1", "evt-2"]  # simulate store_events=True accumulation
+        forked = _fork_run(original, 3)
+        assert forked.events is None, "fork must start with no events"
+        assert original.events == ["evt-1", "evt-2"], "original run must be untouched"
+
 
 class TestCheckpointScrubIsolation:
     """A mid-run checkpoint with store_media=False must scrub the storage copy

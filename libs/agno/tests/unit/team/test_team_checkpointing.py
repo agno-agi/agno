@@ -235,6 +235,18 @@ class TestTeamFork:
         # team's original metrics unchanged
         assert team.metrics.input_tokens == 500
 
+    def test_fork_resets_events(self):
+        """A forked team run must not inherit the parent's events (with
+        store_events=True the new run would otherwise append onto the parent's)."""
+        run = TeamRunOutput(
+            run_id="r1",
+            messages=[Message(role="user", content="a"), Message(role="assistant", content="b")],
+        )
+        run.events = ["evt-1"]  # simulate store_events=True accumulation
+        forked = team_run._fork_team_run(run, message_index=1)
+        assert forked.events is None, "fork must start with no events"
+        assert run.events == ["evt-1"], "original run must be untouched"
+
     def test_fork_does_not_clone_members_or_reparent(self):
         """Members are out of scope for team fork (parity with agent surface
         for fallback / parser / followups). The forked team's

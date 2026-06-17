@@ -6084,6 +6084,10 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     forked.forked_from_message_index = message_index
     forked.metrics = RunMetrics()
     forked.created_at = int(_time())
+    # Fork is a new run — don't inherit the parent's events. With
+    # store_events=True the new run's events would otherwise be the parent's
+    # events with this run's events appended onto them.
+    forked.events = None
 
     _truncate_team_run_to_checkpoint(forked, message_index)
     return forked
