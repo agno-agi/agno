@@ -5097,6 +5097,26 @@ def _build_cancel_terminal_events(
     return cancelled_event, completed_event
 
 
+def _resolve_run_index(session: AgentSession, run: RunOutput) -> Optional[int]:
+    """Find the position of ``run`` within ``session.runs``.
+
+    Called after ``session.upsert_run(run=...)``. Returns the 0-based index of
+    the run that matches ``run.run_id``. Falls back to ``len(runs) - 1`` if no
+    match is found (defensive: upsert_run always places the run somewhere) or
+    ``None`` if there are no runs.
+    """
+    runs = session.runs or []
+    if not runs:
+        return None
+    target_id = run.run_id
+    if target_id is not None:
+        for idx, existing in enumerate(runs):
+            existing_id = existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
+            if existing_id == target_id:
+                return idx
+    return len(runs) - 1
+
+
 def cleanup_and_store(
     agent: Agent,
     run_response: RunOutput,
@@ -5135,6 +5155,7 @@ def cleanup_and_store(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
+    run_index = _resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5146,9 +5167,15 @@ def cleanup_and_store(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Save session metadata (skip bulk run re-upsert) and persist only this run (O(1))
+    # Persist the session row and this single run (both O(1))
     _session.save_session(agent, session=session)
-    _session.save_run(agent, run=storage_copy, session_id=session.session_id, user_id=user_id)
+    _session.save_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=user_id,
+        run_index=run_index,
+    )
 
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id.
@@ -5193,6 +5220,7 @@ async def acleanup_and_store(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
+    run_index = _resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5204,9 +5232,15 @@ async def acleanup_and_store(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Save session metadata (skip bulk run re-upsert) and persist only this run (O(1))
+    # Persist the session row and this single run (both O(1))
     await _session.asave_session(agent, session=session)
-    await _session.asave_run(agent, run=storage_copy, session_id=session.session_id, user_id=user_id)
+    await _session.asave_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=user_id,
+        run_index=run_index,
+    )
 
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id.
