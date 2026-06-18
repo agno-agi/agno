@@ -159,6 +159,8 @@ class FileGenerationTools(Toolkit):
         Returns:
             Tuple of (s3_uri, error_message). If successful, error is None.
         """
+        if self.s3_client is None:
+            return None, "S3 client is not configured."
         key = f"{self.s3_prefix.rstrip('/')}/{filename}" if self.s3_prefix else filename
         body = content.encode("utf-8") if isinstance(content, str) else content
         try:
