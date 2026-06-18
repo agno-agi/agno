@@ -2,20 +2,11 @@
 Dependencies Merge — Dojo Demo
 ==============================
 
-Agent with backend dependencies that merge with UI-sent context.
+Agent with backend dependencies that merge with frontend context.
 
-The agent has backend dependencies (api_version, feature_flags) configured at creation.
-The frontend sends context via useAgentContext (user_name, current_page, cart_data).
-The SDK merges both automatically — UI values win on key conflicts.
-
-Dojo sends context via useAgentContext hook:
-{
-    description: "user_name",
-    value: "Alice"
-}
-
-This becomes a flat dependency: {"user_name": "Alice"}
-JSON string values are parsed back to structured data automatically.
+Backend dependencies (api_version, feature_flags) are set at agent creation.
+Frontend sends context via useAgentContext hook (user_name, current_page).
+SDK merges both automatically — frontend values win on key conflicts.
 """
 
 from agno.agent.agent import Agent
@@ -32,10 +23,10 @@ dependencies_agent = Agent(
     add_dependencies_to_context=True,
     instructions="""You help users understand what context is available to you.
 
-When asked about dependencies or context, list everything you see in <additional context> tags:
-- Backend dependencies: api_version, feature_flags, server_region
-- Frontend context: user_name, current_page, cart_data, etc.
+When asked about dependencies or context, list everything in <additional context> tags:
+- Backend: api_version, feature_flags, server_region
+- Frontend: user_name, current_page, cart_data, etc.
 
-Format your response as a clear list showing each value.""",
+Format as a clear list showing each value.""",
     markdown=True,
 )
