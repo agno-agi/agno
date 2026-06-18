@@ -62,6 +62,7 @@ def example_json_generation():
             if file.url:
                 print(f"File location: {file.url}")
     print()
+    return response
 
 
 def example_csv_generation():
@@ -77,6 +78,7 @@ def example_csv_generation():
             if file.url:
                 print(f"File location: {file.url}")
     print()
+    return response
 
 
 def example_pdf_generation():
@@ -98,7 +100,7 @@ def example_pdf_generation():
 def download_from_s3(response):
     """Download the generated files back from S3 to confirm they exist."""
     print("=== Downloading Generated Files from S3 ===")
-    if not response.files:
+    if response is None or not response.files:
         print("No files were generated.")
         return
     s3_client = boto3.client("s3", region_name=AWS_REGION)
@@ -127,6 +129,7 @@ def example_text_generation():
             if file.url:
                 print(f"File location: {file.url}")
     print()
+    return response
 
 
 def example_docx_generation():
@@ -142,6 +145,7 @@ def example_docx_generation():
             if file.url:
                 print(f"File location: {file.url}")
     print()
+    return response
 
 
 def example_html_generation():
@@ -157,6 +161,7 @@ def example_html_generation():
             if file.url:
                 print(f"File location: {file.url}")
     print()
+    return response
 
 
 # ---------------------------------------------------------------------------
