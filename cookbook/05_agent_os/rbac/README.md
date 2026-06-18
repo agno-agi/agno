@@ -363,16 +363,31 @@ Each cookbook below runs the whole scenario for you and prints a plain
 `ALLOWED` / `BLOCKED` transcript that explains itself, then exits (no server, no
 curl needed). Every file starts with a short plain-English explainer at the top.
 
-New to authorization? Read them in this order:
+New to authorization? Read them in this order — each is runnable on its own:
 
 1. `managed_roles.py` — start here. What roles are, and how handing someone a role
-   decides what they can do. Shows a change taking effect instantly.
-2. `managed_roles_sessions.py` — roles protecting real data: who is allowed to
-   delete a saved chat session (and who gets stopped before any data is touched).
+   decides what they can do. Shows a change taking effect instantly (no re-login).
+2. `managed_roles_sessions.py` — roles protecting real data: who may delete a saved
+   chat session (and who is stopped before any data is touched).
+3. `idp_workos_auth0.py` — they already have a login service (WorkOS/Auth0/Okta):
+   the role rides the token, you only enforce, via a ~30-line custom
+   `AuthorizationProvider`. Production-shaped: JWKS verification + issuer/audience
+   pinning. (Enforcement only — no user store needed.)
+4. `managed_roles_audit.py` — the governance angle: the two append-only trails
+   (who changed what, and every allow/deny), turned on with a `DbAuditSink`.
 
-Both use `ManagedRoleStore`, agno's native managed-roles engine (deny-overrides
-RBAC, no third-party dependency). The IdP / user-directory / over-HTTP scenarios
-(WorkOS/Auth0, the admin console, ReBAC) live in the directory and FGA cookbooks.
+This covers the three ways a company runs authorization:
+
+| Their situation | Who owns "who has which role" | Cookbook |
+|---|---|---|
+| They have a login service; we only enforce | the login service (role on the token) | `idp_workos_auth0.py` |
+| No login service; we define + assign roles | us, in the managed store | `managed_roles.py` |
+| You want a custom decision model | you (your own `AuthorizationProvider`) | `idp_workos_auth0.py` shows the pattern |
+
+For symmetric/asymmetric JWT basics (the default scope tier, no roles) see
+`symmetric/` and `asymmetric/`. The **user directory** (storing users, the
+`/authz/users` admin API, the single-file admin console) and **ReBAC/FGA** are the
+next layer — see the directory and FGA PRs.
 
 Install the optional extra for DB-backed persistence: `pip install "agno[roles]"`.
 
