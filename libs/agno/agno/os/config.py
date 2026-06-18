@@ -4,6 +4,9 @@ from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, T
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agno.os.authz.audit import AuditSink
+from agno.os.authz.provider import AuthorizationProvider
+
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPServerConfig.include_tags`` / ``exclude_tags`` without reading
 # ``agno/os/mcp.py``. Keep in sync with the ``tags={...}`` argument on each
@@ -125,14 +128,11 @@ class AuthorizationConfig(BaseModel):
     require_expiration: Optional[bool] = None
     admin_scope: Optional[str] = None
     # Pluggable authorization strategy. When None, AgentOS uses the built-in
-    # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency).
-    # Supply an AuthorizationProvider instance to swap in a different model
-    # (ReBAC/ABAC/managed roles/external) without changing the request pipeline.
-    # Or pass a LIST of providers to run several authz planes at once — a request
-    # is allowed if any of them allows it (e.g. [ScopeAuthorizationProvider(),
-    # roles.provider] for operators authorized by token scopes + end users
-    # authorized by a managed role store).
-    authorization_provider: Optional[Any] = None
+    # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency). Supply an
+    # AuthorizationProvider to swap in a different model (ReBAC/ABAC/OpenFGA/Cerbos),
+    # or a LIST of them to run several planes at once (allow if any allows) — without
+    # changing the request pipeline.
+    authorization_provider: Optional[Union[AuthorizationProvider, List[AuthorizationProvider]]] = None
     # Optional ManagedUserStore — the credential-less user directory for the
     # no-IdP case. When set, AgentOS denies a disabled user at the enforcement
     # point (revocation that outlives a valid token) and can auto-provision a
@@ -154,7 +154,7 @@ class AuthorizationConfig(BaseModel):
     # (allow/deny) at the route gate — principal, route, required scopes, and a
     # non-secret token reference — so you get an access trail, not just a change
     # trail. Pass the same sink you give ManagedRoleStore to unify both.
-    audit: Optional[Any] = None
+    audit: Optional[AuditSink] = None
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
