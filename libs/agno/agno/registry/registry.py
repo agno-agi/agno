@@ -20,14 +20,20 @@ if TYPE_CHECKING:
 
 
 def _model_identity(model: Model) -> tuple:
-    """Stable identity for catalog dedup: the provider class, display provider, and model id.
+    """Stable identity for catalog dedup: the provider class, display provider, id, and connection.
 
     The class (module + qualname) is included alongside the display ``provider`` string so that
     distinct classes sharing a provider string (e.g. OpenAIChat vs OpenAIResponses, or the Azure
     model classes -- all report provider "Azure") are not collapsed into a single catalog entry.
+
+    The non-secret connection params (``_serializable_params``: base_url, azure_endpoint, ...) are
+    folded in so two instances of the same class and id that point at *different* endpoints are kept
+    as distinct entries rather than collapsing -- otherwise a second deployment would be silently
+    dropped and requests routed to the first one's endpoint.
     """
     cls = type(model)
-    return (cls.__module__, cls.__qualname__, getattr(model, "provider", None), getattr(model, "id", None))
+    connection = tuple(getattr(model, param, None) for param in getattr(cls, "_serializable_params", ()))
+    return (cls.__module__, cls.__qualname__, getattr(model, "provider", None), getattr(model, "id", None), connection)
 
 
 @dataclass
@@ -245,21 +251,32 @@ class Registry:
             return next((db for db in self.dbs if db.id == db_id), None)
         return None
 
-    def get_model(self, model_id: str, provider: Optional[str] = None, name: Optional[str] = None) -> Optional[Model]:
-        """Get a registered model instance by id, disambiguating by provider/name when given.
+    def get_model(
+        self,
+        model_id: str,
+        provider: Optional[str] = None,
+        name: Optional[str] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Model]:
+        """Get a registered model instance by id, disambiguating by provider/name/connection params.
 
-        Returns the live, fully-configured instance the user registered. Reconstructing a model
-        from its serialized config only round-trips ``id``/``name``/``provider`` (see
-        ``Model.to_dict``), so connection params like ``azure_endpoint``/``base_url`` and any
-        credentials are lost. Preferring the registered instance keeps those intact.
+        Returns the live, fully-configured instance the user registered (preserving credentials and
+        any client state that cannot be rebuilt from serialized config).
 
         ``provider`` and ``name`` are matched only when supplied, so distinct provider classes that
         share an id (e.g. OpenAIChat vs OpenAIResponses, or the Azure model classes -- all report
-        provider "Azure") resolve to the right instance. Returns None when nothing matches, letting
-        the caller fall back to rebuilding from the serialized dict.
+        provider "Azure") resolve to the right instance. ``params`` carries serialized connection
+        fields (base_url, azure_endpoint, ...) and is matched too, so two deployments of the same
+        model at different endpoints resolve to the correct one.
+
+        Returns None when nothing matches. Also returns None (rather than guessing) when more than
+        one registered model matches and the candidates cannot be told apart -- falling back to a
+        rebuild is safer than silently routing to the wrong endpoint/account.
         """
         if not self.models or not model_id:
             return None
+        params = params or {}
+        matches = []
         for model in self.models:
             if getattr(model, "id", None) != model_id:
                 continue
@@ -267,8 +284,20 @@ class Registry:
                 continue
             if name is not None and getattr(model, "name", None) != name:
                 continue
-            return model
-        return None
+            if any(getattr(model, key, None) != value for key, value in params.items()):
+                continue
+            matches.append(model)
+
+        if not matches:
+            return None
+        if len(matches) > 1:
+            log_warning(
+                f"Registry: multiple registered models match id '{model_id}' and could not be "
+                "disambiguated from the serialized config; rebuilding instead of guessing. Give the "
+                "models distinct ids or connection params to resolve this."
+            )
+            return None
+        return matches[0]
 
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)

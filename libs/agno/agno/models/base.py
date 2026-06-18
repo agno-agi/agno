@@ -11,6 +11,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    ClassVar,
     Dict,
     Iterator,
     List,
@@ -135,6 +136,13 @@ class Model(ABC):
     # Functional role of this model (e.g., MODEL, OUTPUT_MODEL, PARSER_MODEL).
     # Set by the agent during initialization; defaults to MODEL.
     model_type: ModelType = ModelType.MODEL
+
+    # Non-secret connection params that round-trip through ``to_dict``/``get_model_from_dict``
+    # (e.g. base_url, azure_endpoint). Reconstructing a model from its serialized config would
+    # otherwise drop these. Subclasses extend this tuple; NEVER list credentials (api_key, tokens)
+    # here -- those must stay out of the persisted config and come from the env or a registered
+    # model instance. Declared as a ClassVar so dataclass does not treat it as an instance field.
+    _serializable_params: ClassVar[Tuple[str, ...]] = ()
 
     # -*- Do not set the following attributes directly -*-
     # -*- Set them on the Agent instead -*-
@@ -432,6 +440,12 @@ class Model(ABC):
     def to_dict(self) -> Dict[str, Any]:
         fields = {"name", "id", "provider"}
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
+        # Round-trip non-secret connection params so a reconstructed model keeps e.g. its
+        # base_url/azure_endpoint. Credentials are never listed in ``_serializable_params``.
+        for param in self._serializable_params:
+            value = getattr(self, param, None)
+            if value is not None:
+                _dict[param] = value
         return _dict
 
     def _remove_temporary_messages(self, messages: List[Message]) -> None:
