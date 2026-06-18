@@ -226,32 +226,87 @@ def test_session_state_mutability():
 
 
 def test_api_schema_session_state():
-    """Test that API schemas include session_state."""
+    """Test that API schemas include session_state and run lineage fields."""
     from agno.os.schema import RunSchema, TeamRunSchema
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
     # Test RunSchema
-    run_output = RunOutput(run_id="test_123", session_state={"api_data": "value"})
+    run_output = RunOutput(
+        run_id="test_123",
+        session_id="session_123",
+        workflow_id="workflow_123",
+        workflow_step_id="step_123",
+        session_state={"api_data": "value"},
+        last_checkpoint_at_message_index=5,
+        forked_from_run_id="source_run_123",
+        forked_from_message_index=3,
+        forked_from_session_id="source_session_123",
+        regenerated_from="previous_run_123",
+    )
     run_dict = run_output.to_dict()
     api_schema = RunSchema.from_dict(run_dict)
     assert api_schema.session_state == {"api_data": "value"}
+    assert api_schema.session_id == "session_123"
+    assert api_schema.workflow_id == "workflow_123"
+    assert api_schema.workflow_step_id == "step_123"
+    assert api_schema.last_checkpoint_at_message_index == 5
+    assert api_schema.forked_from_run_id == "source_run_123"
+    assert api_schema.forked_from_message_index == 3
+    assert api_schema.forked_from_session_id == "source_session_123"
+    assert api_schema.regenerated_from == "previous_run_123"
 
     # Verify API response includes it
     api_response = api_schema.model_dump(exclude_none=True)
     assert "session_state" in api_response
     assert api_response["session_state"] == {"api_data": "value"}
+    assert api_response["session_id"] == "session_123"
+    assert api_response["workflow_id"] == "workflow_123"
+    assert api_response["workflow_step_id"] == "step_123"
+    assert api_response["last_checkpoint_at_message_index"] == 5
+    assert api_response["forked_from_run_id"] == "source_run_123"
+    assert api_response["forked_from_message_index"] == 3
+    assert api_response["forked_from_session_id"] == "source_session_123"
+    assert api_response["regenerated_from"] == "previous_run_123"
 
     # Test TeamRunSchema
-    team_output = TeamRunOutput(run_id="team_123", team_id="team_456", session_state={"team_api_data": "value"})
+    team_output = TeamRunOutput(
+        run_id="team_123",
+        team_id="team_456",
+        session_id="team_session_123",
+        user_id="user_123",
+        workflow_step_id="team_step_123",
+        session_state={"team_api_data": "value"},
+        last_checkpoint_at_message_index=8,
+        forked_from_run_id="source_team_run_123",
+        forked_from_message_index=6,
+        forked_from_session_id="source_team_session_123",
+        regenerated_from="previous_team_run_123",
+    )
     team_dict = team_output.to_dict()
     team_schema = TeamRunSchema.from_dict(team_dict)
     assert team_schema.session_state == {"team_api_data": "value"}
+    assert team_schema.session_id == "team_session_123"
+    assert team_schema.user_id == "user_123"
+    assert team_schema.workflow_step_id == "team_step_123"
+    assert team_schema.last_checkpoint_at_message_index == 8
+    assert team_schema.forked_from_run_id == "source_team_run_123"
+    assert team_schema.forked_from_message_index == 6
+    assert team_schema.forked_from_session_id == "source_team_session_123"
+    assert team_schema.regenerated_from == "previous_team_run_123"
 
     # Verify API response includes it
     team_api_response = team_schema.model_dump(exclude_none=True)
     assert "session_state" in team_api_response
     assert team_api_response["session_state"] == {"team_api_data": "value"}
+    assert team_api_response["session_id"] == "team_session_123"
+    assert team_api_response["user_id"] == "user_123"
+    assert team_api_response["workflow_step_id"] == "team_step_123"
+    assert team_api_response["last_checkpoint_at_message_index"] == 8
+    assert team_api_response["forked_from_run_id"] == "source_team_run_123"
+    assert team_api_response["forked_from_message_index"] == 6
+    assert team_api_response["forked_from_session_id"] == "source_team_session_123"
+    assert team_api_response["regenerated_from"] == "previous_team_run_123"
 
 
 def test_custom_event_subclass_serialization():

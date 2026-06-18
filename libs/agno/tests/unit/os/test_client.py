@@ -407,6 +407,42 @@ async def test_get_session():
 
 
 @pytest.mark.asyncio
+async def test_get_session_runs_prefers_agent_schema_for_workflow_agent_runs():
+    """Agent run history can carry workflow_id without becoming WorkflowRunSchema."""
+    from agno.os.schema import RunSchema, WorkflowRunSchema
+
+    client = AgentOSClient(base_url="http://localhost:7777")
+    mock_data = [
+        {
+            "run_id": "run-123",
+            "session_id": "sess-123",
+            "agent_id": "agent-1",
+            "workflow_id": "workflow-1",
+            "workflow_step_id": "step-1",
+            "content": "done",
+            "last_checkpoint_at_message_index": 4,
+            "forked_from_run_id": "source-run",
+            "forked_from_message_index": 2,
+            "forked_from_session_id": "source-session",
+            "regenerated_from": "previous-run",
+        }
+    ]
+    with patch.object(client, "_aget", new_callable=AsyncMock) as mock_get:
+        mock_get.return_value = mock_data
+        runs = await client.get_session_runs("sess-123")
+
+        assert isinstance(runs[0], RunSchema)
+        assert not isinstance(runs[0], WorkflowRunSchema)
+        assert runs[0].workflow_id == "workflow-1"
+        assert runs[0].workflow_step_id == "step-1"
+        assert runs[0].last_checkpoint_at_message_index == 4
+        assert runs[0].forked_from_run_id == "source-run"
+        assert runs[0].forked_from_message_index == 2
+        assert runs[0].forked_from_session_id == "source-session"
+        assert runs[0].regenerated_from == "previous-run"
+
+
+@pytest.mark.asyncio
 async def test_delete_session():
     """Verify delete_session deletes a session."""
     client = AgentOSClient(base_url="http://localhost:7777")

@@ -474,8 +474,11 @@ class WorkflowSessionDetailSchema(BaseModel):
 
 class RunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the run")
+    session_id: Optional[str] = Field(None, description="Session ID associated with the run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     agent_id: Optional[str] = Field(None, description="Agent ID that executed this run")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID if this run was executed as part of a workflow")
+    workflow_step_id: Optional[str] = Field(None, description="Workflow step ID associated with this run")
     user_id: Optional[str] = Field(None, description="User ID associated with the run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     run_input: Optional[str] = Field(None, description="Input provided to the run")
@@ -501,6 +504,13 @@ class RunSchema(BaseModel):
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    last_checkpoint_at_message_index: Optional[int] = Field(
+        None, description="Message index for the most recent checkpoint written during this run"
+    )
+    forked_from_run_id: Optional[str] = Field(None, description="Source run ID this run was forked from")
+    forked_from_message_index: Optional[int] = Field(None, description="Source message index this run was forked from")
+    forked_from_session_id: Optional[str] = Field(None, description="Source session ID this run was forked from")
+    regenerated_from: Optional[str] = Field(None, description="Run ID this run was regenerated from")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -509,8 +519,11 @@ class RunSchema(BaseModel):
 
         return cls(
             run_id=run_dict.get("run_id", ""),
+            session_id=run_dict.get("session_id"),
             parent_run_id=run_dict.get("parent_run_id", ""),
             agent_id=run_dict.get("agent_id", ""),
+            workflow_id=run_dict.get("workflow_id"),
+            workflow_step_id=run_dict.get("workflow_step_id"),
             user_id=run_dict.get("user_id", ""),
             status=run_dict.get("status"),
             run_input=run_input,
@@ -533,14 +546,22 @@ class RunSchema(BaseModel):
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
+            last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
+            forked_from_run_id=run_dict.get("forked_from_run_id"),
+            forked_from_message_index=run_dict.get("forked_from_message_index"),
+            forked_from_session_id=run_dict.get("forked_from_session_id"),
+            regenerated_from=run_dict.get("regenerated_from"),
             created_at=to_utc_datetime(run_dict.get("created_at")),
         )
 
 
 class TeamRunSchema(BaseModel):
     run_id: str = Field(..., description="Unique identifier for the team run")
+    session_id: Optional[str] = Field(None, description="Session ID associated with the run")
     parent_run_id: Optional[str] = Field(None, description="Parent run ID if this is a nested run")
     team_id: Optional[str] = Field(None, description="Team ID that executed this run")
+    user_id: Optional[str] = Field(None, description="User ID associated with the run")
+    workflow_step_id: Optional[str] = Field(None, description="Workflow step ID associated with this run")
     status: Optional[str] = Field(None, description="Run status (PENDING, RUNNING, COMPLETED, ERROR, etc.)")
     content: Optional[Union[str, dict]] = Field(None, description="Output content from the team run")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
@@ -565,6 +586,13 @@ class TeamRunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    last_checkpoint_at_message_index: Optional[int] = Field(
+        None, description="Message index for the most recent checkpoint written during this run"
+    )
+    forked_from_run_id: Optional[str] = Field(None, description="Source run ID this run was forked from")
+    forked_from_message_index: Optional[int] = Field(None, description="Source message index this run was forked from")
+    forked_from_session_id: Optional[str] = Field(None, description="Source session ID this run was forked from")
+    regenerated_from: Optional[str] = Field(None, description="Run ID this run was regenerated from")
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -572,8 +600,11 @@ class TeamRunSchema(BaseModel):
         run_response_format = "text" if run_dict.get("content_type", "str") == "str" else "json"
         return cls(
             run_id=run_dict.get("run_id", ""),
+            session_id=run_dict.get("session_id"),
             parent_run_id=run_dict.get("parent_run_id", ""),
             team_id=run_dict.get("team_id", ""),
+            user_id=run_dict.get("user_id", ""),
+            workflow_step_id=run_dict.get("workflow_step_id"),
             status=run_dict.get("status"),
             run_input=run_input,
             content=run_dict.get("content", ""),
@@ -596,6 +627,11 @@ class TeamRunSchema(BaseModel):
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
+            last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
+            forked_from_run_id=run_dict.get("forked_from_run_id"),
+            forked_from_message_index=run_dict.get("forked_from_message_index"),
+            forked_from_session_id=run_dict.get("forked_from_session_id"),
+            regenerated_from=run_dict.get("regenerated_from"),
         )
 
 

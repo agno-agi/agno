@@ -1857,10 +1857,12 @@ class AgentOSClient:
         # Parse runs based on session type and run content
         runs: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
         for run in data:
-            if run.get("workflow_id") is not None:
-                runs.append(WorkflowRunSchema.model_validate(run))
+            if run.get("agent_id") is not None:
+                runs.append(RunSchema.model_validate(run))
             elif run.get("team_id") is not None:
                 runs.append(TeamRunSchema.model_validate(run))
+            elif run.get("workflow_id") is not None:
+                runs.append(WorkflowRunSchema.model_validate(run))
             else:
                 runs.append(RunSchema.model_validate(run))
         return runs
@@ -1903,10 +1905,12 @@ class AgentOSClient:
         data = await self._aget(f"/sessions/{session_id}/runs/{run_id}", params=params, headers=headers)
 
         # Return appropriate schema based on run type
-        if data.get("workflow_id") is not None:
-            return WorkflowRunSchema.model_validate(data)
+        if data.get("agent_id") is not None:
+            return RunSchema.model_validate(data)
         elif data.get("team_id") is not None:
             return TeamRunSchema.model_validate(data)
+        elif data.get("workflow_id") is not None:
+            return WorkflowRunSchema.model_validate(data)
         else:
             return RunSchema.model_validate(data)
 
