@@ -35,6 +35,15 @@ except ImportError as e:
         f"python-docx not installed. DOCX generation will not be available. Install with: pip install python-docx: {str(e)}"
     )
 
+try:
+    import boto3
+
+    BOTO3_AVAILABLE = True
+except ImportError:
+    # boto3 is only required when uploading to S3. Keep it optional so users who
+    # only generate/save files locally are unaffected.
+    BOTO3_AVAILABLE = False
+
 
 class FileGenerationTools(Toolkit):
     def __init__(
@@ -47,6 +56,13 @@ class FileGenerationTools(Toolkit):
         enable_html_generation: bool = True,
         output_directory: Optional[str] = None,
         save_files: bool = False,
+        s3_bucket: Optional[str] = None,
+        s3_prefix: Optional[str] = None,
+        save_to_s3: bool = False,
+        region_name: Optional[str] = None,
+        aws_access_key_id: Optional[str] = None,
+        aws_secret_access_key: Optional[str] = None,
+        aws_session_token: Optional[str] = None,
         all: bool = False,
         **kwargs,
     ):
@@ -67,6 +83,31 @@ class FileGenerationTools(Toolkit):
             log_debug(f"Files will be saved to: {self.output_directory}")
         else:
             self.output_directory = None
+
+        # s3_bucket implies save_to_s3=True, mirroring how output_directory implies save_files.
+        # S3 saving is independent of local saving: either, both, or neither can be enabled.
+        self.save_to_s3 = save_to_s3 or (s3_bucket is not None)
+        self.s3_prefix = s3_prefix
+        self.s3_client: Optional[Any] = None
+
+        if self.save_to_s3:
+            if s3_bucket is None:
+                raise ValueError("s3_bucket is required when save_to_s3 is True.")
+            if not BOTO3_AVAILABLE:
+                raise ImportError("boto3 is required to save files to S3. Install it with `pip install boto3`.")
+            self.s3_bucket: Optional[str] = s3_bucket
+            # Unset credentials are passed as None so boto3 falls back to its default
+            # credential chain (environment variables, ~/.aws config, or IAM role).
+            self.s3_client = boto3.client(
+                "s3",
+                region_name=region_name,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                aws_session_token=aws_session_token,
+            )
+            log_debug(f"Files will be uploaded to S3 bucket: {self.s3_bucket}")
+        else:
+            self.s3_bucket = None
 
         if enable_pdf_generation and not PDF_AVAILABLE:
             logger.warning("PDF generation requested but reportlab is not installed. Disabling PDF generation.")
@@ -110,6 +151,25 @@ class FileGenerationTools(Toolkit):
         log_debug(f"File saved to: {file_path}")
         return str(file_path), None
 
+    def _upload_file_to_s3(
+        self, content: Union[str, bytes], filename: str, mime_type: str
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Upload file content to the configured S3 bucket.
+
+        Returns:
+            Tuple of (s3_uri, error_message). If successful, error is None.
+        """
+        key = f"{self.s3_prefix.rstrip('/')}/{filename}" if self.s3_prefix else filename
+        body = content.encode("utf-8") if isinstance(content, str) else content
+        try:
+            self.s3_client.put_object(Bucket=self.s3_bucket, Key=key, Body=body, ContentType=mime_type)
+        except Exception as e:
+            log_warning(f"Failed to upload file to S3: {str(e)}")
+            return None, str(e)
+        s3_uri = f"s3://{self.s3_bucket}/{key}"
+        log_debug(f"File uploaded to: {s3_uri}")
+        return s3_uri, None
+
     def _create_file_artifact(
         self,
         content: Union[str, bytes],
@@ -139,6 +199,11 @@ class FileGenerationTools(Toolkit):
         if self.save_files and self.output_directory:
             file_path, file_path_error = self._save_file_to_disk(content, file_name)
 
+        s3_uri: Optional[str] = None
+        s3_error: Optional[str] = None
+        if self.save_to_s3 and self.s3_client:
+            s3_uri, s3_error = self._upload_file_to_s3(content_bytes, file_name, mime_type)
+
         file_artifact = File(
             id=str(uuid4()),
             content=content_bytes,
@@ -155,6 +220,10 @@ class FileGenerationTools(Toolkit):
             success_msg += f" → {file_path}"
         elif file_path_error:
             success_msg += f" (save failed: {file_path_error})"
+        if s3_uri:
+            success_msg += f" → uploaded to {s3_uri}"
+        elif s3_error:
+            success_msg += f" (S3 upload failed: {s3_error})"
 
         return ToolResult(content=success_msg, files=[file_artifact])
 
