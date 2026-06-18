@@ -308,7 +308,8 @@ def on_unknown_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     return [RawEvent(type=EventType.RAW, event=raw_dict, source="agno")]
 
 
-def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+def _close_open_streams(state: StreamState) -> List[BaseEvent]:
+    """Close any open reasoning session, active tool calls, and text message."""
     events: List[BaseEvent] = []
 
     # Close orphaned reasoning session
@@ -329,6 +330,13 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     if state.text_message_open:
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
         state.close_text_message()
+
+    return events
+
+
+def _finalize_run(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Emit external-execution tool calls for paused runs, the final state snapshot, and RUN_FINISHED."""
+    events: List[BaseEvent] = []
 
     # Emit external execution tools for paused runs
     from agno.run.agent import RunPausedEvent
@@ -388,6 +396,10 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
 
     events.append(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=state.thread_id, run_id=state.run_id))
     return events
+
+
+def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    return _close_open_streams(state) + _finalize_run(chunk, state)
 
 
 def _normalize_event(event: str) -> str:
