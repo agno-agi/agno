@@ -751,7 +751,18 @@ def from_dict(
     if "model" in config:
         model_data = config["model"]
         if isinstance(model_data, dict) and "id" in model_data:
-            config["model"] = get_model_from_dict(model_data)
+            # Prefer the live instance from the registry: rebuilding from the serialized dict drops
+            # connection params (azure_endpoint, base_url, ...) and credentials that aren't persisted.
+            registered_model = (
+                registry.get_model(
+                    model_data["id"],
+                    provider=model_data.get("provider"),
+                    name=model_data.get("name"),
+                )
+                if registry is not None
+                else None
+            )
+            config["model"] = registered_model if registered_model is not None else get_model_from_dict(model_data)
         elif isinstance(model_data, str):
             config["model"] = get_model(model_data)
 
