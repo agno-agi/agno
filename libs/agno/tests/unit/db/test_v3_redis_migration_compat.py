@@ -12,13 +12,13 @@ import pytest
 
 fakeredis = pytest.importorskip("fakeredis")
 
-from agno.db.base import SessionType
-from agno.db.redis.redis import RedisDb
-from agno.db.redis.utils import generate_redis_key, serialize_data
-from agno.models.message import Message
-from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
-from agno.session import AgentSession
+from agno.db.base import SessionType  # noqa: E402
+from agno.db.redis.redis import RedisDb  # noqa: E402
+from agno.db.redis.utils import generate_redis_key, serialize_data  # noqa: E402
+from agno.models.message import Message  # noqa: E402
+from agno.run.agent import RunOutput  # noqa: E402
+from agno.run.base import RunStatus  # noqa: E402
+from agno.session import AgentSession  # noqa: E402
 
 
 def _make_run(run_id: str, session_id: str, content: str) -> RunOutput:

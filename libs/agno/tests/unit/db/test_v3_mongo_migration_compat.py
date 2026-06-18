@@ -13,12 +13,12 @@ import pytest
 
 mongomock = pytest.importorskip("mongomock")
 
-from agno.db.base import SessionType
-from agno.db.mongo.mongo import MongoDb
-from agno.models.message import Message
-from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
-from agno.session import AgentSession
+from agno.db.base import SessionType  # noqa: E402
+from agno.db.mongo.mongo import MongoDb  # noqa: E402
+from agno.models.message import Message  # noqa: E402
+from agno.run.agent import RunOutput  # noqa: E402
+from agno.run.base import RunStatus  # noqa: E402
+from agno.session import AgentSession  # noqa: E402
 
 
 def _make_run(run_id: str, session_id: str, content: str) -> RunOutput:

@@ -15,9 +15,9 @@ import pytest
 
 mockfirestore = pytest.importorskip("mockfirestore")
 
-from mockfirestore import CollectionReference as _MockCollectionRef
-from mockfirestore import MockFirestore
-from mockfirestore import Query as _MockQuery
+from mockfirestore import CollectionReference as _MockCollectionRef  # noqa: E402
+from mockfirestore import MockFirestore  # noqa: E402
+from mockfirestore import Query as _MockQuery  # noqa: E402
 
 
 def _make_where_compat(original):
