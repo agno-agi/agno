@@ -2,7 +2,7 @@ import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
 
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_info
 
 try:
     from ag_ui.core import (
@@ -17,7 +17,7 @@ try:
 except ImportError as e:
     raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
@@ -25,13 +25,14 @@ from agno.os.interfaces.agui.input import extract_context, extract_media, extrac
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 async def run_entity(
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
+    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow],
     run_input: RunAgentInput,
 ) -> AsyncIterator[BaseEvent]:
-    """Shared handler for running an Agent or Team with AG-UI input/output mapping."""
+    """Shared handler for running an Agent, Team, or Workflow with AG-UI input/output mapping."""
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
@@ -83,18 +84,26 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
 ) -> APIRouter:
-    if agent is None and team is None:
-        raise ValueError("Either agent or team must be provided.")
+    if agent is None and team is None and workflow is None:
+        raise ValueError("Either agent, team, or workflow must be provided.")
 
-    entity = agent or team
+    entity = agent or team or workflow
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")
-    async def run_agent_agui(run_input: RunAgentInput):
+    async def run_agent_agui(request: Request, run_input: RunAgentInput):
         async def event_generator():
             async for event in run_entity(entity, run_input):  # type: ignore
+                # Workflows fan out many steps; stop streaming if the client
+                # disconnected, to avoid burning tokens on output nobody sees.
+                if workflow is not None and await request.is_disconnected():
+                    log_info(f"AGUI client disconnected; stopping workflow stream for run_id={run_input.run_id}")
+                    break
                 yield encoder.encode(event)
 
         return StreamingResponse(
