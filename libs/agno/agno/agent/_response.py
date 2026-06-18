@@ -1423,6 +1423,20 @@ def handle_model_response_chunk(
             if model_response_event.citations is not None:
                 run_response.citations = model_response_event.citations
 
+            reasoning_content_delta = model_response_event.reasoning_content if stream_events else None
+            if reasoning_content_delta:
+                yield handle_event(  # type: ignore
+                    create_reasoning_content_delta_event(
+                        from_run_response=run_response,
+                        reasoning_content=reasoning_content_delta,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+
+            run_content_reasoning_content = None if reasoning_content_delta else model_response_event.reasoning_content
+
             # Only yield if we have content to show
             if content_type != "str":
                 yield handle_event(  # type: ignore
@@ -1437,7 +1451,7 @@ def handle_model_response_chunk(
                 )
             elif (
                 model_response_event.content is not None
-                or model_response_event.reasoning_content is not None
+                or run_content_reasoning_content is not None
                 or model_response_event.redacted_reasoning_content is not None
                 or model_response_event.citations is not None
                 or model_response_event.provider_data is not None
@@ -1446,7 +1460,7 @@ def handle_model_response_chunk(
                     create_run_output_content_event(
                         from_run_response=run_response,
                         content=model_response_event.content,
-                        reasoning_content=model_response_event.reasoning_content,
+                        reasoning_content=run_content_reasoning_content,
                         redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                         citations=model_response_event.citations,
                         model_provider_data=model_response_event.provider_data,
