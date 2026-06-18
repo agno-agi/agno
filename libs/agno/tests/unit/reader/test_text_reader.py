@@ -89,7 +89,7 @@ def test_unicode_content(tmp_path):
     # Test handling of Unicode content
     test_data = "Hello, 世界!"
     text_path = tmp_path / "unicode.txt"
-    text_path.write_text(test_data)
+    text_path.write_text(test_data, encoding="utf-8")
 
     reader = TextReader()
     documents = reader.read(text_path)
@@ -232,7 +232,7 @@ async def test_async_empty_text_file(tmp_path):
 async def test_async_unicode_content(tmp_path):
     test_data = "Hello, 世界!"
     text_path = tmp_path / "unicode.txt"
-    text_path.write_text(test_data)
+    text_path.write_text(test_data, encoding="utf-8")
 
     reader = TextReader()
     documents = await reader.async_read(text_path)
