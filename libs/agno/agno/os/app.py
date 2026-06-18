@@ -1051,6 +1051,15 @@ class AgentOS:
             user_isolation = self.authorization_config.user_isolation
             authorization_provider = self.authorization_config.authorization_provider
             authz_audit = self.authorization_config.audit
+            role_store = self.authorization_config.role_store
+            if role_store is not None:
+                # Managed-roles shortcut: use the store's provider, and default it to
+                # the OS database when it has none (no-op if it already has its own DB
+                # or the OS DB isn't SQL-capable). The config validator already
+                # rejects passing both role_store and authorization_provider.
+                if self.db is not None:
+                    role_store.attach_db(self.db)
+                authorization_provider = role_store.provider
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 

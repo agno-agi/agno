@@ -167,6 +167,15 @@ class ManagedRoleStore:
     def roles_of(self, subject: str) -> List[str]:
         return self._engine.roles_of(subject)
 
+    def attach_db(self, db: Any) -> None:
+        """Bind an agno ``Db`` to a store created without one, so managed roles
+        persist in (and read fresh from) that DB. No-op if the store already has its
+        own DB, or the db isn't SQL-capable. AgentOS calls this to default a managed
+        store to the OS database when you pass ``AuthorizationConfig(role_store=...)``."""
+        attach = getattr(self._engine, "attach_db", None)
+        if callable(attach):
+            attach(db)
+
     # ------------------------------------------------------------------ audit
     def audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Recent change-audit events (newest first), if the audit sink supports

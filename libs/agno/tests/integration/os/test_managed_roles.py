@@ -27,7 +27,8 @@ OS_ID = "managed-roles-test-os"
 def _token(sub: str) -> str:
     return jwt.encode(
         {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
-        SECRET, algorithm="HS256",
+        SECRET,
+        algorithm="HS256",
     )
 
 
@@ -103,13 +104,9 @@ def test_per_resource_scope_is_granular():
     client = _build(store)
 
     # may run the specific agent
-    assert client.post(
-        "/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}
-    ).status_code != 403
+    assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code != 403
     # but not a different one
-    assert client.post(
-        "/agents/other-agent/runs", headers=_auth("bob"), data={"message": "hi"}
-    ).status_code == 403
+    assert client.post("/agents/other-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
 
 
 def test_roles_from_external_idp_claim():
@@ -127,7 +124,8 @@ def test_roles_from_external_idp_claim():
             "roles": ["editor"],
             "exp": datetime.now(UTC) + timedelta(hours=1),
         },
-        SECRET, algorithm="HS256",
+        SECRET,
+        algorithm="HS256",
     )
     headers = {"Authorization": f"Bearer {tok}"}
     assert client.post("/agents/research-agent/runs", headers=headers, data={"message": "hi"}).status_code != 403
@@ -192,3 +190,45 @@ def test_management_helpers():
     assert store.roles_of("bob") == ["b"]
     store.unassign("bob", "b")
     assert store.roles_of("bob") == []
+
+
+def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
+    """#4: AuthorizationConfig(role_store=...) wires the store's provider (no manual
+    .provider). #3: a store with no DB adopts the OS DB, migrating in-memory roles."""
+    from agno.db.sqlite import SqliteDb
+
+    store = ManagedRoleStore()  # no DB -> in-memory for now
+    store.set_role_scopes("viewer", ["agents:*:read"])
+    store.assign("bob", "viewer")
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    agent = Agent(id="research-agent", name="R", db=db)
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            role_store=store,  # <- the shortcut; AgentOS uses store.provider
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+    assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
+    assert client.get("/agents/research-agent", headers=_auth("nobody")).status_code == 403
+
+    # the store adopted the OS DB and migrated its in-memory roles -> persisted,
+    # so a fresh store on the same DB sees them
+    fresh = ManagedRoleStore(db=db)
+    assert fresh.roles_of("bob") == ["viewer"]
+    assert fresh.get_role_scopes("viewer") == ["agents:read"]
+
+
+def test_role_store_and_provider_are_mutually_exclusive():
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    with pytest.raises(ValueError, match="not both"):
+        AuthorizationConfig(role_store=ManagedRoleStore(), authorization_provider=ScopeAuthorizationProvider())

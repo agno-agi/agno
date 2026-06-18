@@ -98,6 +98,28 @@ class NativePolicyEngine(PolicyEngine):
         )
         metadata.create_all(self._engine)
 
+    def attach_db(self, db: Any) -> None:
+        """Bind an agno ``Db`` to a previously in-memory engine, migrating any
+        in-memory policy + assignments into it, then switch to reading the DB fresh.
+
+        No-op if the engine already has its own DB (the caller's choice wins) or the
+        db isn't SQL-capable (e.g. a NoSQL agno Db) — in that case it stays in-memory.
+        Lets AgentOS default a managed store with no DB to the OS database."""
+        if self._engine is not None:
+            return  # already db-backed — respect the explicit choice
+        try:
+            engine = _engine_from_db(db)
+        except Exception:
+            return  # not a SQL-capable db; stay in-memory
+        policies, grouping = self._policies, self._grouping
+        self._setup_db(engine)
+        for (role, resource, action), effect in policies.items():
+            self._persist_policy(role, resource, action, effect)
+        for subject, roles in grouping.items():
+            for role in roles:
+                self._persist_grouping(subject, role, add=True)
+        self._policies, self._grouping = {}, {}  # now db-backed; the dicts go unused
+
     # --- read helpers (source from the DB, or the in-memory store) -------
     def _direct_roles(self, node: str) -> Set[str]:
         """Roles directly assigned to ``node`` (a subject, or a role when nesting).
