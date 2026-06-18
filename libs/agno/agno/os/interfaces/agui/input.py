@@ -1,4 +1,5 @@
 import base64
+import json
 import urllib.request
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, List, Optional, Tuple
@@ -132,6 +133,24 @@ def validate_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
 
     log_warning(f"AGUI state must be a dict, got {type(state).__name__}. State will be ignored. Thread: {thread_id}")
     return None
+
+
+def extract_context(context: Optional[List[Any]]) -> Optional[Dict[str, Any]]:
+    """Convert AG-UI context list to a dependencies dict."""
+    if not context:
+        return None
+
+    deps: Dict[str, Any] = {}
+    for i, item in enumerate(context, start=1):
+        key = item.description or f"context_{i}"
+        value = item.value
+        # AG-UI stringifies all values; parse JSON back to structured data
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        deps[key] = value
+    return deps or None
 
 
 def _decode_base64(value: str) -> Optional[bytes]:

@@ -15,7 +15,7 @@ from ag_ui.core.types import (
     VideoInputContent,
 )
 
-from agno.os.interfaces.agui.input import extract_media, extract_user_input
+from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input
 from agno.os.interfaces.agui.router import run_entity
 from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
@@ -2106,3 +2106,48 @@ async def test_run_entity_passes_agui_media():
     events = [event async for event in run_entity(fake_entity, _media_run_input())]
     assert events[0].type == EventType.RUN_STARTED
     _assert_media_forwarded(fake_entity.captured_kwargs)
+
+
+def test_extract_context_none_returns_none():
+    """None input returns None."""
+    assert extract_context(None) is None
+
+
+def test_extract_context_empty_list_returns_none():
+    """Empty list returns None."""
+    assert extract_context([]) is None
+
+
+def test_extract_context_converts_to_dict():
+    """Context items are converted to a flat dict keyed by description."""
+    item = MagicMock(description="user_state", value="viewing dashboard")
+    result = extract_context([item])
+    assert result == {"user_state": "viewing dashboard"}
+
+
+def test_extract_context_parses_json_values():
+    """JSON string values are parsed into structured data."""
+    item = MagicMock(description="movies", value='{"count":2,"titles":["A","B"]}')
+    result = extract_context([item])
+    assert result == {"movies": {"count": 2, "titles": ["A", "B"]}}
+
+
+def test_extract_context_preserves_non_json_strings():
+    """Non-JSON strings are kept verbatim."""
+    item = MagicMock(description="note", value="just plain text {{{ not json")
+    result = extract_context([item])
+    assert result == {"note": "just plain text {{{ not json"}
+
+
+def test_extract_context_fallback_key_for_empty_description():
+    """Empty description falls back to context_N."""
+    item = MagicMock(description="", value="some value")
+    result = extract_context([item])
+    assert result == {"context_1": "some value"}
+
+
+def test_extract_context_preserves_none_value():
+    """None values are preserved."""
+    item = MagicMock(description="empty", value=None)
+    result = extract_context([item])
+    assert result == {"empty": None}
