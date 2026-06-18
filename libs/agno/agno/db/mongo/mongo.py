@@ -393,9 +393,7 @@ class MongoDb(BaseDb):
             return False
 
         if not force:
-            pending = collection.count_documents(
-                {"runs": {"$exists": True, "$ne": None, "$not": {"$size": 0}}}
-            )
+            pending = collection.count_documents({"runs": {"$exists": True, "$ne": None, "$not": {"$size": 0}}})
             if pending > 0:
                 raise RuntimeError(
                     f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "
@@ -771,9 +769,7 @@ class MongoDb(BaseDb):
             # Attach runs from the runs collection, merged with any runs still sitting
             # in the legacy `runs` field.
             if runs_collection is not None and sessions_raw:
-                runs_by_session = self._get_sessions_runs_docs(
-                    runs_collection, [s["session_id"] for s in sessions_raw]
-                )
+                runs_by_session = self._get_sessions_runs_docs(runs_collection, [s["session_id"] for s in sessions_raw])
                 for s in sessions_raw:
                     runs_data = runs_by_session.get(s["session_id"], [])
                     s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))

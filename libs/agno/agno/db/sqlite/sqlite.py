@@ -700,9 +700,12 @@ class SqliteDb(BaseDb):
                 return False
 
             if not force:
-                pending = sess.execute(
-                    text(f"SELECT COUNT(*) FROM {self.session_table_name} WHERE runs IS NOT NULL")
-                ).scalar() or 0
+                pending = (
+                    sess.execute(
+                        text(f"SELECT COUNT(*) FROM {self.session_table_name} WHERE runs IS NOT NULL")
+                    ).scalar()
+                    or 0
+                )
                 if pending > 0:
                     raise RuntimeError(
                         f"Refusing to drop {self.session_table_name}.runs: {pending} session(s) still have "

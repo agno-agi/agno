@@ -35,7 +35,17 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import (
+    build_run_rows_for_session,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    merge_runs_table_with_legacy_blob,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -58,6 +68,7 @@ class DynamoDb(BaseDb):
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -92,6 +103,7 @@ class DynamoDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             culture_table=culture_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
@@ -140,6 +152,7 @@ class DynamoDb(BaseDb):
         """Create all configured DynamoDB tables if they don't exist."""
         tables_to_create = [
             ("sessions", self.session_table_name),
+            ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
             ("metrics", self.metrics_table_name),
             ("evals", self.eval_table_name),
@@ -170,6 +183,8 @@ class DynamoDb(BaseDb):
 
         if table_type == "sessions":
             table_name = self.session_table_name
+        elif table_type == "runs":
+            table_name = self.runs_table_name
         elif table_type == "memories":
             table_name = self.memory_table_name
         elif table_type == "metrics":
@@ -205,6 +220,258 @@ class DynamoDb(BaseDb):
         """Upsert the schema version into the database."""
         pass
 
+    # --- Runs ---
+
+    def _query_runs_by_session(self, session_id: str) -> List[Dict[str, Any]]:
+        """Query all run items for a session, ordered by created_at via the GSI."""
+        table_name = self._get_table("runs", create_table_if_not_found=False)
+        items: List[Dict[str, Any]] = []
+        try:
+            response = self.client.query(
+                TableName=table_name,
+                IndexName="session_id-created_at-index",
+                KeyConditionExpression="session_id = :sid",
+                ExpressionAttributeValues={":sid": {"S": session_id}},
+            )
+            items.extend(response.get("Items", []))
+            while "LastEvaluatedKey" in response:
+                response = self.client.query(
+                    TableName=table_name,
+                    IndexName="session_id-created_at-index",
+                    KeyConditionExpression="session_id = :sid",
+                    ExpressionAttributeValues={":sid": {"S": session_id}},
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
+                )
+                items.extend(response.get("Items", []))
+        except self.client.exceptions.ResourceNotFoundException:
+            return []
+        return items
+
+    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        """Return raw run_data dicts for a session, ordered by run_index then created_at."""
+        items = self._query_runs_by_session(session_id)
+        rows = [deserialize_from_dynamodb_item(it) for it in items]
+        rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+        return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for sid in session_ids:
+            grouped[sid] = self._get_session_runs_data(sid)
+        return grouped
+
+    def _store_session_runs(self, session: Session) -> None:
+        """Upsert every run of the given session into the runs table."""
+        rows = build_run_rows_for_session(session=session)
+        if not rows:
+            return
+        table_name = self._get_table("runs", create_table_if_not_found=True)
+        for row in rows:
+            payload = {k: v for k, v in row.items() if v is not None}
+            if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
+                payload["run_data"] = json.dumps(payload["run_data"])
+            item = serialize_to_dynamo_item(payload)
+            self.client.put_item(TableName=table_name, Item=item)
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        """Cascade-delete every run row for a session."""
+        items = self._query_runs_by_session(session_id)
+        if not items:
+            return 0
+        table_name = self._get_table("runs", create_table_if_not_found=False)
+        run_ids = [it.get("run_id", {}).get("S") for it in items]
+        run_ids = [r for r in run_ids if r]
+        for i in range(0, len(run_ids), DYNAMO_BATCH_SIZE_LIMIT):
+            batch = run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+            delete_requests = [{"DeleteRequest": {"Key": {"run_id": {"S": rid}}}} for rid in batch]
+            self.client.batch_write_item(RequestItems={table_name: delete_requests})
+        return len(run_ids)
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` attribute on every session item.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` field as a
+        backup. Once verified, call this to reclaim the storage.
+
+        Args:
+            force: If True, unset the field even on sessions that still hold a
+                non-null ``runs`` blob. Defaults to False.
+
+        Returns:
+            True if any session items were touched.
+        """
+        table_name = self._get_table("sessions", create_table_if_not_found=False)
+        items: List[Dict[str, Any]] = []
+        try:
+            response = self.client.scan(TableName=table_name)
+            items.extend(response.get("Items", []))
+            while "LastEvaluatedKey" in response:
+                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                items.extend(response.get("Items", []))
+        except self.client.exceptions.ResourceNotFoundException:
+            return False
+
+        if not items:
+            return False
+
+        if not force:
+            pending = 0
+            for it in items:
+                runs_attr = it.get("runs")
+                if runs_attr is None:
+                    continue
+                # Treat empty list/string as "no legacy data"
+                if "S" in runs_attr:
+                    try:
+                        decoded = json.loads(runs_attr["S"])
+                        if decoded:
+                            pending += 1
+                    except (json.JSONDecodeError, TypeError):
+                        if runs_attr["S"]:
+                            pending += 1
+                elif "L" in runs_attr and runs_attr["L"]:
+                    pending += 1
+            if pending:
+                raise RuntimeError(
+                    f"Refusing to unset {table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        touched = 0
+        for it in items:
+            if "runs" not in it:
+                continue
+            session_id = it.get("session_id", {}).get("S")
+            if not session_id:
+                continue
+            try:
+                self.client.update_item(
+                    TableName=table_name,
+                    Key={"session_id": {"S": session_id}},
+                    UpdateExpression="REMOVE #runs",
+                    ExpressionAttributeNames={"#runs": "runs"},
+                )
+                touched += 1
+            except Exception as e:
+                log_error(f"Failed to unset runs on session {session_id}: {str(e)}")
+        log_info(f"Unset runs on {touched} session item(s)")
+        return touched > 0
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=False)
+            response = self.client.get_item(TableName=table_name, Key={"run_id": {"S": run_id}})
+            item = response.get("Item")
+            if not item:
+                return None
+            row = deserialize_from_dynamodb_item(item)
+            if not deserialize:
+                return row
+            return deserialize_run(row.get("run_type"), row["run_data"])
+        except self.client.exceptions.ResourceNotFoundException:
+            return None
+        except Exception as e:
+            log_error(f"Error reading run {run_id}: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=False)
+            items: List[Dict[str, Any]] = []
+            try:
+                if session_id is not None:
+                    items = self._query_runs_by_session(session_id)
+                else:
+                    response = self.client.scan(TableName=table_name)
+                    items.extend(response.get("Items", []))
+                    while "LastEvaluatedKey" in response:
+                        response = self.client.scan(
+                            TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"]
+                        )
+                        items.extend(response.get("Items", []))
+            except self.client.exceptions.ResourceNotFoundException:
+                items = []
+
+            rows = [deserialize_from_dynamodb_item(it) for it in items]
+
+            if user_id is not None:
+                rows = [r for r in rows if r.get("user_id") == user_id]
+            if agent_id is not None:
+                rows = [r for r in rows if r.get("agent_id") == agent_id]
+            if team_id is not None:
+                rows = [r for r in rows if r.get("team_id") == team_id]
+            if workflow_id is not None:
+                rows = [r for r in rows if r.get("workflow_id") == workflow_id]
+            if status is not None:
+                status_value = status.value if isinstance(status, RunStatus) else status
+                rows = [r for r in rows if r.get("status") == status_value]
+
+            total_count = len(rows)
+
+            if sort_by is not None:
+                rows = apply_sorting(rows, sort_by, sort_order)
+            else:
+                rows = sorted(rows, key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+
+            if limit is not None:
+                rows = apply_pagination(rows, limit, page)
+
+            if not deserialize:
+                return rows, total_count
+            return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+        except Exception as e:
+            log_error(f"Error reading runs: {str(e)}")
+            raise e
+
+    def delete_run(self, run_id: str) -> bool:
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=False)
+            self.client.delete_item(
+                TableName=table_name,
+                Key={"run_id": {"S": run_id}},
+                ConditionExpression="attribute_exists(run_id)",
+            )
+            return True
+        except self.client.exceptions.ConditionalCheckFailedException:
+            return False
+        except self.client.exceptions.ResourceNotFoundException:
+            return False
+        except Exception as e:
+            log_error(f"Error deleting run {run_id}: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        if not run_ids:
+            return
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=False)
+            for i in range(0, len(run_ids), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+                delete_requests = [{"DeleteRequest": {"Key": {"run_id": {"S": rid}}}} for rid in batch]
+                self.client.batch_write_item(RequestItems={table_name: delete_requests})
+        except self.client.exceptions.ResourceNotFoundException:
+            return
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
+
     # --- Sessions ---
 
     def delete_session(self, session_id: Optional[str] = None, user_id: Optional[str] = None) -> bool:
@@ -230,6 +497,11 @@ class DynamoDb(BaseDb):
                 kwargs["ConditionExpression"] = "user_id = :user_id"
                 kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
             self.client.delete_item(**kwargs)
+            # Cascade-delete runs for this session
+            try:
+                self._delete_session_runs(session_id)
+            except Exception as e:
+                log_error(f"Failed to cascade-delete runs for session {session_id}: {str(e)}")
             return True
 
         except self.client.exceptions.ConditionalCheckFailedException:
@@ -277,6 +549,13 @@ class DynamoDb(BaseDb):
                     if delete_requests:
                         self.client.batch_write_item(RequestItems={self.session_table_name: delete_requests})
 
+            # Cascade-delete runs for each session
+            for session_id in session_ids:
+                try:
+                    self._delete_session_runs(session_id)
+                except Exception as e:
+                    log_error(f"Failed to cascade-delete runs for session {session_id}: {str(e)}")
+
         except Exception as e:
             log_error(f"Failed to delete sessions: {str(e)}")
             raise e
@@ -321,6 +600,13 @@ class DynamoDb(BaseDb):
 
             if not session:
                 return None
+
+            # Attach runs from the runs table, merged with any legacy `runs` field
+            try:
+                runs_data = self._get_session_runs_data(session_id)
+                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+            except Exception as e:
+                log_error(f"Failed to load runs for session {session_id}: {str(e)}")
 
             if not deserialize:
                 return session
@@ -478,6 +764,17 @@ class DynamoDb(BaseDb):
                 if session_data:
                     sessions_data.append(session_data)
 
+            # Attach runs from the runs table, merged with legacy blob
+            if sessions_data:
+                try:
+                    runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions_data])
+                    for s in sessions_data:
+                        s["runs"] = merge_runs_table_with_legacy_blob(
+                            runs_by_session.get(s["session_id"], []), s.get("runs")
+                        )
+                except Exception as e:
+                    log_error(f"Failed to attach runs to sessions: {str(e)}")
+
             # Filter by session_name in-memory (stored inside session_data JSON)
             if session_name:
                 sessions_data = [
@@ -581,6 +878,14 @@ class DynamoDb(BaseDb):
                 return None
 
             session = deserialize_from_dynamodb_item(item)
+
+            # Attach runs from the runs table, merged with legacy blob
+            try:
+                runs_data = self._get_session_runs_data(session_id)
+                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+            except Exception as e:
+                log_error(f"Failed to load runs for renamed session {session_id}: {str(e)}")
+
             if not deserialize:
                 return session
 
@@ -623,13 +928,18 @@ class DynamoDb(BaseDb):
                 if existing_uid is not None and existing_uid != session.user_id:
                     return None
 
-            # Prepare the session to upsert, merging with existing session if it exists.
-            serialized_session = prepare_session_data(session)
+            # Prepare the session to upsert (without the inline `runs` list).
+            serialized_session = prepare_session_data(session, include_runs=False)
             if existing_item:
                 serialized_session = merge_with_existing_session(serialized_session, existing_item)
                 serialized_session["updated_at"] = int(time.time())
             else:
                 serialized_session["updated_at"] = serialized_session["created_at"]
+
+            # Drop the legacy `runs` field from what we serialize back — runs now live in
+            # the runs table. The session item's legacy `runs` attribute (if any) is
+            # explicitly removed below so it's nulled for sessions that touch v3.
+            serialized_session.pop("runs", None)
 
             item = serialize_to_dynamo_item(serialized_session)
             put_kwargs: Dict[str, Any] = {"TableName": table_name, "Item": item}
@@ -649,6 +959,14 @@ class DynamoDb(BaseDb):
             except self.client.exceptions.ConditionalCheckFailedException:
                 return None
 
+            # Persist runs into the dedicated runs table.
+            try:
+                self._store_session_runs(session)
+            except Exception as e:
+                log_error(f"Failed to store runs for session {session.session_id}: {str(e)}")
+
+            # Attach runs to the returned session dict so the caller sees them.
+            serialized_session["runs"] = [r.to_dict() if hasattr(r, "to_dict") else r for r in (session.runs or [])]
             return deserialize_session_result(serialized_session, session, deserialize)
 
         except Exception as e:
@@ -1400,6 +1718,17 @@ class DynamoDb(BaseDb):
                     session_data = deserialize_from_dynamodb_item(item)
                     if session_data:
                         all_sessions.append(session_data)
+
+            # Attach runs from the runs table, merged with legacy blob
+            if all_sessions:
+                try:
+                    runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in all_sessions])
+                    for s in all_sessions:
+                        s["runs"] = merge_runs_table_with_legacy_blob(
+                            runs_by_session.get(s["session_id"], []), s.get("runs")
+                        )
+                except Exception as e:
+                    log_error(f"Failed to attach runs to sessions for metrics: {str(e)}")
 
             return all_sessions
 

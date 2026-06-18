@@ -592,9 +592,7 @@ class AsyncMongoDb(AsyncBaseDb):
             return False
 
         if not force:
-            pending = await collection.count_documents(
-                {"runs": {"$exists": True, "$ne": None, "$not": {"$size": 0}}}
-            )
+            pending = await collection.count_documents({"runs": {"$exists": True, "$ne": None, "$not": {"$size": 0}}})
             if pending > 0:
                 raise RuntimeError(
                     f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "

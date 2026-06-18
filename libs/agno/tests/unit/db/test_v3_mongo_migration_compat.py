@@ -100,10 +100,7 @@ def test_continue_legacy_session_writes_all_runs_to_collection():
     loaded.upsert_run(_make_run("r2", "s3", "fresh"))
     db.upsert_session(loaded)
 
-    ids = [
-        d["run_id"]
-        for d in db._database["agno_runs"].find({"session_id": "s3"}, sort=[("run_index", 1)])
-    ]
+    ids = [d["run_id"] for d in db._database["agno_runs"].find({"session_id": "s3"}, sort=[("run_index", 1)])]
     assert ids == ["r0", "r1", "r2"]
 
     reloaded = db.get_session("s3", SessionType.AGENT)

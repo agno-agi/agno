@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import time
 from pathlib import Path
@@ -93,20 +92,22 @@ def test_partial_state_merges():
     _insert_legacy_session(db, "s4", legacy)
 
     # Migrate one of the legacy runs by hand into the runs file
-    db._write_runs_file([
-        {
-            "run_id": "rl1",
-            "session_id": "s4",
-            "run_type": "agent",
-            "agent_id": "agent-1",
-            "user_id": "u1",
-            "status": "COMPLETED",
-            "run_index": 1,
-            "run_data": legacy[1],
-            "created_at": int(time.time()),
-            "updated_at": int(time.time()),
-        }
-    ])
+    db._write_runs_file(
+        [
+            {
+                "run_id": "rl1",
+                "session_id": "s4",
+                "run_type": "agent",
+                "agent_id": "agent-1",
+                "user_id": "u1",
+                "status": "COMPLETED",
+                "run_index": 1,
+                "run_data": legacy[1],
+                "created_at": int(time.time()),
+                "updated_at": int(time.time()),
+            }
+        ]
+    )
 
     loaded = db.get_session("s4", SessionType.AGENT)
     assert {r.run_id for r in loaded.runs} == {"rl0", "rl1", "rl2"}

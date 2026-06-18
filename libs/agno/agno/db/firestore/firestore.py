@@ -315,9 +315,7 @@ class FirestoreDb(BaseDb):
         )
         return [doc.to_dict().get("run_data") for doc in query.stream() if doc.exists]
 
-    def _get_sessions_runs_docs(
-        self, runs_collection_ref, session_ids: List[str]
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    def _get_sessions_runs_docs(self, runs_collection_ref, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get the raw run_data dicts for several sessions, grouped by session_id.
 
         Firestore's ``in`` filter caps at 30 values per query, so we chunk.
@@ -335,7 +333,9 @@ class FirestoreDb(BaseDb):
                 run_data = data.get("run_data")
                 if sid is None or run_data is None:
                     continue
-                runs_by_session.setdefault(sid, []).append((data.get("run_index") or 0, data.get("created_at") or 0, run_data))
+                runs_by_session.setdefault(sid, []).append(
+                    (data.get("run_index") or 0, data.get("created_at") or 0, run_data)
+                )
         # Sort each list by (run_index, created_at)
         for sid, items in runs_by_session.items():
             items.sort(key=lambda t: (t[0], t[1]))
@@ -900,7 +900,9 @@ class FirestoreDb(BaseDb):
                 existing_doc = doc_ref.get()
                 if existing_doc.exists:
                     existing_data = existing_doc.to_dict() or {}
-                    if existing_data.get("user_id") is not None and existing_data.get("user_id") != record.get("user_id"):
+                    if existing_data.get("user_id") is not None and existing_data.get("user_id") != record.get(
+                        "user_id"
+                    ):
                         return None
                     if "runs" in existing_data:
                         had_legacy_runs = True

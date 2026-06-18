@@ -137,9 +137,10 @@ def test_continue_legacy_session_writes_all_runs_to_table():
     conn = sqlite3.connect(db_file)
     try:
         # All 3 runs (2 legacy + 1 new) are in the runs table
-        ids = [r[0] for r in conn.execute(
-            "SELECT run_id FROM agno_runs WHERE session_id='s3' ORDER BY run_index"
-        ).fetchall()]
+        ids = [
+            r[0]
+            for r in conn.execute("SELECT run_id FROM agno_runs WHERE session_id='s3' ORDER BY run_index").fetchall()
+        ]
         assert ids == ["r0", "r1", "r2"]
         # The legacy blob has been cleared for this session
         blob = conn.execute("SELECT runs FROM agno_sessions WHERE session_id='s3'").fetchone()[0]

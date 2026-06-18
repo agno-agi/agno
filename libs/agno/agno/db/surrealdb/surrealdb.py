@@ -29,6 +29,7 @@ from agno.db.surrealdb.models import (
     deserialize_user_memories,
     deserialize_user_memory,
     desurrealize_eval_run_record,
+    desurrealize_run_row,
     desurrealize_session,
     desurrealize_user_memory,
     get_schema,
@@ -36,12 +37,23 @@ from agno.db.surrealdb.models import (
     serialize_cultural_knowledge,
     serialize_eval_run_record,
     serialize_knowledge_row,
+    serialize_run_row,
     serialize_session,
     serialize_user_memory,
 )
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import (
+    build_run_rows_for_session,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    merge_runs_table_with_legacy_blob,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -61,6 +73,7 @@ class SurrealDb(BaseDb):
         db_ns: str,
         db_db: str,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -97,6 +110,7 @@ class SurrealDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -129,6 +143,7 @@ class SurrealDb(BaseDb):
             "evals": self.eval_table_name,
             "knowledge": self.knowledge_table_name,
             "memories": self.memory_table_name,
+            "runs": self.runs_table_name,
             "sessions": self.session_table_name,
             "spans": self.span_table_name,
             "teams": self._teams_table_name,
@@ -162,6 +177,8 @@ class SurrealDb(BaseDb):
     def _get_table(self, table_type: TableType, create_table_if_not_found: bool = True):
         if table_type == "sessions":
             table_name = self.session_table_name
+        elif table_type == "runs":
+            table_name = self.runs_table_name
         elif table_type == "memories":
             table_name = self.memory_table_name
         elif table_type == "knowledge":
@@ -232,6 +249,172 @@ class SurrealDb(BaseDb):
         total_count = int(total_count)
         return total_count
 
+    # --- Runs ---
+
+    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        """Return raw run_data dicts for a session, ordered by run_index then created_at."""
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return []
+        rows_raw = self._query(
+            f"SELECT * FROM {runs_table} WHERE session_id = $sid ORDER BY run_index ASC, created_at ASC",
+            {"sid": session_id},
+            dict,
+        )
+        rows = [desurrealize_run_row(r) for r in rows_raw]
+        return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for sid in session_ids:
+            grouped[sid] = self._get_session_runs_data(sid)
+        return grouped
+
+    def _store_session_runs(self, session: Session) -> None:
+        """Upsert every run of the given session into the runs table."""
+        rows = build_run_rows_for_session(session=session)
+        if not rows:
+            return
+        runs_table = self._get_table("runs", create_table_if_not_found=True)
+        for row in rows:
+            content = serialize_run_row(row, runs_table)
+            self._query_one(
+                "UPSERT ONLY $record CONTENT $content",
+                {"record": RecordID(runs_table, row["run_id"]), "content": content},
+                dict,
+            )
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return 0
+        result = self.client.query(
+            f"DELETE FROM {runs_table} WHERE session_id = $sid RETURN BEFORE",
+            {"sid": session_id},
+        )
+        if isinstance(result, list):
+            return len(result)
+        return 0
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session records."""
+        try:
+            sessions_table = self._get_table("sessions", create_table_if_not_found=False)
+        except Exception:
+            return False
+
+        sessions_raw = self._query(f"SELECT * FROM {sessions_table}", {}, dict)
+        if not sessions_raw:
+            return False
+
+        if not force:
+            pending = sum(1 for s in sessions_raw if s.get("runs"))
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {sessions_table}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        self.client.query(f"UPDATE {sessions_table} UNSET runs", {})
+        log_info(f"Unset runs on session records in {sessions_table}")
+        return True
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return None
+        raw = self._query_one(
+            "SELECT * FROM ONLY $record",
+            {"record": RecordID(runs_table, run_id)},
+            dict,
+        )
+        if raw is None:
+            return None
+        row = desurrealize_run_row(raw)
+        if not deserialize:
+            return row
+        return deserialize_run(row.get("run_type"), row["run_data"])
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return [] if deserialize else ([], 0)
+
+        where = WhereClause()
+        if session_id is not None:
+            where = where.and_("session_id", session_id)
+        if user_id is not None:
+            where = where.and_("user_id", user_id)
+        if agent_id is not None:
+            where = where.and_("agent_id", agent_id)
+        if team_id is not None:
+            where = where.and_("team_id", team_id)
+        if workflow_id is not None:
+            where = where.and_("workflow_id", workflow_id)
+        if status is not None:
+            status_value = status.value if isinstance(status, RunStatus) else status
+            where = where.and_("status", status_value)
+
+        where_clause, where_vars = where.build()
+        total_count = self._count(runs_table, where_clause, where_vars)
+
+        order_clause = order_limit_start(sort_by or "run_index", sort_order or "asc", limit, page)
+        query = dedent(f"""
+            SELECT *
+            FROM {runs_table}
+            {where_clause}
+            {order_clause}
+        """)
+        rows_raw = self._query(query, where_vars, dict)
+        rows = [desurrealize_run_row(r) for r in rows_raw]
+
+        if not deserialize:
+            return list(rows), total_count
+        return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+
+    def delete_run(self, run_id: str) -> bool:
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return False
+        res = self.client.delete(RecordID(runs_table, run_id))
+        return bool(res)
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        if not run_ids:
+            return
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=False)
+        except Exception:
+            return
+        records = [RecordID(runs_table, rid) for rid in run_ids]
+        params: Dict[str, Any] = {"records": records}
+        self.client.query(
+            f"DELETE FROM {runs_table} WHERE id IN $records",
+            params,
+        )
+
     # --- Sessions ---
     def clear_sessions(self) -> None:
         """Delete all session rows from the database.
@@ -251,9 +434,16 @@ class SurrealDb(BaseDb):
                 f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
                 {"record": RecordID(table, session_id), "user_id": user_id},
             )
-            return isinstance(res, list) and len(res) > 0
-        res = self.client.delete(RecordID(table, session_id))
-        return bool(res)
+            deleted = isinstance(res, list) and len(res) > 0
+        else:
+            res = self.client.delete(RecordID(table, session_id))
+            deleted = bool(res)
+        if deleted:
+            try:
+                self._delete_session_runs(session_id)
+            except Exception as e:
+                log_error(f"Failed to cascade-delete runs for session {session_id}: {str(e)}")
+        return deleted
 
     def delete_sessions(self, session_ids: list[str], user_id: Optional[str] = None) -> None:
         table = self._get_table(table_type="sessions")
@@ -267,6 +457,12 @@ class SurrealDb(BaseDb):
             query += " AND user_id = $user_id"
             params["user_id"] = user_id
         self.client.query(query, params)
+        # Cascade-delete runs for each session
+        for sid in session_ids:
+            try:
+                self._delete_session_runs(sid)
+            except Exception as e:
+                log_error(f"Failed to cascade-delete runs for session {sid}: {str(e)}")
 
     def get_session(
         self,
@@ -310,6 +506,13 @@ class SurrealDb(BaseDb):
             return None
 
         desurrealized = desurrealize_session(raw)
+
+        # Attach runs from the runs table, merged with any legacy `runs` blob
+        try:
+            runs_data = self._get_session_runs_data(session_id)
+            desurrealized["runs"] = merge_runs_table_with_legacy_blob(runs_data, desurrealized.get("runs"))
+        except Exception as e:
+            log_error(f"Failed to load runs for session {session_id}: {str(e)}")
 
         if not deserialize:
             return desurrealized
@@ -433,6 +636,19 @@ class SurrealDb(BaseDb):
         sessions_raw = self._query(query, where_vars, dict)
         converted_sessions_raw = [desurrealize_session(session) for session in sessions_raw]
 
+        # Attach runs from the runs table, merged with legacy blob
+        if converted_sessions_raw:
+            try:
+                runs_by_session = self._get_sessions_runs_data(
+                    [s["session_id"] for s in converted_sessions_raw if s.get("session_id")]
+                )
+                for s in converted_sessions_raw:
+                    sid = s.get("session_id")
+                    if sid:
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(sid, []), s.get("runs"))
+            except Exception as e:
+                log_error(f"Failed to attach runs to sessions: {str(e)}")
+
         if not deserialize:
             return list(converted_sessions_raw), total_count
 
@@ -481,9 +697,17 @@ class SurrealDb(BaseDb):
         else:
             session_raw = self._query_one("UPDATE ONLY $record SET session_name = $name", vars, dict)
 
-        if session_raw is None or not deserialize:
-            return session_raw
+        if session_raw is None:
+            return None
         desurrealized = desurrealize_session(session_raw)
+        # Attach runs from the runs table, merged with legacy blob
+        try:
+            runs_data = self._get_session_runs_data(session_id)
+            desurrealized["runs"] = merge_runs_table_with_legacy_blob(runs_data, desurrealized.get("runs"))
+        except Exception as e:
+            log_error(f"Failed to load runs for renamed session {session_id}: {str(e)}")
+        if not deserialize:
+            return desurrealized
         return deserialize_session(session_type, desurrealized)
 
     def upsert_session(
@@ -520,14 +744,25 @@ class SurrealDb(BaseDb):
             "UPSERT ONLY $record CONTENT $content",
             {
                 "record": RecordID(table, session.session_id),
-                "content": serialize_session(session, self.table_names),
+                "content": serialize_session(session, self.table_names, include_runs=False),
             },
             dict,
         )
-        if session_raw is None or not deserialize:
-            return session_raw
+        if session_raw is None:
+            return None
+
+        # Persist runs into the dedicated runs table.
+        try:
+            self._store_session_runs(session)
+        except Exception as e:
+            log_error(f"Failed to store runs for session {session.session_id}: {str(e)}")
 
         desurrealized = desurrealize_session(session_raw)
+        # Attach in-memory runs so the caller sees them on the returned session
+        desurrealized["runs"] = [r.to_dict() if hasattr(r, "to_dict") else r for r in (session.runs or [])]
+
+        if not deserialize:
+            return desurrealized
         return deserialize_session(session_type, desurrealized)
 
     def upsert_sessions(
@@ -557,12 +792,16 @@ class SurrealDb(BaseDb):
                 "UPSERT ONLY $record CONTENT $content",
                 {
                     "record": RecordID(table, session.session_id),
-                    "content": serialize_session(session, self.table_names),
+                    "content": serialize_session(session, self.table_names, include_runs=False),
                 },
                 dict,
             )
             if session_raw:
                 sessions_raw.append(session_raw)
+                try:
+                    self._store_session_runs(session)
+                except Exception as e:
+                    log_error(f"Failed to store runs for session {session.session_id}: {str(e)}")
         if not deserialize:
             return list(sessions_raw)
 
@@ -1167,6 +1406,18 @@ class SurrealDb(BaseDb):
             sessions = get_all_sessions_for_metrics_calculation(
                 self.client, self._get_table("sessions"), start_timestamp, end_timestamp
             )
+
+            # Attach runs from the runs table, merged with legacy blob
+            if sessions:
+                try:
+                    sids = [s["session_id"] for s in sessions if s.get("session_id")]
+                    runs_by_session = self._get_sessions_runs_data(sids)
+                    for s in sessions:
+                        sid = s.get("session_id")
+                        if sid:
+                            s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(sid, []), s.get("runs"))
+                except Exception as e:
+                    log_error(f"Failed to attach runs to sessions for metrics: {str(e)}")
 
             all_sessions_data = fetch_all_sessions_data(
                 sessions=sessions,  # Added parameter name for clarity

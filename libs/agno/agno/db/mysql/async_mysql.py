@@ -491,9 +491,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     )
 
             log_info(f"Dropping legacy runs column from {self.session_table_name}")
-            await sess.execute(
-                text(f"ALTER TABLE `{self.db_schema}`.`{self.session_table_name}` DROP COLUMN `runs`")
-            )
+            await sess.execute(text(f"ALTER TABLE `{self.db_schema}`.`{self.session_table_name}` DROP COLUMN `runs`"))
             return True
 
     def _legacy_runs_update(self, table: Table) -> Dict[str, Any]:

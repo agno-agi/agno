@@ -528,9 +528,7 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             if not force:
                 pending = (
-                    await sess.execute(
-                        text(f"SELECT COUNT(*) FROM {self.session_table_name} WHERE runs IS NOT NULL")
-                    )
+                    await sess.execute(text(f"SELECT COUNT(*) FROM {self.session_table_name} WHERE runs IS NOT NULL"))
                 ).scalar() or 0
                 if pending > 0:
                     raise RuntimeError(

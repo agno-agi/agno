@@ -58,9 +58,14 @@ v3.0 normalized run storage is implemented for:
 - `MongoDb` and `AsyncMongoDb` (uses a separate ``agno_runs`` collection)
 - `FirestoreDb` (uses a separate ``agno_runs`` collection)
 - `RedisDb` (uses ``<prefix>:runs:<run_id>`` keys plus a per-session sorted-set index)
+- `DynamoDb` (uses a separate ``agno_runs`` table with a ``session_id-created_at`` GSI)
+- `SurrealDb` (uses a separate ``agno_runs`` table)
+- `JsonDb` (uses a separate ``agno_runs.json`` file)
+- `GcsJsonDb` (uses a separate ``agno_runs.json`` object in the bucket)
 
-Other adapters (DynamoDB, SurrealDB, ClickHouse, JSON, GCS, in-memory) continue to
-store runs inline in the session and will be ported in follow-up releases.
+`InMemoryDb` and `ClickHouse` continue to store runs inline in the session. The
+in-memory adapter does not benefit from the split (no I/O, no row-size limits),
+and ClickHouse will be addressed in a follow-up release.
 
 ### MongoDB note
 
@@ -87,6 +92,31 @@ a per-session sorted set (``<prefix>:runs:by_session:<session_id>``) scored by
 ``ZRANGE`` + ``MGET`` round-trip rather than a full scan. The legacy ``runs``
 field on the session record is preserved by the migration; call
 ``db.cleanup_legacy_runs_field()`` to drop it once verified.
+
+### DynamoDB note
+
+DynamoDB has a hard 400 KB per-item limit. The v2.x design — embedding the full
+runs list in the session item — could simply fail to write for long sessions.
+v3.0 puts each run in its own item in a dedicated ``agno_runs`` table with a
+``session_id-created_at-index`` GSI for ordered reads. The legacy ``runs``
+attribute on the session item is preserved by the migration; call
+``db.cleanup_legacy_runs_field()`` to remove it once verified.
+
+### SurrealDB note
+
+SurrealDB stores each run in a dedicated ``agno_runs`` table with indexes on the
+identity fields. The legacy ``runs`` field on session records is preserved by
+the migration; call ``db.cleanup_legacy_runs_field()`` to drop it once verified.
+
+### JSON / GCS-JSON note
+
+The file-backed adapters keep runs in a sibling JSON file (``agno_runs.json``).
+This brings API parity with the SQL/NoSQL adapters — same ``get_run`` /
+``get_runs`` / ``delete_run`` surface — but it does **not** lift the underlying
+I/O cost: every write still rewrites a single JSON file. These adapters are for
+local development; for production workloads use one of the SQL or NoSQL
+adapters. The legacy ``runs`` field is preserved by the migration and removed
+via ``db.cleanup_legacy_runs_field()``.
 
 ## Migrating existing data
 

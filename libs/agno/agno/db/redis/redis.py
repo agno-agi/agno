@@ -1315,7 +1315,9 @@ class RedisDb(BaseDb):
                 if not sid:
                     continue
                 runs_data = self._get_session_runs_data(sid)
-                lightweight = [{"model": rd.get("model"), "model_provider": rd.get("model_provider")} for rd in runs_data]
+                lightweight = [
+                    {"model": rd.get("model"), "model_provider": rd.get("model_provider")} for rd in runs_data
+                ]
                 if lightweight or not session.get("runs"):
                     session["runs"] = lightweight
 

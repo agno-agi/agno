@@ -526,21 +526,27 @@ class SingleStoreDb(BaseDb):
         """
         schema = self.db_schema or "agno"
         with self.Session() as sess, sess.begin():
-            column_exists = sess.execute(
-                text(
-                    "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
-                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
-                ),
-                {"schema": schema, "table": self.session_table_name},
-            ).scalar() is not None
+            column_exists = (
+                sess.execute(
+                    text(
+                        "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                        "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
+                    ),
+                    {"schema": schema, "table": self.session_table_name},
+                ).scalar()
+                is not None
+            )
             if not column_exists:
                 log_info(f"{self.session_table_name}.runs column does not exist, nothing to clean up")
                 return False
 
             if not force:
-                pending = sess.execute(
-                    text(f"SELECT COUNT(*) FROM `{schema}`.`{self.session_table_name}` WHERE runs IS NOT NULL")
-                ).scalar() or 0
+                pending = (
+                    sess.execute(
+                        text(f"SELECT COUNT(*) FROM `{schema}`.`{self.session_table_name}` WHERE runs IS NOT NULL")
+                    ).scalar()
+                    or 0
+                )
                 if pending > 0:
                     raise RuntimeError(
                         f"Refusing to drop {self.session_table_name}.runs: {pending} session(s) still have "

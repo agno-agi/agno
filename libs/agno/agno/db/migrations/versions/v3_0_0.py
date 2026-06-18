@@ -61,6 +61,10 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _migrate_gcsjsondb(db, table_name)
         elif db_type == "InMemoryDb":
             return _migrate_inmemorydb(db, table_name)
+        elif db_type == "DynamoDb":
+            return _migrate_dynamodb(db, table_name)
+        elif db_type == "SurrealDb":
+            return _migrate_surrealdb(db, table_name)
         else:
             log_info(f"Migration v3.0.0 is not implemented for {db_type}. Sessions will keep storing runs inline.")
         return False
@@ -127,6 +131,10 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_gcsjsondb(db, table_name)
         elif db_type == "InMemoryDb":
             return _revert_inmemorydb(db, table_name)
+        elif db_type == "DynamoDb":
+            return _revert_dynamodb(db, table_name)
+        elif db_type == "SurrealDb":
+            return _revert_surrealdb(db, table_name)
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -696,22 +704,23 @@ def _migrate_mysql_like(db: BaseDb, table_name: str) -> bool:
             return False
 
         # Does the legacy `runs` column exist?
-        column_exists = sess.execute(
-            text(
-                "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
-                "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
-            ),
-            {"schema": db_schema, "table": table_name},
-        ).scalar() is not None
+        column_exists = (
+            sess.execute(
+                text(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
+                ),
+                {"schema": db_schema, "table": table_name},
+            ).scalar()
+            is not None
+        )
         if not column_exists:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
         # Copy every legacy run into the runs table
         result = sess.execute(
-            text(
-                f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL"
-            )
+            text(f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL")
         )
         migrated_runs = 0
         while True:
@@ -780,9 +789,7 @@ async def _migrate_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
             return False
 
         result = await sess.execute(
-            text(
-                f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL"
-            )
+            text(f"SELECT session_id, user_id, runs FROM `{db_schema}`.`{table_name}` WHERE runs IS NOT NULL")
         )
         migrated_runs = 0
         while True:
@@ -829,13 +836,16 @@ def _revert_mysql_like(db: BaseDb, table_name: str) -> bool:
             return False
 
         # Re-add the runs column if missing
-        column_exists = sess.execute(
-            text(
-                "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
-                "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
-            ),
-            {"schema": db_schema, "table": table_name},
-        ).scalar() is not None
+        column_exists = (
+            sess.execute(
+                text(
+                    "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = 'runs'"
+                ),
+                {"schema": db_schema, "table": table_name},
+            ).scalar()
+            is not None
+        )
         if not column_exists:
             log_info(f"-- Adding runs column back to {table_name}")
             sess.execute(text(f"ALTER TABLE `{db_schema}`.`{table_name}` ADD COLUMN `runs` JSON"))
@@ -854,9 +864,7 @@ def _revert_mysql_like(db: BaseDb, table_name: str) -> bool:
             ).fetchall()
             runs = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in run_rows]
             sess.execute(
-                text(
-                    f"UPDATE `{db_schema}`.`{table_name}` SET runs = :runs WHERE session_id = :session_id"
-                ),
+                text(f"UPDATE `{db_schema}`.`{table_name}` SET runs = :runs WHERE session_id = :session_id"),
                 {"runs": json.dumps(runs, cls=CustomJSONEncoder), "session_id": session_id},
             )
 
@@ -917,9 +925,7 @@ async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
             ).fetchall()
             runs = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in run_rows]
             await sess.execute(
-                text(
-                    f"UPDATE `{db_schema}`.`{table_name}` SET runs = :runs WHERE session_id = :session_id"
-                ),
+                text(f"UPDATE `{db_schema}`.`{table_name}` SET runs = :runs WHERE session_id = :session_id"),
                 {"runs": json.dumps(runs, cls=CustomJSONEncoder), "session_id": session_id},
             )
 
@@ -1136,7 +1142,9 @@ def _revert_firestore(db: BaseDb, table_name: str) -> bool:
         sid = d.get("session_id")
         if sid is None:
             continue
-        runs_by_session.setdefault(sid, []).append((d.get("run_index") or 0, d.get("created_at") or 0, d.get("run_data")))
+        runs_by_session.setdefault(sid, []).append(
+            (d.get("run_index") or 0, d.get("created_at") or 0, d.get("run_data"))
+        )
 
     # Rebuild the inline blob on each session doc
     batch = db.db_client.batch()  # type: ignore
@@ -1224,7 +1232,9 @@ def _revert_redis(db: BaseDb, table_name: str) -> bool:
         sid = r.get("session_id")
         if sid is None:
             continue
-        runs_by_session.setdefault(sid, []).append((r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data")))
+        runs_by_session.setdefault(sid, []).append(
+            (r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data"))
+        )
 
     sessions = db._get_all_records("sessions")  # type: ignore
     for session in sessions:
@@ -1300,7 +1310,9 @@ def _revert_jsondb(db: BaseDb, table_name: str) -> bool:
         sid = r.get("session_id")
         if sid is None:
             continue
-        runs_by_session.setdefault(sid, []).append((r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data")))
+        runs_by_session.setdefault(sid, []).append(
+            (r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data"))
+        )
 
     for session in sessions:
         sid = session.get("session_id")
@@ -1352,7 +1364,9 @@ def _revert_gcsjsondb(db: BaseDb, table_name: str) -> bool:
         sid = r.get("session_id")
         if sid is None:
             continue
-        runs_by_session.setdefault(sid, []).append((r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data")))
+        runs_by_session.setdefault(sid, []).append(
+            (r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data"))
+        )
 
     for session in sessions:
         sid = session.get("session_id")
@@ -1366,48 +1380,254 @@ def _revert_gcsjsondb(db: BaseDb, table_name: str) -> bool:
 
 
 def _migrate_inmemorydb(db: BaseDb, table_name: str) -> bool:
-    """Move runs from the legacy `runs` field of each in-memory session into the runs list."""
-    sessions = db._sessions  # type: ignore
-    if not sessions:
-        return False
-
-    migrated = 0
-    existing_run_ids = {r.get("run_id") for r in db._runs}  # type: ignore
-    for session in sessions:
-        legacy = session.get("runs")
-        if not legacy:
-            continue
-        rows = _build_run_rows(legacy, session.get("session_id"), session.get("user_id"), run_data_as_string=False)
-        for row in rows:
-            if row["run_id"] in existing_run_ids:
-                continue
-            db._runs.append(row)  # type: ignore
-            existing_run_ids.add(row["run_id"])
-            migrated += 1
-
-    log_info(
-        f"-- Copied {migrated} runs into the runs list. The legacy 'runs' field on each session record "
-        "was preserved as a backup. Once verified, drop it via db.cleanup_legacy_runs_field()."
-    )
-    return True
+    """InMemoryDb is not normalized in v3.0; runs stay inline."""
+    log_info("-- InMemoryDb does not split runs into a separate table; skipping migration.")
+    return False
 
 
 def _revert_inmemorydb(db: BaseDb, table_name: str) -> bool:
-    sessions = db._sessions  # type: ignore
-    runs = db._runs  # type: ignore
+    return False
+
+
+# ---------------------------------------------------------------------------
+# DynamoDb
+# ---------------------------------------------------------------------------
+
+
+def _migrate_dynamodb(db: BaseDb, table_name: str) -> bool:
+    """Copy legacy `runs` blob from each session item into the agno_runs table."""
+    import json as _json
+
+    client = db.client  # type: ignore
+    runs_table = db.runs_table_name  # type: ignore
+
+    # Ensure runs table exists
+    db._get_table("runs", create_table_if_not_found=True)  # type: ignore
+
+    # Scan all sessions
+    items: List[Dict[str, Any]] = []
+    try:
+        response = client.scan(TableName=table_name)
+        items.extend(response.get("Items", []))
+        while "LastEvaluatedKey" in response:
+            response = client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+            items.extend(response.get("Items", []))
+    except Exception as e:
+        log_error(f"Failed to scan {table_name} during v3 migration: {str(e)}")
+        return False
+
+    migrated = 0
+    for item in items:
+        runs_attr = item.get("runs")
+        if runs_attr is None:
+            continue
+
+        legacy: Any = None
+        if "S" in runs_attr:
+            try:
+                legacy = _json.loads(runs_attr["S"])
+            except (_json.JSONDecodeError, TypeError):
+                legacy = None
+        elif "L" in runs_attr:
+            legacy = runs_attr["L"]
+
+        if not legacy:
+            continue
+
+        session_id = item.get("session_id", {}).get("S")
+        user_id = item.get("user_id", {}).get("S")
+        if not session_id:
+            continue
+
+        rows = _build_run_rows(legacy, session_id, user_id, run_data_as_string=False)
+        for row in rows:
+            payload = {k: v for k, v in row.items() if v is not None}
+            if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
+                payload["run_data"] = _json.dumps(payload["run_data"])
+            dynamo_item = _serialize_to_dynamo_item_minimal(payload)
+            try:
+                client.put_item(
+                    TableName=runs_table,
+                    Item=dynamo_item,
+                    ConditionExpression="attribute_not_exists(run_id)",
+                )
+                migrated += 1
+            except client.exceptions.ConditionalCheckFailedException:
+                continue
+            except Exception as e:
+                log_error(f"Failed to migrate run {payload.get('run_id')}: {str(e)}")
+
+    log_info(
+        f"-- Copied {migrated} runs into {runs_table}. The legacy 'runs' attribute on each session item "
+        "was preserved as a backup. Once verified, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return migrated > 0
+
+
+def _revert_dynamodb(db: BaseDb, table_name: str) -> bool:
+    """Walk runs and re-attach to session items, then truncate the runs table."""
+    import json as _json
+
+    client = db.client  # type: ignore
+    runs_table = db.runs_table_name  # type: ignore
+
+    items: List[Dict[str, Any]] = []
+    try:
+        response = client.scan(TableName=runs_table)
+        items.extend(response.get("Items", []))
+        while "LastEvaluatedKey" in response:
+            response = client.scan(TableName=runs_table, ExclusiveStartKey=response["LastEvaluatedKey"])
+            items.extend(response.get("Items", []))
+    except Exception as e:
+        log_error(f"Failed to scan runs table {runs_table}: {str(e)}")
+        return False
 
     runs_by_session: Dict[str, List[Any]] = {}
-    for r in runs:
-        sid = r.get("session_id")
-        if sid is None:
+    for it in items:
+        sid = it.get("session_id", {}).get("S")
+        if not sid:
             continue
-        runs_by_session.setdefault(sid, []).append((r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data")))
+        run_index = int(it.get("run_index", {}).get("N", "0"))
+        created_at = int(it.get("created_at", {}).get("N", "0"))
+        run_data_raw = it.get("run_data", {}).get("S")
+        if not run_data_raw:
+            continue
+        try:
+            payload = _json.loads(run_data_raw)
+        except (_json.JSONDecodeError, TypeError):
+            continue
+        runs_by_session.setdefault(sid, []).append((run_index, created_at, payload))
 
-    for session in sessions:
-        sid = session.get("session_id")
-        items = runs_by_session.get(sid, [])
+    for sid, items_for_session in runs_by_session.items():
+        items_for_session.sort(key=lambda t: (t[0], t[1]))
+        legacy_runs = [t[2] for t in items_for_session]
+        try:
+            client.update_item(
+                TableName=table_name,
+                Key={"session_id": {"S": sid}},
+                UpdateExpression="SET #runs = :runs",
+                ExpressionAttributeNames={"#runs": "runs"},
+                ExpressionAttributeValues={":runs": {"S": _json.dumps(legacy_runs)}},
+            )
+        except Exception as e:
+            log_error(f"Failed to revert runs onto session {sid}: {str(e)}")
+
+    # Best-effort: truncate the runs table
+    for it in items:
+        run_id = it.get("run_id", {}).get("S")
+        if not run_id:
+            continue
+        try:
+            client.delete_item(TableName=runs_table, Key={"run_id": {"S": run_id}})
+        except Exception:
+            pass
+
+    return True
+
+
+def _serialize_to_dynamo_item_minimal(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Minimal DynamoDB item serializer used by the v3 migration."""
+    item: Dict[str, Any] = {}
+    for key, value in data.items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            item[key] = {"BOOL": value}
+        elif isinstance(value, (int, float)):
+            item[key] = {"N": str(value)}
+        elif isinstance(value, str):
+            item[key] = {"S": value}
+        elif isinstance(value, (dict, list)):
+            import json as _json
+
+            item[key] = {"S": _json.dumps(value)}
+        else:
+            item[key] = {"S": str(value)}
+    return item
+
+
+# ---------------------------------------------------------------------------
+# SurrealDb
+# ---------------------------------------------------------------------------
+
+
+def _migrate_surrealdb(db: BaseDb, table_name: str) -> bool:
+    """Copy legacy `runs` blob from each session record into the runs table."""
+    from surrealdb import RecordID  # type: ignore
+
+    from agno.db.surrealdb.models import serialize_run_row  # local import to avoid hard dep
+
+    runs_table = db.runs_table_name  # type: ignore
+
+    # Make sure the runs table exists
+    db._get_table("runs", create_table_if_not_found=True)  # type: ignore
+
+    sessions_raw = db._query(f"SELECT * FROM {table_name}", {}, dict)  # type: ignore
+    migrated = 0
+    for s in sessions_raw:
+        legacy = s.get("runs")
+        if not legacy:
+            continue
+
+        session_id = s.get("id")
+        if isinstance(session_id, RecordID):
+            session_id = session_id.id
+        user_id = s.get("user_id")
+        if not session_id:
+            continue
+
+        rows = _build_run_rows(legacy, session_id, user_id, run_data_as_string=False)
+        for row in rows:
+            content = serialize_run_row(row, runs_table)
+            try:
+                db._query_one(  # type: ignore
+                    "UPSERT ONLY $record CONTENT $content",
+                    {"record": RecordID(runs_table, row["run_id"]), "content": content},
+                    dict,
+                )
+                migrated += 1
+            except Exception as e:
+                log_error(f"Failed to migrate run {row.get('run_id')}: {str(e)}")
+
+    log_info(
+        f"-- Copied {migrated} runs into {runs_table}. The legacy 'runs' field on each session record "
+        "was preserved as a backup. Once verified, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return migrated > 0
+
+
+def _revert_surrealdb(db: BaseDb, table_name: str) -> bool:
+    """Walk runs and rebuild the legacy `runs` blob on each session row."""
+    from surrealdb import RecordID  # type: ignore
+
+    runs_table = db.runs_table_name  # type: ignore
+
+    rows_raw = db._query(f"SELECT * FROM {runs_table}", {}, dict)  # type: ignore
+    runs_by_session: Dict[str, List[Any]] = {}
+    for r in rows_raw:
+        sid = r.get("session_id")
+        if isinstance(sid, RecordID):
+            sid = sid.id
+        if not sid:
+            continue
+        runs_by_session.setdefault(sid, []).append(
+            (r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data"))
+        )
+
+    sessions_table = table_name
+    for sid, items in runs_by_session.items():
         items.sort(key=lambda t: (t[0], t[1]))
-        session["runs"] = [t[2] for t in items]
+        legacy_runs = [t[2] for t in items if t[2] is not None]
+        try:
+            db.client.query(  # type: ignore
+                "UPDATE $record SET runs = $runs",
+                {"record": RecordID(sessions_table, sid), "runs": legacy_runs},
+            )
+        except Exception as e:
+            log_error(f"Failed to revert runs onto session {sid}: {str(e)}")
 
-    runs.clear()
+    try:
+        db.client.delete(runs_table)  # type: ignore
+    except Exception:
+        pass
     return True
