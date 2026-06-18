@@ -48,8 +48,6 @@ async def run_entity(
         if session_state is not None:
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
-        # Inject AG-UI readable context as dependencies. The SDK merges these
-        # with entity.dependencies automatically (call-site wins on conflict).
         ui_deps = extract_context(run_input.context)
         run_kwargs: dict = {}
         if ui_deps:
