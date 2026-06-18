@@ -322,7 +322,7 @@ class FirestoreDb(BaseDb):
         """
         if not session_ids:
             return {}
-        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        runs_buffer: Dict[str, List[Any]] = {}
         # Chunk to fit Firestore's `in` query limit (30)
         for start in range(0, len(session_ids), 30):
             chunk = session_ids[start : start + 30]
@@ -333,14 +333,15 @@ class FirestoreDb(BaseDb):
                 run_data = data.get("run_data")
                 if sid is None or run_data is None:
                     continue
-                runs_by_session.setdefault(sid, []).append(
+                runs_buffer.setdefault(sid, []).append(
                     (data.get("run_index") or 0, data.get("created_at") or 0, run_data)
                 )
         # Sort each list by (run_index, created_at)
-        for sid, items in runs_by_session.items():
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        for sid, items in runs_buffer.items():
             items.sort(key=lambda t: (t[0], t[1]))
             runs_by_session[sid] = [t[2] for t in items]
-        return runs_by_session  # type: ignore[return-value]
+        return runs_by_session
 
     def _store_session_runs(self, runs_collection_ref, session: Session) -> None:
         """Upsert every run of the given session into the runs collection."""
@@ -1670,7 +1671,10 @@ class FirestoreDb(BaseDb):
                         )
 
                 for s in results:
-                    rb = runs_by_session.get(s.get("session_id"), [])
+                    sid = s.get("session_id")
+                    if not sid:
+                        continue
+                    rb = runs_by_session.get(sid, [])
                     if rb or not s.get("runs"):
                         s["runs"] = rb
 

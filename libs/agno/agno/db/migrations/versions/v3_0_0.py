@@ -1101,7 +1101,10 @@ def _migrate_firestore(db: BaseDb, table_name: str) -> bool:
         legacy_runs = data.get("runs")
         if not legacy_runs:
             continue
-        rows = _build_run_rows(legacy_runs, data.get("session_id"), data.get("user_id"), run_data_as_string=False)
+        session_id = data.get("session_id")
+        if not session_id:
+            continue
+        rows = _build_run_rows(legacy_runs, session_id, data.get("user_id"), run_data_as_string=False)
         for row in rows:
             run_doc_ref = runs_ref.document(row["run_id"])
             batch.set(run_doc_ref, row)

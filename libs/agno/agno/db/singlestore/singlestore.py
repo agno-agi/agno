@@ -1015,7 +1015,9 @@ class SingleStoreDb(BaseDb):
             log_error(f"Error renaming session: {str(e)}")
             raise e
 
-    def upsert_session(self, session: Session, deserialize: Optional[bool] = True) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Insert or update a session in the database.
 

@@ -331,7 +331,7 @@ class RedisDb(BaseDb):
         """Get raw run_data dicts for a session, ordered by run_index."""
         index_key = self._runs_by_session_index_key(session_id)
         try:
-            run_ids = self.redis_client.zrange(index_key, 0, -1)
+            run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
         except Exception:
             run_ids = []
 
@@ -340,7 +340,7 @@ class RedisDb(BaseDb):
 
         ordered: List[Dict[str, Any]] = []
         for rid in run_ids:
-            run_id = rid.decode() if isinstance(rid, bytes) else rid
+            run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
             row = self._get_record("runs", run_id)
             if not row:
                 continue
@@ -357,13 +357,13 @@ class RedisDb(BaseDb):
         """Delete every run row associated with a session (and the session's run index)."""
         index_key = self._runs_by_session_index_key(session_id)
         try:
-            run_ids = self.redis_client.zrange(index_key, 0, -1)
+            run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
         except Exception:
             run_ids = []
 
         deleted = 0
         for rid in run_ids or []:
-            run_id = rid.decode() if isinstance(rid, bytes) else rid
+            run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
             if self._delete_record(
                 table_type="runs",
                 record_id=run_id,
@@ -455,12 +455,12 @@ class RedisDb(BaseDb):
             if session_id is not None:
                 index_key = self._runs_by_session_index_key(session_id)
                 try:
-                    run_ids = self.redis_client.zrange(index_key, 0, -1)
+                    run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
                 except Exception:
                     run_ids = []
                 rows: List[Dict[str, Any]] = []
                 for rid in run_ids or []:
-                    run_id = rid.decode() if isinstance(rid, bytes) else rid
+                    run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
                     row = self._get_record("runs", run_id)
                     if row is not None:
                         rows.append(row)
