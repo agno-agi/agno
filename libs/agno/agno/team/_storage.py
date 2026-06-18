@@ -25,7 +25,7 @@ from agno.db.utils import resolve_db_from_config
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.utils import get_model, get_model_from_dict
+from agno.models.utils import resolve_model
 from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.run.team import (
@@ -749,22 +749,7 @@ def from_dict(
 
     # --- Handle Model reconstruction ---
     if "model" in config:
-        model_data = config["model"]
-        if isinstance(model_data, dict) and "id" in model_data:
-            # Prefer the live instance from the registry: rebuilding from the serialized dict drops
-            # connection params (azure_endpoint, base_url, ...) and credentials that aren't persisted.
-            registered_model = (
-                registry.get_model(
-                    model_data["id"],
-                    provider=model_data.get("provider"),
-                    name=model_data.get("name"),
-                )
-                if registry is not None
-                else None
-            )
-            config["model"] = registered_model if registered_model is not None else get_model_from_dict(model_data)
-        elif isinstance(model_data, str):
-            config["model"] = get_model(model_data)
+        config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle Members reconstruction ---
     members: Optional[List[Union[Agent, "Team"]]] = None
