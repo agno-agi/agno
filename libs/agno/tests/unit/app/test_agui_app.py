@@ -2127,32 +2127,32 @@ def test_extract_context_object_with_attrs():
     """Pydantic-style object with description and value attributes."""
     item = MagicMock(description="user_state", value="viewing dashboard")
     result = extract_context([item])
-    assert result == [{"description": "user_state", "value": "viewing dashboard"}]
+    assert result == {"user_state": "viewing dashboard"}
 
 
 def test_extract_context_json_string_value_decoded():
     """String values that look like JSON are parsed into structured data."""
     item = MagicMock(description="movies", value='{"count":2,"titles":["A","B"]}')
     result = extract_context([item])
-    assert result == [{"description": "movies", "value": {"count": 2, "titles": ["A", "B"]}}]
+    assert result == {"movies": {"count": 2, "titles": ["A", "B"]}}
 
 
 def test_extract_context_non_json_string_kept_verbatim():
     """Non-JSON string values are preserved as strings (graceful fallback)."""
     item = MagicMock(description="note", value="just plain text {{{ not json")
     result = extract_context([item])
-    assert result == [{"description": "note", "value": "just plain text {{{ not json"}]
+    assert result == {"note": "just plain text {{{ not json"}
 
 
 def test_extract_context_empty_description_gets_fallback():
     """Empty description falls back to context_N auto-numbering."""
     item = MagicMock(description="", value="some value")
     result = extract_context([item])
-    assert result == [{"description": "context_1", "value": "some value"}]
+    assert result == {"context_1": "some value"}
 
 
 def test_extract_context_none_value_preserved():
     """None values are preserved (model sees JSON null)."""
     item = MagicMock(description="empty", value=None)
     result = extract_context([item])
-    assert result == [{"description": "empty", "value": None}]
+    assert result == {"empty": None}

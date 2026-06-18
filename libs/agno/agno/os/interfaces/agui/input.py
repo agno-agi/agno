@@ -135,23 +135,22 @@ def validate_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def extract_context(context: Optional[List[Any]]) -> Optional[List[Dict[str, Any]]]:
-    """Convert AG-UI context to dicts, decoding JSON string values."""
+def extract_context(context: Optional[List[Any]]) -> Optional[Dict[str, Any]]:
+    """Convert AG-UI context list to a dependencies dict."""
     if not context:
         return None
 
-    entries = []
+    deps: Dict[str, Any] = {}
     for i, item in enumerate(context, start=1):
+        key = item.description or f"context_{i}"
         value = item.value
+        # AG-UI stringifies all values; parse JSON back to structured data
         try:
             value = json.loads(value)
         except (json.JSONDecodeError, TypeError):
             pass
-        entries.append({
-            "description": item.description or f"context_{i}",
-            "value": value,
-        })
-    return entries or None
+        deps[key] = value
+    return deps or None
 
 
 def _decode_base64(value: str) -> Optional[bytes]:

@@ -64,10 +64,9 @@ async def test_run_entity_no_context_omits_add_dependencies_to_context_kwarg():
 
 
 @pytest.mark.asyncio
-async def test_run_entity_with_context_injects_dependencies_and_forces_kwarg():
-    """When AGUI context is present, it should be merged into dependencies
-    (preserving any entity.dependencies) and `add_dependencies_to_context=True`
-    should be passed."""
+async def test_run_entity_with_context_passes_ui_deps():
+    """When AGUI context is present, UI deps are passed to arun().
+    SDK handles merging with entity.dependencies internally."""
     fake_entity = CaptureKwargsEntity()
     fake_entity.dependencies = {"existing_dep": "preserved"}
     context = [MagicMock(description="user_name", value="Alice")]
@@ -79,9 +78,7 @@ async def test_run_entity_with_context_injects_dependencies_and_forces_kwarg():
 
     assert fake_entity.captured_kwargs.get("add_dependencies_to_context") is True
     deps = fake_entity.captured_kwargs.get("dependencies")
-    assert deps is not None
-    assert deps["existing_dep"] == "preserved"
-    assert deps["agui_context"] == [{"description": "user_name", "value": "Alice"}]
+    assert deps == {"user_name": "Alice"}
     # session_state must remain untouched (no agui_context pollution)
     session_state = fake_entity.captured_kwargs.get("session_state")
     assert session_state is None or "agui_context" not in session_state

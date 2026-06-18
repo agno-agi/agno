@@ -48,18 +48,12 @@ async def run_entity(
         if session_state is not None:
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
-        # Inject AG-UI readable context via dependencies (per-call, never
-        # persisted) so we don't pollute user-managed session_state. Merged
-        # with any entity.dependencies the user already set, then surfaced to
-        # the model via add_dependencies_to_context=True. This renders into
-        # the user message, which is fresh every turn — no stale-context bleed
-        # on reasoning-model multi-turn conversations.
-        agui_ctx = extract_context(run_input.context)
+        # Inject AG-UI readable context as dependencies. The SDK merges these
+        # with entity.dependencies automatically (call-site wins on conflict).
+        ui_deps = extract_context(run_input.context)
         run_kwargs: dict = {}
-        if agui_ctx:
-            base_deps = dict(getattr(entity, "dependencies", None) or {})
-            base_deps["agui_context"] = agui_ctx
-            run_kwargs["dependencies"] = base_deps
+        if ui_deps:
+            run_kwargs["dependencies"] = ui_deps
             run_kwargs["add_dependencies_to_context"] = True
 
         response_stream = entity.arun(  # type: ignore
