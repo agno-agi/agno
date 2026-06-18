@@ -140,19 +140,18 @@ def extract_context(context: Optional[List[Any]]) -> Optional[List[Dict[str, Any
     if not context:
         return None
 
-    def parse_value(value: str) -> Any:
+    entries = []
+    for i, item in enumerate(context, start=1):
+        value = item.value
         try:
-            return json.loads(value)
+            value = json.loads(value)
         except (json.JSONDecodeError, TypeError):
-            return value
-
-    return [
-        {
+            pass
+        entries.append({
             "description": item.description or f"context_{i}",
-            "value": parse_value(item.value),
-        }
-        for i, item in enumerate(context, start=1)
-    ] or None
+            "value": value,
+        })
+    return entries or None
 
 
 def _decode_base64(value: str) -> Optional[bytes]:
