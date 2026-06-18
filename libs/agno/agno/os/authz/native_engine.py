@@ -4,22 +4,23 @@ A :class:`~agno.os.authz.engine.PolicyEngine` implemented directly in agno: role
 hold scopes (with allow/deny), subjects are assigned roles, and decisions use
 **deny-overrides** matching the cloud RBAC semantics. No external policy engine.
 
-Storage is in-memory by default (``ManagedRoleStore()``); pass a ``db`` (an agno
-``Db``) or ``db_url`` and policy + assignments persist to two SQLAlchemy tables
-(``authz_policy``, ``authz_grouping``) and are loaded back on startup. The
-in-memory caches are the read path either way; mutations write through to the DB.
+Two storage modes:
 
-Single process: a change takes effect on the very next request (the writer updates
-its own cache). Across **multiple workers/replicas** each process holds its own
-cache loaded at startup, so a change made on one worker is not seen by the others
-until they reload — pass ``reload_interval=<seconds>`` for bounded auto-refresh, or
-call :meth:`reload` explicitly (e.g. on a timer or after admin changes).
+- **db-backed** (``db`` / ``db_url``): policy + assignments live in two SQLAlchemy
+  tables (``authz_policy``, ``authz_grouping``) and every decision reads them
+  **fresh** with small indexed queries. There is no in-process cache, so a change
+  on one worker/replica is visible to all of them on their very next request — the
+  right default for AgentOS's multi-container deployments. Authz is a tiny,
+  index-served part of a request (which is otherwise an agent run), so the
+  round-trips are negligible, and a DB outage fails closed.
+- **in-memory** (no ``db``): policy + assignments live in dicts. The dicts ARE the
+  store (not a cache of something else), so there's no staleness — but it's
+  single-process and not persisted: fine for tests, not for production.
 
 The decision model, in agno terms:
 
 - a role's scopes are stored as ``(resource, action, effect)`` via the shared
-  :mod:`~agno.os.authz._scope_policy` convention (deduped per
-  ``(role, resource, action)``),
+  :mod:`~agno.os.authz._scope_policy` convention (deduped per ``(role, resource, action)``),
 - a subject (or a token-carried role) is allowed an action on a resource iff some
   matching grant says *allow* and none says *deny* — evaluated per identity root
   and OR'd across token-carried roles, so a deny on one role can't silently veto
@@ -27,7 +28,6 @@ The decision model, in agno terms:
 """
 
 import logging
-import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from agno.os.authz._db import engine_from_db as _engine_from_db
@@ -38,6 +38,8 @@ _DENY = "deny"
 _ALLOW = "allow"
 # A policy key: (role, resource, action). The value is the effect ("allow" | "deny").
 _PolicyKey = Tuple[str, str, str]
+# A policy row carried through the decision logic: (role, resource, action, effect).
+_PolicyRow = Tuple[str, str, str, str]
 
 
 def _normalize_effect(effect: str) -> str:
@@ -51,32 +53,24 @@ def _normalize_effect(effect: str) -> str:
 
 
 class NativePolicyEngine(PolicyEngine):
-    """agno-native :class:`PolicyEngine`. In-memory, or SQLAlchemy-persisted when
-    given ``db``/``db_url``."""
+    """agno-native :class:`PolicyEngine`. Queries the DB fresh per decision when
+    given ``db``/``db_url``; an in-memory store otherwise."""
 
-    def __init__(
-        self,
-        db_url: Optional[str] = None,
-        db: Optional[Any] = None,
-        reload_interval: Optional[float] = None,
-    ):
-        # Read path: in-memory caches, authoritative for decisions either way.
+    def __init__(self, db_url: Optional[str] = None, db: Optional[Any] = None):
+        # In-memory store (used only when there is no DB). With a DB these stay
+        # empty — the DB is read fresh on every decision (no cache to go stale).
         self._policies: Dict[_PolicyKey, str] = {}  # (role, resource, action) -> effect
         self._grouping: Dict[str, Set[str]] = {}  # subject -> {role, ...}
-        self._engine: Any = None  # SQLAlchemy Engine when persisted, else None
+        self._engine: Any = None  # SQLAlchemy Engine when db-backed, else None
         self._policy_tbl: Any = None
         self._group_tbl: Any = None
         self._log = logging.getLogger("agno.authz.engine")
-        # Multi-worker freshness: auto-reload the cache from the DB when it's older
-        # than this many seconds (None = never auto-reload; single-process default).
-        self._reload_interval = reload_interval
-        self._last_load = 0.0
 
         target = _engine_from_db(db) if db is not None else (self._make_engine(db_url) if db_url else None)
         if target is not None:
             self._setup_db(target)
 
-    # --- persistence -----------------------------------------------------
+    # --- storage ---------------------------------------------------------
     @staticmethod
     def _make_engine(db_url: str) -> Any:
         import sqlalchemy as sa
@@ -103,43 +97,48 @@ class NativePolicyEngine(PolicyEngine):
             sa.Column("role", sa.String(255), primary_key=True),
         )
         metadata.create_all(self._engine)
-        self.reload()  # initial load of persisted state into the caches
 
-    def reload(self) -> None:
-        """Reload policy + assignments from the DB into the in-memory caches.
-
-        No-op for an in-memory engine. In multi-worker / multi-replica deployments
-        call this (or set ``reload_interval``) so a process picks up role/assignment
-        changes another process wrote. Builds fresh dicts and swaps them atomically,
-        so a concurrent reader never sees a half-loaded cache."""
-        if self._engine is None or self._policy_tbl is None:
-            return
+    # --- read helpers (source from the DB, or the in-memory store) -------
+    def _direct_roles(self, node: str) -> Set[str]:
+        """Roles directly assigned to ``node`` (a subject, or a role when nesting).
+        Indexed point-lookup on the grouping PK when db-backed."""
+        if self._engine is None:
+            return set(self._grouping.get(node, set()))
         import sqlalchemy as sa
 
-        policies: Dict[_PolicyKey, str] = {}
-        grouping: Dict[str, Set[str]] = {}
         with self._engine.connect() as conn:
-            for row in conn.execute(sa.select(self._policy_tbl)).mappings():
-                policies[(row["role"], row["resource"], row["action"])] = row["effect"]
-            for row in conn.execute(sa.select(self._group_tbl)).mappings():
-                grouping.setdefault(row["subject"], set()).add(row["role"])
-        self._policies = policies  # atomic swap
-        self._grouping = grouping
-        self._last_load = time.monotonic()
+            rows = conn.execute(sa.select(self._group_tbl.c.role).where(self._group_tbl.c.subject == node))
+            return {r[0] for r in rows}
 
-    def _maybe_reload(self) -> None:
-        """Auto-refresh from the DB once ``reload_interval`` seconds have elapsed.
-        No-op in-memory or when no interval is set, so single-process deployments
-        pay nothing."""
-        if self._engine is None or self._reload_interval is None:
-            return
-        if time.monotonic() - self._last_load >= self._reload_interval:
-            self.reload()
+    def _closure(self, seed: str) -> Set[str]:
+        """``seed`` plus the roles it is (transitively) assigned. The seed itself is
+        included so a token-carried role matches policies written for that role."""
+        seen: Set[str] = set()
+        stack = [seed]
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(self._direct_roles(node))
+        return seen
 
+    def _policies_for(self, principals: Set[str]) -> List[_PolicyRow]:
+        """All (role, resource, action, effect) rows whose role is in ``principals``."""
+        if not principals:
+            return []
+        if self._engine is None:
+            return [(r, res, act, eff) for (r, res, act), eff in self._policies.items() if r in principals]
+        import sqlalchemy as sa
+
+        t = self._policy_tbl
+        with self._engine.connect() as conn:
+            rows = conn.execute(sa.select(t).where(t.c.role.in_(principals))).mappings()
+            return [(row["role"], row["resource"], row["action"], row["effect"]) for row in rows]
+
+    # --- persistence (db-backed mutations) -------------------------------
     def _persist_policies_set(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
         """Replace a role's persisted policy rows with ``rows`` ((resource, action, effect))."""
-        if self._engine is None:
-            return
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -151,8 +150,6 @@ class NativePolicyEngine(PolicyEngine):
                 )
 
     def _persist_policy(self, role: str, resource: str, action: str, effect: str) -> None:
-        if self._engine is None:
-            return
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -166,8 +163,6 @@ class NativePolicyEngine(PolicyEngine):
             conn.execute(sa.insert(self._policy_tbl).values(role=role, resource=resource, action=action, effect=effect))
 
     def _delete_policy(self, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
-        if self._engine is None:
-            return
         import sqlalchemy as sa
 
         clause = [self._policy_tbl.c.role == role]
@@ -179,8 +174,6 @@ class NativePolicyEngine(PolicyEngine):
             conn.execute(sa.delete(self._policy_tbl).where(*clause))
 
     def _persist_grouping(self, subject: str, role: str, add: bool) -> None:
-        if self._engine is None:
-            return
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -191,8 +184,6 @@ class NativePolicyEngine(PolicyEngine):
                 conn.execute(sa.insert(self._group_tbl).values(subject=subject, role=role))
 
     def _delete_grouping_role(self, role: str) -> None:
-        if self._engine is None:
-            return
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -200,18 +191,16 @@ class NativePolicyEngine(PolicyEngine):
 
     # --- authoring: roles -> scopes -------------------------------------
     def set_role_scopes(self, role: str, entries: List[ScopeEntry]) -> None:
-        # Stage + validate EVERY entry before touching the DB or the cache: a bad
-        # scope mid-list raises here (nothing mutated yet), and mapping to a dict
-        # dedups colliding (resource, action) pairs (e.g. agents:read & agents:*:read)
-        # so the persist can't blow up on a duplicate primary key. Last effect wins.
+        # Stage + validate EVERY entry first: a bad scope raises before anything is
+        # written, and mapping to a dict dedups colliding (resource, action) pairs
+        # (e.g. agents:read & agents:*:read) so the insert can't hit a duplicate PK.
         staged: Dict[Tuple[str, str], str] = {}
         for scope, effect in entries:
             resource, action = scope_to_resource_action(scope)
             staged[(resource, action)] = _normalize_effect(effect)
-        rows = [(resource, action, effect) for (resource, action), effect in staged.items()]
-        # DB first (one transaction); only swap the cache once it has committed, so a
-        # persist failure leaves the cache matching the DB instead of half-applied.
-        self._persist_policies_set(role, rows)
+        if self._engine is not None:
+            self._persist_policies_set(role, [(res, act, eff) for (res, act), eff in staged.items()])
+            return
         for key in [k for k in self._policies if k[0] == role]:
             del self._policies[key]
         for (resource, action), effect in staged.items():
@@ -220,32 +209,41 @@ class NativePolicyEngine(PolicyEngine):
     def add_scope(self, role: str, scope: str, effect: str = _ALLOW) -> None:
         resource, action = scope_to_resource_action(scope)  # validate before mutating
         effect = _normalize_effect(effect)
-        self._persist_policy(role, resource, action, effect)
-        self._policies[(role, resource, action)] = effect
+        if self._engine is not None:
+            self._persist_policy(role, resource, action, effect)
+        else:
+            self._policies[(role, resource, action)] = effect
 
     def remove_scope(self, role: str, scope: str) -> None:
         resource, action = scope_to_resource_action(scope)  # validate before mutating
-        self._delete_policy(role, resource, action)
-        self._policies.pop((role, resource, action), None)
+        if self._engine is not None:
+            self._delete_policy(role, resource, action)
+        else:
+            self._policies.pop((role, resource, action), None)
 
     def get_role_scopes(self, role: str) -> List[ScopeEntry]:
-        return [
-            (resource_action_to_scope(resource, action), effect)
-            for (r, resource, action), effect in self._policies.items()
-            if r == role
-        ]
+        return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in self._policies_for({role})]
 
     def remove_role(self, role: str) -> None:
+        if self._engine is not None:
+            self._delete_policy(role)
+            self._delete_grouping_role(role)
+            return
         for key in [k for k in self._policies if k[0] == role]:
             del self._policies[key]
         for subject in list(self._grouping):
             self._grouping[subject].discard(role)
-        self._delete_policy(role)
-        self._delete_grouping_role(role)
 
     def list_roles(self) -> List[str]:
         # Roles defined by scope policies PLUS roles that only exist as assignments,
         # so an assignment-only role is still inspectable/cleanable.
+        if self._engine is not None:
+            import sqlalchemy as sa
+
+            with self._engine.connect() as conn:
+                roles = {r[0] for r in conn.execute(sa.select(self._policy_tbl.c.role).distinct())}
+                roles |= {r[0] for r in conn.execute(sa.select(self._group_tbl.c.role).distinct())}
+            return sorted(roles)
         roles = {key[0] for key in self._policies}
         for assigned in self._grouping.values():
             roles |= assigned
@@ -253,38 +251,26 @@ class NativePolicyEngine(PolicyEngine):
 
     # --- assignments: subject -> roles ----------------------------------
     def assign(self, subject: str, role: str) -> None:
-        self._grouping.setdefault(subject, set()).add(role)
-        self._persist_grouping(subject, role, add=True)
+        if self._engine is not None:
+            self._persist_grouping(subject, role, add=True)
+        else:
+            self._grouping.setdefault(subject, set()).add(role)
 
     def unassign(self, subject: str, role: str) -> None:
-        self._grouping.get(subject, set()).discard(role)
-        self._persist_grouping(subject, role, add=False)
+        if self._engine is not None:
+            self._persist_grouping(subject, role, add=False)
+        else:
+            self._grouping.get(subject, set()).discard(role)
 
     def roles_of(self, subject: str) -> List[str]:
-        return sorted(self._grouping.get(subject, set()))
+        return sorted(self._direct_roles(subject))
 
     # --- decisions -------------------------------------------------------
-    def _closure(self, seed: str) -> Set[str]:
-        """``seed`` plus the roles it is (transitively) assigned. The seed itself is
-        included so a token-carried role matches policies written for that role."""
-        seen: Set[str] = set()
-        stack = [seed]
-        while stack:
-            node = stack.pop()
-            if node in seen:
-                continue
-            seen.add(node)
-            stack.extend(self._grouping.get(node, ()))
-        return seen
-
     def _allowed_for_root(self, root: str, request_resource: str, request_action: str) -> bool:
         """deny-overrides within one identity root: allowed iff some grant in the
         root's closure matches and allows, and none matches and denies."""
-        principals = self._closure(root)
         allow = deny = False
-        for (role, resource, action), effect in self._policies.items():
-            if role not in principals:
-                continue
+        for _role, resource, action, effect in self._policies_for(self._closure(root)):
             if action != "*" and action != request_action:
                 continue
             if not resource_matches(resource, request_resource):
@@ -298,7 +284,6 @@ class NativePolicyEngine(PolicyEngine):
     def _enforce(self, resource: str, action: str, subject: Optional[str], roles: Optional[List[str]]) -> bool:
         """One decision for ``(resource, action)``. Token-carried roles take precedence
         (each evaluated as its own root and OR'd); else the subject's assignments."""
-        self._maybe_reload()
         if roles:
             decision = any(self._allowed_for_root(role, resource, action) for role in roles)
         elif subject:
@@ -331,6 +316,13 @@ class NativePolicyEngine(PolicyEngine):
             return False  # unmappable scope -> not satisfied
         return self._enforce(resource, action, subject, roles)
 
+    def _principals_for(self, subject: Optional[str], roles: Optional[List[str]]) -> Set[str]:
+        roots = list(roles) if roles else ([subject] if subject else [])
+        principals: Set[str] = set()
+        for root in roots:
+            principals |= self._closure(root)
+        return principals
+
     def accessible_resource_ids(
         self,
         resource_type: str,
@@ -344,23 +336,18 @@ class NativePolicyEngine(PolicyEngine):
         take precedence, else the subject's stored assignments; deny rows skipped."""
         if not resource_type:
             return set()
-        self._maybe_reload()
-        roots = list(roles) if roles else ([subject] if subject else [])
-        if not roots:
+        principals = self._principals_for(subject, roles)
+        if not principals:
             return set()
-        principals: Set[str] = set()
-        for root in roots:
-            principals |= self._closure(root)
-
         ids: Set[str] = set()
-        for (role, resource, policy_action), effect in self._policies.items():
-            if role not in principals or effect == _DENY:
+        prefix = f"{resource_type}/"
+        for _role, resource, policy_action, effect in self._policies_for(principals):
+            if effect == _DENY:
                 continue
             if action is not None and policy_action != action and policy_action != "*":
                 continue
             if resource in ("*", f"{resource_type}/*", resource_type):
                 return {"*"}
-            prefix = f"{resource_type}/"
             if resource.startswith(prefix):
                 ids.add(resource[len(prefix) :])
         return ids
@@ -378,18 +365,13 @@ class NativePolicyEngine(PolicyEngine):
         list endpoints honour deny-overrides like the per-resource gate does."""
         if not resource_type:
             return set()
-        self._maybe_reload()
-        roots = list(roles) if roles else ([subject] if subject else [])
-        if not roots:
+        principals = self._principals_for(subject, roles)
+        if not principals:
             return set()
-        principals: Set[str] = set()
-        for root in roots:
-            principals |= self._closure(root)
-
-        prefix = f"{resource_type}/"
         ids: Set[str] = set()
-        for (role, resource, policy_action), effect in self._policies.items():
-            if role not in principals or effect != _DENY:
+        prefix = f"{resource_type}/"
+        for _role, resource, policy_action, effect in self._policies_for(principals):
+            if effect != _DENY:
                 continue
             if action is not None and policy_action != action and policy_action != "*":
                 continue

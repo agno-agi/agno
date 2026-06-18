@@ -200,9 +200,10 @@ def test_denied_resource_ids_empty_without_denies():
     assert eng.denied_resource_ids("agents", "read", subject="v") == set()
 
 
-def test_reload_picks_up_another_process_change(tmp_path):
-    """Multi-worker freshness (#2): a second engine on the same DB is stale until
-    reload(), then reflects the revocation. reload swaps caches atomically."""
+def test_db_backed_is_fresh_across_engines_no_cache(tmp_path):
+    """Multi-container (#2): db-backed engines read fresh per decision, so a second
+    engine (another worker/replica) sees a revocation immediately — no reload, no
+    stale cache."""
     pytest.importorskip("sqlalchemy")
     url = f"sqlite:///{tmp_path / 'roles.db'}"
 
@@ -210,38 +211,29 @@ def test_reload_picks_up_another_process_change(tmp_path):
     a.set_role_scopes("admin", [("agent_os:admin", "allow")])
     a.assign("bob", "admin")
 
-    b = NativePolicyEngine(db_url=url)  # "worker B" loads current state at boot
+    b = NativePolicyEngine(db_url=url)  # a second "worker"
     assert b.check_resource("agents", "x", "run", subject="bob") is True
 
-    a.unassign("bob", "admin")  # revoked on "worker A" (writes through to the DB)
-    assert b.check_resource("agents", "x", "run", subject="bob") is True  # B stale before reload
-    b.reload()
-    assert b.check_resource("agents", "x", "run", subject="bob") is False  # fresh after reload
+    a.unassign("bob", "admin")  # revoked on the first worker
+    # the second worker sees it on its very next decision — no reload() needed
+    assert b.check_resource("agents", "x", "run", subject="bob") is False
     assert b.roles_of("bob") == []
 
+    # a scope change is seen live too
+    a.set_role_scopes("viewer", [("agents:*:read", "allow")])
+    a.assign("carol", "viewer")
+    assert b.check_resource("agents", "x", "read", subject="carol") is True
+    assert b.get_role_scopes("viewer") == [("agents:read", "allow")]
 
-def test_reload_interval_auto_refreshes(tmp_path):
-    """reload_interval=0 => reload on every decision, so a second engine auto-picks
-    up another process's change without an explicit reload()."""
+
+def test_no_cache_state_when_db_backed(tmp_path):
+    """The in-memory dicts stay empty when db-backed — the DB is the only source."""
     pytest.importorskip("sqlalchemy")
-    url = f"sqlite:///{tmp_path / 'roles.db'}"
-
-    a = NativePolicyEngine(db_url=url)
-    a.set_role_scopes("admin", [("agent_os:admin", "allow")])
-    a.assign("bob", "admin")
-
-    b = NativePolicyEngine(db_url=url, reload_interval=0)  # always-fresh
-    assert b.check_resource("agents", "x", "run", subject="bob") is True
-    a.unassign("bob", "admin")
-    assert b.check_resource("agents", "x", "run", subject="bob") is False  # auto-reloaded
-
-
-def test_reload_is_noop_in_memory():
-    eng = NativePolicyEngine()  # no db
+    eng = NativePolicyEngine(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
-    eng.assign("v", "viewer")
-    eng.reload()  # must not wipe the in-memory state
-    assert eng.roles_of("v") == ["viewer"]
+    eng.assign("bob", "viewer")
+    assert eng._policies == {} and eng._grouping == {}  # nothing cached in-process
+    assert eng.roles_of("bob") == ["viewer"]  # but reads work (fresh from DB)
 
 
 def test_set_role_scopes_atomic_on_bad_scope(tmp_path):
