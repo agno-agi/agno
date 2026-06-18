@@ -140,21 +140,19 @@ def extract_context(context: Optional[List[Any]]) -> Optional[List[Dict[str, Any
     if not context:
         return None
 
+    def parse_value(value: str) -> Any:
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return value
+
     return [
         {
             "description": item.description or f"context_{i}",
-            "value": _maybe_parse_json(item.value),
+            "value": parse_value(item.value),
         }
         for i, item in enumerate(context, start=1)
     ] or None
-
-
-def _maybe_parse_json(value: str) -> Any:
-    """Parse JSON string if valid, otherwise return as-is."""
-    try:
-        return json.loads(value)
-    except (json.JSONDecodeError, TypeError):
-        return value
 
 
 def _decode_base64(value: str) -> Optional[bytes]:
