@@ -25,12 +25,14 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from agno.os.interfaces.agui import workflow_handlers
 from agno.os.interfaces.agui.state import StreamState
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
 from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
+from agno.run.workflow import WorkflowRunEvent
 from agno.utils.message import get_text_from_message
 
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
@@ -118,6 +120,7 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
         )
 
     if content:
+        state.streamed_any_text = True
         events.append(
             TextMessageContentEvent(
                 type=EventType.TEXT_MESSAGE_CONTENT,
@@ -300,6 +303,14 @@ def on_custom_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseE
     return [CustomEvent(name=custom_event_name, value=custom_event_value)]
 
 
+def on_workflow_cancelled(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    # Mark the run cancelled so the completion gate suppresses the trailing
+    # WorkflowCompletedEvent (whose content is the cancel reason, not an answer),
+    # then surface the marker as a CustomEvent like any other structural event.
+    state.cancelled = True
+    return on_custom_event(chunk, state)
+
+
 def on_unknown_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
     try:
         raw_dict: Dict[str, Any] = chunk.to_dict()
@@ -355,6 +366,7 @@ def _finalize_run(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEve
 
             content = getattr(chunk, "content", None)
             if content:
+                state.streamed_any_text = True
                 events.append(
                     TextMessageContentEvent(
                         type=EventType.TEXT_MESSAGE_CONTENT,
@@ -419,6 +431,11 @@ HANDLERS: Dict[str, EventHandler] = {
     RunEvent.custom_event.value: on_custom_event,
 }
 
+# Workflow structural events (started, step_*, router_*, loop_*, ...) carry their
+# data to clients as CustomEvents; the terminals go through the completion gate.
+HANDLERS.update({value: on_custom_event for value in workflow_handlers.STRUCTURAL_EVENT_VALUES})
+HANDLERS[WorkflowRunEvent.workflow_cancelled.value] = on_workflow_cancelled
+
 # Terminal events that trigger completion handling
 _COMPLETION_EVENTS = frozenset(
     {
@@ -426,6 +443,8 @@ _COMPLETION_EVENTS = frozenset(
         RunEvent.run_paused.value,
         TeamRunEvent.run_completed.value,
         TeamRunEvent.run_paused.value,
+        WorkflowRunEvent.workflow_completed.value,
+        WorkflowRunEvent.workflow_error.value,
     }
 )
 
@@ -456,5 +475,14 @@ def process_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEve
 
 
 def process_completion(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    """Process completion event (run_completed/run_paused) and return cleanup events."""
-    return on_run_completed(chunk, state)
+    """Process a terminal event (run or workflow) and return cleanup events."""
+    if not workflow_handlers.is_workflow_terminal(chunk):
+        return on_run_completed(chunk, state)
+
+    # Workflow terminal: close open streams, emit the workflow-specific events,
+    # and finalize only for completed (error ends on RunErrorEvent, no finish).
+    events = _close_open_streams(state)
+    events += workflow_handlers.workflow_completion_events(chunk, state)
+    if workflow_handlers.is_workflow_completed(chunk):
+        events += _finalize_run(chunk, state)
+    return events
