@@ -976,7 +976,6 @@ class AsyncMySQLDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
-            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
             session_dict = session.to_dict(include_runs=False)
 
             if isinstance(session, AgentSession):
@@ -1038,9 +1037,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                 stmt = stmt.on_duplicate_key_update(**update_values)
                 await sess.execute(stmt)
 
-                if runs_table is not None:
-                    await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                 # Fetch the row
                 select_stmt = select(table).where(table.c.session_id == session_dict.get("session_id"))
                 result = await sess.execute(select_stmt)
@@ -1082,7 +1078,6 @@ class AsyncMySQLDb(AsyncBaseDb):
 
         try:
             table = await self._get_table(table_type="sessions")
-            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
 
             # Group sessions by type for batch processing
             agent_sessions = []
@@ -1149,10 +1144,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                         )
                         await sess.execute(stmt, agent_data)
 
-                        if runs_table is not None:
-                            for session in agent_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
@@ -1205,10 +1196,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                         )
                         await sess.execute(stmt, team_data)
 
-                        if runs_table is not None:
-                            for session in team_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(team_ids))
@@ -1260,10 +1247,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             **extra_clear_runs,
                         )
                         await sess.execute(stmt, workflow_data)
-
-                        if runs_table is not None:
-                            for session in workflow_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]

@@ -1037,7 +1037,6 @@ class SingleStoreDb(BaseDb):
             table = self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
-            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
 
             session_dict = session.to_dict(include_runs=False)
 
@@ -1098,9 +1097,6 @@ class SingleStoreDb(BaseDb):
                 stmt = stmt.on_duplicate_key_update(**update_values)
                 sess.execute(stmt)
 
-                if runs_table is not None:
-                    self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                 # Fetch the result
                 select_stmt = select(table).where(table.c.session_id == session_dict.get("session_id"))
                 row = sess.execute(select_stmt).fetchone()
@@ -1141,8 +1137,6 @@ class SingleStoreDb(BaseDb):
             table = self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return []
-
-            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
 
             # Group sessions by type for batch processing
             agent_sessions = []
@@ -1208,10 +1202,6 @@ class SingleStoreDb(BaseDb):
                         )
                         sess.execute(stmt, agent_data)
 
-                        if runs_table is not None:
-                            for session in agent_sessions:
-                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
@@ -1263,10 +1253,6 @@ class SingleStoreDb(BaseDb):
                         )
                         sess.execute(stmt, team_data)
 
-                        if runs_table is not None:
-                            for session in team_sessions:
-                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(team_ids))
@@ -1317,10 +1303,6 @@ class SingleStoreDb(BaseDb):
                             **extra_clear_runs,
                         )
                         sess.execute(stmt, workflow_data)
-
-                        if runs_table is not None:
-                            for session in workflow_sessions:
-                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]

@@ -872,7 +872,6 @@ class MongoDb(BaseDb):
             collection = self._get_collection(table_type="sessions", create_collection_if_not_found=True)
             if collection is None:
                 return None
-            runs_collection = self._get_collection(table_type="runs", create_collection_if_not_found=True)
 
             session_dict = session.to_dict(include_runs=False)
 
@@ -943,10 +942,6 @@ class MongoDb(BaseDb):
             if not result:
                 return None
 
-            # Persist runs in the runs collection
-            if runs_collection is not None:
-                self._store_session_runs(runs_collection, session)
-
             # Attach the in-memory runs to the returned dict so callers see the full picture
             result["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
 
@@ -990,8 +985,6 @@ class MongoDb(BaseDb):
                     for result in [self.upsert_session(session, deserialize=deserialize)]
                     if result is not None
                 ]
-            runs_collection = self._get_collection(table_type="runs", create_collection_if_not_found=True)
-
             from pymongo import ReplaceOne
 
             operations = []
@@ -1057,13 +1050,6 @@ class MongoDb(BaseDb):
             if operations:
                 # Execute bulk write
                 collection.bulk_write(operations)
-
-                # Persist runs separately
-                if runs_collection is not None:
-                    for session in sessions:
-                        if session is None:
-                            continue
-                        self._store_session_runs(runs_collection, session)
 
                 # Fetch the results
                 session_ids = [session.session_id for session in sessions if session and session.session_id]

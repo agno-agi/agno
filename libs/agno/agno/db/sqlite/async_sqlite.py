@@ -1083,7 +1083,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
-            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
 
             serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
 
@@ -1141,10 +1140,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if row is None:
                     return None
                 session_raw = deserialize_session_json_fields(dict(row._mapping))
-
-                # Persist the new and modified runs into the runs table
-                if runs_table is not None:
-                    await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
             if not deserialize:
                 session_raw["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
@@ -1207,8 +1202,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
-            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
-
             sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions}
 
             def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -1259,10 +1252,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                             ),
                         )
                         await sess.execute(stmt, agent_data)
-
-                        if runs_table is not None:
-                            for session in agent_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
@@ -1317,10 +1306,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                         )
                         await sess.execute(stmt, team_data)
 
-                        if runs_table is not None:
-                            for session in team_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(team_ids))
@@ -1373,10 +1358,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                             ),
                         )
                         await sess.execute(stmt, workflow_data)
-
-                        if runs_table is not None:
-                            for session in workflow_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]

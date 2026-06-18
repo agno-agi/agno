@@ -26,7 +26,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
@@ -757,29 +757,6 @@ class PostgresDb(BaseDb):
             runs_by_session.setdefault(session_id, []).append(run_data)
         return runs_by_session
 
-    def _store_session_runs(self, sess, runs_table: Table, session: Session) -> None:
-        """Upsert every run of the given session into the runs table."""
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
-
-        for row in rows:
-            row["run_data"] = sanitize_postgres_strings(row["run_data"])
-
-        stmt = postgresql.insert(runs_table)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["run_id"],
-            set_=dict(
-                status=stmt.excluded.status,
-                run_index=stmt.excluded.run_index,
-                run_data=stmt.excluded.run_data,
-                user_id=stmt.excluded.user_id,
-                parent_run_id=stmt.excluded.parent_run_id,
-                updated_at=stmt.excluded.updated_at,
-            ),
-        )
-        sess.execute(stmt, rows)
-
     def get_run(
         self, run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
@@ -812,6 +789,64 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs table (O(1) operation).
+
+        This is optimized for updating existing runs (e.g., status changes in HITL
+        or background mode) without re-upserting all runs in the session.
+
+        For new runs, the run_index should be provided or will be read from run_data.
+        For updates to existing runs, run_index is preserved from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs. If not provided for new runs,
+                will attempt to read from run_data.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(runs_table).values(**row)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["run_id"],
+                    set_=dict(
+                        status=stmt.excluded.status,
+                        run_data=stmt.excluded.run_data,
+                        user_id=stmt.excluded.user_id,
+                        parent_run_id=stmt.excluded.parent_run_id,
+                        updated_at=stmt.excluded.updated_at,
+                        # Note: run_index is NOT updated for existing runs to preserve ordering
+                    ),
+                )
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Exception upserting run to runs table: {str(e)}")
             raise e
 
     def get_runs(
@@ -1266,7 +1301,12 @@ class PostgresDb(BaseDb):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
-        Insert or update a session in the database.
+        Insert or update the session row.
+
+        Runs are persisted independently via ``upsert_run()`` — this method does
+        not touch the ``agno_runs`` table. Callers that want to write the full
+        session (row + runs) should iterate ``upsert_run`` over ``session.runs``
+        themselves.
 
         Args:
             session (Session): The session data to upsert.
@@ -1284,7 +1324,6 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
-            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
 
             session_dict = session.to_dict(include_runs=False)
             # Sanitize JSON/dict fields to remove null bytes from nested strings
@@ -1357,10 +1396,6 @@ class PostgresDb(BaseDb):
                     return None
                 session_dict = dict(row._mapping)
 
-                # Persist the new and modified runs into the runs table
-                if runs_table is not None:
-                    self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
             if not deserialize:
                 session_dict["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
                 return session_dict
@@ -1398,7 +1433,6 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return []
-            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
 
             # Group sessions by type for better handling
             agent_sessions = [s for s in sessions if isinstance(s, AgentSession)]
@@ -1465,10 +1499,6 @@ class PostgresDb(BaseDb):
                     result = sess.execute(stmt, session_records)
                     rows = result.fetchall()
 
-                    if runs_table is not None:
-                        for agent_session in agent_sessions:
-                            self._store_session_runs(sess=sess, runs_table=runs_table, session=agent_session)
-
                 for row in rows:
                     session_dict = dict(row._mapping)
                     if deserialize:
@@ -1527,10 +1557,6 @@ class PostgresDb(BaseDb):
                     result = sess.execute(stmt, session_records)
                     rows = result.fetchall()
 
-                    if runs_table is not None:
-                        for team_session in team_sessions:
-                            self._store_session_runs(sess=sess, runs_table=runs_table, session=team_session)
-
                 for row in rows:
                     session_dict = dict(row._mapping)
                     if deserialize:
@@ -1588,10 +1614,6 @@ class PostgresDb(BaseDb):
 
                     result = sess.execute(stmt, session_records)
                     rows = result.fetchall()
-
-                    if runs_table is not None:
-                        for workflow_session in workflow_sessions:
-                            self._store_session_runs(sess=sess, runs_table=runs_table, session=workflow_session)
 
                 for row in rows:
                     session_dict = dict(row._mapping)
