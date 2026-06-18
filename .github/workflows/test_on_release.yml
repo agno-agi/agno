@@ -7,7 +7,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "poc/user-scoped-db"
+      - "fix/os-route-path-and-isolation"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
