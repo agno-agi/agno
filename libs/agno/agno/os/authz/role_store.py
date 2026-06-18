@@ -425,6 +425,30 @@ class ManagedRoleStore:
     def roles_of(self, subject: str) -> List[str]:
         return self._engine.roles_of(subject)
 
+    def attach_db(self, db: Any) -> None:
+        """Bind an agno ``Db`` to a store created without one, so managed roles
+        persist in (and read fresh from) that DB. No-op if the store already has its
+        own DB, or the db isn't SQL-capable. AgentOS calls this to default a managed
+        store to the OS database when you pass ``AuthorizationConfig(role_store=...)``."""
+        attach = getattr(self._engine, "attach_db", None)
+        if callable(attach):
+            attach(db)
+
+        # Migrate in-memory role metadata (authz_roles) onto the same DB. Only when
+        # the store was created without a DB (meta is in-memory) and the db is SQL —
+        # mirrors the engine's own attach so policy, assignments, and metadata all
+        # land together. Leave metadata in-memory if the db isn't SQL-capable.
+        if self._meta_mem is not None:
+            try:
+                meta_engine = _engine_from_db(db)
+            except Exception:
+                return
+            pending = self._meta_mem
+            self._init_meta_table(meta_engine)
+            self._meta_mem = None  # route writes to the DB from here on
+            for row in pending.values():
+                self._meta_write(dict(row), insert=True)
+
     # ------------------------------------------------------------------ audit
     def audit_log(
         self,
