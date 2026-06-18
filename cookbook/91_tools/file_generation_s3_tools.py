@@ -20,7 +20,7 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.file_generation import FileGenerationTools
 
 # Replace with your own bucket name.
-S3_BUCKET = "virusbucket1agno"
+S3_BUCKET = "yourbucket"
 S3_PREFIX = "generated/"
 AWS_REGION = "us-east-1"
 
