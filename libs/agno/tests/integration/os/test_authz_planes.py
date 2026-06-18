@@ -139,20 +139,15 @@ def test_admin_gate_accepts_admin_from_token_scope():
 
 
 def test_authorization_provider_rejects_a_string():
-    """A list of providers is supported; a string is a mistake and must error
-    (not be treated as an iterable of characters)."""
-    agent = Agent(id="research-agent", name="R", db=InMemoryDb())
-    with pytest.raises(ValueError, match="not a string"):
-        AgentOS(
-            id=OS_ID,
-            agents=[agent],
-            authorization=True,
-            authorization_config=AuthorizationConfig(
-                verification_keys=[SECRET],
-                algorithm="HS256",
-                authorization_provider="ScopeAuthorizationProvider",  # oops, a string
-            ),
-        ).get_app()
+    """A list of providers is supported; a string is a mistake. The typed
+    AuthorizationConfig field rejects it at construction (pydantic ValidationError,
+    a ValueError), so it can never be mistaken for an iterable of characters."""
+    with pytest.raises(ValueError, match="AuthorizationProvider"):
+        AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            authorization_provider="ScopeAuthorizationProvider",  # oops, a string
+        )
 
 
 def test_composite_filter_accessible_unions_and_respects_per_plane_deny():
