@@ -666,21 +666,84 @@ class TestLookup:
         assert found is not None
         assert found.id == "persisted"
 
-    def test_edit_agent_copies_live_agent_without_mutating_it(self, studio, registry, db):
+    def test_edit_code_defined_agent_is_rejected(self, studio, registry, db):
+        # A code-defined (live) agent shadows any DB row at lookup time, so editing
+        # it would write an unreachable draft. edit_* must reject it instead of
+        # silently returning "edited" (review findings 9-12).
         studio.create_agent(name="shared", instructions="db", model_id="gpt-5.4")
         live = Agent(id="shared", name="Shared", model=OpenAIResponses(id="gpt-5.4"), instructions="live")
         tool = StudioTool(registry=registry, db=db, agents_list=[live], versions=True)
 
-        before = _loads(tool.get_agent("shared"))
         out = _loads(tool.edit_agent(agent_id="shared", instructions="updated-live"))
-        after = _loads(tool.get_agent("shared"))
-        draft = _loads(tool.get_version("shared", version=out["draft_version"]))
 
-        assert before["instructions"] == "live"
-        assert out["status"] == "edited"
+        assert "error" in out
+        assert "code-defined" in out["error"]
         assert live.instructions == "live"
-        assert after["instructions"] == "live"
-        assert draft["config"]["instructions"] == "updated-live"
+
+
+# ----------------------------------------------------------------------
+# Type guards (a component id of one type must not load as another)
+# ----------------------------------------------------------------------
+
+
+class TestTypeGuards:
+    def _full(self, registry, db):
+        return StudioTool(registry=registry, db=db, teams=True, workflows=True)
+
+    def test_get_agent_rejects_team_id(self, registry, db):
+        tool = self._full(registry, db)
+        tool.create_agent(name="member", instructions="i", model_id="gpt-5.4")
+        tool.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+
+        # 'squad' is a team; loading it as an agent must fail, not return a team-as-agent.
+        out = _loads(tool.get_agent("squad"))
+        assert "error" in out
+
+    def test_run_agent_rejects_team_id(self, registry, db):
+        tool = self._full(registry, db)
+        tool.create_agent(name="member", instructions="i", model_id="gpt-5.4")
+        tool.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+
+        out = _loads(tool.run_agent("squad", message="hi"))
+        assert "error" in out
+
+    def test_get_team_rejects_agent_id(self, registry, db):
+        tool = self._full(registry, db)
+        tool.create_agent(name="solo", instructions="i", model_id="gpt-5.4")
+
+        out = _loads(tool.get_team("solo"))
+        assert "error" in out
+
+    def test_team_member_rejects_workflow_id(self, registry, db):
+        tool = self._full(registry, db)
+        tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
+        tool.create_workflow(name="flow", description="d", step_specs=[{"name": "s1", "agent_id": "a1"}])
+
+        # A workflow id is neither an agent nor a team, so it cannot be a member.
+        out = _loads(tool.create_team(name="squad", instructions="i", member_ids=["flow"], model_id="gpt-5.4"))
+        assert "error" in out
+        assert "flow" in out["error"]
+
+    def test_workflow_step_agent_id_rejects_team_id(self, registry, db):
+        tool = self._full(registry, db)
+        tool.create_agent(name="member", instructions="i", model_id="gpt-5.4")
+        tool.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+
+        # 'squad' is a team, so an agent_id step pointing at it must error.
+        out = _loads(
+            tool.create_workflow(name="flow", description="d", step_specs=[{"name": "s1", "agent_id": "squad"}])
+        )
+        assert "error" in out
+
+    def test_get_agent_tool_names_match_create(self, registry, db):
+        tool = self._full(registry, db)
+        created = _loads(
+            tool.create_agent(name="calc", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
+        )
+        got = _loads(tool.get_agent("calc"))
+        # create_* and get_* must report tools the same way (toolkit name, not expanded fns).
+        assert created["tools"] == ["calculator"]
+        assert got["tools"] == ["calculator"]
 
 
 # ----------------------------------------------------------------------

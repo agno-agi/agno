@@ -56,7 +56,7 @@ from agno.utils.log import log_debug, logger
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.db.base import BaseDb
+    from agno.db.base import BaseDb, ComponentType
     from agno.models.base import Model
     from agno.registry.registry import Registry
     from agno.team.team import Team
@@ -310,6 +310,21 @@ class StudioTool(Toolkit):
             raise ValueError(f"Tools not found in registry: {missing}")
         return resolved
 
+    def _normalize_tool_names(self, names: List[str]) -> List[str]:
+        """Collapse toolkit function names back to their toolkit name."""
+        func_to_toolkit: Dict[str, str] = {}
+        for tool in self.registry.tools:
+            if isinstance(tool, Toolkit):
+                for fn_name in tool.functions:
+                    func_to_toolkit[fn_name] = tool.name
+
+        normalized: List[str] = []
+        for name in names:
+            mapped = func_to_toolkit.get(name, name)
+            if mapped not in normalized:
+                normalized.append(mapped)
+        return normalized
+
     # ------------------------------------------------------------------
     # Component lookup: union of live lists, registry, and studio cache.
     # Studio cache is checked first so freshly created/edited components
@@ -373,6 +388,18 @@ class StudioTool(Toolkit):
                 return w
         return self._load_workflow_from_db(workflow_id, version=self._edit_base_version(workflow_id))
 
+    def _is_code_defined(self, component_id: str, candidates: List[Any]) -> bool:
+        """True if the id/name matches a code-defined (registry/list) component.
+
+        Code-defined components are not DB-backed, so editing them would write an
+        unreachable DB row that the live object always shadows. edit_* rejects
+        these instead of silently persisting a draft no one can load.
+        """
+        for c in candidates:
+            if getattr(c, "id", None) == component_id or getattr(c, "name", None) == component_id:
+                return True
+        return False
+
     def _edit_base_version(self, component_id: str) -> Optional[int]:
         """Version to base an edit on: the latest draft when versioning is
         enabled, else None (the current published version)."""
@@ -383,11 +410,7 @@ class StudioTool(Toolkit):
     def _latest_draft_version(self, component_id: str) -> Optional[int]:
         if self.db is None:
             return None
-        try:
-            configs = self.db.list_configs(component_id, include_config=False)
-        except Exception:
-            logger.debug(f"StudioTool: list_configs failed for {component_id}", exc_info=True)
-            return None
+        configs = self.db.list_configs(component_id, include_config=False)
         drafts: List[int] = [
             c["version"] for c in configs if c.get("stage") == "draft" and isinstance(c.get("version"), int)
         ]
@@ -396,7 +419,9 @@ class StudioTool(Toolkit):
     def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict. Bypasses Agent.load() to
         avoid Agno's load_component_graph signature mismatch."""
-        config = self._load_config_from_db(agent_id, version=version)
+        from agno.db.base import ComponentType
+
+        config = self._load_config_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
         if config is None:
             return None
         from agno.agent.agent import Agent
@@ -411,7 +436,9 @@ class StudioTool(Toolkit):
             return None
 
     def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
-        config = self._load_config_from_db(team_id, version=version)
+        from agno.db.base import ComponentType
+
+        config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
         if config is None:
             return None
         from agno.team.team import Team
@@ -426,7 +453,9 @@ class StudioTool(Toolkit):
             return None
 
     def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
-        config = self._load_config_from_db(workflow_id, version=version)
+        from agno.db.base import ComponentType
+
+        config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
         if config is None:
             return None
         from agno.workflow.workflow import Workflow
@@ -440,14 +469,23 @@ class StudioTool(Toolkit):
             logger.warning("StudioTool: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
 
-    def _load_config_from_db(self, component_id: str, version: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def _load_config_from_db(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        component_type: Optional["ComponentType"] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Load a component's config by id.
+
+        When ``component_type`` is given, the stored component must be of that
+        type; a mismatch returns None so that, e.g., a team id never loads as an
+        Agent (mirrors the typed ``get_component`` guard used by delete_agent).
+        """
         if self.db is None:
             return None
-        try:
-            row = self.db.get_config(component_id=component_id, version=version)
-        except Exception:
-            logger.warning("StudioTool: db.get_config failed for %s", component_id, exc_info=True)
+        if component_type is not None and self.db.get_component(component_id, component_type=component_type) is None:
             return None
+        row = self.db.get_config(component_id=component_id, version=version)
         if row is None:
             return None
         config = row.get("config") if isinstance(row, dict) else None
@@ -643,21 +681,17 @@ class StudioTool(Toolkit):
         """Return a thin summary of DB components of a given type: [{id, name, description}]."""
         if self.db is None:
             return []
-        try:
-            from agno.db.base import ComponentType
+        from agno.db.base import ComponentType
 
-            rows, _ = self.db.list_components(component_type=ComponentType(component_type))
-            return [
-                {
-                    "id": r.get("component_id"),
-                    "name": r.get("name"),
-                    "description": r.get("description"),
-                }
-                for r in rows
-            ]
-        except Exception:
-            logger.debug("StudioTool: list_components failed", exc_info=True)
-            return []
+        rows, _ = self.db.list_components(component_type=ComponentType(component_type))
+        return [
+            {
+                "id": r.get("component_id"),
+                "name": r.get("name"),
+                "description": r.get("description"),
+            }
+            for r in rows
+        ]
 
     # ------------------------------------------------------------------
     # Read one
@@ -681,7 +715,7 @@ class StudioTool(Toolkit):
                 "model_id": getattr(getattr(agent, "model", None), "id", None),
                 "instructions": getattr(agent, "instructions", None),
                 "description": getattr(agent, "description", None),
-                "tools": _summarize_tools(getattr(agent, "tools", None)),
+                "tools": self._normalize_tool_names(_summarize_tools(getattr(agent, "tools", None))),
             },
             default=str,
         )
@@ -961,6 +995,10 @@ class StudioTool(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
+        if self._is_code_defined(agent_id, self._iter_agents()):
+            return json.dumps(
+                {"error": f"Cannot edit code-defined agent: {agent_id}. Only Studio-created components are editable."}
+            )
         agent = self._find_agent_for_edit(agent_id)
         if agent is None:
             return json.dumps({"error": f"Agent not found: {agent_id}"})
@@ -1013,6 +1051,10 @@ class StudioTool(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
+        if self._is_code_defined(team_id, self._iter_teams()):
+            return json.dumps(
+                {"error": f"Cannot edit code-defined team: {team_id}. Only Studio-created components are editable."}
+            )
         team = self._find_team_for_edit(team_id)
         if team is None:
             return json.dumps({"error": f"Team not found: {team_id}"})
@@ -1067,6 +1109,12 @@ class StudioTool(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTool has no db configured; cannot edit components."})
+        if self._is_code_defined(workflow_id, self._iter_workflows()):
+            return json.dumps(
+                {
+                    "error": f"Cannot edit code-defined workflow: {workflow_id}. Only Studio-created components are editable."
+                }
+            )
         wf = self._find_workflow_for_edit(workflow_id)
         if wf is None:
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
@@ -1700,23 +1748,20 @@ class StudioTool(Toolkit):
         newly published config version."""
         if self.db is None:
             return
-        try:
-            from agno.db.base import ComponentType
+        from agno.db.base import ComponentType
 
-            component = self.db.get_component(component_id)
-            row = self.db.get_config(component_id=component_id, version=version)
-            config = row.get("config") if isinstance(row, dict) else None
-            if component is None or not isinstance(config, dict):
-                return
-            self.db.upsert_component(
-                component_id=component_id,
-                component_type=ComponentType(component["component_type"]),
-                name=config.get("name") or component.get("name"),
-                description=config.get("description"),
-                metadata=config.get("metadata"),
-            )
-        except Exception:
-            logger.debug(f"StudioTool: failed to sync component row for {component_id}", exc_info=True)
+        component = self.db.get_component(component_id)
+        row = self.db.get_config(component_id=component_id, version=version)
+        config = row.get("config") if isinstance(row, dict) else None
+        if component is None or not isinstance(config, dict):
+            return
+        self.db.upsert_component(
+            component_id=component_id,
+            component_type=ComponentType(component["component_type"]),
+            name=config.get("name") or component.get("name"),
+            description=config.get("description"),
+            metadata=config.get("metadata"),
+        )
 
 
 # ----------------------------------------------------------------------

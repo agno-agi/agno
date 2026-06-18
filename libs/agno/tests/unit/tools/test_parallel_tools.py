@@ -102,9 +102,7 @@ def test_search_returns_results(parallel_tools):
     mock_result.model_dump = Mock(
         return_value={
             "search_id": "test-search-id",
-            "results": [
-                {"title": "Test", "url": "https://example.com", "excerpts": ["content"]}
-            ],
+            "results": [{"title": "Test", "url": "https://example.com", "excerpts": ["content"]}],
         }
     )
     parallel_tools.parallel_client.search = Mock(return_value=mock_result)
@@ -253,9 +251,7 @@ def test_extract_with_full_content_limit(parallel_tools):
     mock_result.model_dump = Mock(return_value={"extract_id": "id", "results": [], "errors": []})
     parallel_tools.parallel_client.extract = Mock(return_value=mock_result)
 
-    parallel_tools.parallel_extract(
-        urls=["https://example.com"], full_content=True, max_chars_for_full_content=5000
-    )
+    parallel_tools.parallel_extract(urls=["https://example.com"], full_content=True, max_chars_for_full_content=5000)
 
     call_args = parallel_tools.parallel_client.extract.call_args[1]
     assert call_args["advanced_settings"]["full_content"] == {"max_chars_per_result": 5000}

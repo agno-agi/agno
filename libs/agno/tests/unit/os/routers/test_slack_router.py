@@ -456,7 +456,9 @@ class TestRouterWiring:
         ):
             mock_cls.return_value = make_slack_mock(token="xoxb-explicit-token")
             build_app(agent_mock, token="xoxb-explicit-token")
-            mock_cls.assert_called_once_with(token="xoxb-explicit-token", user_token=None, ssl=None, max_file_size=1_073_741_824)
+            mock_cls.assert_called_once_with(
+                token="xoxb-explicit-token", user_token=None, ssl=None, max_file_size=1_073_741_824
+            )
 
     def test_explicit_signing_secret_used(self):
         agent_mock = make_agent_mock()
