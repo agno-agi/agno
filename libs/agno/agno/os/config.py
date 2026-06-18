@@ -4,6 +4,9 @@ from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, T
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from agno.os.authz.audit import AuditSink
+from agno.os.authz.provider import AuthorizationProvider
+
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPServerConfig.include_tags`` / ``exclude_tags`` without reading
 # ``agno/os/mcp.py``. Keep in sync with the ``tags={...}`` argument on each
@@ -125,15 +128,16 @@ class AuthorizationConfig(BaseModel):
     require_expiration: Optional[bool] = None
     admin_scope: Optional[str] = None
     # Pluggable authorization strategy. When None, AgentOS uses the built-in
-    # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency).
-    # Supply an AuthorizationProvider instance to swap in a different model
-    # (ReBAC/ABAC/Casbin/OpenFGA/Cerbos) without changing the request pipeline.
-    authorization_provider: Optional[Any] = None
+    # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency). Supply an
+    # AuthorizationProvider to swap in a different model (ReBAC/ABAC/OpenFGA/Cerbos),
+    # or a LIST of them to run several planes at once (allow if any allows) — without
+    # changing the request pipeline.
+    authorization_provider: Optional[Union[AuthorizationProvider, List[AuthorizationProvider]]] = None
     # Optional AuditSink. When set, AgentOS records each authorization decision
     # (allow/deny) at the route gate — principal, route, required scopes, and a
     # non-secret token reference — so you get an access trail, not just a change
     # trail. Pass the same sink you give ManagedRoleStore to unify both.
-    audit: Optional[Any] = None
+    audit: Optional[AuditSink] = None
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
