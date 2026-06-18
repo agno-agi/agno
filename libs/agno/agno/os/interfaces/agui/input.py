@@ -136,31 +136,25 @@ def validate_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_context(context: Optional[List[Any]]) -> Optional[List[Dict[str, Any]]]:
-    """Convert AG-UI context entries into serializable context records.
-
-    Each AG-UI Context entry has {description, value}. We normalize both
-    fields, attempt JSON-decoding of string values, and return a plain
-    list of dicts suitable for injection into dependencies.
-    """
+    """Convert AG-UI context to dicts, decoding JSON string values."""
     if not context:
         return None
 
-    entries: List[Dict[str, Any]] = []
-    for index, item in enumerate(context, start=1):
-        description = getattr(item, "description", None)
-        value = getattr(item, "value", None)
-        if isinstance(item, dict):
-            description = item.get("description", description)
-            value = item.get("value", value)
-        description = description if isinstance(description, str) and description else f"context_{index}"
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except json.JSONDecodeError:
-                pass
-        entries.append({"description": description, "value": value})
+    return [
+        {
+            "description": item.description or f"context_{i}",
+            "value": _maybe_parse_json(item.value),
+        }
+        for i, item in enumerate(context, start=1)
+    ] or None
 
-    return entries or None
+
+def _maybe_parse_json(value: str) -> Any:
+    """Parse JSON string if valid, otherwise return as-is."""
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
 
 
 def _decode_base64(value: str) -> Optional[bytes]:

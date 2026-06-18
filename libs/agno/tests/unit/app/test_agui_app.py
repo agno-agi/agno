@@ -2130,12 +2130,6 @@ def test_extract_context_object_with_attrs():
     assert result == [{"description": "user_state", "value": "viewing dashboard"}]
 
 
-def test_extract_context_dict_input():
-    """Dict input — when context items arrive as plain dicts not objects."""
-    result = extract_context([{"description": "page", "value": "home"}])
-    assert result == [{"description": "page", "value": "home"}]
-
-
 def test_extract_context_json_string_value_decoded():
     """String values that look like JSON are parsed into structured data."""
     item = MagicMock(description="movies", value='{"count":2,"titles":["A","B"]}')
@@ -2150,13 +2144,10 @@ def test_extract_context_non_json_string_kept_verbatim():
     assert result == [{"description": "note", "value": "just plain text {{{ not json"}]
 
 
-def test_extract_context_missing_description_gets_fallback():
-    """Missing/empty description falls back to context_N auto-numbering."""
-
-    class _Item:
-        value = "some value"
-
-    result = extract_context([_Item()])
+def test_extract_context_empty_description_gets_fallback():
+    """Empty description falls back to context_N auto-numbering."""
+    item = MagicMock(description="", value="some value")
+    result = extract_context([item])
     assert result == [{"description": "context_1", "value": "some value"}]
 
 
