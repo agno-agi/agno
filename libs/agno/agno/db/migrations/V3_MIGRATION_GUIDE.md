@@ -56,10 +56,11 @@ v3.0 normalized run storage is implemented for:
 - `MySQLDb` and `AsyncMySQLDb`
 - `SingleStoreDb`
 - `MongoDb` and `AsyncMongoDb` (uses a separate ``agno_runs`` collection)
+- `FirestoreDb` (uses a separate ``agno_runs`` collection)
+- `RedisDb` (uses ``<prefix>:runs:<run_id>`` keys plus a per-session sorted-set index)
 
-Other adapters (Redis, DynamoDB, Firestore, SurrealDB, ClickHouse, JSON, GCS,
-in-memory) continue to store runs inline in the session and will be ported in
-follow-up releases.
+Other adapters (DynamoDB, SurrealDB, ClickHouse, JSON, GCS, in-memory) continue to
+store runs inline in the session and will be ported in follow-up releases.
 
 ### MongoDB note
 
@@ -69,6 +70,23 @@ document per run, with the same fields as the SQL ``agno_runs`` table. The
 The legacy ``runs`` field on session documents is preserved by the migration; call
 ``db.cleanup_legacy_runs_field()`` (rather than ``cleanup_legacy_runs_column()``)
 to unset it when you have verified the migration.
+
+### Firestore note
+
+Firestore's 1 MB document size limit is the *hard* version of MongoDB's 16 MB
+limit — long sessions can simply fail to save in v2.x. v3.0 puts each run in its
+own document in a dedicated ``agno_runs`` collection. The legacy ``runs`` field on
+session documents is preserved by the migration; ``db.cleanup_legacy_runs_field()``
+removes it once verified (uses Firestore ``DELETE_FIELD``).
+
+### Redis note
+
+Redis stores each run as a separate key (``<prefix>:runs:<run_id>``) and maintains
+a per-session sorted set (``<prefix>:runs:by_session:<session_id>``) scored by
+``run_index`` for cheap ordered reads. ``get_runs(session_id=...)`` is a
+``ZRANGE`` + ``MGET`` round-trip rather than a full scan. The legacy ``runs``
+field on the session record is preserved by the migration; call
+``db.cleanup_legacy_runs_field()`` to drop it once verified.
 
 ## Migrating existing data
 

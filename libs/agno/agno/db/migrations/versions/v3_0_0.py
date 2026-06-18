@@ -51,6 +51,16 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _migrate_mysql_like(db, table_name)
         elif db_type == "MongoDb":
             return _migrate_mongo(db, table_name)
+        elif db_type == "FirestoreDb":
+            return _migrate_firestore(db, table_name)
+        elif db_type == "RedisDb":
+            return _migrate_redis(db, table_name)
+        elif db_type == "JsonDb":
+            return _migrate_jsondb(db, table_name)
+        elif db_type == "GcsJsonDb":
+            return _migrate_gcsjsondb(db, table_name)
+        elif db_type == "InMemoryDb":
+            return _migrate_inmemorydb(db, table_name)
         else:
             log_info(f"Migration v3.0.0 is not implemented for {db_type}. Sessions will keep storing runs inline.")
         return False
@@ -107,6 +117,16 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_mysql_like(db, table_name)
         elif db_type == "MongoDb":
             return _revert_mongo(db, table_name)
+        elif db_type == "FirestoreDb":
+            return _revert_firestore(db, table_name)
+        elif db_type == "RedisDb":
+            return _revert_redis(db, table_name)
+        elif db_type == "JsonDb":
+            return _revert_jsondb(db, table_name)
+        elif db_type == "GcsJsonDb":
+            return _revert_gcsjsondb(db, table_name)
+        elif db_type == "InMemoryDb":
+            return _revert_inmemorydb(db, table_name)
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -1041,4 +1061,353 @@ async def _revert_async_mongo(db: AsyncBaseDb, table_name: str) -> bool:
 
     log_info(f"-- Dropping runs collection {runs_collection_name}")
     await runs_collection.drop()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Firestore
+# ---------------------------------------------------------------------------
+
+
+def _migrate_firestore(db: BaseDb, table_name: str) -> bool:
+    """Copy runs from the legacy `runs` field on session documents into the runs collection.
+
+    Non-destructive: the legacy `runs` field is left in place. Call
+    ``db.cleanup_legacy_runs_field()`` to remove it once verified.
+    """
+    sessions_ref = db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
+    if sessions_ref is None:
+        log_info(f"Sessions collection {table_name} does not exist, skipping migration")
+        return False
+
+    runs_ref = db._get_collection(table_type="runs", create_collection_if_not_found=True)  # type: ignore
+    if runs_ref is None:
+        log_info("Runs collection unavailable, skipping migration")
+        return False
+
+    migrated_runs = 0
+    batch = db.db_client.batch()  # type: ignore
+    pending_in_batch = 0
+    BATCH_LIMIT = 400  # Firestore batches max out at 500 writes; stay below the cap
+
+    for doc in sessions_ref.stream():
+        data = doc.to_dict() or {}
+        legacy_runs = data.get("runs")
+        if not legacy_runs:
+            continue
+        rows = _build_run_rows(legacy_runs, data.get("session_id"), data.get("user_id"), run_data_as_string=False)
+        for row in rows:
+            run_doc_ref = runs_ref.document(row["run_id"])
+            batch.set(run_doc_ref, row)
+            pending_in_batch += 1
+            migrated_runs += 1
+            if pending_in_batch >= BATCH_LIMIT:
+                batch.commit()
+                batch = db.db_client.batch()  # type: ignore
+                pending_in_batch = 0
+
+    if pending_in_batch:
+        batch.commit()
+
+    log_info(f"-- Copied {migrated_runs} runs from {table_name} into the runs collection")
+    log_info(
+        f"-- The legacy '{table_name}.runs' field was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return True
+
+
+def _revert_firestore(db: BaseDb, table_name: str) -> bool:
+    """Revert: rebuild the legacy `runs` field on session documents from the runs collection.
+
+    The runs collection is deleted at the end.
+    """
+    from google.cloud.firestore import FieldFilter  # type: ignore[import-untyped]
+
+    sessions_ref = db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
+    runs_ref = db._get_collection(table_type="runs", create_collection_if_not_found=True)  # type: ignore
+    if sessions_ref is None or runs_ref is None:
+        log_info("Sessions or runs collection unavailable, skipping revert")
+        return False
+
+    runs_by_session: Dict[str, List[Any]] = {}
+    for doc in runs_ref.stream():
+        d = doc.to_dict() or {}
+        sid = d.get("session_id")
+        if sid is None:
+            continue
+        runs_by_session.setdefault(sid, []).append((d.get("run_index") or 0, d.get("created_at") or 0, d.get("run_data")))
+
+    # Rebuild the inline blob on each session doc
+    batch = db.db_client.batch()  # type: ignore
+    pending = 0
+    for sid, items in runs_by_session.items():
+        items.sort(key=lambda t: (t[0], t[1]))
+        runs = [t[2] for t in items]
+        q = sessions_ref.where(filter=FieldFilter("session_id", "==", sid))
+        for sd in q.stream():
+            batch.update(sd.reference, {"runs": runs})
+            pending += 1
+            if pending >= 400:
+                batch.commit()
+                batch = db.db_client.batch()  # type: ignore
+                pending = 0
+    if pending:
+        batch.commit()
+
+    # Wipe the runs collection
+    log_info("-- Deleting all documents in the runs collection")
+    batch = db.db_client.batch()  # type: ignore
+    pending = 0
+    for doc in runs_ref.stream():
+        batch.delete(doc.reference)
+        pending += 1
+        if pending >= 400:
+            batch.commit()
+            batch = db.db_client.batch()  # type: ignore
+            pending = 0
+    if pending:
+        batch.commit()
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Redis
+# ---------------------------------------------------------------------------
+
+
+def _migrate_redis(db: BaseDb, table_name: str) -> bool:
+    """Copy runs from the legacy `runs` field on session records into per-run keys.
+
+    Non-destructive: the legacy `runs` field is left in place on the session
+    record. Call ``db.cleanup_legacy_runs_field()`` once you have verified the
+    migration to free the storage.
+    """
+    sessions = db._get_all_records("sessions")  # type: ignore
+    migrated_runs = 0
+    for session in sessions:
+        legacy_runs = session.get("runs")
+        if not legacy_runs:
+            continue
+        rows = _build_run_rows(legacy_runs, session.get("session_id"), session.get("user_id"), run_data_as_string=False)
+        if not rows:
+            continue
+        # Write each run key directly + populate the sorted-set index.
+        index_key = db._runs_by_session_index_key(session["session_id"])  # type: ignore
+        from agno.db.redis.utils import generate_redis_key, serialize_data  # type: ignore
+
+        pipe = db.redis_client.pipeline()  # type: ignore
+        for row in rows:
+            key = generate_redis_key(prefix=db.db_prefix, table_type="runs", key_id=row["run_id"])  # type: ignore
+            pipe.set(key, serialize_data(row), ex=db.expire)  # type: ignore
+            pipe.zadd(index_key, {row["run_id"]: float(row.get("run_index") or 0)})
+        pipe.execute()
+        migrated_runs += len(rows)
+
+    log_info(f"-- Copied {migrated_runs} runs into per-run Redis keys")
+    log_info(
+        "-- The legacy 'runs' field on each session record was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return True
+
+
+def _revert_redis(db: BaseDb, table_name: str) -> bool:
+    """Revert: rebuild the legacy `runs` field on session records, then delete run keys."""
+    from agno.db.redis.utils import generate_redis_key  # type: ignore
+
+    # Collect runs per session
+    runs_keys = db._get_all_records("runs")  # type: ignore
+    runs_by_session: Dict[str, List[Any]] = {}
+    for r in runs_keys:
+        sid = r.get("session_id")
+        if sid is None:
+            continue
+        runs_by_session.setdefault(sid, []).append((r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data")))
+
+    sessions = db._get_all_records("sessions")  # type: ignore
+    for session in sessions:
+        sid = session.get("session_id")
+        items = runs_by_session.get(sid, [])
+        items.sort(key=lambda t: (t[0], t[1]))
+        session["runs"] = [t[2] for t in items]
+        db._store_record(table_type="sessions", record_id=sid, data=session)  # type: ignore
+
+    # Delete per-run keys + per-session indexes
+    for r in runs_keys:
+        rid = r.get("run_id")
+        if not rid:
+            continue
+        try:
+            db.redis_client.delete(generate_redis_key(prefix=db.db_prefix, table_type="runs", key_id=rid))  # type: ignore
+        except Exception:
+            pass
+    for sid in list(runs_by_session.keys()):
+        try:
+            db.redis_client.delete(db._runs_by_session_index_key(sid))  # type: ignore
+        except Exception:
+            pass
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# JsonDb / GcsJsonDb / InMemoryDb
+# These adapters store sessions as a single list (file/object/in-memory dict).
+# Each one exposes the same `_store_session_runs`-style helper added in v3,
+# plus a way to walk the legacy `runs` field on each session record.
+# ---------------------------------------------------------------------------
+
+
+def _migrate_jsondb(db: BaseDb, table_name: str) -> bool:
+    """Copy runs from the legacy `runs` field on each session record into the runs file."""
+    sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
+    if not sessions:
+        log_info(f"Sessions file {table_name}.json is empty or missing, skipping migration")
+        return False
+
+    existing_runs = db._read_runs_file(create_table_if_not_found=True)  # type: ignore
+    by_id = {r["run_id"]: r for r in existing_runs if "run_id" in r}
+
+    migrated = 0
+    for session in sessions:
+        legacy = session.get("runs")
+        if not legacy:
+            continue
+        rows = _build_run_rows(legacy, session.get("session_id"), session.get("user_id"), run_data_as_string=False)
+        for row in rows:
+            by_id[row["run_id"]] = row
+            migrated += 1
+
+    if migrated:
+        db._write_runs_file(list(by_id.values()))  # type: ignore
+    log_info(f"-- Copied {migrated} runs into {db.runs_table_name}.json")  # type: ignore
+    log_info(
+        "-- The legacy 'runs' field on each session record was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return True
+
+
+def _revert_jsondb(db: BaseDb, table_name: str) -> bool:
+    """Revert: rebuild the legacy `runs` field on each session record from the runs file."""
+    sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
+    all_runs = db._read_runs_file(create_table_if_not_found=False)  # type: ignore
+
+    runs_by_session: Dict[str, List[Any]] = {}
+    for r in all_runs:
+        sid = r.get("session_id")
+        if sid is None:
+            continue
+        runs_by_session.setdefault(sid, []).append((r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data")))
+
+    for session in sessions:
+        sid = session.get("session_id")
+        items = runs_by_session.get(sid, [])
+        items.sort(key=lambda t: (t[0], t[1]))
+        session["runs"] = [t[2] for t in items]
+
+    db._write_json_file(db.session_table_name, sessions)  # type: ignore
+    db._write_runs_file([])  # type: ignore
+    return True
+
+
+def _migrate_gcsjsondb(db: BaseDb, table_name: str) -> bool:
+    """Same shape as :func:`_migrate_jsondb` — both store sessions as a JSON list (file vs object)."""
+    sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
+    if not sessions:
+        log_info(f"Sessions object {table_name}.json is empty or missing, skipping migration")
+        return False
+
+    existing_runs = db._read_json_file(db.runs_table_name, create_table_if_not_found=True)  # type: ignore
+    by_id = {r["run_id"]: r for r in existing_runs if "run_id" in r}
+
+    migrated = 0
+    for session in sessions:
+        legacy = session.get("runs")
+        if not legacy:
+            continue
+        rows = _build_run_rows(legacy, session.get("session_id"), session.get("user_id"), run_data_as_string=False)
+        for row in rows:
+            by_id[row["run_id"]] = row
+            migrated += 1
+
+    if migrated:
+        db._write_json_file(db.runs_table_name, list(by_id.values()))  # type: ignore
+    log_info(f"-- Copied {migrated} runs into {db.runs_table_name}.json (GCS)")  # type: ignore
+    log_info(
+        "-- The legacy 'runs' field on each session record was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return True
+
+
+def _revert_gcsjsondb(db: BaseDb, table_name: str) -> bool:
+    sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
+    all_runs = db._read_json_file(db.runs_table_name, create_table_if_not_found=False)  # type: ignore
+
+    runs_by_session: Dict[str, List[Any]] = {}
+    for r in all_runs:
+        sid = r.get("session_id")
+        if sid is None:
+            continue
+        runs_by_session.setdefault(sid, []).append((r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data")))
+
+    for session in sessions:
+        sid = session.get("session_id")
+        items = runs_by_session.get(sid, [])
+        items.sort(key=lambda t: (t[0], t[1]))
+        session["runs"] = [t[2] for t in items]
+
+    db._write_json_file(db.session_table_name, sessions)  # type: ignore
+    db._write_json_file(db.runs_table_name, [])  # type: ignore
+    return True
+
+
+def _migrate_inmemorydb(db: BaseDb, table_name: str) -> bool:
+    """Move runs from the legacy `runs` field of each in-memory session into the runs list."""
+    sessions = db._sessions  # type: ignore
+    if not sessions:
+        return False
+
+    migrated = 0
+    existing_run_ids = {r.get("run_id") for r in db._runs}  # type: ignore
+    for session in sessions:
+        legacy = session.get("runs")
+        if not legacy:
+            continue
+        rows = _build_run_rows(legacy, session.get("session_id"), session.get("user_id"), run_data_as_string=False)
+        for row in rows:
+            if row["run_id"] in existing_run_ids:
+                continue
+            db._runs.append(row)  # type: ignore
+            existing_run_ids.add(row["run_id"])
+            migrated += 1
+
+    log_info(
+        f"-- Copied {migrated} runs into the runs list. The legacy 'runs' field on each session record "
+        "was preserved as a backup. Once verified, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return True
+
+
+def _revert_inmemorydb(db: BaseDb, table_name: str) -> bool:
+    sessions = db._sessions  # type: ignore
+    runs = db._runs  # type: ignore
+
+    runs_by_session: Dict[str, List[Any]] = {}
+    for r in runs:
+        sid = r.get("session_id")
+        if sid is None:
+            continue
+        runs_by_session.setdefault(sid, []).append((r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data")))
+
+    for session in sessions:
+        sid = session.get("session_id")
+        items = runs_by_session.get(sid, [])
+        items.sort(key=lambda t: (t[0], t[1]))
+        session["runs"] = [t[2] for t in items]
+
+    runs.clear()
     return True
