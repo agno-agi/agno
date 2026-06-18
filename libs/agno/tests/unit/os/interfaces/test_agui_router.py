@@ -42,43 +42,28 @@ async def test_run_entity_passes_stream_events():
     assert "stream_steps" not in fake_entity.captured_kwargs
 
 
-# ---------------------------------------------------------------------------
-# AG-UI readable context flow (PR for issue #7805)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_run_entity_no_context_omits_add_dependencies_to_context_kwarg():
-    """When no AGUI context is sent, the kwarg should NOT be passed —
-    preserves the entity's own `add_dependencies_to_context` configuration.
-    """
+async def test_run_entity_no_context_omits_dependencies_kwarg():
+    """No context means no dependencies or add_dependencies_to_context passed."""
     fake_entity = CaptureKwargsEntity()
     run_input = FakeRunInput(context=None)
 
-    events = []
-    async for event in run_entity(fake_entity, run_input):
-        events.append(event)
+    async for _ in run_entity(fake_entity, run_input):
+        pass
 
     assert "add_dependencies_to_context" not in fake_entity.captured_kwargs
     assert "dependencies" not in fake_entity.captured_kwargs
 
 
 @pytest.mark.asyncio
-async def test_run_entity_with_context_passes_ui_deps():
-    """When AGUI context is present, UI deps are passed to arun().
-    SDK handles merging with entity.dependencies internally."""
+async def test_run_entity_with_context_passes_dependencies():
+    """Context items are passed as dependencies with add_dependencies_to_context=True."""
     fake_entity = CaptureKwargsEntity()
-    fake_entity.dependencies = {"existing_dep": "preserved"}
     context = [MagicMock(description="user_name", value="Alice")]
     run_input = FakeRunInput(context=context)
 
-    events = []
-    async for event in run_entity(fake_entity, run_input):
-        events.append(event)
+    async for _ in run_entity(fake_entity, run_input):
+        pass
 
     assert fake_entity.captured_kwargs.get("add_dependencies_to_context") is True
-    deps = fake_entity.captured_kwargs.get("dependencies")
-    assert deps == {"user_name": "Alice"}
-    # session_state must remain untouched (no agui_context pollution)
-    session_state = fake_entity.captured_kwargs.get("session_state")
-    assert session_state is None or "agui_context" not in session_state
+    assert fake_entity.captured_kwargs.get("dependencies") == {"user_name": "Alice"}

@@ -2108,51 +2108,46 @@ async def test_run_entity_passes_agui_media():
     _assert_media_forwarded(fake_entity.captured_kwargs)
 
 
-# ---------------------------------------------------------------------------
-# extract_context — readable context extraction (PR for issue #7805)
-# ---------------------------------------------------------------------------
-
-
 def test_extract_context_none_returns_none():
-    """None input returns None — no context block to inject."""
+    """None input returns None."""
     assert extract_context(None) is None
 
 
 def test_extract_context_empty_list_returns_none():
-    """Empty list returns None — caller can skip dependencies injection."""
+    """Empty list returns None."""
     assert extract_context([]) is None
 
 
-def test_extract_context_object_with_attrs():
-    """Pydantic-style object with description and value attributes."""
+def test_extract_context_converts_to_dict():
+    """Context items are converted to a flat dict keyed by description."""
     item = MagicMock(description="user_state", value="viewing dashboard")
     result = extract_context([item])
     assert result == {"user_state": "viewing dashboard"}
 
 
-def test_extract_context_json_string_value_decoded():
-    """String values that look like JSON are parsed into structured data."""
+def test_extract_context_parses_json_values():
+    """JSON string values are parsed into structured data."""
     item = MagicMock(description="movies", value='{"count":2,"titles":["A","B"]}')
     result = extract_context([item])
     assert result == {"movies": {"count": 2, "titles": ["A", "B"]}}
 
 
-def test_extract_context_non_json_string_kept_verbatim():
-    """Non-JSON string values are preserved as strings (graceful fallback)."""
+def test_extract_context_preserves_non_json_strings():
+    """Non-JSON strings are kept verbatim."""
     item = MagicMock(description="note", value="just plain text {{{ not json")
     result = extract_context([item])
     assert result == {"note": "just plain text {{{ not json"}
 
 
-def test_extract_context_empty_description_gets_fallback():
-    """Empty description falls back to context_N auto-numbering."""
+def test_extract_context_fallback_key_for_empty_description():
+    """Empty description falls back to context_N."""
     item = MagicMock(description="", value="some value")
     result = extract_context([item])
     assert result == {"context_1": "some value"}
 
 
-def test_extract_context_none_value_preserved():
-    """None values are preserved (model sees JSON null)."""
+def test_extract_context_preserves_none_value():
+    """None values are preserved."""
     item = MagicMock(description="empty", value=None)
     result = extract_context([item])
     assert result == {"empty": None}
