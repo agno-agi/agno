@@ -363,22 +363,25 @@ Each cookbook below runs the whole scenario for you and prints a plain
 `ALLOWED` / `BLOCKED` transcript that explains itself, then exits (no server, no
 curl needed). Every file starts with a short plain-English explainer at the top.
 
-New to authorization? Read them in this order:
+New to authorization? Read them in this order — each is runnable on its own:
 
 1. `managed_roles.py` — start here. What roles are, and how handing someone a role
-   decides what they can do. Shows a change taking effect instantly.
-2. `managed_roles_sessions.py` — roles protecting real data: who is allowed to
-   delete a saved chat session (and who gets stopped before any data is touched).
-3. `managed_users.py` — the user directory: list users, give roles, and disable
+   decides what they can do. Shows a change taking effect instantly (no re-login).
+2. `managed_roles_sessions.py` — roles protecting real data: who may delete a saved
+   chat session (and who is stopped before any data is touched).
+3. `idp_workos_auth0.py` — they already have a login service (WorkOS/Auth0/Okta):
+   the role rides the token, you only enforce, via a ~30-line custom
+   `AuthorizationProvider` (JWKS verification + issuer/audience pinning).
+4. `managed_roles_audit.py` — the governance angle: the two append-only trails
+   (who changed what, and every allow/deny), turned on with a `DbAuditSink`.
+5. `managed_users.py` — the user directory: list users, give roles, and disable
    someone instantly (blocked on their next request, even with a valid token).
-4. `manage_users_and_roles.py` — runs a real AgentOS server that serves the
+6. `manage_users_and_roles.py` — runs a real AgentOS server that serves the
    `/authz` user + role management API (admin-only, with audit) for a frontend/
    admin UI, with CORS and a seeded admin + users. Prints a ready-to-use admin token.
    Pair it with `console.html` — a single-file test client (no build, no deps):
    start the server, open the file in a browser, paste the printed token, and
    click around users / roles / scopes / both audit trails.
-5. `idp_workos_auth0.py` — they already have a login service (WorkOS/Auth0): roles
-   ride the token, you only enforce, via a ~30-line custom `AuthorizationProvider`.
 
 ### The two ways a company runs this
 
