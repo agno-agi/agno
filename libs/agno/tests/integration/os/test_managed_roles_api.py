@@ -24,6 +24,17 @@ SECRET = "managed-roles-api-test-secret-at-least-256-bits-long-xx"
 OS_ID = "managed-roles-api-test-os"
 
 
+def _db_url() -> str:
+    """A throwaway file-backed SQLite URL. Managed roles require a DB (no in-memory
+    mode); file-backed so the same DB is visible across the threads TestClient uses."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".authz.db")
+    os.close(fd)
+    return f"sqlite:///{path}"
+
+
 def _token(sub: str) -> str:
     return jwt.encode(
         {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
@@ -37,7 +48,7 @@ def _auth(sub: str) -> dict:
 
 @pytest.fixture
 def client_and_store():
-    store = ManagedRoleStore()  # in-memory
+    store = ManagedRoleStore(db_url=_db_url())  # in-memory
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("alice", "admin")
@@ -156,7 +167,7 @@ def test_scope_catalog_endpoint(client_and_store):
 
 def test_admin_via_token_claim_can_manage():
     """When roles come from the token (external IdP), an admin role on the token grants management."""
-    store = ManagedRoleStore(roles_claim="roles")
+    store = ManagedRoleStore(roles_claim="roles", db_url=_db_url())
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.set_role_scopes("viewer", ["agents:*:read"])
 

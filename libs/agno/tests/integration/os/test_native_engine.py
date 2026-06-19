@@ -1,18 +1,33 @@
-"""NativePolicyEngine — agno's default managed-roles backend (no third-party deps).
+"""NativePolicyEngine — agno's default managed-roles backend.
 
 Covers the decision model directly (deny-overrides, object wildcards, the
 scope<->policy read-back, roles-from-token vs stored subjects, transitive roles,
-accessible-ids) and SQLAlchemy persistence. The in-memory tests deliberately
-import nothing optional, proving the default path is dependency-free.
+accessible-ids) and SQLAlchemy persistence. Managed roles always require a DB —
+there is no in-memory mode, since an in-memory store can't stay consistent across
+the workers/replicas an AgentOS deployment runs — so every test runs on a
+throwaway SQLite DB and an unbound engine raises.
 """
+
+import os
+import tempfile
 
 import pytest
 
-from agno.os.authz.native_engine import NativePolicyEngine
+pytest.importorskip("sqlalchemy")  # managed roles require a SQL DB; no in-memory mode
+
+from agno.os.authz.native_engine import NativePolicyEngine  # noqa: E402
+
+
+def _engine() -> NativePolicyEngine:
+    """A throwaway file-backed SQLite engine. File (not ``:memory:``) so the same DB
+    is visible across any threads, and each call is isolated to its own DB file."""
+    fd, path = tempfile.mkstemp(suffix=".authz.db")
+    os.close(fd)
+    return NativePolicyEngine(db_url=f"sqlite:///{path}")
 
 
 def test_basic_allow_and_deny_overrides():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes(
         "member",
         [("agents:*:read", "allow"), ("agents:secret-agent:read", "deny")],
@@ -29,7 +44,7 @@ def test_basic_allow_and_deny_overrides():
 
 
 def test_object_wildcard_matching():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
     eng.assign("v", "viewer")
     # resource/* matches resource/<id> ...
@@ -42,7 +57,7 @@ def test_object_wildcard_matching():
 
 
 def test_admin_scope_allows_everything():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("admin", [("agent_os:admin", "allow")])
     eng.assign("alice", "admin")
     assert eng.check_resource("agents", "any", "run", subject="alice") is True
@@ -54,13 +69,13 @@ def test_admin_scope_allows_everything():
 def test_scope_read_back_is_canonical():
     """agents:*:read and agents:read collapse to the same policy and read back as
     the global form — matching the documented (lossy) convention."""
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("v", [("agents:*:read", "allow")])
     assert eng.get_role_scopes("v") == [("agents:read", "allow")]
 
 
 def test_add_remove_and_effect_flip():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.add_scope("e", "agents:read")
     eng.add_scope("e", "agents:run")
     assert {s for s, _ in eng.get_role_scopes("e")} == {"agents:read", "agents:run"}
@@ -73,7 +88,7 @@ def test_add_remove_and_effect_flip():
 
 
 def test_roles_from_token_take_precedence():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("editor", [("agents:*:read", "allow"), ("agents:a1:run", "allow")])
     # subject has no stored assignment; role carried on the token authorizes
     assert eng.check_resource("agents", "a1", "run", subject="idp-user", roles=["editor"]) is True
@@ -83,7 +98,7 @@ def test_roles_from_token_take_precedence():
 def test_deny_on_one_token_role_does_not_veto_allow_on_another():
     """Per-root deny-overrides: a deny in role A must not cancel an allow in role B
     when both are carried on the token."""
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("A", [("agents:a1:read", "deny")])
     eng.set_role_scopes("B", [("agents:*:read", "allow")])
     assert eng.check_resource("agents", "a1", "read", roles=["A", "B"]) is True
@@ -93,7 +108,7 @@ def test_deny_on_one_token_role_does_not_veto_allow_on_another():
 
 
 def test_transitive_role_assignment():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("super", [("agent_os:admin", "allow")])
     eng.assign("lead", "super")  # a role assigned to a role
     eng.assign("bob", "lead")
@@ -101,7 +116,7 @@ def test_transitive_role_assignment():
 
 
 def test_accessible_resource_ids_specific_and_wildcard():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("m", [("agents:a1:read", "allow"), ("agents:a2:read", "allow")])
     eng.assign("bob", "m")
     assert eng.accessible_resource_ids("agents", "read", subject="bob") == {"a1", "a2"}
@@ -113,7 +128,7 @@ def test_accessible_resource_ids_specific_and_wildcard():
 
 
 def test_remove_role_drops_policies_and_assignments():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("temp", [("agents:*:read", "allow")])
     eng.assign("bob", "temp")
     eng.remove_role("temp")
@@ -123,13 +138,13 @@ def test_remove_role_drops_policies_and_assignments():
 
 
 def test_list_roles_includes_assignment_only_roles():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.assign("bob", "ghost")  # assigned but never given scopes
     assert "ghost" in eng.list_roles()
 
 
 def test_unmappable_scope_is_not_satisfied():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("admin", [("agent_os:admin", "allow")])
     eng.assign("alice", "admin")
     # a malformed required scope returns False rather than raising
@@ -169,7 +184,7 @@ def test_list_filter_honours_deny_overrides_like_the_gate():
         def __init__(self, rid):
             self.id = rid
 
-    eng = NativePolicyEngine()
+    eng = _engine()
     # "read every agent EXCEPT the secret one"
     eng.set_role_scopes("analyst", [("agents:*:read", "allow"), ("agents:secret:read", "deny")])
     eng.assign("bob", "analyst")
@@ -194,7 +209,7 @@ def test_list_filter_honours_deny_overrides_like_the_gate():
 
 
 def test_denied_resource_ids_empty_without_denies():
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
     eng.assign("v", "viewer")
     assert eng.denied_resource_ids("agents", "read", subject="v") == set()
@@ -226,14 +241,29 @@ def test_db_backed_is_fresh_across_engines_no_cache(tmp_path):
     assert b.get_role_scopes("viewer") == [("agents:read", "allow")]
 
 
-def test_no_cache_state_when_db_backed(tmp_path):
-    """The in-memory dicts stay empty when db-backed — the DB is the only source."""
+def test_db_is_the_only_store_no_in_process_state(tmp_path):
+    """The DB is the only source of truth — there are no in-process policy/grouping
+    dicts to go stale (they were removed; a DB is required)."""
     pytest.importorskip("sqlalchemy")
     eng = NativePolicyEngine(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
     eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
     eng.assign("bob", "viewer")
-    assert eng._policies == {} and eng._grouping == {}  # nothing cached in-process
-    assert eng.roles_of("bob") == ["viewer"]  # but reads work (fresh from DB)
+    assert not hasattr(eng, "_policies") and not hasattr(eng, "_grouping")
+    assert eng.is_bound is True
+    assert eng.roles_of("bob") == ["viewer"]  # reads work (fresh from DB)
+
+
+def test_unbound_engine_raises():
+    """No DB anywhere -> the engine is unbound and every operation raises, rather
+    than silently running an in-memory store that can't work across replicas."""
+    eng = NativePolicyEngine()  # no db / db_url
+    assert eng.is_bound is False
+    with pytest.raises(RuntimeError, match="requires a SQL database"):
+        eng.set_role_scopes("viewer", [("agents:*:read", "allow")])
+    with pytest.raises(RuntimeError, match="requires a SQL database"):
+        eng.check_resource("agents", "x", "read", subject="bob")
+    with pytest.raises(RuntimeError, match="requires a SQL database"):
+        eng.roles_of("bob")
 
 
 def test_set_role_scopes_atomic_on_bad_scope(tmp_path):
@@ -270,7 +300,7 @@ def test_authorize_route_requires_all_scopes_and_no_blanket_allow():
     from agno.os.authz.engine import EngineAuthorizationProvider
     from agno.os.authz.provider import AuthorizationContext
 
-    eng = NativePolicyEngine()
+    eng = _engine()
     eng.set_role_scopes("partial", [("sessions:read", "allow")])
     eng.set_role_scopes("full", [("sessions:read", "allow"), ("sessions:write", "allow")])
     eng.assign("p", "partial")
@@ -294,7 +324,7 @@ def test_authorize_route_requires_all_scopes_and_no_blanket_allow():
 def test_effect_must_be_allow_or_deny_fail_closed():
     """A typo'd effect must raise, not silently become an allow (deny-overrides
     keys off the exact string 'deny')."""
-    eng = NativePolicyEngine()
+    eng = _engine()
     with pytest.raises(ValueError):
         eng.add_scope("r", "agents:read", effect="denied")  # typo
     with pytest.raises(ValueError):

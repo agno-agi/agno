@@ -6,10 +6,14 @@ scope terms (``agents:*:read``, ``agents:research-agent:run``,
 ``agent_os:admin``). The decision engine underneath is agno's own
 :class:`~agno.os.authz.native_engine.NativePolicyEngine` (deny-overrides RBAC, no
 third-party dependency). The engine is swappable behind the :class:`PolicyEngine`
-port. A change persists and takes effect on the next request — and, when DB-backed,
-across every worker/replica, because decisions read the DB fresh (no in-process
-cache to go stale).
+port. A change persists and takes effect on the next request across every
+worker/replica, because decisions read the DB fresh (no in-process cache to go
+stale).
 
+A DB is **required** — managed roles must be persisted, and an in-memory store
+can't stay consistent across the replicas an AgentOS deployment runs. Give the
+store a DB directly (``db=``/``db_url=``) or let AgentOS adopt the OS DB via
+``AuthorizationConfig(role_store=...)``; without one, every operation raises.
 Persistence to a DB needs SQLAlchemy: ``pip install "agno[roles]"`` (or ``agno[os]``).
 
 Example::
@@ -60,7 +64,9 @@ class ManagedRoleStore:
             db_url: SQLAlchemy URL for the DB that holds the policy (e.g.
                 ``postgresql+psycopg://...`` or ``sqlite:///roles.db``). Use your
                 own database. If omitted (and no ``db``/``engine``), the store is
-                in-memory (not persisted) — fine for tests, not for production.
+                unbound and must be bound before use — by AgentOS adopting the OS DB
+                via ``role_store=``, or it raises. A DB is required; there is no
+                in-memory mode (it couldn't stay consistent across replicas).
             roles_claim: JWT claim carrying a caller's roles (the external-IdP
                 case). When absent, roles come from this store's own assignments
                 (the no-IdP case). Both are served by the same store.
@@ -166,6 +172,13 @@ class ManagedRoleStore:
 
     def roles_of(self, subject: str) -> List[str]:
         return self._engine.roles_of(subject)
+
+    @property
+    def is_bound(self) -> bool:
+        """True once the store has a DB (passed directly or adopted via
+        :meth:`attach_db`). A custom ``engine=`` is assumed self-managed (bound)."""
+        flag = getattr(self._engine, "is_bound", None)
+        return bool(flag) if flag is not None else True
 
     def attach_db(self, db: Any) -> None:
         """Bind an agno ``Db`` to a store created without one, so managed roles
