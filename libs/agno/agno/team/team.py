@@ -1844,17 +1844,21 @@ def get_teams(
         )
         for component in components:
             component_id = component["component_id"]
-            config = db.get_config(component_id=component_id)
-            if config is not None:
-                team_config = config.get("config")
-                if team_config is not None:
-                    if "id" not in team_config:
-                        team_config["id"] = component_id
-                    team = Team.from_dict(team_config, db=db, registry=registry)
-                    team.id = component_id
-                    team._version = component.get("current_version")
-                    team._stage = config.get("stage")
-                    teams.append(team)
+            try:
+                config = db.get_config(component_id=component_id)
+                if config is not None:
+                    team_config = config.get("config")
+                    if team_config is not None:
+                        if "id" not in team_config:
+                            team_config["id"] = component_id
+                        team = Team.from_dict(team_config, db=db, registry=registry)
+                        team.id = component_id
+                        team._version = component.get("current_version")
+                        team._stage = config.get("stage")
+                        teams.append(team)
+            except Exception as e:
+                log_error(f"Error loading Team {component_id} from database: {str(e)}")
+                continue
         return teams
 
     except Exception as e:
