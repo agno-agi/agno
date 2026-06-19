@@ -71,6 +71,7 @@ from agno.run.cancel import (
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
+from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -1932,7 +1933,7 @@ async def _arun_background(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
-    run_index = len(agent_session.runs or []) - 1
+    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
     await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
 
@@ -2023,7 +2024,7 @@ async def _arun_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
-    run_index = len(agent_session.runs or []) - 1
+    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
     await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
 
@@ -5097,26 +5098,6 @@ def _build_cancel_terminal_events(
     return cancelled_event, completed_event
 
 
-def _resolve_run_index(session: AgentSession, run: RunOutput) -> Optional[int]:
-    """Find the position of ``run`` within ``session.runs``.
-
-    Called after ``session.upsert_run(run=...)``. Returns the 0-based index of
-    the run that matches ``run.run_id``. Falls back to ``len(runs) - 1`` if no
-    match is found (defensive: upsert_run always places the run somewhere) or
-    ``None`` if there are no runs.
-    """
-    runs = session.runs or []
-    if not runs:
-        return None
-    target_id = run.run_id
-    if target_id is not None:
-        for idx, existing in enumerate(runs):
-            existing_id = existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
-            if existing_id == target_id:
-                return idx
-    return len(runs) - 1
-
-
 def cleanup_and_store(
     agent: Agent,
     run_response: RunOutput,
@@ -5155,7 +5136,7 @@ def cleanup_and_store(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
-    run_index = _resolve_run_index(session, storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5220,7 +5201,7 @@ async def acleanup_and_store(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
-    run_index = _resolve_run_index(session, storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
