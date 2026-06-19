@@ -6,10 +6,14 @@ scope terms (``agents:*:read``, ``agents:research-agent:run``,
 ``agent_os:admin``). The decision engine underneath is agno's own
 :class:`~agno.os.authz.native_engine.NativePolicyEngine` (deny-overrides RBAC, no
 third-party dependency). The engine is swappable behind the :class:`PolicyEngine`
-port. A change persists and takes effect on the next request — and, when DB-backed,
-across every worker/replica, because decisions read the DB fresh (no in-process
-cache to go stale).
+port. A change persists and takes effect on the next request across every
+worker/replica, because decisions read the DB fresh (no in-process cache to go
+stale).
 
+A DB is **required** — managed roles must be persisted, and an in-memory store
+can't stay consistent across the replicas an AgentOS deployment runs. Give the
+store a DB directly (``db=``/``db_url=``) or let AgentOS adopt the OS DB via
+``AuthorizationConfig(role_store=...)``; without one, every operation raises.
 Persistence to a DB needs SQLAlchemy: ``pip install "agno[roles]"`` (or ``agno[os]``).
 
 Example::
@@ -36,7 +40,9 @@ Example::
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
+from agno.os.authz._db import NO_DB_MESSAGE
 from agno.os.authz._db import engine_from_db as _engine_from_db
+from agno.os.authz._db import engine_from_url as _engine_from_url
 from agno.os.authz.audit import DEFAULT_AUDIT_SORT_FIELD, DEFAULT_AUDIT_SORT_ORDER
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, normalize_roles_claim
 
@@ -84,7 +90,9 @@ class ManagedRoleStore:
             db_url: SQLAlchemy URL for the DB that holds the policy (e.g.
                 ``postgresql+psycopg://...`` or ``sqlite:///roles.db``). Use your
                 own database. If omitted (and no ``db``/``engine``), the store is
-                in-memory (not persisted) — fine for tests, not for production.
+                unbound and must be bound before use — by AgentOS adopting the OS DB
+                via ``role_store=``, or it raises. A DB is required; there is no
+                in-memory mode (it couldn't stay consistent across replicas).
             roles_claim: JWT claim carrying a caller's roles (the external-IdP
                 case). When absent, roles come from this store's own assignments
                 (the no-IdP case). Both are served by the same store.
@@ -115,19 +123,15 @@ class ManagedRoleStore:
         self._audit = audit
 
         # Role metadata (display name / description / is_default / timestamps).
-        # The policy engine only stores policies, so metadata needs its own table;
-        # reuse the same DB when one is configured, else keep it in memory.
-        self._meta_mem: Optional[Dict[str, dict]] = None
-        self._meta_engine: Any = None  # SQLAlchemy Engine when db-backed, else None
+        # The policy engine only stores policies, so metadata needs its own table in
+        # the same DB. Like the engine, it requires a DB — it may arrive later via
+        # attach_db(), so it stays unbound (engine None) until then.
+        self._meta_engine: Any = None  # SQLAlchemy Engine once bound, else None
         self._meta_table: Any = None  # SQLAlchemy Table for authz_roles metadata
         if db is not None:
             self._init_meta_table(_engine_from_db(db))
         elif db_url is not None:
-            import sqlalchemy as sa
-
-            self._init_meta_table(sa.create_engine(db_url))
-        else:
-            self._meta_mem = {}
+            self._init_meta_table(_engine_from_url(db_url))
 
         if decision_log:
             import logging
@@ -178,25 +182,26 @@ class ManagedRoleStore:
         )
         metadata.create_all(self._meta_engine)
 
+    def _require_meta(self) -> None:
+        if self._meta_engine is None:
+            raise RuntimeError(NO_DB_MESSAGE)
+
     def _meta_get(self, slug: str) -> Optional[dict]:
-        if self._meta_mem is not None:
-            row = self._meta_mem.get(slug)
-            return dict(row) if row else None
+        self._require_meta()
         import sqlalchemy as sa
 
-        with self._meta_engine.connect() as conn:  # type: ignore[union-attr]
-            r = conn.execute(sa.select(self._meta_table).where(self._meta_table.c.slug == slug)).mappings().first()  # type: ignore[union-attr]
+        with self._meta_engine.connect() as conn:
+            r = conn.execute(sa.select(self._meta_table).where(self._meta_table.c.slug == slug)).mappings().first()
         return dict(r) if r else None
 
     def _meta_get_all(self) -> dict:
         """All metadata rows as ``{slug: row}`` in a single read, so list views
         don't do one SELECT per role (N+1)."""
-        if self._meta_mem is not None:
-            return {slug: dict(row) for slug, row in self._meta_mem.items()}
+        self._require_meta()
         import sqlalchemy as sa
 
-        with self._meta_engine.connect() as conn:  # type: ignore[union-attr]
-            rows = conn.execute(sa.select(self._meta_table)).mappings().all()  # type: ignore[union-attr]
+        with self._meta_engine.connect() as conn:
+            rows = conn.execute(sa.select(self._meta_table)).mappings().all()
         return {r["slug"]: dict(r) for r in rows}
 
     def _meta_upsert(
@@ -230,25 +235,21 @@ class ManagedRoleStore:
         return row
 
     def _meta_write(self, row: dict, insert: bool) -> None:
-        if self._meta_mem is not None:
-            self._meta_mem[row["slug"]] = dict(row)
-            return
+        self._require_meta()
         import sqlalchemy as sa
 
-        with self._meta_engine.begin() as conn:  # type: ignore[union-attr]
+        with self._meta_engine.begin() as conn:
             if insert:
-                conn.execute(sa.insert(self._meta_table).values(**row))  # type: ignore[union-attr]
+                conn.execute(sa.insert(self._meta_table).values(**row))
             else:
-                conn.execute(sa.update(self._meta_table).where(self._meta_table.c.slug == row["slug"]).values(**row))  # type: ignore[union-attr]
+                conn.execute(sa.update(self._meta_table).where(self._meta_table.c.slug == row["slug"]).values(**row))
 
     def _meta_delete(self, slug: str) -> None:
-        if self._meta_mem is not None:
-            self._meta_mem.pop(slug, None)
-            return
+        self._require_meta()
         import sqlalchemy as sa
 
-        with self._meta_engine.begin() as conn:  # type: ignore[union-attr]
-            conn.execute(sa.delete(self._meta_table).where(self._meta_table.c.slug == slug))  # type: ignore[union-attr]
+        with self._meta_engine.begin() as conn:
+            conn.execute(sa.delete(self._meta_table).where(self._meta_table.c.slug == slug))
 
     def _meta_or_default(self, slug: str) -> dict:
         """Metadata for a role, synthesising defaults for rows defined before
@@ -370,13 +371,11 @@ class ManagedRoleStore:
     def list_roles(self) -> List[str]:
         """All role slugs (those with policies and/or metadata)."""
         slugs = set(self._engine.list_roles())
-        if self._meta_mem is not None:
-            slugs |= set(self._meta_mem.keys())
-        elif self._meta_engine is not None:
+        if self._meta_engine is not None:
             import sqlalchemy as sa
 
             with self._meta_engine.connect() as conn:
-                slugs |= {r[0] for r in conn.execute(sa.select(self._meta_table.c.slug))}  # type: ignore[union-attr]
+                slugs |= {r[0] for r in conn.execute(sa.select(self._meta_table.c.slug))}
         return sorted(slugs)
 
     def list_roles_detailed(self) -> List[dict]:
@@ -425,6 +424,16 @@ class ManagedRoleStore:
     def roles_of(self, subject: str) -> List[str]:
         return self._engine.roles_of(subject)
 
+    @property
+    def is_bound(self) -> bool:
+        """True once the store has a DB for both its policy engine and its role
+        metadata (passed directly or adopted via :meth:`attach_db`). A custom
+        ``engine=`` is assumed to manage its own persistence, but the store still
+        needs a DB for the metadata (authz_roles) it owns."""
+        flag = getattr(self._engine, "is_bound", None)
+        engine_bound = bool(flag) if flag is not None else True
+        return engine_bound and self._meta_engine is not None
+
     def attach_db(self, db: Any) -> None:
         """Bind an agno ``Db`` to a store created without one, so managed roles
         persist in (and read fresh from) that DB. No-op if the store already has its
@@ -434,20 +443,14 @@ class ManagedRoleStore:
         if callable(attach):
             attach(db)
 
-        # Migrate in-memory role metadata (authz_roles) onto the same DB. Only when
-        # the store was created without a DB (meta is in-memory) and the db is SQL —
-        # mirrors the engine's own attach so policy, assignments, and metadata all
-        # land together. Leave metadata in-memory if the db isn't SQL-capable.
-        if self._meta_mem is not None:
+        # Bind the metadata table (authz_roles) to the same DB, mirroring the
+        # engine's own attach so policy, assignments, and metadata all land together.
+        # No-op if metadata is already bound or the db isn't SQL-capable.
+        if self._meta_engine is None:
             try:
-                meta_engine = _engine_from_db(db)
+                self._init_meta_table(_engine_from_db(db))
             except Exception:
                 return
-            pending = self._meta_mem
-            self._init_meta_table(meta_engine)
-            self._meta_mem = None  # route writes to the DB from here on
-            for row in pending.values():
-                self._meta_write(dict(row), insert=True)
 
     # ------------------------------------------------------------------ audit
     def audit_log(

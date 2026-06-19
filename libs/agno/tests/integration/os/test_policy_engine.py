@@ -11,6 +11,17 @@ from agno.os.authz.provider import AuthorizationContext
 from agno.os.authz.role_store import ManagedRoleStore
 
 
+def _db_url() -> str:
+    """A throwaway file-backed SQLite URL. Managed roles require a DB (no in-memory
+    mode); file-backed so the same DB is visible across the threads TestClient uses."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".authz.db")
+    os.close(fd)
+    return f"sqlite:///{path}"
+
+
 class DictPolicyEngine(PolicyEngine):
     """Minimal dict-backed engine — exact scope-string matching, admin override.
     Enough to show the store/provider delegate correctly through the port."""
@@ -72,7 +83,7 @@ class DictPolicyEngine(PolicyEngine):
 
 
 def test_store_runs_on_a_custom_engine_no_casbin():
-    store = ManagedRoleStore(engine=DictPolicyEngine())  # no casbin involved
+    store = ManagedRoleStore(engine=DictPolicyEngine(), db_url=_db_url())  # no casbin involved
 
     # agno-native surface works through the port
     store.set_role_scopes("viewer", ["agents:read"], name="Viewer", description="read only")
@@ -98,7 +109,7 @@ def test_store_runs_on_a_custom_engine_no_casbin():
 
 
 def test_patch_and_remove_through_engine():
-    store = ManagedRoleStore(engine=DictPolicyEngine())
+    store = ManagedRoleStore(engine=DictPolicyEngine(), db_url=_db_url())
     store.create_role("editor", name="Editor")
     store.patch_role_scopes("editor", upsert=["agents:read", "agents:run"])
     store.patch_role_scopes("editor", remove=["agents:run"])

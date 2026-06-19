@@ -116,6 +116,17 @@ from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 
 
+def _db_url() -> str:
+    """A throwaway file-backed SQLite URL. Managed roles require a DB (no in-memory
+    mode); file-backed so the same DB is visible across the threads TestClient uses."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".authz.db")
+    os.close(fd)
+    return f"sqlite:///{path}"
+
+
 def _os(role_store, user_store, **cfg):
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     return AgentOS(
@@ -135,7 +146,7 @@ def _os(role_store, user_store, **cfg):
 
 
 def test_users_api_crud_and_role_merge():
-    roles = ManagedRoleStore()
+    roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.assign("alice", "admin")
@@ -185,7 +196,7 @@ def test_users_api_crud_and_role_merge():
 
 
 def test_users_api_is_admin_only():
-    roles = ManagedRoleStore()
+    roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.assign("alice", "admin")
@@ -201,7 +212,7 @@ def test_users_api_is_admin_only():
 
 
 def test_disabled_user_is_denied_even_with_valid_token():
-    roles = ManagedRoleStore()
+    roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.assign("bob", "viewer")
     users = ManagedUserStore()
@@ -228,7 +239,7 @@ def test_disabled_user_is_denied_on_websocket():
     a disabled user with a valid token is rejected at WS authenticate."""
     import json as _json
 
-    roles = ManagedRoleStore()
+    roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("viewer", ["agents:*:read", "workflows:*:run"])
     roles.assign("bob", "viewer")
     users = ManagedUserStore()
@@ -258,7 +269,7 @@ def test_disabled_user_is_denied_on_websocket():
 
 
 def test_auto_provision_from_claims_at_the_gate():
-    roles = ManagedRoleStore()
+    roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("viewer", ["agents:*:read"])
     roles.assign("carol", "viewer")
     users = ManagedUserStore()

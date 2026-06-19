@@ -1064,11 +1064,19 @@ class AgentOS:
             role_store = self.authorization_config.role_store
             if role_store is not None:
                 # Managed-roles shortcut: use the store's provider, and default it to
-                # the OS database when it has none (no-op if it already has its own DB
-                # or the OS DB isn't SQL-capable). The config validator already
+                # the OS database when it has none. The config validator already
                 # rejects passing both role_store and authorization_provider.
                 if self.db is not None:
                     role_store.attach_db(self.db)
+                # Managed roles must be persisted: fail loudly now rather than ship a
+                # store that silently can't stay consistent across workers/replicas.
+                if not role_store.is_bound:
+                    raise ValueError(
+                        "AuthorizationConfig(role_store=...) needs a SQL database. The store "
+                        "has none and AgentOS has no SQL db to adopt (db= is missing or not "
+                        "SQL-capable). Pass db=/db_url= to the ManagedRoleStore, or give AgentOS "
+                        "a SQL database (e.g. SqliteDb/PostgresDb) so the store can adopt it."
+                    )
                 authorization_provider = role_store.provider
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")

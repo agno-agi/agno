@@ -24,6 +24,17 @@ SECRET = "managed-roles-test-secret-at-least-256-bits-long-xxxxx"
 OS_ID = "managed-roles-test-os"
 
 
+def _db_url() -> str:
+    """A throwaway file-backed SQLite URL. Managed roles require a DB (no in-memory
+    mode); file-backed so the same DB is visible across the threads TestClient uses."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".authz.db")
+    os.close(fd)
+    return f"sqlite:///{path}"
+
+
 def _token(sub: str) -> str:
     return jwt.encode(
         {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
@@ -55,7 +66,7 @@ def _auth(sub: str) -> dict:
 
 
 def test_role_scopes_enforced_through_pipeline():
-    store = ManagedRoleStore()  # in-memory
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.set_role_scopes("admin", ["agent_os:admin"])
     store.assign("bob", "viewer")
@@ -73,14 +84,14 @@ def test_role_scopes_enforced_through_pipeline():
 
 
 def test_unassigned_subject_is_denied():
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
     client = _build(store)
     assert client.get("/agents/research-agent", headers=_auth("nobody")).status_code == 403
 
 
 def test_runtime_grant_takes_effect_same_token():
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("member", ["agents:*:read", "agents:research-agent:run"])
     client = _build(store)
 
@@ -98,7 +109,7 @@ def test_runtime_grant_takes_effect_same_token():
 
 
 def test_per_resource_scope_is_granular():
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("member", ["agents:*:read", "agents:research-agent:run"])
     store.assign("bob", "member")
     client = _build(store)
@@ -111,7 +122,7 @@ def test_per_resource_scope_is_granular():
 
 def test_roles_from_external_idp_claim():
     """Roles carried on the token (external IdP) authorize against the same store."""
-    store = ManagedRoleStore(roles_claim="roles")
+    store = ManagedRoleStore(roles_claim="roles", db_url=_db_url())
     store.set_role_scopes("editor", ["agents:*:read", "agents:research-agent:run"])
     client = _build(store)
 
@@ -140,7 +151,7 @@ def test_non_resource_routes_are_gated_sessions():
     db = InMemoryDb()
     db.upsert_session(AgentSession(session_id="s1", agent_id="research-agent", user_id="u"))
 
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("support", ["sessions:read"])  # read only
     store.set_role_scopes("operator", ["sessions:read", "sessions:delete"])
     store.set_role_scopes("admin", ["agent_os:admin"])
@@ -176,7 +187,7 @@ def test_non_resource_routes_are_gated_sessions():
 
 
 def test_management_helpers():
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("a", ["agents:*:read"])
     store.set_role_scopes("b", ["teams:*:read"])
     store.assign("bob", "a")
@@ -194,7 +205,7 @@ def test_management_helpers():
 
 # --------------------------------------------------------- metadata + effects
 def test_role_metadata_is_tracked():
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"], name="Viewer", description="read-only")
 
     rec = store.get_role("viewer")
@@ -215,7 +226,7 @@ def test_role_metadata_is_tracked():
 
 def test_allow_deny_effect_overrides():
     """A deny scope overrides an allow for the same action (deny-overrides)."""
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     # member can read any agent, but is explicitly denied reading the secret one
     store.set_role_scopes(
         "member",
@@ -239,13 +250,11 @@ def test_allow_deny_effect_overrides():
 
 def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
     """#4: AuthorizationConfig(role_store=...) wires the store's provider (no manual
-    .provider). #3: a store with no DB adopts the OS DB, migrating in-memory roles."""
+    .provider). #3: a store with no DB of its own adopts the OS DB when AgentOS wires
+    it (a DB is required — there is no in-memory mode), and roles persist there."""
     from agno.db.sqlite import SqliteDb
 
-    store = ManagedRoleStore()  # no DB -> in-memory for now
-    store.set_role_scopes("viewer", ["agents:*:read"], name="Viewer", description="read-only")
-    store.assign("bob", "viewer")
-
+    store = ManagedRoleStore()  # no DB yet -> AgentOS will adopt the OS DB
     db = SqliteDb(db_file=str(tmp_path / "os.db"))
     agent = Agent(id="research-agent", name="R", db=db)
     agent_os = AgentOS(
@@ -258,19 +267,23 @@ def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            role_store=store,  # <- the shortcut; AgentOS uses store.provider
+            role_store=store,  # <- the shortcut; AgentOS adopts the OS db + uses store.provider
         ),
     )
-    client = TestClient(agent_os.get_app())
+    client = TestClient(agent_os.get_app())  # adopts the OS DB -> store is now bound
+
+    # configure after wiring (the store is bound to the OS DB now)
+    store.set_role_scopes("viewer", ["agents:*:read"], name="Viewer", description="read-only")
+    store.assign("bob", "viewer")
+    assert store.is_bound is True
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
     assert client.get("/agents/research-agent", headers=_auth("nobody")).status_code == 403
 
-    # the store adopted the OS DB and migrated its in-memory roles -> persisted,
-    # so a fresh store on the same DB sees them
+    # roles persisted to the OS DB -> a fresh store on the same DB sees them
     fresh = ManagedRoleStore(db=db)
     assert fresh.roles_of("bob") == ["viewer"]
     assert fresh.get_role_scopes("viewer") == ["agents:read"]
-    # role metadata migrated too, not just policy + assignments
+    # role metadata persisted too, not just policy + assignments
     rec = fresh.get_role("viewer")
     assert rec is not None and rec["name"] == "Viewer" and rec["description"] == "read-only"
 
@@ -280,3 +293,25 @@ def test_role_store_and_provider_are_mutually_exclusive():
 
     with pytest.raises(ValueError, match="not both"):
         AuthorizationConfig(role_store=ManagedRoleStore(), authorization_provider=ScopeAuthorizationProvider())
+
+
+def test_role_store_without_any_db_fails_loud_at_wiring(tmp_path):
+    """A managed store with no DB, wired into an AgentOS that also has no SQL DB,
+    must fail loudly rather than silently run an in-memory store that can't stay
+    consistent across replicas."""
+    store = ManagedRoleStore()  # no DB
+    agent = Agent(id="research-agent", name="R", db=InMemoryDb())  # not SQL-capable
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            role_store=store,
+        ),
+    )
+    with pytest.raises(ValueError, match="needs a SQL database"):
+        agent_os.get_app()
