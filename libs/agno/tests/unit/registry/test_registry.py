@@ -483,6 +483,56 @@ class TestRegistryIntegration:
         if agent.tools:
             assert len(agent.tools) == 1
 
+    def test_registry_preserves_model_connection_params(self):
+        """Reconstructing an agent reuses the registered model instance, keeping connection params.
+
+        Regression: a serialized model dict only round-trips id/name/provider, so rebuilding from it
+        drops azure_endpoint/base_url and credentials. The registry holds the live instance, so
+        from_dict should prefer it. See Model.to_dict / Registry.get_model.
+        """
+        from agno.agent.agent import Agent
+        from agno.models.azure import AzureOpenAI
+
+        model = AzureOpenAI(
+            id="gpt-4.1-mini",
+            api_version="2024-12-01-preview",
+            azure_endpoint="https://example.cognitiveservices.azure.com",
+        )
+        registry = Registry(models=[model])
+
+        # The stored config only carries the serialized model dict (id/name/provider).
+        config = {
+            "id": "test-agent",
+            "name": "Test Agent",
+            "model": model.to_dict(),
+        }
+        assert "azure_endpoint" not in config["model"]  # confirm the gap the fix bridges
+
+        agent = Agent.from_dict(config, registry=registry)
+
+        # The live, fully-configured instance is reused -- not a bare rebuild.
+        assert agent.model is model
+        assert agent.model.azure_endpoint == "https://example.cognitiveservices.azure.com"
+        assert agent.model.api_version == "2024-12-01-preview"
+
+    def test_from_dict_without_registry_rebuilds_bare_model(self):
+        """Without a registry, the model is still rebuilt from its dict (unchanged fallback)."""
+        from agno.agent.agent import Agent
+        from agno.models.azure import AzureOpenAI
+
+        config = {
+            "id": "test-agent",
+            "name": "Test Agent",
+            "model": {"id": "gpt-4.1-mini", "name": "AzureOpenAI", "provider": "Azure"},
+        }
+
+        agent = Agent.from_dict(config)
+
+        assert isinstance(agent.model, AzureOpenAI)
+        assert agent.model.id == "gpt-4.1-mini"
+        # No registered instance to source connection params from.
+        assert agent.model.azure_endpoint is None
+
     def test_registry_schema_with_agent(self):
         """Test registry schema lookup with agent config."""
         reg = Registry(schemas=[SampleInputSchema, SampleOutputSchema])
@@ -642,6 +692,61 @@ class TestGetDb:
 
         not_found2 = reg.get_db("TEST-DB")
         assert not_found2 is None
+
+
+# =============================================================================
+# get_model() Tests
+# =============================================================================
+
+
+class TestGetModel:
+    """Tests for Registry.get_model() method."""
+
+    def _model(self, id, provider, name):
+        m = MagicMock()
+        m.id = id
+        m.provider = provider
+        m.name = name
+        return m
+
+    def test_get_model_found_by_id(self):
+        """A single registered model is returned by id alone."""
+        model = self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")
+        reg = Registry(models=[model])
+
+        assert reg.get_model("gpt-4.1-mini") is model
+
+    def test_get_model_not_found(self):
+        """An unknown id returns None so the caller can fall back to dict reconstruction."""
+        reg = Registry(models=[self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")])
+
+        assert reg.get_model("does-not-exist") is None
+
+    def test_get_model_empty_registry(self, basic_registry):
+        """An empty registry returns None."""
+        assert basic_registry.get_model("gpt-4.1-mini") is None
+
+    def test_get_model_disambiguates_by_provider_and_name(self):
+        """Models sharing an id are disambiguated by provider/name (e.g. OpenAIChat vs Responses)."""
+        chat = self._model("gpt-5.5", "OpenAI", "OpenAIChat")
+        responses = self._model("gpt-5.5", "OpenAI", "OpenAIResponses")
+        reg = Registry(models=[chat, responses])
+
+        assert reg.get_model("gpt-5.5", provider="OpenAI", name="OpenAIChat") is chat
+        assert reg.get_model("gpt-5.5", provider="OpenAI", name="OpenAIResponses") is responses
+
+    def test_get_model_no_match_on_provider_returns_none(self):
+        """When provider is given and no registered model matches, None is returned."""
+        model = self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")
+        reg = Registry(models=[model])
+
+        assert reg.get_model("gpt-4.1-mini", provider="OpenAI") is None
+
+    def test_get_model_empty_id(self):
+        """A falsy id returns None."""
+        reg = Registry(models=[self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")])
+
+        assert reg.get_model("") is None
 
 
 # =============================================================================

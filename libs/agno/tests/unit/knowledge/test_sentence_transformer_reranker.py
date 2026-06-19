@@ -94,6 +94,17 @@ class TestSentenceTransformerRerankerCaching:
             model_kwargs=model_kwargs,
         )
 
+    def test_client_uses_supplied_cross_encoder(self, mock_cross_encoder):
+        """A caller-provided CrossEncoder should be reused instead of creating a new one."""
+        from agno.knowledge.reranker.sentence_transformer import SentenceTransformerReranker
+
+        mock_instance = MagicMock()
+
+        reranker = SentenceTransformerReranker(cross_encoder=mock_instance)
+
+        assert reranker.client is mock_instance
+        mock_cross_encoder.assert_not_called()
+
 
 class TestSentenceTransformerRerankerBehavior:
     """Tests for correct reranking behavior."""
