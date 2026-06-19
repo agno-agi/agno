@@ -766,14 +766,22 @@ class Knowledge(RemoteKnowledge):
     def remove_all_content(self, user_id: Optional[str] = None):
         contents, _ = self.get_content(user_id=user_id)
         for content in contents:
-            if content.id is not None:
-                self.remove_content_by_id(content.id, user_id=user_id)
+            if content.id is None:
+                continue
+            # A scoped caller never deletes shared (unowned) rows.
+            if user_id is not None and content.user_id is None:
+                continue
+            self.remove_content_by_id(content.id, user_id=user_id)
 
     async def aremove_all_content(self, user_id: Optional[str] = None):
         contents, _ = await self.aget_content(user_id=user_id)
         for content in contents:
-            if content.id is not None:
-                await self.aremove_content_by_id(content.id, user_id=user_id)
+            if content.id is None:
+                continue
+            # A scoped caller never deletes shared (unowned) rows.
+            if user_id is not None and content.user_id is None:
+                continue
+            await self.aremove_content_by_id(content.id, user_id=user_id)
 
     def remove_vector_by_id(self, id: str) -> bool:
         from agno.vectordb import VectorDb

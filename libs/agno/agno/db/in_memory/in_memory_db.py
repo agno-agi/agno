@@ -676,7 +676,7 @@ class InMemoryDb(BaseDb):
             raise e
 
     # -- Metrics methods --
-    def calculate_metrics(self) -> Optional[list[dict]]:
+    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
         try:
             starting_date = self._get_metrics_calculation_starting_date(self._metrics)
@@ -716,7 +716,9 @@ class InMemoryDb(BaseDb):
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Upsert each record by the full (user_id, date,
                 # aggregation_period) key.
-                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                for metrics_record in calculate_date_metrics(
+                    date_to_process, sessions_for_date, user_isolation=user_isolation
+                ):
                     existing_record_idx = None
                     for i, existing_metric in enumerate(self._metrics):
                         if (
@@ -931,9 +933,7 @@ class InMemoryDb(BaseDb):
 
             # Owner scoping: drop rows the caller isn't allowed to see.
             if user_id is not None:
-                knowledge_items = [
-                    item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)
-                ]
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -1455,4 +1455,3 @@ class InMemoryDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for InMemoryDb")
-

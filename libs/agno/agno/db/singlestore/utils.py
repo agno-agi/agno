@@ -224,17 +224,18 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     return results
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isolation: bool = False) -> List[dict]:
     """Calculate metrics for the given single date, bucketed per ``user_id``.
 
     Each session is attributed to its owning user. Sessions without a
     ``user_id`` aggregate under the sentinel empty-string bucket — that
     bucket is what RBAC-off deployments see and looks identical to the
-    legacy global-metrics shape (one row per date).
+    global-metrics shape (one row per date).
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
+        user_isolation: If ``True``, bucket metrics per ``user_id``; otherwise one row per date (default).
 
     Returns:
         A list of per-user metrics records.
@@ -261,6 +262,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
                 "reasoning_tokens": 0,
             },
             "model_counts": {},
+            "user_ids": set(),
         }
 
     session_types = [
@@ -275,8 +277,11 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
         sessions = sessions_data.get(session_type, []) or []
 
         for session in sessions:
-            bucket_key = session.get("user_id") or ""
+            session_user_id = session.get("user_id") or ""
+            bucket_key = session_user_id if user_isolation else ""
             bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            if session_user_id:
+                bucket["user_ids"].add(session_user_id)
             bucket[sessions_count_key] += 1
 
             runs = session.get("runs", []) or []
@@ -301,7 +306,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
             model_id, model_provider = model.rsplit(":", 1)
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
-        users_count = 0 if user_id == "" else 1
+        users_count = len(bucket["user_ids"])
 
         records.append(
             {

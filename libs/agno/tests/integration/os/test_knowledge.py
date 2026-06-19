@@ -164,9 +164,12 @@ def test_upload_content_invalid_json(test_app):
         assert "id" in data
 
 
-def test_edit_content_success(test_app, mock_knowledge):
+def test_edit_content_success(test_app, mock_knowledge, mock_content_row):
     """Test successful content editing."""
     content_id = str(uuid4())
+
+    # PATCH now pre-checks ownership; return a valid row so the gate passes.
+    mock_knowledge.contents_db.get_knowledge_content.return_value = mock_content_row
 
     # Mock the return value of patch_content
     mock_content_dict = {
@@ -199,10 +202,12 @@ def test_edit_content_success(test_app, mock_knowledge):
     mock_knowledge.patch_content.assert_called_once()
 
 
-def test_edit_content_with_invalid_reader(test_app, mock_knowledge):
+def test_edit_content_with_invalid_reader(test_app, mock_knowledge, mock_content_row):
     """Test content editing with invalid reader_id."""
     content_id = str(uuid4())
     mock_knowledge.readers = {"valid_reader": Mock()}
+    # PATCH pre-checks ownership before validating the reader_id.
+    mock_knowledge.contents_db.get_knowledge_content.return_value = mock_content_row
 
     response = test_app.patch(
         f"/knowledge/content/{content_id}", data={"name": "Updated Content", "reader_id": "invalid_reader"}
@@ -270,8 +275,8 @@ def test_delete_content_by_id(test_app, mock_knowledge, mock_content_row):
     data = response.json()
     assert data["id"] == mock_content_row.id
 
-    # Verify knowledge.remove_content_by_id was called
-    mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id)
+    # Verify knowledge.remove_content_by_id was called (scoped by owner)
+    mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id, user_id=None)
 
 
 def test_delete_all_content(test_app, mock_knowledge):

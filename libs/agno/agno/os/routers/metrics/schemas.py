@@ -10,6 +10,7 @@ class DayAggregatedMetrics(BaseModel):
     """Aggregated metrics for a given day"""
 
     id: str = Field(..., description="Unique identifier for the metrics record")
+    user_id: Optional[str] = Field(None, description="Owner of this metrics bucket")
 
     agent_runs_count: int = Field(..., description="Total number of agent runs", ge=0)
     agent_sessions_count: int = Field(..., description="Total number of agent sessions", ge=0)
@@ -29,11 +30,13 @@ class DayAggregatedMetrics(BaseModel):
     def from_dict(cls, metrics_dict: Dict[str, Any]) -> "DayAggregatedMetrics":
         created_at = to_utc_datetime(metrics_dict.get("created_at")) or datetime.now(timezone.utc)
         updated_at = to_utc_datetime(metrics_dict.get("updated_at", created_at)) or created_at
+        user_id = metrics_dict.get("user_id") or None
         return cls(
             agent_runs_count=metrics_dict.get("agent_runs_count", 0),
             agent_sessions_count=metrics_dict.get("agent_sessions_count", 0),
             date=metrics_dict.get("date", datetime.now(timezone.utc)),
             id=metrics_dict.get("id", ""),
+            user_id=user_id,
             model_metrics=metrics_dict.get("model_metrics", {}),
             team_runs_count=metrics_dict.get("team_runs_count", 0),
             team_sessions_count=metrics_dict.get("team_sessions_count", 0),

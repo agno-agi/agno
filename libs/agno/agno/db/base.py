@@ -291,7 +291,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def calculate_metrics(self) -> Optional[Any]:
+    def calculate_metrics(self, user_isolation: bool = False) -> Optional[Any]:
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -1447,7 +1447,7 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def calculate_metrics(self) -> Optional[Any]:
+    async def calculate_metrics(self, user_isolation: bool = False) -> Optional[Any]:
         raise NotImplementedError
 
     # --- Knowledge ---
@@ -1933,15 +1933,11 @@ class AsyncBaseDb(ABC):
     # --- Schedules (Optional) ---
     # See "Notes on user_id" on the sync BaseDb above. Same semantics here.
 
-    async def get_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    async def get_schedule_by_name(
-        self, name: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by name."""
         raise NotImplementedError
 
@@ -1991,9 +1987,7 @@ class AsyncBaseDb(ABC):
         """Update a schedule run record. SYSTEM CONTEXT — executor writes."""
         raise NotImplementedError
 
-    async def get_schedule_run(
-        self, run_id: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
         raise NotImplementedError
 

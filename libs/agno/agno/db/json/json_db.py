@@ -794,7 +794,7 @@ class JsonDb(BaseDb):
             raise e
 
     # -- Metrics methods --
-    def calculate_metrics(self) -> Optional[list[dict]]:
+    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
         try:
             metrics = self._read_json_file(self.metrics_table_name, create_table_if_not_found=True)
@@ -835,7 +835,9 @@ class JsonDb(BaseDb):
                 # calculate_date_metrics now returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Upsert each by the full (user_id, date, period) key.
-                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                for metrics_record in calculate_date_metrics(
+                    date_to_process, sessions_for_date, user_isolation=user_isolation
+                ):
                     existing_record_idx = None
                     for i, existing_metric in enumerate(metrics):
                         if (
@@ -1063,9 +1065,7 @@ class JsonDb(BaseDb):
 
             # Owner scoping: drop rows the caller isn't allowed to see.
             if user_id is not None:
-                knowledge_items = [
-                    item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)
-                ]
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -1921,4 +1921,3 @@ class JsonDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for JsonDb")
-

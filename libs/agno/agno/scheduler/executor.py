@@ -273,12 +273,10 @@ class ScheduleExecutor:
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
 
-            # Impersonate the schedule owner so the run + downstream session /
-            # traces / metrics are attributed to them, not to the internal
-            # ``__scheduler__`` service identity. The agent run route only
-            # trusts this form-field user_id when the caller authenticates as
-            # the internal service (see ``agents/router.py``).
-            if schedule.user_id and "user_id" not in form_payload:
+            # Owner is authoritative: ignore any user_id in the user-controlled
+            # payload so a schedule can't impersonate another user.
+            form_payload.pop("user_id", None)
+            if schedule.user_id:
                 form_payload["user_id"] = schedule.user_id
 
             resource_type = match.group(1)

@@ -95,12 +95,9 @@ METRICS_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
-    "_unique_constraints": [
-        {
-            "name": "uq_metrics_user_date_period",
-            "columns": ["user_id", "date", "aggregation_period"],
-        }
-    ],
+    # No DB-level UNIQUE(user_id, date, aggregation_period): a SingleStore
+    # columnstore table rejects a multi-column UNIQUE alongside the PRIMARY KEY.
+    # Uniqueness is enforced in bulk_upsert_metrics (read-before-write) instead.
 }
 
 CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {

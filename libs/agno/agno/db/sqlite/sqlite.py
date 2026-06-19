@@ -1861,7 +1861,7 @@ class SqliteDb(BaseDb):
 
         return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
-    def calculate_metrics(self) -> Optional[list[dict]]:
+    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1920,7 +1920,9 @@ class SqliteDb(BaseDb):
                 # calculate_date_metrics now returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Flatten into the bulk-upsert list.
-                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
+                metrics_records.extend(
+                    calculate_date_metrics(date_to_process, sessions_for_date, user_isolation=user_isolation)
+                )
 
             if metrics_records:
                 with self.Session() as sess, sess.begin():
@@ -4924,13 +4926,7 @@ class SqliteDb(BaseDb):
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(base_filter)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
