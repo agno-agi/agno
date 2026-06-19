@@ -1,44 +1,24 @@
-"""Per-user knowledge isolation with Pinecone.
+"""
+Per-User Knowledge Isolation with Redis
+=======================================
+Give each user a private view of one shared knowledge base. Documents a user
+uploads are visible only to them; documents uploaded with no user are shared
+with everyone, and an admin (no user id) sees all of it.
 
-Demonstrates the two halves of vector-DB isolation: Alice/Bob private
-ownership plus an admin shared bucket.
+Redis does this by storing the owner as a tag field and filtering on it,
+treating chunks with no tag as shared.
 
-How it works under the hood (Pinecone):
-
-  * Each vector stores ``user_id`` in its metadata payload.
-  * Reads pass a server-side ``filter`` to ``index.query``:
-    ``{"$or": [{"user_id": {"$eq": "alice"}}, {"user_id": {"$exists":
-    False}}]}``. The Pinecone planner uses indexed metadata to prune
-    the candidate set before ANN, so top-K math stays correct.
-  * Shared content stores no ``user_id`` field; the ``$exists: False``
-    branch makes it discoverable.
-  * ``user_id=None`` drops the predicate entirely.
-
-Prerequisites:
-
-  * Pinecone account + serverless index. The cookbook auto-creates the
-    index if missing.
-  * Environment variables::
-
-        export PINECONE_API_KEY=...
-
-  * ``OPENAI_API_KEY`` set in your environment.
-
-Run:
-
-    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/pinecone.py
+Setup: ./cookbook/scripts/run_redis.sh
 """
 
 import asyncio
-import os
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.pineconedb import PineconeDb
-
-INDEX_NAME = "per-user-isolation-demo"
+from agno.vectordb.redis import RedisDB
+from agno.vectordb.search import SearchType
 
 
 def _write_temp_doc(name: str, body: str) -> str:
@@ -48,14 +28,11 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    vector_db = PineconeDb(
-        name=INDEX_NAME,
-        dimension=1536,
-        metric="cosine",
-        spec={"serverless": {"cloud": "aws", "region": "us-east-1"}},
-        api_key=os.getenv("PINECONE_API_KEY"),
+    vector_db = RedisDB(
+        index_name="per_user_isolation_demo",
+        redis_url="redis://localhost:6379",
+        search_type=SearchType.vector,
     )
-    # Pinecone-side index reuse is fine; just clear vectors from a prior run.
     try:
         await vector_db.async_drop()
     except Exception:
@@ -64,7 +41,7 @@ async def main() -> None:
 
     knowledge = Knowledge(
         name="per_user_demo",
-        description="Per-user RAG isolation demo (Pinecone)",
+        description="Per-user RAG isolation demo (Redis)",
         vector_db=vector_db,
     )
 
@@ -93,28 +70,36 @@ async def main() -> None:
     )
 
     print("\n=== Direct asearch tests ===\n")
-    alice_salary = await knowledge.asearch(query="What is Alice's salary?", user_id="alice")
+    alice_salary = await knowledge.asearch(
+        query="What is Alice's salary?", user_id="alice"
+    )
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+        print(f"  - {d.content[:80]}")
 
-    alice_about_bob = await knowledge.asearch(query="What is Bob's salary?", user_id="alice")
+    alice_about_bob = await knowledge.asearch(
+        query="What is Bob's salary?", user_id="alice"
+    )
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
-    bob_chunks = [d for d in alice_about_bob if d.meta_data.get("user_id") == "bob"]
-    assert not bob_chunks, "Isolation broken: Alice's retrieval surfaced Bob's chunks"
-    print("  isolation holds: Bob's chunks are NOT visible to Alice")
+        print(f"  - {d.content[:80]}")
+    # This backend keeps user_id internal (not surfaced in returned meta_data),
+    # so verify isolation by content rather than by reading an owner off the row.
+    bob_leak = [d for d in alice_about_bob if "215,000" in d.content]
+    assert not bob_leak, "Isolation broken: Alice's retrieval surfaced Bob's salary"
+    print("  isolation holds: Bob's salary is NOT visible to Alice")
 
-    bob_holidays = await knowledge.asearch(query="When is the company closed?", user_id="bob")
+    bob_holidays = await knowledge.asearch(
+        query="When is the company closed?", user_id="bob"
+    )
     print(f"\nBob asks about holidays -> {len(bob_holidays)} results")
     for d in bob_holidays:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+        print(f"  - {d.content[:80]}")
 
     admin_view = await knowledge.asearch(query="salary", user_id=None)
     print(f"\nAdmin asks about salary (user_id=None) -> {len(admin_view)} results")
     for d in admin_view:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+        print(f"  - {d.content[:80]}")
 
     print("\n=== Agent-mediated test ===\n")
     alice_agent = Agent(

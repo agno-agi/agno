@@ -53,7 +53,7 @@ class Cassandra(VectorDb):
         self.table = AgnoMetadataVectorCassandraTable(
             session=self.session,
             keyspace=self.keyspace,
-            vector_dimension=1024,
+            vector_dimension=self.embedder.dimensions or 1024,
             table=self.table_name,
             primary_key_type="TEXT",
         )

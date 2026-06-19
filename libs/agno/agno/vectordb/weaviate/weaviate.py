@@ -296,7 +296,7 @@ class Weaviate(VectorDb):
                     "content_id": document.content_id,
                     "content_hash": content_hash,
                     # user_id is a first-class property so the scope filter can match it.
-                    self.USER_ID_KEY: user_id,
+                    self.USER_ID_KEY: user_id or None,
                 },
                 vector=document.embedding,
                 uuid=doc_uuid,
@@ -395,7 +395,7 @@ class Weaviate(VectorDb):
                         "meta_data": meta_data_str,
                         "content_id": document.content_id,
                         "content_hash": content_hash,
-                        self.USER_ID_KEY: user_id,
+                        self.USER_ID_KEY: user_id or None,
                     }
 
                     # Use the API correctly - properties, vector and uuid are separate parameters

@@ -1,41 +1,24 @@
-"""Per-user knowledge isolation with Redis (RediSearch).
+"""
+Per-User Knowledge Isolation with Pinecone
+==========================================
+Give each user a private view of one shared knowledge base. Documents a user
+uploads are visible only to them; documents uploaded with no user are shared
+with everyone, and an admin (no user id) sees all of it.
 
-Demonstrates the two halves of vector-DB isolation: Alice/Bob private
-ownership plus an admin shared bucket.
-
-How it works under the hood (Redis):
-
-  * Each indexed document carries a ``user_id`` TAG field. The wrapper
-    uses a ``\\x1f`` separator and ``case_sensitive=True`` so multi-
-    character ids stay atomic.
-  * Reads pass a RediSearch filter ``(@user_id:{alice}) | ismissing
-    (@user_id)``. The ``ismissing`` clause makes shared content
-    discoverable to scoped readers.
-  * Owner tag values escape ``|`` so OIDC-style ids like ``auth0|alice``
-    don't parse as tag-union.
-  * ``user_id=None`` drops the predicate entirely.
-
-Prerequisites:
-
-  * Redis Stack (with RediSearch + RedisJSON) running locally::
-
-        docker run -p 6379:6379 redis/redis-stack-server:latest
-
-  * ``OPENAI_API_KEY`` set in your environment.
-
-Run:
-
-    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/redis.py
+Pinecone does this by storing the owner in each vector's metadata and filtering
+on it, treating vectors with no owner as shared.
 """
 
 import asyncio
+import os
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.redis import RedisDB
-from agno.vectordb.search import SearchType
+from agno.vectordb.pineconedb import PineconeDb
+
+INDEX_NAME = "per-user-isolation-demo"
 
 
 def _write_temp_doc(name: str, body: str) -> str:
@@ -45,11 +28,14 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    vector_db = RedisDB(
-        index_name="per_user_isolation_demo",
-        redis_url="redis://localhost:6379",
-        search_type=SearchType.vector,
+    vector_db = PineconeDb(
+        name=INDEX_NAME,
+        dimension=1536,
+        metric="cosine",
+        spec={"serverless": {"cloud": "aws", "region": "us-east-1"}},
+        api_key=os.getenv("PINECONE_API_KEY"),
     )
+    # Pinecone-side index reuse is fine; just clear vectors from a prior run.
     try:
         await vector_db.async_drop()
     except Exception:
@@ -58,7 +44,7 @@ async def main() -> None:
 
     knowledge = Knowledge(
         name="per_user_demo",
-        description="Per-user RAG isolation demo (Redis)",
+        description="Per-user RAG isolation demo (Pinecone)",
         vector_db=vector_db,
     )
 
@@ -87,12 +73,16 @@ async def main() -> None:
     )
 
     print("\n=== Direct asearch tests ===\n")
-    alice_salary = await knowledge.asearch(query="What is Alice's salary?", user_id="alice")
+    alice_salary = await knowledge.asearch(
+        query="What is Alice's salary?", user_id="alice"
+    )
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
         print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
 
-    alice_about_bob = await knowledge.asearch(query="What is Bob's salary?", user_id="alice")
+    alice_about_bob = await knowledge.asearch(
+        query="What is Bob's salary?", user_id="alice"
+    )
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
         print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
@@ -100,7 +90,9 @@ async def main() -> None:
     assert not bob_chunks, "Isolation broken: Alice's retrieval surfaced Bob's chunks"
     print("  isolation holds: Bob's chunks are NOT visible to Alice")
 
-    bob_holidays = await knowledge.asearch(query="When is the company closed?", user_id="bob")
+    bob_holidays = await knowledge.asearch(
+        query="When is the company closed?", user_id="bob"
+    )
     print(f"\nBob asks about holidays -> {len(bob_holidays)} results")
     for d in bob_holidays:
         print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")

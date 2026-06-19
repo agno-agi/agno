@@ -1,31 +1,14 @@
-"""Per-user knowledge isolation with SurrealDB.
+"""
+Per-User Knowledge Isolation with SurrealDB
+===========================================
+Give each user a private view of one shared knowledge base. Documents a user
+uploads are visible only to them; documents uploaded with no user are shared
+with everyone, and an admin (no user id) sees all of it.
 
-Demonstrates the two halves of vector-DB isolation: Alice/Bob private
-ownership plus an admin shared bucket.
+SurrealDB does this by storing the owner in a user_id field and filtering on it,
+treating chunks with no owner as shared.
 
-How it works under the hood (SurrealDB):
-
-  * Each record stores a ``user_id`` field. Shared content stores
-    ``NONE``.
-  * Reads bind a dedicated ``$scope_user_id`` parameter (separate from
-    any caller-supplied ``user_id`` filter so they can't collide):
-    ``WHERE (user_id = $scope_user_id OR user_id = NONE)``.
-  * The record id folds in ``user_id`` so two users' identical content
-    won't clobber each other.
-  * ``user_id=None`` drops the predicate entirely.
-
-Prerequisites:
-
-  * SurrealDB running locally::
-
-        docker run -p 8000:8000 surrealdb/surrealdb:latest \\
-          start --user root --pass root memory
-
-  * ``OPENAI_API_KEY`` set in your environment.
-
-Run:
-
-    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/surrealdb.py
+Setup: ./cookbook/scripts/run_surrealdb.sh
 """
 
 from pathlib import Path
@@ -92,25 +75,27 @@ def main() -> None:
     alice_salary = knowledge.search(query="What is Alice's salary?", user_id="alice")
     print(f"Alice asks about Alice's salary -> {len(alice_salary)} results")
     for d in alice_salary:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+        print(f"  - {d.content[:80]}")
 
     alice_about_bob = knowledge.search(query="What is Bob's salary?", user_id="alice")
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
-    bob_chunks = [d for d in alice_about_bob if d.meta_data.get("user_id") == "bob"]
-    assert not bob_chunks, "Isolation broken: Alice's retrieval surfaced Bob's chunks"
-    print("  isolation holds: Bob's chunks are NOT visible to Alice")
+        print(f"  - {d.content[:80]}")
+    # This backend keeps user_id internal (not surfaced in returned meta_data),
+    # so verify isolation by content rather than by reading an owner off the row.
+    bob_leak = [d for d in alice_about_bob if "215,000" in d.content]
+    assert not bob_leak, "Isolation broken: Alice's retrieval surfaced Bob's salary"
+    print("  isolation holds: Bob's salary is NOT visible to Alice")
 
     bob_holidays = knowledge.search(query="When is the company closed?", user_id="bob")
     print(f"\nBob asks about holidays -> {len(bob_holidays)} results")
     for d in bob_holidays:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+        print(f"  - {d.content[:80]}")
 
     admin_view = knowledge.search(query="salary", user_id=None)
     print(f"\nAdmin asks about salary (user_id=None) -> {len(admin_view)} results")
     for d in admin_view:
-        print(f"  - {d.content[:80]}  (owner={d.meta_data.get('user_id')!r})")
+        print(f"  - {d.content[:80]}")
 
     print("\n=== Agent-mediated test ===\n")
     alice_agent = Agent(

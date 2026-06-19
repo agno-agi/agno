@@ -1,41 +1,12 @@
-"""Per-user knowledge isolation with ChromaDB.
+"""
+Per-User Knowledge Isolation with LanceDB
+=========================================
+Give each user a private view of one shared knowledge base. Documents a user
+uploads are visible only to them; documents uploaded with no user are shared
+with everyone, and an admin (no user id) sees all of it.
 
-Same isolation contract as the pgvector / LanceDB cookbooks in this
-directory, against a different backend. The
-``Knowledge.asearch(user_id=...)`` API is identical — only the underlying
-primitive changes.
-
-Chroma uses its **native multi-tenancy primitive: one collection per
-tenant.** That's the vendor-recommended pattern for tenant isolation —
-chunks for Alice physically live in a different collection from chunks
-for Bob, so a query against Alice's collection cannot return Bob's
-content. This is materially simpler than (and immune to) the metadata
-filter quirks that other backends have.
-
-How it works under the hood:
-
-  * Insert with ``user_id="alice"`` → write to ``{table}__alice``.
-  * Insert with ``user_id=None``     → write to ``{table}`` (the BASE
-    collection, which doubles as the shared / org-wide bucket).
-  * Search with ``user_id="alice"``  → query BOTH ``{table}__alice``
-    AND ``{table}``, merge results by distance, take top ``limit``.
-  * Search with ``user_id=None``     → query only the BASE collection
-    (admin / unscoped view of shared content).
-
-One difference from pgvector / LanceDB worth noting: those backends
-return ALL rows when you search with ``user_id=None`` because they're
-filtered SQL-style. Chroma's model is collection-based, so
-``user_id=None`` only sees the BASE / shared collection — not every
-user's content. To audit across users, iterate explicitly per user_id.
-
-Prerequisites:
-
-  * ``pip install chromadb`` (embedded — no server to run).
-  * ``OPENAI_API_KEY`` set in your environment (or swap the model below).
-
-Run:
-
-    python cookbook/07_knowledge/04_advanced/07_per_user_isolation/chromadb.py
+LanceDB does this by storing the owner in a user_id column and filtering on
+it before the vector search runs, so scoped results aren't silently truncated.
 """
 
 import asyncio
@@ -45,10 +16,10 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.chroma import ChromaDb
+from agno.vectordb.lancedb import LanceDb
 
-DB_PATH = "/tmp/agno_per_user_isolation_chromadb"
-COLLECTION_NAME = "per_user_isolation_demo"
+DB_PATH = "/tmp/agno_per_user_isolation_lancedb"
+TABLE_NAME = "per_user_isolation_demo"
 
 
 def _write_temp_doc(name: str, body: str) -> str:
@@ -61,25 +32,27 @@ def _write_temp_doc(name: str, body: str) -> str:
 async def main() -> None:
     # ------------------------------------------------------------------
     # Wipe any previous on-disk state. If you ran an older version of
-    # this cookbook (before Chroma grew per-user collection routing),
-    # the cached collection layout could be inconsistent. In production
-    # you'd run a real migration; here we just drop-and-reingest.
+    # this cookbook (before LanceDB grew a ``user_id`` column), the
+    # cached schema would lack that column and isolation would silently
+    # collapse. In production you'd run a real migration; here we just
+    # drop-and-reingest.
     # ------------------------------------------------------------------
     if Path(DB_PATH).exists():
         shutil.rmtree(DB_PATH)
 
-    vector_db = ChromaDb(collection=COLLECTION_NAME, path=DB_PATH)
+    vector_db = LanceDb(uri=DB_PATH, table_name=TABLE_NAME)
 
     knowledge = Knowledge(
         name="per_user_demo",
-        description="Per-user RAG isolation demo (ChromaDB)",
+        description="Per-user RAG isolation demo (LanceDB)",
         vector_db=vector_db,
     )
 
     # ------------------------------------------------------------------
     # Three uploads: Alice (private), Bob (private), Admin (shared).
-    # The ``user_id`` kwarg on ``ainsert`` flows through to the Chroma
-    # backend, which routes each insert to its per-user collection.
+    # The ``user_id`` kwarg on ``ainsert`` flows through to the LanceDB
+    # backend, which writes it to the dedicated ``user_id`` column. The
+    # API call is identical to pgvector — see the sibling cookbook.
     # ------------------------------------------------------------------
     await knowledge.ainsert(
         path=_write_temp_doc(
@@ -105,13 +78,16 @@ async def main() -> None:
             "The company is closed on January 1, July 4, and December 25.",
         ),
         name="company_holidays",
-        # No ``user_id`` — this is org-wide / admin-uploaded shared
-        # content. Chroma routes it to the BASE collection; scoped
-        # searches read it alongside the caller's own collection.
+        # No ``user_id`` — this is org-wide / admin-uploaded shared content.
+        # LanceDB stores NULL in the column; scoped queries match it via
+        # ``user_id = caller OR user_id IS NULL``.
     )
 
     # ------------------------------------------------------------------
     # Demonstrate the isolation contract DIRECTLY against Knowledge.
+    # The result counts tell the story; ``Document`` doesn't carry the
+    # owner back (the column is internal to the backend), so we don't
+    # print per-chunk ownership — the assertion is what matters.
     # ------------------------------------------------------------------
     print("\n=== Direct asearch tests ===\n")
 
@@ -128,12 +104,11 @@ async def main() -> None:
     print(f"\nAlice asks about Bob's salary -> {len(alice_about_bob)} results")
     for d in alice_about_bob:
         print(f"  - {d.content[:80]}")
-    # The canonical isolation assertion. The collection model makes this
-    # physically guaranteed (Bob's chunks aren't even in the collections
-    # we queried) — but we still assert at the cookbook level so any
-    # regression would crash here, loudly.
+    # The canonical isolation assertion: Bob's content must never surface
+    # in Alice's retrieval, no matter how relevant it is to her query.
+    bob_phrases = ["Bob's salary", "$215"]
     for d in alice_about_bob:
-        for phrase in ["Bob's salary", "$215"]:
+        for phrase in bob_phrases:
             assert phrase not in d.content, (
                 f"Isolation broken: Alice's retrieval surfaced Bob's chunk "
                 f"(matched {phrase!r}): {d.content!r}"
@@ -147,17 +122,17 @@ async def main() -> None:
     for d in bob_holidays:
         print(f"  - {d.content[:80]}")
 
-    # ``user_id=None`` on Chroma sees the BASE/shared collection only
-    # (unlike pgvector/LanceDB where None means "no scope, all rows").
-    admin_view = await knowledge.asearch(query="anything", user_id=None)
-    print(f"\nAdmin asks about everything (user_id=None) -> {len(admin_view)} results")
+    admin_view = await knowledge.asearch(query="salary", user_id=None)
+    print(f"\nAdmin asks about salary (user_id=None) -> {len(admin_view)} results")
     for d in admin_view:
         print(f"  - {d.content[:80]}")
 
     # ------------------------------------------------------------------
     # End-to-end: an Agent doing RAG-as-Alice never sees Bob's chunks.
-    # ``run_context.user_id`` flows from the Agent into Knowledge.asearch,
-    # which routes to Alice's collection plus the shared one.
+    # The ``user_id`` on the Agent flows into ``run_context.user_id``,
+    # which is what ``KnowledgeTools.search_knowledge`` reads and forwards
+    # to ``knowledge.search``. In a real deployment this comes from
+    # ``get_scoped_user_id(request)`` (the JWT sub).
     # ------------------------------------------------------------------
     print("\n=== Agent-mediated test ===\n")
 

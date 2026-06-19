@@ -1,14 +1,14 @@
 """
-Per-User Knowledge Isolation with ClickHouse
-============================================
+Per-User Knowledge Isolation with Weaviate
+==========================================
 Give each user a private view of one shared knowledge base. Documents a user
 uploads are visible only to them; documents uploaded with no user are shared
 with everyone, and an admin (no user id) sees all of it.
 
-ClickHouse does this by storing the owner in a user_id column and filtering on
-it, using an empty string to mark shared chunks (its columns can't be null).
+Weaviate does this by storing the owner as a text property and filtering on it,
+treating chunks with no owner as shared.
 
-Setup: ./cookbook/scripts/run_clickhouse.sh
+Setup: ./cookbook/scripts/run_weaviate.sh
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.clickhouse import Clickhouse
+from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
 
 
 def _write_temp_doc(name: str, body: str) -> str:
@@ -27,22 +27,18 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    vector_db = Clickhouse(
-        table_name="per_user_isolation_demo",
-        host="localhost",
-        port=8123,
-        username="ai",
-        password="ai",
+    vector_db = Weaviate(
+        collection="per_user_isolation_demo",
+        vector_index=VectorIndex.HNSW,
+        distance=Distance.COSINE,
+        local=True,
     )
-    try:
-        vector_db.drop()
-    except Exception:
-        pass
-    vector_db.create()
+    await vector_db.async_drop()
+    await vector_db.async_create()
 
     knowledge = Knowledge(
         name="per_user_demo",
-        description="Per-user RAG isolation demo (ClickHouse)",
+        description="Per-user RAG isolation demo (Weaviate)",
         vector_db=vector_db,
     )
 
@@ -117,10 +113,6 @@ async def main() -> None:
     response = await alice_agent.arun("What is Bob's salary?")
     print("Alice's agent on 'What is Bob's salary?':")
     print(response.content)
-
-    if vector_db.async_client is not None:
-        await vector_db.async_client.close()
-
     print("\nDone.")
 
 

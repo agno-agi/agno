@@ -848,8 +848,8 @@ class Milvus(VectorDb):
         results = self.client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            filter=self._scoped_expr(filters, user_id),
-            output_fields=["*"],
+            filter=self._scoped_expr(filters, user_id) or "",
+            output_fields=self._read_output_fields(),
             limit=limit,
             search_params=search_params,
         )
@@ -858,20 +858,7 @@ class Milvus(VectorDb):
         search_results: List[Document] = []
         for result in results[0]:
             entity = result["entity"]
-            meta_data = self._decode_json_field(entity.get("meta_data"), default={})
-            usage = self._decode_json_field(entity.get("usage"), default=None)
-            search_results.append(
-                Document(
-                    id=result["id"],
-                    name=entity.get("name", None),
-                    meta_data=meta_data,
-                    content=entity.get("content", ""),
-                    content_id=entity.get("content_id", None),
-                    embedder=self.embedder,
-                    embedding=entity.get("vector", None),
-                    usage=usage,
-                )
-            )
+            search_results.append(self._entity_to_document(result["id"], entity))
 
         # Apply reranker if available
         if self.reranker and search_results:
@@ -920,8 +907,8 @@ class Milvus(VectorDb):
         results = await self.async_client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            filter=self._scoped_expr(filters, user_id),
-            output_fields=["*"],
+            filter=self._scoped_expr(filters, user_id) or "",
+            output_fields=self._read_output_fields(),
             limit=limit,
             search_params=search_params,
         )
@@ -930,20 +917,7 @@ class Milvus(VectorDb):
         search_results: List[Document] = []
         for result in results[0]:
             entity = result["entity"]
-            meta_data = self._decode_json_field(entity.get("meta_data"), default={})
-            usage = self._decode_json_field(entity.get("usage"), default=None)
-            search_results.append(
-                Document(
-                    id=result["id"],
-                    name=entity.get("name", None),
-                    meta_data=meta_data,
-                    content=entity.get("content", ""),
-                    content_id=entity.get("content_id", None),
-                    embedder=self.embedder,
-                    embedding=entity.get("vector", None),
-                    usage=usage,
-                )
-            )
+            search_results.append(self._entity_to_document(result["id"], entity))
 
         log_info(f"Found {len(search_results)} documents")
         return search_results
@@ -1024,7 +998,11 @@ class Milvus(VectorDb):
 
             log_info("Performing hybrid search")
             results = self._client.hybrid_search(
-                collection_name=self.collection, reqs=reqs, ranker=ranker, limit=limit, output_fields=["*"]
+                collection_name=self.collection,
+                reqs=reqs,
+                ranker=ranker,
+                limit=limit,
+                output_fields=self._read_output_fields(),
             )
 
             # Build search results
@@ -1130,7 +1108,11 @@ class Milvus(VectorDb):
 
             log_info("Performing async hybrid search")
             results = await self.async_client.hybrid_search(
-                collection_name=self.collection, reqs=reqs, ranker=ranker, limit=limit, output_fields=["*"]
+                collection_name=self.collection,
+                reqs=reqs,
+                ranker=ranker,
+                limit=limit,
+                output_fields=self._read_output_fields(),
             )
 
             # Build search results
@@ -1399,6 +1381,36 @@ class Milvus(VectorDb):
             return f"({base}) and {scope}"
         return scope or base
 
+    def _read_output_fields(self) -> List[str]:
+        """Explicit output fields for reads.
+
+        Milvus does NOT expand dynamic fields via ``output_fields=["*"]`` — that
+        returns only the schema fields (``id`` + the vector), so every dynamic
+        field we wrote (content, owner, metadata, ...) must be named back.
+        """
+        fields = ["text", "content", "name", "content_id", "meta_data", "usage", "content_hash", self.USER_ID_KEY]
+        if self.search_type == SearchType.hybrid:
+            return fields + ["dense_vector", "sparse_vector"]
+        return fields + ["vector"]
+
+    def _entity_to_document(self, doc_id: str, entity: Dict[str, Any]) -> Document:
+        """Map a Milvus entity back to a Document, surfacing the owner in meta_data."""
+        meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+        owner = entity.get(self.USER_ID_KEY)
+        if owner is not None:
+            meta_data = {**meta_data, self.USER_ID_KEY: owner}
+        usage = self._decode_json_field(entity.get("usage"), default=None)
+        return Document(
+            id=doc_id,
+            name=entity.get("name", None),
+            meta_data=meta_data,
+            content=entity.get("content", ""),
+            content_id=entity.get("content_id", None),
+            embedder=self.embedder,
+            embedding=entity.get("vector", None),
+            usage=usage,
+        )
+
     async def _async_content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Async counterpart to content_hash_exists used by async_upsert."""
         expr = self._content_hash_expr(content_hash, user_id)
@@ -1431,12 +1443,8 @@ class Milvus(VectorDb):
         try:
             # Fetch the full row so we can do a complete upsert. Milvus only supports
             # partial-field upsert from 2.6.2+, so we read every field and rewrite it.
-            # Vector fields are listed explicitly because some Milvus versions exclude
-            # them from output_fields=["*"].
             search_expr = f'content_id == "{_quote(content_id)}"'
-            output_fields = (
-                ["*", "dense_vector", "sparse_vector"] if self.search_type == SearchType.hybrid else ["*", "vector"]
-            )
+            output_fields = self._read_output_fields()
             results = self.client.query(
                 collection_name=self.collection,
                 filter=search_expr,

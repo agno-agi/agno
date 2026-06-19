@@ -185,7 +185,7 @@ class Clickhouse(VectorDb):
         of the same content get distinct ids (ReplacingMergeTree collapses rows
         sharing the PK id); None keeps the legacy content-only id.
         """
-        if user_id is None:
+        if not user_id:
             return md5(base_content.encode()).hexdigest()
         return md5(f"{base_content}_{user_id}".encode()).hexdigest()
 
@@ -506,7 +506,7 @@ class Clickhouse(VectorDb):
         user_id = '') (own + shared) and bind its param. Returns "" when
         unscoped. user_id is bound, never f-string interpolated.
         """
-        if user_id is None:
+        if not user_id:
             return ""
         parameters["user_id"] = user_id
         return "WHERE (user_id = {user_id:String} OR user_id = '')"
