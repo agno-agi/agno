@@ -61,6 +61,7 @@ Agent(model="agno:openai/gpt-5.4")
 | `basic.py` | Sync, streaming, and async runs (managed `AGNO_API_KEY`) |
 | `bring_your_own_key.py` | BYOK: provider key by prefix, or explicit `api_key=` |
 | `tool_use.py` | Function calling: single, parallel, streaming, and async |
+| `mcp_tools.py` | MCP tools over Streamable HTTP (e.g. a `web_search` server) |
 | `structured_output.py` | Typed responses with `output_schema` (native + JSON mode) |
 | `metrics.py` | Per-message and aggregated token metrics |
 | `image_input.py` | Image input to a vision model |

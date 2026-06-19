@@ -44,6 +44,23 @@ reassembled correctly. No provider SDK loaded.
 
 ---
 
+### mcp_tools.py
+
+**Status:** PASS
+
+**Description:** Agent on `openai/gpt-5.4` (BYOK via staging) connected to a local MCP
+server (`http://localhost:8787/mcp`, Streamable HTTP) exposing a `web_search` tool.
+
+**Result:** The gateway model issued a `web_search` tool call, the MCP server returned
+live DuckDuckGo results, and the agent summarized them. MCP tools work unchanged through
+the gateway (they are forwarded as standard OpenAI tools/tool_calls).
+
+**Notes:**
+- The cookbook file is named `mcp_tools.py`, not `mcp.py`, on purpose: a module named
+  `mcp.py` shadows the `mcp` package and breaks the import.
+
+---
+
 ### structured_output.py
 
 **Status:** PASS
