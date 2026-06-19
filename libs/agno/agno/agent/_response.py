@@ -1166,6 +1166,28 @@ def handle_model_response_stream(
             if not model_response.reasoning_content:
                 model_response.reasoning_content = reasoning_content
 
+            # Emit reasoning events for UI to show reasoning card
+            if stream_events and not reasoning_state["reasoning_started"]:
+                yield handle_event(
+                    create_reasoning_started_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,
+                    store_events=agent.store_events,
+                )
+                reasoning_state["reasoning_started"] = True
+
+            # Yield content event with extracted reasoning
+            yield handle_event(
+                create_run_output_content_event(
+                    from_run_response=run_response,
+                    content=clean_content,
+                    reasoning_content=reasoning_content,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,
+                store_events=agent.store_events,
+            )
+
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -1331,6 +1353,28 @@ async def ahandle_model_response_stream(
             if not model_response.reasoning_content:
                 model_response.reasoning_content = reasoning_content
 
+            # Emit reasoning events for UI to show reasoning card
+            if stream_events and not reasoning_state["reasoning_started"]:
+                yield handle_event(
+                    create_reasoning_started_event(from_run_response=run_response),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,
+                    store_events=agent.store_events,
+                )
+                reasoning_state["reasoning_started"] = True
+
+            # Yield content event with extracted reasoning
+            yield handle_event(
+                create_run_output_content_event(
+                    from_run_response=run_response,
+                    content=clean_content,
+                    reasoning_content=reasoning_content,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,
+                store_events=agent.store_events,
+            )
+
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -1426,6 +1470,16 @@ def handle_model_response_chunk(
 
             # Process reasoning content
             if model_response_event.reasoning_content is not None:
+                # Emit ReasoningStartedEvent on first reasoning chunk
+                if stream_events and not reasoning_state["reasoning_started"]:
+                    yield handle_event(
+                        create_reasoning_started_event(from_run_response=run_response),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,
+                        store_events=agent.store_events,
+                    )
+                    reasoning_state["reasoning_started"] = True
+
                 model_response.reasoning_content = (
                     model_response.reasoning_content or ""
                 ) + model_response_event.reasoning_content
