@@ -22,13 +22,24 @@ SECRET = "composite-secret-at-least-256-bits-long-padding-xxxxxxxx"
 OS_ID = "composite-os"
 
 
+def _db_url() -> str:
+    """A throwaway file-backed SQLite URL. Managed roles require a DB (no in-memory
+    mode); file-backed so the same DB is visible across the threads TestClient uses."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".authz.db")
+    os.close(fd)
+    return f"sqlite:///{path}"
+
+
 def test_empty_providers_rejected():
     with pytest.raises(ValueError):
         CompositeAuthorizationProvider([])
 
 
 def test_allows_via_either_plane():
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.assign("storeuser", "viewer")
     comp = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), store.provider])
@@ -51,7 +62,7 @@ def test_allows_via_either_plane():
 
 
 def test_accessible_ids_union_with_wildcard_winning():
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("one", ["agents:a1:read"])
     store.assign("u", "one")
     comp = CompositeAuthorizationProvider([ScopeAuthorizationProvider(), store.provider])
@@ -76,7 +87,7 @@ def _token(sub, scopes):
 def test_both_planes_enforce_on_one_os_end_to_end():
     """One OS: an operator authorized by token scopes AND an end user authorized by
     the store both get in; an unknown caller is denied."""
-    store = ManagedRoleStore()
+    store = ManagedRoleStore(db_url=_db_url())
     store.set_role_scopes("viewer", ["agents:*:read"])
     store.assign("enduser", "viewer")  # end user known only to the store
 
@@ -108,7 +119,7 @@ def test_both_planes_enforce_on_one_os_end_to_end():
 def test_admin_gate_accepts_admin_from_token_scope():
     """An operator whose token carries agent_os:admin can manage roles even though
     they have no admin assignment in the store (the cloud/operator plane)."""
-    store = ManagedRoleStore()  # nobody is admin in the store
+    store = ManagedRoleStore(db_url=_db_url())  # nobody is admin in the store
     agent = Agent(id="research-agent", name="R", db=InMemoryDb())
     agent_os = AgentOS(
         id=OS_ID,
@@ -166,7 +177,7 @@ def test_composite_filter_accessible_unions_and_respects_per_plane_deny():
 
     resources = [R("a"), R("secret"), R("b")]
 
-    eng = NativePolicyEngine()
+    eng = NativePolicyEngine(db_url=_db_url())
     eng.set_role_scopes("analyst", [("agents:*:read", "allow"), ("agents:secret:read", "deny")])
     eng.assign("bob", "analyst")
     engine_prov = EngineAuthorizationProvider(eng)

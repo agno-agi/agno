@@ -4,18 +4,15 @@ A :class:`~agno.os.authz.engine.PolicyEngine` implemented directly in agno: role
 hold scopes (with allow/deny), subjects are assigned roles, and decisions use
 **deny-overrides** matching the cloud RBAC semantics. No external policy engine.
 
-Two storage modes:
-
-- **db-backed** (``db`` / ``db_url``): policy + assignments live in two SQLAlchemy
-  tables (``authz_policy``, ``authz_grouping``) and every decision reads them
-  **fresh** with small indexed queries. There is no in-process cache, so a change
-  on one worker/replica is visible to all of them on their very next request — the
-  right default for AgentOS's multi-container deployments. Authz is a tiny,
-  index-served part of a request (which is otherwise an agent run), so the
-  round-trips are negligible, and a DB outage fails closed.
-- **in-memory** (no ``db``): policy + assignments live in dicts. The dicts ARE the
-  store (not a cache of something else), so there's no staleness — but it's
-  single-process and not persisted: fine for tests, not for production.
+Storage is **always a database** (``db`` / ``db_url``): policy + assignments live in
+two SQLAlchemy tables (``authz_policy``, ``authz_grouping``) and every decision reads
+them **fresh** with small indexed queries. There is no in-process cache, so a change
+on one worker/replica is visible to all of them on their very next request — the
+right default for AgentOS's multi-container deployments. Authz is a tiny,
+index-served part of a request (which is otherwise an agent run), so the round-trips
+are negligible, and a DB outage fails closed. A DB is *required*: an in-memory store
+can't stay consistent across replicas, so an engine with no DB raises on any use
+(see :data:`~agno.os.authz._db.NO_DB_MESSAGE`).
 
 The decision model, in agno terms:
 
@@ -30,14 +27,14 @@ The decision model, in agno terms:
 import logging
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from agno.os.authz._db import NO_DB_MESSAGE
 from agno.os.authz._db import engine_from_db as _engine_from_db
+from agno.os.authz._db import engine_from_url as _engine_from_url
 from agno.os.authz._scope_policy import resource_action_to_scope, resource_matches, scope_to_resource_action
 from agno.os.authz.engine import PolicyEngine, ScopeEntry
 
 _DENY = "deny"
 _ALLOW = "allow"
-# A policy key: (role, resource, action). The value is the effect ("allow" | "deny").
-_PolicyKey = Tuple[str, str, str]
 # A policy row carried through the decision logic: (role, resource, action, effect).
 _PolicyRow = Tuple[str, str, str, str]
 
@@ -53,29 +50,33 @@ def _normalize_effect(effect: str) -> str:
 
 
 class NativePolicyEngine(PolicyEngine):
-    """agno-native :class:`PolicyEngine`. Queries the DB fresh per decision when
-    given ``db``/``db_url``; an in-memory store otherwise."""
+    """agno-native :class:`PolicyEngine`. Queries the DB fresh per decision. A DB is
+    required (``db`` or ``db_url``); without one — and until AgentOS adopts the OS DB
+    via :meth:`attach_db` — every operation raises, because an in-memory store can't
+    stay consistent across the workers/replicas an AgentOS deployment runs."""
 
     def __init__(self, db_url: Optional[str] = None, db: Optional[Any] = None):
-        # In-memory store (used only when there is no DB). With a DB these stay
-        # empty — the DB is read fresh on every decision (no cache to go stale).
-        self._policies: Dict[_PolicyKey, str] = {}  # (role, resource, action) -> effect
-        self._grouping: Dict[str, Set[str]] = {}  # subject -> {role, ...}
-        self._engine: Any = None  # SQLAlchemy Engine when db-backed, else None
+        # A DB is required. It may arrive later via attach_db() (the AgentOS
+        # role_store= shortcut), so an engine built with neither db nor db_url starts
+        # "unbound" and raises on use until bound — it is never an operating mode.
+        self._engine: Any = None  # SQLAlchemy Engine once bound, else None (unbound)
         self._policy_tbl: Any = None
         self._group_tbl: Any = None
         self._log = logging.getLogger("agno.authz.engine")
 
-        target = _engine_from_db(db) if db is not None else (self._make_engine(db_url) if db_url else None)
+        target = _engine_from_db(db) if db is not None else (_engine_from_url(db_url) if db_url else None)
         if target is not None:
             self._setup_db(target)
 
     # --- storage ---------------------------------------------------------
-    @staticmethod
-    def _make_engine(db_url: str) -> Any:
-        import sqlalchemy as sa
+    @property
+    def is_bound(self) -> bool:
+        """True once a DB is bound (directly or via :meth:`attach_db`)."""
+        return self._engine is not None
 
-        return sa.create_engine(db_url)
+    def _require_engine(self) -> None:
+        if self._engine is None:
+            raise RuntimeError(NO_DB_MESSAGE)
 
     def _setup_db(self, engine: Any) -> None:
         import sqlalchemy as sa
@@ -99,33 +100,25 @@ class NativePolicyEngine(PolicyEngine):
         metadata.create_all(self._engine)
 
     def attach_db(self, db: Any) -> None:
-        """Bind an agno ``Db`` to a previously in-memory engine, migrating any
-        in-memory policy + assignments into it, then switch to reading the DB fresh.
+        """Bind an agno ``Db`` to a still-unbound engine, then read the DB fresh.
 
-        No-op if the engine already has its own DB (the caller's choice wins) or the
-        db isn't SQL-capable (e.g. a NoSQL agno Db) — in that case it stays in-memory.
-        Lets AgentOS default a managed store with no DB to the OS database."""
+        No-op if a DB is already bound (the caller's explicit choice wins) or the db
+        isn't SQL-capable (e.g. a NoSQL agno Db) — in which case the engine stays
+        unbound and the next operation raises. Lets AgentOS adopt the OS database for
+        a managed store created without one."""
         if self._engine is not None:
-            return  # already db-backed — respect the explicit choice
+            return  # already bound — respect the explicit choice
         try:
             engine = _engine_from_db(db)
         except Exception:
-            return  # not a SQL-capable db; stay in-memory
-        policies, grouping = self._policies, self._grouping
+            return  # not a SQL-capable db; stay unbound (use will raise)
         self._setup_db(engine)
-        for (role, resource, action), effect in policies.items():
-            self._persist_policy(role, resource, action, effect)
-        for subject, roles in grouping.items():
-            for role in roles:
-                self._persist_grouping(subject, role, add=True)
-        self._policies, self._grouping = {}, {}  # now db-backed; the dicts go unused
 
-    # --- read helpers (source from the DB, or the in-memory store) -------
+    # --- read helpers (DB-backed) ----------------------------------------
     def _direct_roles(self, node: str) -> Set[str]:
         """Roles directly assigned to ``node`` (a subject, or a role when nesting).
-        Indexed point-lookup on the grouping PK when db-backed."""
-        if self._engine is None:
-            return set(self._grouping.get(node, set()))
+        Indexed point-lookup on the grouping PK."""
+        self._require_engine()
         import sqlalchemy as sa
 
         with self._engine.connect() as conn:
@@ -149,8 +142,7 @@ class NativePolicyEngine(PolicyEngine):
         """All (role, resource, action, effect) rows whose role is in ``principals``."""
         if not principals:
             return []
-        if self._engine is None:
-            return [(r, res, act, eff) for (r, res, act), eff in self._policies.items() if r in principals]
+        self._require_engine()
         import sqlalchemy as sa
 
         t = self._policy_tbl
@@ -161,6 +153,7 @@ class NativePolicyEngine(PolicyEngine):
     # --- persistence (db-backed mutations) -------------------------------
     def _persist_policies_set(self, role: str, rows: List[Tuple[str, str, str]]) -> None:
         """Replace a role's persisted policy rows with ``rows`` ((resource, action, effect))."""
+        self._require_engine()
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -172,6 +165,7 @@ class NativePolicyEngine(PolicyEngine):
                 )
 
     def _persist_policy(self, role: str, resource: str, action: str, effect: str) -> None:
+        self._require_engine()
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -185,6 +179,7 @@ class NativePolicyEngine(PolicyEngine):
             conn.execute(sa.insert(self._policy_tbl).values(role=role, resource=resource, action=action, effect=effect))
 
     def _delete_policy(self, role: str, resource: Optional[str] = None, action: Optional[str] = None) -> None:
+        self._require_engine()
         import sqlalchemy as sa
 
         clause = [self._policy_tbl.c.role == role]
@@ -196,6 +191,7 @@ class NativePolicyEngine(PolicyEngine):
             conn.execute(sa.delete(self._policy_tbl).where(*clause))
 
     def _persist_grouping(self, subject: str, role: str, add: bool) -> None:
+        self._require_engine()
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -206,6 +202,7 @@ class NativePolicyEngine(PolicyEngine):
                 conn.execute(sa.insert(self._group_tbl).values(subject=subject, role=role))
 
     def _delete_grouping_role(self, role: str) -> None:
+        self._require_engine()
         import sqlalchemy as sa
 
         with self._engine.begin() as conn:
@@ -220,69 +217,41 @@ class NativePolicyEngine(PolicyEngine):
         for scope, effect in entries:
             resource, action = scope_to_resource_action(scope)
             staged[(resource, action)] = _normalize_effect(effect)
-        if self._engine is not None:
-            self._persist_policies_set(role, [(res, act, eff) for (res, act), eff in staged.items()])
-            return
-        for key in [k for k in self._policies if k[0] == role]:
-            del self._policies[key]
-        for (resource, action), effect in staged.items():
-            self._policies[(role, resource, action)] = effect
+        self._persist_policies_set(role, [(res, act, eff) for (res, act), eff in staged.items()])
 
     def add_scope(self, role: str, scope: str, effect: str = _ALLOW) -> None:
         resource, action = scope_to_resource_action(scope)  # validate before mutating
         effect = _normalize_effect(effect)
-        if self._engine is not None:
-            self._persist_policy(role, resource, action, effect)
-        else:
-            self._policies[(role, resource, action)] = effect
+        self._persist_policy(role, resource, action, effect)
 
     def remove_scope(self, role: str, scope: str) -> None:
         resource, action = scope_to_resource_action(scope)  # validate before mutating
-        if self._engine is not None:
-            self._delete_policy(role, resource, action)
-        else:
-            self._policies.pop((role, resource, action), None)
+        self._delete_policy(role, resource, action)
 
     def get_role_scopes(self, role: str) -> List[ScopeEntry]:
         return [(resource_action_to_scope(res, act), eff) for (r, res, act, eff) in self._policies_for({role})]
 
     def remove_role(self, role: str) -> None:
-        if self._engine is not None:
-            self._delete_policy(role)
-            self._delete_grouping_role(role)
-            return
-        for key in [k for k in self._policies if k[0] == role]:
-            del self._policies[key]
-        for subject in list(self._grouping):
-            self._grouping[subject].discard(role)
+        self._delete_policy(role)
+        self._delete_grouping_role(role)
 
     def list_roles(self) -> List[str]:
         # Roles defined by scope policies PLUS roles that only exist as assignments,
         # so an assignment-only role is still inspectable/cleanable.
-        if self._engine is not None:
-            import sqlalchemy as sa
+        self._require_engine()
+        import sqlalchemy as sa
 
-            with self._engine.connect() as conn:
-                roles = {r[0] for r in conn.execute(sa.select(self._policy_tbl.c.role).distinct())}
-                roles |= {r[0] for r in conn.execute(sa.select(self._group_tbl.c.role).distinct())}
-            return sorted(roles)
-        roles = {key[0] for key in self._policies}
-        for assigned in self._grouping.values():
-            roles |= assigned
+        with self._engine.connect() as conn:
+            roles = {r[0] for r in conn.execute(sa.select(self._policy_tbl.c.role).distinct())}
+            roles |= {r[0] for r in conn.execute(sa.select(self._group_tbl.c.role).distinct())}
         return sorted(roles)
 
     # --- assignments: subject -> roles ----------------------------------
     def assign(self, subject: str, role: str) -> None:
-        if self._engine is not None:
-            self._persist_grouping(subject, role, add=True)
-        else:
-            self._grouping.setdefault(subject, set()).add(role)
+        self._persist_grouping(subject, role, add=True)
 
     def unassign(self, subject: str, role: str) -> None:
-        if self._engine is not None:
-            self._persist_grouping(subject, role, add=False)
-        else:
-            self._grouping.get(subject, set()).discard(role)
+        self._persist_grouping(subject, role, add=False)
 
     def roles_of(self, subject: str) -> List[str]:
         return sorted(self._direct_roles(subject))
