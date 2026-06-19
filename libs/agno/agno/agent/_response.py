@@ -59,10 +59,13 @@ from agno.utils.events import (
 from agno.utils.log import log_debug, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.reasoning import (
+    ThinkTagStreamState,
     add_reasoning_metrics_to_metadata,
     add_reasoning_step_to_metadata,
     append_to_reasoning_content,
     extract_thinking_content,
+    flush_think_tag_state,
+    process_think_tag_chunk,
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
@@ -1050,9 +1053,10 @@ def handle_model_response_stream(
 ) -> Iterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
-    reasoning_state = {
+    reasoning_state: Dict[str, Any] = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
+        "think_tag_state": ThinkTagStreamState(),
     }
     model_response = ModelResponse(content="")
 
@@ -1155,33 +1159,24 @@ def handle_model_response_stream(
             run_context=run_context,
         )
 
-    # Extract <think> or <thinking> tags from accumulated streaming content
-    if run_response.content and isinstance(run_response.content, str):
-        reasoning_content, clean_content = extract_thinking_content(run_response.content)
-        if reasoning_content:
-            if not run_response.reasoning_content:
-                run_response.reasoning_content = reasoning_content
-            run_response.content = clean_content
-            model_response.content = clean_content
-            if not model_response.reasoning_content:
-                model_response.reasoning_content = reasoning_content
+    # Flush any remaining buffered content from <think> tag parsing
+    think_tag_state = reasoning_state.get("think_tag_state")
+    if think_tag_state is not None:
+        flush_result = flush_think_tag_state(think_tag_state)
+        if flush_result.clean_content:
+            model_response.content = (model_response.content or "") + flush_result.clean_content
+            run_response.content = model_response.content
+        if flush_result.reasoning_content:
+            model_response.reasoning_content = (model_response.reasoning_content or "") + flush_result.reasoning_content
+            run_response.reasoning_content = model_response.reasoning_content
 
-            # Emit reasoning events for UI to show reasoning card
-            if stream_events and not reasoning_state["reasoning_started"]:
-                yield handle_event(
-                    create_reasoning_started_event(from_run_response=run_response),
-                    run_response,
-                    events_to_skip=agent.events_to_skip,
-                    store_events=agent.store_events,
-                )
-                reasoning_state["reasoning_started"] = True
-
-            # Yield content event with extracted reasoning
+        # Emit final content event if there was buffered content
+        if flush_result.clean_content or flush_result.reasoning_content:
             yield handle_event(
                 create_run_output_content_event(
                     from_run_response=run_response,
-                    content=clean_content,
-                    reasoning_content=reasoning_content,
+                    content=flush_result.clean_content,
+                    reasoning_content=flush_result.reasoning_content,
                 ),
                 run_response,
                 events_to_skip=agent.events_to_skip,
@@ -1234,9 +1229,10 @@ async def ahandle_model_response_stream(
 ) -> AsyncIterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
-    reasoning_state = {
+    reasoning_state: Dict[str, Any] = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
+        "think_tag_state": ThinkTagStreamState(),
     }
     model_response = ModelResponse(content="")
 
@@ -1342,33 +1338,24 @@ async def ahandle_model_response_stream(
         ):
             yield event
 
-    # Extract <think> or <thinking> tags from accumulated streaming content
-    if run_response.content and isinstance(run_response.content, str):
-        reasoning_content, clean_content = extract_thinking_content(run_response.content)
-        if reasoning_content:
-            if not run_response.reasoning_content:
-                run_response.reasoning_content = reasoning_content
-            run_response.content = clean_content
-            model_response.content = clean_content
-            if not model_response.reasoning_content:
-                model_response.reasoning_content = reasoning_content
+    # Flush any remaining buffered content from <think> tag parsing
+    think_tag_state = reasoning_state.get("think_tag_state")
+    if think_tag_state is not None:
+        flush_result = flush_think_tag_state(think_tag_state)
+        if flush_result.clean_content:
+            model_response.content = (model_response.content or "") + flush_result.clean_content
+            run_response.content = model_response.content
+        if flush_result.reasoning_content:
+            model_response.reasoning_content = (model_response.reasoning_content or "") + flush_result.reasoning_content
+            run_response.reasoning_content = model_response.reasoning_content
 
-            # Emit reasoning events for UI to show reasoning card
-            if stream_events and not reasoning_state["reasoning_started"]:
-                yield handle_event(
-                    create_reasoning_started_event(from_run_response=run_response),
-                    run_response,
-                    events_to_skip=agent.events_to_skip,
-                    store_events=agent.store_events,
-                )
-                reasoning_state["reasoning_started"] = True
-
-            # Yield content event with extracted reasoning
+        # Emit final content event if there was buffered content
+        if flush_result.clean_content or flush_result.reasoning_content:
             yield handle_event(
                 create_run_output_content_event(
                     from_run_response=run_response,
-                    content=clean_content,
-                    reasoning_content=reasoning_content,
+                    content=flush_result.clean_content,
+                    reasoning_content=flush_result.reasoning_content,
                 ),
                 run_response,
                 events_to_skip=agent.events_to_skip,
@@ -1453,6 +1440,10 @@ def handle_model_response_chunk(
             content_type = "str"
 
             # Process content and thinking
+            # Variables to track what to emit this chunk
+            chunk_content_to_emit: Optional[str] = None
+            chunk_reasoning_to_emit: Optional[str] = None
+
             if model_response_event.content is not None:
                 if parse_structured_output:
                     model_response.content = model_response_event.content
@@ -1464,8 +1455,40 @@ def handle_model_response_chunk(
                     run_response.content = model_response.content
                     run_response.content_type = content_type
                 else:
-                    model_response.content = (model_response.content or "") + model_response_event.content
-                    run_response.content = model_response.content
+                    # Parse <think>/<thinking> tags in-flight during streaming
+                    think_tag_state = reasoning_state.get("think_tag_state")
+                    if think_tag_state is not None:
+                        tag_result = process_think_tag_chunk(model_response_event.content, think_tag_state)
+
+                        # Emit ReasoningStartedEvent when entering <think> block
+                        if tag_result.entered_think and stream_events and not reasoning_state["reasoning_started"]:
+                            yield handle_event(
+                                create_reasoning_started_event(from_run_response=run_response),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,
+                                store_events=agent.store_events,
+                            )
+                            reasoning_state["reasoning_started"] = True
+
+                        # Accumulate clean content (outside <think> tags)
+                        if tag_result.clean_content:
+                            model_response.content = (model_response.content or "") + tag_result.clean_content
+                            run_response.content = model_response.content
+                            chunk_content_to_emit = tag_result.clean_content
+
+                        # Accumulate reasoning content (inside <think> tags)
+                        if tag_result.reasoning_content:
+                            model_response.reasoning_content = (
+                                model_response.reasoning_content or ""
+                            ) + tag_result.reasoning_content
+                            run_response.reasoning_content = model_response.reasoning_content
+                            chunk_reasoning_to_emit = tag_result.reasoning_content
+                    else:
+                        # No think tag state - pass through raw content
+                        model_response.content = (model_response.content or "") + model_response_event.content
+                        run_response.content = model_response.content
+                        chunk_content_to_emit = model_response_event.content
+
                     run_response.content_type = "str"
 
             # Process reasoning content
@@ -1513,17 +1536,20 @@ def handle_model_response_chunk(
                     store_events=agent.store_events,
                 )
             elif (
-                model_response_event.content is not None
+                chunk_content_to_emit is not None
+                or chunk_reasoning_to_emit is not None
                 or model_response_event.reasoning_content is not None
                 or model_response_event.redacted_reasoning_content is not None
                 or model_response_event.citations is not None
                 or model_response_event.provider_data is not None
             ):
+                # Use parsed content (clean_content/reasoning_content) when available
+                # Falls back to raw model_response_event fields for native reasoning models
                 yield handle_event(  # type: ignore
                     create_run_output_content_event(
                         from_run_response=run_response,
-                        content=model_response_event.content,
-                        reasoning_content=model_response_event.reasoning_content,
+                        content=chunk_content_to_emit,
+                        reasoning_content=chunk_reasoning_to_emit or model_response_event.reasoning_content,
                         redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                         citations=model_response_event.citations,
                         model_provider_data=model_response_event.provider_data,
