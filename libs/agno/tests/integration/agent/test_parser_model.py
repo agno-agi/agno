@@ -20,7 +20,7 @@ class ParkGuide(BaseModel):
 
 def test_claude_with_openai_parser_model():
     park_agent = Agent(
-        model=Claude(id="claude-sonnet-4-20250514"),  # Main model to generate the content
+        model=Claude(id="claude-sonnet-4-5-20250929"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
         output_schema=ParkGuide,
         parser_model=OpenAIChat(id="gpt-4o"),  # Model to parse the output
@@ -48,7 +48,7 @@ def test_openai_with_claude_parser_model():
         model=OpenAIChat(id="gpt-4o"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
         output_schema=ParkGuide,
-        parser_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
+        parser_model=Claude(id="claude-sonnet-4-5-20250929"),  # Model to parse the output
     )
 
     response = park_agent.run("Tell me about Yosemite National Park.")
@@ -99,7 +99,7 @@ def test_parser_model_stream(shared_db):
         description="You are an expert on national parks and provide concise guides.",
         output_schema=ParkGuide,
         db=shared_db,
-        parser_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
+        parser_model=Claude(id="claude-sonnet-4-5-20250929"),  # Model to parse the output
     )
 
     response = park_agent.run("Tell me about Yosemite National Park.", stream=True)

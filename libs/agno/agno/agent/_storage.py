@@ -754,17 +754,13 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     Returns:
         Agent: Reconstructed agent instance
     """
-    from agno.models.utils import get_model
+    from agno.models.utils import resolve_model
 
     config = data.copy()
 
     # --- Handle Model reconstruction ---
     if "model" in config:
-        model_data = config["model"]
-        if isinstance(model_data, dict) and "id" in model_data:
-            config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        elif isinstance(model_data, str):
-            config["model"] = get_model(model_data)
+        config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle reasoning_model reconstruction ---
     # TODO: implement reasoning model deserialization
