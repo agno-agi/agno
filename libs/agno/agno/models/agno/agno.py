@@ -114,12 +114,13 @@ class Agno(Model):
         return key, base
 
     def _headers(self, key: str) -> Dict[str, str]:
-        # Managed Agno keys (the "ag-" prefix) go in the x-agno-api-key header; the gateway
-        # validates them and injects its own cf-aig-authorization. Any other key is treated as
-        # a bring-your-own-key provider credential and goes in Authorization: Bearer, which the
-        # gateway forwards to the provider as-is. This matches the gateway's auth contract.
+        # Managed Agno credentials go in the x-agno-api-key header (the gateway validates them
+        # and injects its own cf-aig-authorization): either a long-lived key (the "ag-" prefix)
+        # or a short-lived platform JWT (looks like "eyJ..."). Any other key is a bring-your-own-key
+        # provider credential and goes in Authorization: Bearer, forwarded to the provider as-is.
+        # This matches the gateway's auth contract, which distinguishes managed vs BYOK by shape.
         headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if key.lower().startswith("ag-"):
+        if key.lower().startswith("ag-") or _looks_like_jwt(key):
             headers["x-agno-api-key"] = key
         else:
             headers["Authorization"] = f"Bearer {key}"
@@ -462,6 +463,14 @@ class Agno(Model):
         metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
         metrics.cost = usage.get("cost")
         return metrics
+
+
+def _looks_like_jwt(key: str) -> bool:
+    """Detect a JWS compact JWT: three base64url segments split by dots. The header object
+    starts with ``{"`` which base64url-encodes to ``eyJ``. Used to route short-lived platform
+    JWTs to the managed ``x-agno-api-key`` header, matching the gateway's shape-based detection.
+    """
+    return key.startswith("eyJ") and key.count(".") == 2
 
 
 def _sse_data(line: str) -> Optional[Dict[str, Any]]:
