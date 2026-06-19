@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -54,6 +55,13 @@ class LocalFileSystemTools(Toolkit):
         try:
             filename = filename or str(uuid4())
             directory = directory or self.target_directory
+
+            # Guard against path traversal before any filename processing
+            base_dir = Path(directory).resolve()
+            test_path = (base_dir / filename).resolve()
+            if not str(test_path).startswith(str(base_dir) + os.sep) and test_path != base_dir:
+                return f"Error: Path traversal detected — '{filename}' resolves outside '{base_dir}'"
+
             if filename and "." in filename:
                 path_obj = Path(filename)
                 filename = path_obj.stem
@@ -64,7 +72,7 @@ class LocalFileSystemTools(Toolkit):
             extension = (extension or self.default_extension).lstrip(".")
 
             # Create directory if it doesn't exist
-            dir_path = Path(directory)
+            dir_path = base_dir
             dir_path.mkdir(parents=True, exist_ok=True)
 
             # Construct full filename with extension
@@ -84,7 +92,10 @@ class LocalFileSystemTools(Toolkit):
         """
         Read content from a local file.
         """
-        file_path = Path(directory or self.target_directory) / filename
+        base_dir = Path(directory or self.target_directory).resolve()
+        file_path = (base_dir / filename).resolve()
+        if not str(file_path).startswith(str(base_dir) + "/") and file_path != base_dir:
+            return f"Error: Path traversal detected — '{filename}' resolves outside '{base_dir}'"
         if not file_path.exists():
             return f"File not found: {file_path}"
         return file_path.read_text()
