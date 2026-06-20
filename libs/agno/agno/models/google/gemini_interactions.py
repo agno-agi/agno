@@ -54,60 +54,29 @@ try:
         URLContextResultStep,
     )
 
-    # The streaming delta types were relocated and renamed in google-genai 2.9.0:
-    # they moved from the `step_delta` submodule (named `Delta<X>`) to the top-level
-    # `interactions` namespace (renamed `<X>Delta`). Support both layouts so we don't
-    # force an SDK upgrade. Local `Delta*` aliases keep the rest of this module stable.
-    try:
-        # google-genai >= 2.9.0
-        from google.genai.interactions import (  # type: ignore[attr-defined]
-            ArgumentsDelta as DeltaArgumentsDelta,
-            CodeExecutionCallDelta as DeltaCodeExecutionCall,
-            CodeExecutionResultDelta as DeltaCodeExecutionResult,
-            FileSearchCallDelta as DeltaFileSearchCall,
-            FileSearchResultDelta as DeltaFileSearchResult,
-            FunctionResultDelta as DeltaFunctionResult,
-            GoogleMapsCallDelta as DeltaGoogleMapsCall,
-            GoogleMapsResultDelta as DeltaGoogleMapsResult,
-            GoogleSearchCallDelta as DeltaGoogleSearchCall,
-            GoogleSearchResultDelta as DeltaGoogleSearchResult,
-            ImageDelta as DeltaImage,
-            MCPServerToolCallDelta as DeltaMCPServerToolCall,
-            MCPServerToolResultDelta as DeltaMCPServerToolResult,
-            TextDelta as DeltaText,
-            ThoughtSignatureDelta as DeltaThoughtSignature,
-            ThoughtSummaryDelta as DeltaThoughtSummary,
-            URLContextCallDelta as DeltaURLContextCall,
-            URLContextResultDelta as DeltaURLContextResult,
-        )
-    except ImportError:
-        # google-genai < 2.9.0: delta types live under the `step_delta` submodule,
-        # exposed as a submodule attribute (not a sub-package), so the Delta* types
-        # need attribute access rather than a direct import.
-        from google.genai.interactions import step_delta  # type: ignore[attr-defined]
-
-        DeltaArgumentsDelta = step_delta.DeltaArgumentsDelta
-        DeltaImage = step_delta.DeltaImage
-        DeltaText = step_delta.DeltaText
-        DeltaThoughtSignature = step_delta.DeltaThoughtSignature
-        DeltaThoughtSummary = step_delta.DeltaThoughtSummary
-        # Typed call deltas. Non-function call families stream their typed
-        # Arguments object here (DeltaArgumentsDelta only fires for functions).
-        DeltaCodeExecutionCall = step_delta.DeltaCodeExecutionCall
-        DeltaFileSearchCall = step_delta.DeltaFileSearchCall
-        DeltaGoogleMapsCall = step_delta.DeltaGoogleMapsCall
-        DeltaGoogleSearchCall = step_delta.DeltaGoogleSearchCall
-        DeltaMCPServerToolCall = step_delta.DeltaMCPServerToolCall
-        DeltaURLContextCall = step_delta.DeltaURLContextCall
-        # Result deltas. Every *ResultStep arrives empty at StepStart and its
-        # actual payload streams here (one or more deltas, then StepStop).
-        DeltaCodeExecutionResult = step_delta.DeltaCodeExecutionResult
-        DeltaFileSearchResult = step_delta.DeltaFileSearchResult
-        DeltaFunctionResult = step_delta.DeltaFunctionResult
-        DeltaGoogleMapsResult = step_delta.DeltaGoogleMapsResult
-        DeltaGoogleSearchResult = step_delta.DeltaGoogleSearchResult
-        DeltaMCPServerToolResult = step_delta.DeltaMCPServerToolResult
-        DeltaURLContextResult = step_delta.DeltaURLContextResult
+    # Streaming delta types: the location and naming differs between google-genai
+    # <2.9.0 and >=2.9.0. The compat module version-detects once and exposes a
+    # stable set of `Delta*` aliases so the rest of this file stays unchanged.
+    from agno.utils.models._genai_compat import (
+        DeltaArgumentsDelta,
+        DeltaCodeExecutionCall,
+        DeltaCodeExecutionResult,
+        DeltaFileSearchCall,
+        DeltaFileSearchResult,
+        DeltaFunctionResult,
+        DeltaGoogleMapsCall,
+        DeltaGoogleMapsResult,
+        DeltaGoogleSearchCall,
+        DeltaGoogleSearchResult,
+        DeltaImage,
+        DeltaMCPServerToolCall,
+        DeltaMCPServerToolResult,
+        DeltaText,
+        DeltaThoughtSignature,
+        DeltaThoughtSummary,
+        DeltaURLContextCall,
+        DeltaURLContextResult,
+    )
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. "
