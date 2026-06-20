@@ -40,13 +40,13 @@ mdurl==0.1.2
     # via markdown-it-py
 packaging==25.0
     # via agno (libs/agno/pyproject.toml)
-pydantic==2.10.4
+pydantic==2.13.4
     # via
     #   agno (libs/agno/pyproject.toml)
     #   pydantic-settings
-pydantic-core==2.27.2
+pydantic-core==2.46.4
     # via pydantic
-pydantic-settings==2.7.1
+pydantic-settings==2.14.1
     # via agno (libs/agno/pyproject.toml)
 pygments==2.18.0
     # via rich
