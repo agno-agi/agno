@@ -848,7 +848,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     Returns:
         Agent: Reconstructed agent instance
     """
-    from agno.models.utils import get_model
+    from agno.models.utils import get_model, get_model_from_dict
 
     config = data.copy()
 
@@ -856,7 +856,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     if "model" in config:
         model_data = config["model"]
         if isinstance(model_data, dict) and "id" in model_data:
-            config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
+            config["model"] = get_model_from_dict(model_data)
         elif isinstance(model_data, str):
             config["model"] = get_model(model_data)
 
