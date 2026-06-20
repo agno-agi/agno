@@ -82,7 +82,7 @@ class BrightDataTools(Toolkit):
             if self.verbose:
                 log_info(f"[Bright Data] Request: {payload['url']}")
 
-            response = requests.post(self.endpoint, headers=self.headers, data=json.dumps(payload))
+            response = requests.post(self.endpoint, headers=self.headers, data=json.dumps(payload), timeout=self.timeout)
 
             if response.status_code != 200:
                 raise Exception(f"Failed to scrape: {response.status_code} - {response.text}")
@@ -147,7 +147,7 @@ class BrightDataTools(Toolkit):
                 "data_format": "screenshot",
             }
 
-            response = requests.post(self.endpoint, headers=self.headers, data=json.dumps(payload))
+            response = requests.post(self.endpoint, headers=self.headers, data=json.dumps(payload), timeout=self.timeout)
 
             if response.status_code != 200:
                 raise Exception(f"Error {response.status_code}: {response.text}")
@@ -327,6 +327,7 @@ class BrightDataTools(Toolkit):
                 params={"dataset_id": dataset_id, "include_errors": "true"},
                 headers=self.headers,
                 json=[request_data],
+                timeout=self.timeout,
             )
 
             trigger_data = trigger_response.json()
@@ -346,6 +347,7 @@ class BrightDataTools(Toolkit):
                         f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}",
                         params={"format": "json"},
                         headers=self.headers,
+                        timeout=30,
                     )
 
                     snapshot_data = snapshot_response.json()
