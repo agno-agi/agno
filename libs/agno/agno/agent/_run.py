@@ -3914,16 +3914,16 @@ async def _acontinue_run_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
 
-    # Update the run status to RUNNING in the session — only persist the changed run (O(1))
+    # Transition to RUNNING here only if we have the run; otherwise the spawned
+    # task will load and persist it via _acontinue_run_stream.
     if run_response:
         run_response.status = RunStatus.running
         agent_session.upsert_run(run=run_response)
         await asave_session(agent, session=agent_session)
         await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
+        log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
     else:
-        await asave_session(agent, session=agent_session)
-
-    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+        log_info(f"Background continue-run stream {_run_id} spawned; run will be loaded by the task")
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()

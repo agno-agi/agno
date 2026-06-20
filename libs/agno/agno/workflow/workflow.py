@@ -9389,10 +9389,19 @@ class Workflow:
                 logger.exception("Background continue streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background continue streaming execution failed: {str(e)}"
+                # Only the run changed — persist just the run row (O(1))
                 if self._has_async_db():
-                    await self.asave_session(session=session)
+                    await self.asave_run(
+                        run=workflow_run_response,
+                        session_id=session.session_id,
+                        user_id=session.user_id,
+                    )
                 else:
-                    self.save_session(session=session)
+                    self.save_run(
+                        run=workflow_run_response,
+                        session_id=session.session_id,
+                        user_id=session.user_id,
+                    )
             finally:
                 # Update event buffer with the final status (paused, completed, error,
                 # cancelled) so reconnecting clients take the correct replay path.
