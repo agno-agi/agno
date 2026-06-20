@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.6.16"
+version = "2.6.18"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -88,7 +88,7 @@ azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
 infinity = ["infinity_client"]
-google = ["google-genai>=1.52.0"]
+google = ["google-genai>=1.52.0,<2.9.0"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
 litellm = ["litellm<=1.82.6"]
@@ -384,7 +384,7 @@ demo = [
     "duckdb",
     "exa-py>=2.0.0",
     "fastapi[standard]",
-    "google-genai",
+    "google-genai<2.9.0",
     "matplotlib",
     "mcp",
     "nest_asyncio",

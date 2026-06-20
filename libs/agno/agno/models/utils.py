@@ -1,281 +1,155 @@
-from typing import Optional, Union
+import importlib
+from collections import Counter
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 from agno.models.base import Model
 
+if TYPE_CHECKING:
+    from agno.registry.registry import Registry
+
+# Single source of truth for every supported model provider. One row per stable provider key:
+#   key -> (module, class_name, default_name, default_provider_display)
+# `default_name` and `default_provider_display` are the class's default `name` and (lowercased)
+# `provider` attributes. The construction registry and the (provider, name) resolution indices
+# below are all derived from this table, so adding a provider means adding exactly one row here.
+_PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
+    "aimlapi": ("agno.models.aimlapi", "AIMLAPI", "AIMLAPI", "aimlapi"),
+    "anthropic": ("agno.models.anthropic", "Claude", "Claude", "anthropic"),
+    "aws-bedrock": ("agno.models.aws", "AwsBedrock", "AwsBedrock", "awsbedrock"),
+    "aws-claude": ("agno.models.aws", "Claude", "AwsBedrockAnthropicClaude", "awsbedrock"),
+    "azure-ai-foundry": ("agno.models.azure", "AzureAIFoundry", "AzureAIFoundry", "azure"),
+    "azure-foundry-claude": ("agno.models.azure", "AzureFoundryClaude", "AzureFoundryClaude", "azurefoundry"),
+    "azure-openai": ("agno.models.azure", "AzureOpenAI", "AzureOpenAI", "azure"),
+    "cerebras": ("agno.models.cerebras", "Cerebras", "Cerebras", "cerebras"),
+    "cerebras-openai": ("agno.models.cerebras", "CerebrasOpenAI", "CerebrasOpenAI", "cerebrasopenai"),
+    "cohere": ("agno.models.cohere", "Cohere", "cohere", "cohere"),
+    "cometapi": ("agno.models.cometapi", "CometAPI", "CometAPI", "openai"),
+    "cloudflare": ("agno.models.cloudflare", "Cloudflare", "Cloudflare", "cloudflare"),
+    "dashscope": ("agno.models.dashscope", "DashScope", "Qwen", "dashscope"),
+    "deepinfra": ("agno.models.deepinfra", "DeepInfra", "DeepInfra", "deepinfra"),
+    "deepseek": ("agno.models.deepseek", "DeepSeek", "DeepSeek", "deepseek"),
+    "fireworks": ("agno.models.fireworks", "Fireworks", "Fireworks", "fireworks"),
+    "google": ("agno.models.google", "Gemini", "Gemini", "google"),
+    "google-interactions": ("agno.models.google", "GeminiInteractions", "GeminiInteractions", "google"),
+    "groq": ("agno.models.groq", "Groq", "Groq", "groq"),
+    "huggingface": ("agno.models.huggingface", "HuggingFace", "HuggingFace", "huggingface"),
+    "ibm": ("agno.models.ibm", "WatsonX", "WatsonX", "ibm"),
+    "inception": ("agno.models.inception", "Inception", "Inception", "inceptionlabs"),
+    "internlm": ("agno.models.internlm", "InternLM", "InternLM", "internlm"),
+    "langdb": ("agno.models.langdb", "LangDB", "LangDB", "langdb"),
+    "litellm": ("agno.models.litellm", "LiteLLM", "LiteLLM", "litellm"),
+    "litellm-openai": ("agno.models.litellm", "LiteLLMOpenAI", "LiteLLMOpenAI", "litellm"),
+    "llama-cpp": ("agno.models.llama_cpp", "LlamaCpp", "LlamaCpp", "llamacpp"),
+    "llama-openai": ("agno.models.meta", "LlamaOpenAI", "LlamaOpenAI", "llamaopenai"),
+    "lmstudio": ("agno.models.lmstudio", "LMStudio", "LMStudio", "lmstudio"),
+    "meta": ("agno.models.meta", "Llama", "Llama", "llama"),
+    "minimax": ("agno.models.minimax", "MiniMax", "MiniMax", "minimax"),
+    "mistral": ("agno.models.mistral", "MistralChat", "MistralChat", "mistral"),
+    "moonshot": ("agno.models.moonshot", "MoonShot", "Moonshot", "moonshot"),
+    "n1n": ("agno.models.n1n", "N1N", "N1N", "n1n"),
+    "nebius": ("agno.models.nebius", "Nebius", "Nebius", "nebius"),
+    "neosantara": ("agno.models.neosantara", "Neosantara", "Neosantara", "neosantara"),
+    "nexus": ("agno.models.nexus", "Nexus", "Nexus", "nexus"),
+    "nvidia": ("agno.models.nvidia", "Nvidia", "Nvidia", "nvidia"),
+    "ollama": ("agno.models.ollama", "Ollama", "Ollama", "ollama"),
+    "ollama-responses": ("agno.models.ollama", "OllamaResponses", "OllamaResponses", "ollama"),
+    "openai": ("agno.models.openai", "OpenAIResponses", "OpenAIResponses", "openai"),
+    "openai-chat": ("agno.models.openai", "OpenAIChat", "OpenAIChat", "openai"),
+    "openai-responses": ("agno.models.openai", "OpenAIResponses", "OpenAIResponses", "openai"),
+    "open-responses": ("agno.models.openai", "OpenResponses", "OpenResponses", "openresponses"),
+    "openrouter": ("agno.models.openrouter", "OpenRouter", "OpenRouter", "openrouter"),
+    "openrouter-responses": ("agno.models.openrouter", "OpenRouterResponses", "OpenRouterResponses", "openrouter"),
+    "perplexity": ("agno.models.perplexity", "Perplexity", "Perplexity", "perplexity"),
+    "portkey": ("agno.models.portkey", "Portkey", "Portkey", "portkey"),
+    "requesty": ("agno.models.requesty", "Requesty", "Requesty", "requesty"),
+    "sambanova": ("agno.models.sambanova", "Sambanova", "Sambanova", "sambanova"),
+    "siliconflow": ("agno.models.siliconflow", "Siliconflow", "Siliconflow", "siliconflow"),
+    "together": ("agno.models.together", "Together", "Together", "together"),
+    "tuning-engines": ("agno.models.tuning_engines", "TuningEngines", "Tuning Engines", "tuning engines"),
+    "vercel": ("agno.models.vercel", "V0", "v0", "vercel"),
+    "vertexai-claude": ("agno.models.vertexai.claude", "Claude", "Claude", "vertexai"),
+    "vllm": ("agno.models.vllm", "VLLM", "VLLM", "vllm"),
+    "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
+    "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
+}
+
+# key -> (module, class_name): the construction registry consumed by `_get_model_class`, the
+# CONTRIBUTING guide, and the registry-drift test.
+MODEL_PROVIDER_CLASSES: Dict[str, Tuple[str, str]] = {key: (mod, cls) for key, (mod, cls, _n, _p) in _PROVIDERS.items()}
+
+# key -> lowercased display `provider` string the class reports.
+_KEY_TO_PROVIDER: Dict[str, str] = {key: prov for key, (_m, _c, _n, prov) in _PROVIDERS.items()}
+
+# Serialized `name` -> key, but only for names that identify exactly one provider. Names shared
+# across classes (e.g. "Claude") are ambiguous and omitted, so those fall back to the provider.
+_name_counts = Counter(name for (_m, _c, name, _p) in _PROVIDERS.values())
+_NAME_TO_PROVIDER_KEY: Dict[str, str] = {
+    name: key for key, (_m, _c, name, _p) in _PROVIDERS.items() if _name_counts[name] == 1
+}
+
+# Default key for a display `provider` string that is not itself a key. Where several classes
+# share such a string (e.g. "azure" -> AzureOpenAI/AzureAIFoundry), the default is the variant
+# used when `name` does not disambiguate.
+_AMBIGUOUS_PROVIDER_DEFAULTS: Dict[str, str] = {"azure": "azure-openai", "awsbedrock": "aws-bedrock"}
+
+
+def _build_provider_to_key() -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for key, (_m, _c, _n, prov) in _PROVIDERS.items():
+        if prov not in MODEL_PROVIDER_CLASSES:  # display strings that already equal a key resolve directly
+            mapping.setdefault(prov, key)
+    mapping.update(_AMBIGUOUS_PROVIDER_DEFAULTS)
+    return mapping
+
+
+# Display `provider` string -> key, used as a fallback when `name` is missing or shared.
+_PROVIDER_TO_KEY: Dict[str, str] = _build_provider_to_key()
+
+
+def _canonical_provider_display(key: str) -> str:
+    """The lowercased display `provider` string a given provider key's class reports."""
+    return _KEY_TO_PROVIDER.get(key, key)
+
+
+def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[str] = None) -> str:
+    """Resolve a serialized (provider, name) pair to a stable provider key.
+
+    The provider string is authoritative. `name` is used only to disambiguate among classes that
+    report the same display `provider` (e.g. AzureOpenAI vs AzureAIFoundry, or OpenAIResponses vs
+    the OpenAI-compatible CometAPI). A `name` whose class reports a different provider is treated
+    as a user-supplied label and ignored, so e.g. OpenAIChat(name="Gemini") still resolves to
+    OpenAI rather than Google.
+    """
+    provider = (model_provider or "").strip().lower()
+    provider_key = provider if provider in MODEL_PROVIDER_CLASSES else _PROVIDER_TO_KEY.get(provider)
+    name_key = _NAME_TO_PROVIDER_KEY.get(model_name) if model_name else None
+
+    if provider_key is None:
+        # An empty provider string (older data, or a model whose provider was never set) leaves the
+        # name as the only signal. A non-empty but unrecognized provider stays authoritative so an
+        # unsupported/custom provider is rejected by _get_model_class rather than being silently
+        # re-routed to a built-in class by a colliding name.
+        return (name_key or provider) if not provider else provider
+
+    # Otherwise trust the name only when its class reports this same provider string.
+    if name_key is not None and _canonical_provider_display(name_key) == provider:
+        return name_key
+    return provider_key
+
 
 def _get_model_class(model_id: str, model_provider: str) -> Model:
-    if model_provider == "aimlapi":
-        from agno.models.aimlapi import AIMLAPI
-
-        return AIMLAPI(id=model_id)
-
-    elif model_provider == "anthropic":
-        from agno.models.anthropic import Claude
-
-        return Claude(id=model_id)
-
-    elif model_provider == "aws-bedrock":
-        from agno.models.aws import AwsBedrock
-
-        return AwsBedrock(id=model_id)
-
-    elif model_provider == "aws-claude":
-        from agno.models.aws import Claude as AWSClaude
-
-        return AWSClaude(id=model_id)
-
-    elif model_provider == "azure-ai-foundry":
-        from agno.models.azure import AzureAIFoundry
-
-        return AzureAIFoundry(id=model_id)
-
-    elif model_provider == "azure-foundry-claude":
-        from agno.models.azure import AzureFoundryClaude
-
-        return AzureFoundryClaude(id=model_id)
-
-    elif model_provider == "azure-openai":
-        from agno.models.azure import AzureOpenAI
-
-        return AzureOpenAI(id=model_id)
-
-    elif model_provider == "cerebras":
-        from agno.models.cerebras import Cerebras
-
-        return Cerebras(id=model_id)
-
-    elif model_provider == "cerebras-openai":
-        from agno.models.cerebras import CerebrasOpenAI
-
-        return CerebrasOpenAI(id=model_id)
-
-    elif model_provider == "cohere":
-        from agno.models.cohere import Cohere
-
-        return Cohere(id=model_id)
-
-    elif model_provider == "cometapi":
-        from agno.models.cometapi import CometAPI
-
-        return CometAPI(id=model_id)
-
-    elif model_provider == "cloudflare":
-        from agno.models.cloudflare import Cloudflare
-
-        return Cloudflare(id=model_id)
-
-    elif model_provider == "dashscope":
-        from agno.models.dashscope import DashScope
-
-        return DashScope(id=model_id)
-
-    elif model_provider == "deepinfra":
-        from agno.models.deepinfra import DeepInfra
-
-        return DeepInfra(id=model_id)
-
-    elif model_provider == "deepseek":
-        from agno.models.deepseek import DeepSeek
-
-        return DeepSeek(id=model_id)
-
-    elif model_provider == "fireworks":
-        from agno.models.fireworks import Fireworks
-
-        return Fireworks(id=model_id)
-
-    elif model_provider == "google":
-        from agno.models.google import Gemini
-
-        return Gemini(id=model_id)
-
-    elif model_provider == "google-interactions":
-        from agno.models.google import GeminiInteractions
-
-        return GeminiInteractions(id=model_id)
-
-    elif model_provider == "groq":
-        from agno.models.groq import Groq
-
-        return Groq(id=model_id)
-
-    elif model_provider == "huggingface":
-        from agno.models.huggingface import HuggingFace
-
-        return HuggingFace(id=model_id)
-
-    elif model_provider == "ibm":
-        from agno.models.ibm import WatsonX
-
-        return WatsonX(id=model_id)
-
-    elif model_provider == "inception":
-        from agno.models.inception import Inception
-
-        return Inception(id=model_id)
-
-    elif model_provider == "internlm":
-        from agno.models.internlm import InternLM
-
-        return InternLM(id=model_id)
-
-    elif model_provider == "langdb":
-        from agno.models.langdb import LangDB
-
-        return LangDB(id=model_id)
-
-    elif model_provider == "litellm":
-        from agno.models.litellm import LiteLLM
-
-        return LiteLLM(id=model_id)
-
-    elif model_provider == "litellm-openai":
-        from agno.models.litellm import LiteLLMOpenAI
-
-        return LiteLLMOpenAI(id=model_id)
-
-    elif model_provider == "llama-cpp":
-        from agno.models.llama_cpp import LlamaCpp
-
-        return LlamaCpp(id=model_id)
-
-    elif model_provider == "llama-openai":
-        from agno.models.meta import LlamaOpenAI
-
-        return LlamaOpenAI(id=model_id)
-
-    elif model_provider == "lmstudio":
-        from agno.models.lmstudio import LMStudio
-
-        return LMStudio(id=model_id)
-
-    elif model_provider == "meta":
-        from agno.models.meta import Llama
-
-        return Llama(id=model_id)
-
-    elif model_provider == "minimax":
-        from agno.models.minimax import MiniMax
-
-        return MiniMax(id=model_id)
-
-    elif model_provider == "mistral":
-        from agno.models.mistral import MistralChat
-
-        return MistralChat(id=model_id)
-
-    elif model_provider == "moonshot":
-        from agno.models.moonshot import MoonShot
-
-        return MoonShot(id=model_id)
-
-    elif model_provider == "xiaomi":
-        from agno.models.xiaomi import MiMo
-
-        return MiMo(id=model_id)
-
-    elif model_provider == "n1n":
-        from agno.models.n1n import N1N
-
-        return N1N(id=model_id)
-
-    elif model_provider == "nebius":
-        from agno.models.nebius import Nebius
-
-        return Nebius(id=model_id)
-
-    elif model_provider == "neosantara":
-        from agno.models.neosantara import Neosantara
-
-        return Neosantara(id=model_id)
-
-    elif model_provider == "nexus":
-        from agno.models.nexus import Nexus
-
-        return Nexus(id=model_id)
-
-    elif model_provider == "nvidia":
-        from agno.models.nvidia import Nvidia
-
-        return Nvidia(id=model_id)
-
-    elif model_provider == "ollama":
-        from agno.models.ollama import Ollama
-
-        return Ollama(id=model_id)
-
-    elif model_provider == "openai":
-        from agno.models.openai import OpenAIResponses
-
-        return OpenAIResponses(id=model_id)
-
-    elif model_provider == "openai-chat":
-        from agno.models.openai import OpenAIChat
-
-        return OpenAIChat(id=model_id)
-
-    elif model_provider == "openai-responses":
-        from agno.models.openai import OpenAIResponses
-
-        return OpenAIResponses(id=model_id)
-
-    elif model_provider == "openrouter":
-        from agno.models.openrouter import OpenRouter
-
-        return OpenRouter(id=model_id)
-
-    elif model_provider == "perplexity":
-        from agno.models.perplexity import Perplexity
-
-        return Perplexity(id=model_id)
-
-    elif model_provider == "portkey":
-        from agno.models.portkey import Portkey
-
-        return Portkey(id=model_id)
-
-    elif model_provider == "requesty":
-        from agno.models.requesty import Requesty
-
-        return Requesty(id=model_id)
-
-    elif model_provider == "sambanova":
-        from agno.models.sambanova import Sambanova
-
-        return Sambanova(id=model_id)
-
-    elif model_provider == "siliconflow":
-        from agno.models.siliconflow import Siliconflow
-
-        return Siliconflow(id=model_id)
-
-    elif model_provider == "together":
-        from agno.models.together import Together
-
-        return Together(id=model_id)
-
-    elif model_provider == "vercel":
-        from agno.models.vercel import V0
-
-        return V0(id=model_id)
-
-    elif model_provider == "vertexai-claude":
-        from agno.models.vertexai.claude import Claude as VertexAIClaude
-
-        return VertexAIClaude(id=model_id)
-
-    elif model_provider == "vllm":
-        from agno.models.vllm import VLLM
-
-        return VLLM(id=model_id)
-
-    elif model_provider == "xai":
-        from agno.models.xai import xAI
-
-        return xAI(id=model_id)
-
-    else:
+    entry = MODEL_PROVIDER_CLASSES.get(model_provider)
+    if entry is None:
+        # Allow alias forms (e.g. "azure", "inceptionlabs") to resolve too.
+        resolved = _resolve_provider_key(model_provider)
+        entry = MODEL_PROVIDER_CLASSES.get(resolved)
+    if entry is None:
         raise ValueError(f"Model provider '{model_provider}' is not supported.")
+
+    module_path, class_name = entry
+    module = importlib.import_module(module_path)
+    model_class = getattr(module, class_name)
+    return model_class(id=model_id)
 
 
 def _parse_model_string(model_string: str) -> Model:
@@ -302,7 +176,7 @@ def _parse_model_string(model_string: str) -> Model:
             f"Invalid model string format: '{model_string}'. Model strings should be in format '<provider>:<model_id>' e.g. 'openai:gpt-4o'"
         )
 
-    return _get_model_class(model_id, model_provider)
+    return _get_model_class(model_id, _resolve_provider_key(model_provider))
 
 
 def get_model(model: Union[Model, str, None]) -> Optional[Model]:
@@ -314,3 +188,46 @@ def get_model(model: Union[Model, str, None]) -> Optional[Model]:
         return _parse_model_string(model)
     else:
         raise ValueError("Model must be a Model instance, string, or None")
+
+
+def get_model_from_dict(model_data: Dict[str, Any]) -> Optional[Model]:
+    """Reconstruct a Model from its serialized dict (as produced by ``Model.to_dict``).
+
+    Uses both the serialized ``provider`` and ``name`` to resolve the exact provider class,
+    which is required for providers that share a display ``provider`` string (e.g. Azure).
+    """
+    if not isinstance(model_data, dict):
+        raise ValueError("Model data must be a dictionary")
+
+    model_id = model_data.get("id")
+    if not model_id:
+        raise ValueError(f"Model data is missing an 'id': {model_data}")
+
+    provider_key = _resolve_provider_key(model_data.get("provider"), model_data.get("name"))
+    return _get_model_class(model_id, provider_key)
+
+
+def resolve_model(model_data: Any, registry: Optional["Registry"] = None) -> Any:
+    """Reconstruct a model from its serialized config, preferring a registered live instance.
+
+    Rebuilding from a serialized dict only round-trips ``id``/``name``/``provider`` (see
+    ``Model.to_dict``), so connection params like ``azure_endpoint``/``base_url`` and any
+    credentials are lost. When the model is present in the registry, its live, fully-configured
+    instance is reused; otherwise we fall back to rebuilding from the dict (or a ``provider:id``
+    string). Values that are neither a model dict nor a string are returned unchanged.
+
+    Shared by Agent and Team reconstruction so both resolve models identically.
+    """
+    if isinstance(model_data, dict) and "id" in model_data:
+        if registry is not None:
+            registered_model = registry.get_model(
+                model_data["id"],
+                provider=model_data.get("provider"),
+                name=model_data.get("name"),
+            )
+            if registered_model is not None:
+                return registered_model
+        return get_model_from_dict(model_data)
+    elif isinstance(model_data, str):
+        return get_model(model_data)
+    return model_data

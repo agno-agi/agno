@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("google.genai")
+
 from agno.media import Audio, File, Image, Video
 from agno.models.google.gemini_interactions import GeminiInteractions
 from agno.models.message import Message

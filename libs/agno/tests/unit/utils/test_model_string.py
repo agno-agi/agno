@@ -1,5 +1,10 @@
 import pytest
 
+pytest.importorskip("openai")
+pytest.importorskip("anthropic")
+pytest.importorskip("google.genai")
+pytest.importorskip("groq")
+
 from agno.agent import Agent
 from agno.culture.manager import CultureManager
 from agno.knowledge.chunking.agentic import AgenticChunking
