@@ -75,9 +75,13 @@ def test_fresh_schema_round_trip():
     db, db_file = _new_db()
 
     session = AgentSession(session_id="s1", agent_id="agent-1", user_id="u1")
-    session.upsert_run(_make_run("r1", "s1", "one"))
-    session.upsert_run(_make_run("r2", "s1", "two"))
+    r1 = _make_run("r1", "s1", "one")
+    r2 = _make_run("r2", "s1", "two")
+    session.upsert_run(r1)
+    session.upsert_run(r2)
     db.upsert_session(session)
+    db.upsert_run(run=r1, session_id="s1", user_id="u1", run_index=0)
+    db.upsert_run(run=r2, session_id="s1", user_id="u1", run_index=1)
 
     conn = sqlite3.connect(db_file)
     try:
