@@ -296,7 +296,7 @@ class TestMetricsProviderVariants:
         chat_model = OpenRouter(id="openai/gpt-4o-mini")
         responses_model = OpenRouterResponses(id="openai/gpt-4o-mini")
 
-        assert chat_model.get_provider() == "OpenRouter Chat"
+        assert chat_model.get_provider() == "OpenRouter"
         assert responses_model.get_provider() == "OpenRouter Responses"
 
     def test_session_metrics_from_dict_with_string_keys(self):

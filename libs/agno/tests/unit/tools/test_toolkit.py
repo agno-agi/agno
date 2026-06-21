@@ -695,7 +695,7 @@ def test_async_function_execution():
 
     # Test async execution
     async_func = toolkit.async_functions["example_func"]
-    async_result = asyncio.get_event_loop().run_until_complete(async_func.entrypoint(1, 2))
+    async_result = asyncio.run(async_func.entrypoint(1, 2))
     assert async_result == 103  # 1 + 2 + 100
 
 
