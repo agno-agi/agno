@@ -93,7 +93,29 @@ def test_make_request_success(brightdata_tools, mock_requests):
 
     assert result == "Success response"
     mock_requests.post.assert_called_once_with(
-        brightdata_tools.endpoint, headers=brightdata_tools.headers, data=json.dumps(payload)
+        brightdata_tools.endpoint,
+        headers=brightdata_tools.headers,
+        data=json.dumps(payload),
+        timeout=brightdata_tools.timeout,
+    )
+
+
+def test_make_request_uses_configured_timeout(mock_requests):
+    """Test _make_request passes the configured timeout to requests."""
+    tools = BrightDataTools(api_key="test_key", timeout=42)
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.text = "Success response"
+    mock_requests.post.return_value = mock_response
+
+    payload = {"url": "https://example.com", "zone": "test_zone"}
+    tools._make_request(payload)
+
+    mock_requests.post.assert_called_once_with(
+        tools.endpoint,
+        headers=tools.headers,
+        data=json.dumps(payload),
+        timeout=42,
     )
 
 
@@ -201,6 +223,19 @@ def test_get_screenshot_success(brightdata_tools, mock_requests, mock_agent):
     # Verify base64 encoding
     expected_base64 = base64.b64encode(mock_image_bytes).decode("utf-8")
     assert image_artifact.content == expected_base64.encode("utf-8")
+
+
+def test_get_screenshot_uses_configured_timeout(mock_requests, mock_agent):
+    """Test get_screenshot passes the configured timeout to requests."""
+    tools = BrightDataTools(api_key="test_key", timeout=21)
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.content = b"fake_png_data"
+    mock_requests.post.return_value = mock_response
+
+    tools.get_screenshot(mock_agent, "https://example.com")
+
+    assert mock_requests.post.call_args.kwargs["timeout"] == 21
 
 
 def test_get_screenshot_no_api_key(mock_agent):
@@ -398,6 +433,22 @@ def test_web_data_feed_with_reviews_param(brightdata_tools, mock_requests):
     # Verify the request included num_of_reviews
     trigger_args = mock_requests.post.call_args
     assert trigger_args[1]["json"] == [{"url": "https://facebook.com/company", "num_of_reviews": "50"}]
+
+
+def test_web_data_feed_uses_configured_timeout(mock_requests):
+    """Test web_data_feed passes the configured timeout to trigger and snapshot requests."""
+    tools = BrightDataTools(api_key="test_key", timeout=13)
+    mock_trigger_response = Mock()
+    mock_trigger_response.json.return_value = {"snapshot_id": "test_snapshot_123"}
+    mock_snapshot_response = Mock()
+    mock_snapshot_response.json.return_value = {"product_title": "Test Product"}
+    mock_requests.post.return_value = mock_trigger_response
+    mock_requests.get.return_value = mock_snapshot_response
+
+    tools.web_data_feed("amazon_product", "https://amazon.com/dp/B123")
+
+    assert mock_requests.post.call_args.kwargs["timeout"] == 13
+    assert mock_requests.get.call_args.kwargs["timeout"] == 13
 
 
 def test_web_data_feed_exception(brightdata_tools, mock_requests):
