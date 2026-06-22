@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
@@ -13,7 +14,9 @@ from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
-from agno.agent import Agent, RemoteAgent
+from agno.agent import Agent, AgentFactory, RemoteAgent
+from agno.agent.protocol import AgentProtocol
+from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
@@ -26,6 +29,9 @@ from agno.os.config import (
     KnowledgeDatabaseConfig,
     KnowledgeDomainConfig,
     KnowledgeInstanceConfig,
+    LearningConfig,
+    LearningDomainConfig,
+    MCPServerConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -45,6 +51,7 @@ from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
+from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
@@ -56,6 +63,7 @@ from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
+    collect_components_from_os,
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
@@ -66,10 +74,10 @@ from agno.os.utils import (
 )
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
-from agno.team import RemoteTeam, Team
+from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
 @asynccontextmanager
@@ -94,6 +102,26 @@ async def http_client_lifespan(_):
     await aclose_default_clients()
 
 
+async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
+    """Await in-flight cancel-persist writes before databases close on shutdown."""
+    from agno.agent._run import _background_tasks as agent_tasks
+    from agno.team._run import _background_tasks as team_tasks
+    from agno.workflow.workflow import _workflow_background_tasks as workflow_tasks
+
+    # Re-snapshot until the sets drain (a disconnect handled mid-shutdown can schedule
+    # another persist), bounded by timeout so it never hangs shutdown.
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        pending = {t for t in (*agent_tasks, *team_tasks, *workflow_tasks) if not t.done()}
+        if not pending:
+            return
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            log_warning(f"Timed out draining {len(pending)} cancel-persist task(s) before database shutdown")
+            return
+        await asyncio.wait(pending, timeout=remaining)
+
+
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
@@ -103,6 +131,8 @@ async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
 
     yield
 
+    # Let in-flight cancel-persist tasks finish writing before the pool closes
+    await _drain_cancel_persist_tasks()
     await agent_os._close_databases()
 
 
@@ -195,9 +225,9 @@ class AgentOS:
         description: Optional[str] = None,
         version: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
-        teams: Optional[List[Union[Team, RemoteTeam]]] = None,
-        workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+        agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
+        teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
+        workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
@@ -208,6 +238,7 @@ class AgentOS:
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
         enable_mcp_server: bool = False,
+        mcp_config: Optional[MCPServerConfig] = None,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
@@ -238,6 +269,10 @@ class AgentOS:
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
+            mcp_config: Optional configuration for the MCP server. Register custom tools via
+                ``tools=[...]`` and/or scope the built-in tools via ``enable_builtin_tools`` /
+                ``include_tags`` / ``exclude_tags``. Ignored when ``enable_mcp_server`` is False.
+                When omitted, the MCP server exposes all built-in tools (unchanged behavior).
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
@@ -259,9 +294,9 @@ class AgentOS:
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
-        self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
-        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = workflows
-        self.teams: Optional[List[Union[Team, RemoteTeam]]] = teams
+        self.agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = agents
+        self.teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = teams
+        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
@@ -293,6 +328,7 @@ class AgentOS:
         self.tracing = tracing
 
         self.enable_mcp_server = enable_mcp_server
+        self.mcp_config = mcp_config
         self.lifespan = lifespan
 
         self.registry = registry
@@ -327,6 +363,16 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._populate_registry_managers()
+
+        # Discover knowledge instances and mirror them into the registry so that
+        # GET /registry?resource_type=knowledge is consistent right after construction
+        # (not only after get_app()/resync()).
+        self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
+
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
@@ -375,11 +421,16 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._populate_registry_managers()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
+
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
 
         if self.enable_mcp_server:
             from agno.os.mcp import get_mcp_server
@@ -394,7 +445,12 @@ class AgentOS:
             get_home_router(self),
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
+            get_eval_router(
+                dbs=self.dbs,
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
+            ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
@@ -465,7 +521,11 @@ class AgentOS:
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
 
-            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            a2a_interface = A2A(
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
+                workflows=self._workflows or None,  # type: ignore[arg-type]
+            )
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
 
@@ -494,6 +554,21 @@ class AgentOS:
         if duplicate_ids:
             raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
+    @property
+    def _agents(self) -> List[Agent]:
+        """Local agents only — excludes RemoteAgent and AgentFactory."""
+        return [a for a in (self.agents or []) if isinstance(a, Agent)]
+
+    @property
+    def _teams(self) -> List[Team]:
+        """Local teams only — excludes RemoteTeam and TeamFactory."""
+        return [t for t in (self.teams or []) if isinstance(t, Team)]
+
+    @property
+    def _workflows(self) -> List[Workflow]:
+        """Local workflows only — excludes RemoteWorkflow and WorkflowFactory."""
+        return [w for w in (self.workflows or []) if isinstance(w, Workflow)]
+
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         return FastAPI(
             title=self.name or "Agno AgentOS",
@@ -507,11 +582,16 @@ class AgentOS:
 
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
-        if not self.agents:
+        # Inject db into external framework agents (not covered by self._agents)
+        for entry in self.agents or []:
+            if isinstance(entry, BaseExternalAgent):
+                if self.db is not None and entry.db is None:
+                    entry.db = self.db
+
+        if not self._agents:
             return
-        for agent in self.agents:
-            if isinstance(agent, RemoteAgent):
-                continue
+
+        for agent in self._agents:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
                 agent.db = self.db
@@ -535,13 +615,10 @@ class AgentOS:
 
     def _initialize_teams(self) -> None:
         """Initialize and configure all teams for AgentOS usage."""
-        if not self.teams:
+        if not self._teams:
             return
 
-        for team in self.teams:
-            if isinstance(team, RemoteTeam):
-                continue
-
+        for team in self._teams:
             # Set the default db to teams without their own
             if self.db is not None and team.db is None:
                 team.db = self.db
@@ -567,12 +644,10 @@ class AgentOS:
 
     def _initialize_workflows(self) -> None:
         """Initialize and configure all workflows for AgentOS usage."""
-        if not self.workflows:
+        if not self._workflows:
             return
 
-        for workflow in self.workflows:
-            if isinstance(workflow, RemoteWorkflow):
-                continue
+        for workflow in self._workflows:
             # Set the default db to workflows without their own
             if self.db is not None and workflow.db is None:
                 workflow.db = self.db
@@ -597,22 +672,162 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
+            # Auto-created purely to wire up primitives; suppress duplicate chatter.
+            self.registry._emit_dedup_logs = False
 
-        if self.agents:
-            existing_agent_ids = {getattr(a, "id", None) for a in self.registry.agents}
-            for agent in self.agents:
+        if self._agents:
+            existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
+            for agent in self._agents:
                 agent_id = getattr(agent, "id", None)
-                if not isinstance(agent, RemoteAgent) and agent_id is not None and agent_id not in existing_agent_ids:
-                    self.registry.agents.append(agent)
-                    existing_agent_ids.add(agent_id)
+                if agent_id is None:
+                    continue
+                existing_agent = existing_agents.get(agent_id)
+                if existing_agent is not None:
+                    if existing_agent is not agent:
+                        log_warning(
+                            f"Registry: multiple distinct agents share id '{agent_id}'; keeping the "
+                            "first. Give them distinct ids to avoid one shadowing the other."
+                        )
+                    continue
+                self.registry.agents.append(agent)
+                existing_agents[agent_id] = agent
 
-        if self.teams:
-            existing_team_ids = {getattr(t, "id", None) for t in self.registry.teams}
-            for team in self.teams:
+        if self._teams:
+            existing_teams = {tid: t for t in self.registry.teams if (tid := getattr(t, "id", None)) is not None}
+            for team in self._teams:
                 team_id = getattr(team, "id", None)
-                if not isinstance(team, RemoteTeam) and team_id is not None and team_id not in existing_team_ids:
-                    self.registry.teams.append(team)
-                    existing_team_ids.add(team_id)
+                if team_id is None:
+                    continue
+                existing_team = existing_teams.get(team_id)
+                if existing_team is not None:
+                    if existing_team is not team:
+                        log_warning(
+                            f"Registry: multiple distinct teams share id '{team_id}'; keeping the "
+                            "first. Give them distinct ids to avoid one shadowing the other."
+                        )
+                    continue
+                self.registry.teams.append(team)
+                existing_teams[team_id] = team
+
+    def _populate_registry_knowledge(self) -> None:
+        """Add discovered knowledge instances to the registry.
+
+        Sources are the knowledge instances collected by
+        ``_auto_discover_knowledge_instances`` (agents, teams, the AgentOS
+        ``knowledge`` param, and ``registry.knowledge``). That discovery only
+        keeps instances backed by a ``contents_db``, so a ``contents_db`` is
+        required for a knowledge base to be resolvable from a Studio/Builder
+        component config (vector-search-only knowledge is not registered).
+        """
+        if self.registry is None:
+            self.registry = Registry()
+            # Auto-created purely to wire up primitives; suppress duplicate chatter.
+            self.registry._emit_dedup_logs = False
+
+        if self.knowledge_instances:
+            existing_knowledge = {
+                name: k for k in self.registry.knowledge if (name := getattr(k, "name", None)) is not None
+            }
+            for kb in self.knowledge_instances:
+                kb_name = getattr(kb, "name", None)
+                if kb_name is None:
+                    continue
+                existing = existing_knowledge.get(kb_name)
+                if existing is not None:
+                    if existing is not kb:
+                        log_warning(
+                            f"Registry: multiple distinct knowledge instances share name '{kb_name}'; "
+                            "keeping the first. Give them distinct names to avoid one shadowing the other."
+                        )
+                    continue
+                self.registry.knowledge.append(kb)
+                existing_knowledge[kb_name] = kb
+
+    def _populate_registry_managers(self) -> None:
+        """Add memory and session summary managers from agents/teams to the registry.
+
+        Each manager is tagged with a generated id of the form `{owner_id}__{kind}` so
+        it can be looked up later. Managers are deduplicated by that id.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+            # Auto-created purely to wire up primitives; suppress duplicate chatter.
+            self.registry._emit_dedup_logs = False
+
+        registry = self.registry
+        memory_by_id = {mid: m for m in registry.memory_managers if (mid := getattr(m, "id", None)) is not None}
+        summary_by_id = {
+            sid: s for s in registry.session_summary_managers if (sid := getattr(s, "id", None)) is not None
+        }
+
+        def _register(owner: Any, owner_type: str) -> None:
+            owner_id = getattr(owner, "id", None)
+
+            mm = getattr(owner, "memory_manager", None)
+            if mm is not None:
+                mm_id = getattr(mm, "id", None)
+                if mm_id is not None:
+                    existing = memory_by_id.get(mm_id)
+                    if existing is not None:
+                        if existing is not mm:
+                            log_warning(
+                                f"Registry: multiple distinct memory managers share id '{mm_id}'; keeping "
+                                "the first. Give them distinct ids to avoid one shadowing the other."
+                            )
+                    else:
+                        mm.owner_id = owner_id
+                        mm.owner_type = owner_type
+                        registry.memory_managers.append(mm)
+                        memory_by_id[mm_id] = mm
+
+            sm = getattr(owner, "session_summary_manager", None)
+            if sm is not None:
+                sm_id = getattr(sm, "id", None)
+                if sm_id is not None:
+                    existing = summary_by_id.get(sm_id)
+                    if existing is not None:
+                        if existing is not sm:
+                            log_warning(
+                                f"Registry: multiple distinct session summary managers share id '{sm_id}'; "
+                                "keeping the first. Give them distinct ids to avoid one shadowing the other."
+                            )
+                    else:
+                        sm.owner_id = owner_id
+                        sm.owner_type = owner_type
+                        registry.session_summary_managers.append(sm)
+                        summary_by_id[sm_id] = sm
+
+        for agent in self._agents:
+            _register(agent, "agent")
+        for team in self._teams:
+            _register(team, "team")
+
+    def _populate_registry_components(self) -> None:
+        """Auto-populate the registry with components found in agents, teams and workflows.
+
+        Recursively walks every agent, team and workflow (including nested teams,
+        workflow steps and branch/route steps) and collects the models, tools,
+        databases and vector databases they reference. This keeps the registry,
+        and therefore ``GET /registry``, consistent with what is actually wired
+        into the AgentOS without requiring components to be declared twice.
+
+        The registry owns deduplication and cache invalidation (see
+        ``Registry.add_*``): models/dbs/vector dbs dedupe by id/name, toolkits by
+        (type, name, function set), and other callables by equality. User-provided
+        registry components and instances shared across many agents are never
+        duplicated, and user objects are only referenced, never mutated. The walk
+        degrades gracefully: a malformed node is skipped rather than failing
+        AgentOS construction.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+            # Auto-created purely to wire up primitives; suppress duplicate chatter.
+            self.registry._emit_dedup_logs = False
+
+        try:
+            collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
+        except Exception as e:
+            log_debug(f"Registry auto-population skipped: {e}")
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
@@ -628,19 +843,19 @@ class AgentOS:
         # Fall back to finding the first available database
         db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
-        for agent in self.agents or []:
+        for agent in self._agents:
             if agent.db:
                 db = agent.db
                 break
 
         if db is None:
-            for team in self.teams or []:
+            for team in self._teams:
                 if team.db:
                     db = team.db
                     break
 
         if db is None:
-            for workflow in self.workflows or []:
+            for workflow in self._workflows:
                 if workflow.db:
                     db = workflow.db
                     break
@@ -734,11 +949,20 @@ class AgentOS:
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
+
+        # Collect models, tools, dbs and vector dbs from the agent/team/workflow tree
+        self._populate_registry_components()
 
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
+            get_eval_router(
+                dbs=self.dbs,
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
+            ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
@@ -853,17 +1077,24 @@ class AgentOS:
 
     def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
         from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+        from agno.os.scopes import AgentOSScope
 
         verify_audience = False
         jwks_file = None
         verification_keys = None
         algorithm = "RS256"
+        audience = None
+        admin_scope: Optional[str] = None
+        user_isolation = False
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
             verification_keys = self.authorization_config.verification_keys
             jwks_file = self.authorization_config.jwks_file
             verify_audience = self.authorization_config.verify_audience or False
+            audience = self.authorization_config.audience
+            admin_scope = self.authorization_config.admin_scope
+            user_isolation = self.authorization_config.user_isolation
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -874,6 +1105,15 @@ class AgentOS:
             algorithm=algorithm,
         )
         fastapi_app.state.jwt_validator = jwt_validator
+        # Expose audience config + admin scope on app.state so WebSocket auth
+        # (which does not flow through HTTP middleware) can honour them.
+        fastapi_app.state.jwt_verify_audience = verify_audience
+        fastapi_app.state.jwt_audience = audience
+        fastapi_app.state.admin_scope = admin_scope or AgentOSScope.ADMIN.value
+        # User isolation is opt-in and orthogonal to RBAC. When False (default)
+        # JWT/RBAC still apply but the per-user DB wrapper and ownership gates
+        # added by the user-scoped-DB work stay dormant.
+        fastapi_app.state.user_isolation_enabled = user_isolation
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms
@@ -899,15 +1139,23 @@ class AgentOS:
                 ] + interface_prefixes
 
         # Add middleware to stack
-        fastapi_app.add_middleware(
-            JWTMiddleware,
-            verification_keys=verification_keys,
-            jwks_file=jwks_file,
-            algorithm=algorithm,
-            authorization=self.authorization,
-            verify_audience=verify_audience,
-            excluded_route_paths=excluded_route_paths,
-        )
+        middleware_kwargs: Dict[str, Any] = {
+            "verification_keys": verification_keys,
+            "jwks_file": jwks_file,
+            "algorithm": algorithm,
+            "authorization": self.authorization,
+            "verify_audience": verify_audience,
+            "excluded_route_paths": excluded_route_paths,
+        }
+        if audience:
+            middleware_kwargs["audience"] = audience
+        if admin_scope:
+            middleware_kwargs["admin_scope"] = admin_scope
+        # Default to False on the middleware; only forward when actually enabled
+        # so manual app.add_middleware(JWTMiddleware) defaults stay backwards-compatible.
+        if user_isolation:
+            middleware_kwargs["user_isolation"] = True
+        fastapi_app.add_middleware(JWTMiddleware, **middleware_kwargs)
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.
@@ -1001,23 +1249,40 @@ class AgentOS:
             str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]
         ] = {}  # Track databases specifically used for knowledge
 
-        for agent in self.agents or []:
-            if agent.db:
-                self._register_db_with_validation(dbs, agent.db)
-            agent_contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
-            if agent_contents_db:
-                self._register_db_with_validation(knowledge_dbs, agent_contents_db)
+        for entry in self.agents or []:
+            if isinstance(entry, AgentFactory):
+                if entry.db:
+                    self._register_db_with_validation(dbs, entry.db)
+            elif isinstance(entry, Agent):
+                if entry.db:
+                    self._register_db_with_validation(dbs, entry.db)
+                agent_contents_db = getattr(entry.knowledge, "contents_db", None) if entry.knowledge else None
+                if agent_contents_db:
+                    self._register_db_with_validation(knowledge_dbs, agent_contents_db)
+            else:
+                # External framework agents (BaseExternalAgent / AgentProtocol)
+                agent_db = getattr(entry, "db", None)
+                if agent_db:
+                    self._register_db_with_validation(dbs, agent_db)
 
-        for team in self.teams or []:
-            if team.db:
-                self._register_db_with_validation(dbs, team.db)
-            team_contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
-            if team_contents_db:
-                self._register_db_with_validation(knowledge_dbs, team_contents_db)
+        for team_entry in self.teams or []:
+            if isinstance(team_entry, TeamFactory):
+                if team_entry.db:
+                    self._register_db_with_validation(dbs, team_entry.db)
+            elif isinstance(team_entry, Team):
+                if team_entry.db:
+                    self._register_db_with_validation(dbs, team_entry.db)
+                team_contents_db = getattr(team_entry.knowledge, "contents_db", None) if team_entry.knowledge else None
+                if team_contents_db:
+                    self._register_db_with_validation(knowledge_dbs, team_contents_db)
 
-        for workflow in self.workflows or []:
-            if workflow.db:
-                self._register_db_with_validation(dbs, workflow.db)
+        for wf_entry in self.workflows or []:
+            if isinstance(wf_entry, WorkflowFactory):
+                if wf_entry.db:
+                    self._register_db_with_validation(dbs, wf_entry.db)
+            elif isinstance(wf_entry, Workflow):
+                if wf_entry.db:
+                    self._register_db_with_validation(dbs, wf_entry.db)
 
         for knowledge_base in self.knowledge or []:
             if knowledge_base.contents_db:
@@ -1119,6 +1384,7 @@ class AgentOS:
             "session_table_name": db.session_table_name,
             "culture_table_name": db.culture_table_name,
             "memory_table_name": db.memory_table_name,
+            "learnings_table_name": db.learnings_table_name,
             "metrics_table_name": db.metrics_table_name,
             "evals_table_name": db.eval_table_name,
             "knowledge_table_name": db.knowledge_table_name,
@@ -1155,16 +1421,20 @@ class AgentOS:
             if isinstance(knowledge, (Knowledge, RemoteKnowledge)):
                 knowledge_instances.append(knowledge)
 
-        for agent in self.agents or []:
+        for agent in self._agents:
             if agent.knowledge:
                 _add_knowledge_if_not_duplicate(agent.knowledge)
 
-        for team in self.teams or []:
+        for team in self._teams:
             if team.knowledge:
                 _add_knowledge_if_not_duplicate(team.knowledge)
 
         for knowledge_base in self.knowledge or []:
             _add_knowledge_if_not_duplicate(knowledge_base)
+
+        if self.registry is not None:
+            for knowledge_base in self.registry.knowledge or []:
+                _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
 
@@ -1257,6 +1527,28 @@ class AgentOS:
                 )
 
         return memory_config
+
+    def _get_learning_config(self) -> LearningConfig:
+        learning_config = self.config.learning if self.config and self.config.learning else LearningConfig()
+
+        if learning_config.dbs is None:
+            learning_config.dbs = []
+
+        dbs_with_specific_config = [db.db_id for db in learning_config.dbs]
+
+        for db_id, dbs in self.dbs.items():
+            if db_id not in dbs_with_specific_config:
+                # Collect unique table names from all databases with the same id
+                unique_tables = list(set(db.learnings_table_name for db in dbs))
+                learning_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=LearningDomainConfig(display_name=db_id),
+                        tables=unique_tables,
+                    )
+                )
+
+        return learning_config
 
     def _get_knowledge_config(self) -> KnowledgeConfig:
         knowledge_config = self.config.knowledge if self.config and self.config.knowledge else KnowledgeConfig()

@@ -6,6 +6,7 @@ from fastapi.routing import APIRouter
 from typing_extensions import List
 
 from agno.agent import Agent
+from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.os.interfaces.a2a.router import attach_routes
 from agno.os.interfaces.base import BaseInterface
@@ -20,7 +21,7 @@ class A2A(BaseInterface):
 
     def __init__(
         self,
-        agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+        agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol]]] = None,
         teams: Optional[List[Union[Team, RemoteTeam]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
         prefix: str = "/a2a",

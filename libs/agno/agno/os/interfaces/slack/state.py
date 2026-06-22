@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Union
 
 from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from agno.media import Audio, File, Image, Video
+    from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
     from agno.run.base import BaseRunOutputEvent
+    from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 
-# Literal not Enum — values flow directly into Slack API dicts as plain strings
-TaskStatus = Literal["in_progress", "complete", "error"]
+# Literal not Enum — values flow directly into Slack API dicts as plain strings.
+# "pending" added for HITL pauses — Slack's AI Stream UI treats in_progress cards
+# that outlive the stream idle window as errors, whereas pending cards are valid waits.
+TaskStatus = Literal["pending", "in_progress", "complete", "error"]
 
 
 class TaskUpdateDict(TypedDict):
@@ -30,7 +34,7 @@ class TaskCard:
 class StreamState:
     # Slack thread title — set once on first content to avoid repeated API calls
     title_set: bool = False
-    # Incremented per error; used to generate unique fallback task card IDs
+    # Error events may lack tool_call_id; this generates fallback IDs (tool_error_0, tool_error_1, ...)
     error_count: int = 0
 
     text_buffer: str = ""
@@ -59,8 +63,11 @@ class StreamState:
     # Total chars sent to the current Slack stream; reset on rotation
     stream_chars_sent: int = 0
 
-    def track_task(self, key: str, title: str) -> None:
-        self.task_cards[key] = TaskCard(title=title)
+    # Stashed by _on_run_paused; router posts Block Kit approval card after stream.stop()
+    paused_event: Optional[Union["AgentRunPausedEvent", "TeamRunPausedEvent"]] = None
+
+    def track_task(self, key: str, title: str, status: TaskStatus = "in_progress") -> None:
+        self.task_cards[key] = TaskCard(title=title, status=status)
 
     def complete_task(self, key: str) -> None:
         card = self.task_cards.get(key)

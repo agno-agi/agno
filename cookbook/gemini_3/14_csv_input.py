@@ -45,7 +45,7 @@ with tables and summaries.
 # ---------------------------------------------------------------------------
 csv_agent = Agent(
     name="Data Analyst",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     markdown=True,
 )

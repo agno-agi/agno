@@ -3,9 +3,11 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     RouterExecutionCompletedEvent,
@@ -706,6 +708,29 @@ class Router:
                     add_session_state_to_context=add_session_state_to_context,
                 )
 
+                # Check for executor HITL pause
+                if isinstance(step_output, StepOutput) and getattr(step_output, "is_paused", False):
+                    all_results.append(step_output)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+
+                if isinstance(step_output, list) and step_output and getattr(step_output[-1], "is_paused", False):
+                    all_results.extend(step_output)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
                     all_results.extend(step_output)
@@ -729,6 +754,8 @@ class Router:
                     current_step_input, step_output, router_step_outputs
                 )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} failed")
@@ -824,6 +851,8 @@ class Router:
         router_step_outputs = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                raise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_outputs_for_step = []
                 # Stream step execution
@@ -856,6 +885,18 @@ class Router:
                 step_name = getattr(step, "name", f"step_{i}")
                 log_debug(f"Router step {step_name} streaming completed")
 
+                # Check for executor HITL pause
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         router_step_outputs[step_name] = step_outputs_for_step[0]
@@ -879,6 +920,8 @@ class Router:
                             current_step_input, step_outputs_for_step, router_step_outputs
                         )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} streaming failed")
@@ -980,6 +1023,30 @@ class Router:
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                 )
+
+                # Check for executor HITL pause
+                if isinstance(step_output, StepOutput) and getattr(step_output, "is_paused", False):
+                    all_results.append(step_output)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+
+                if isinstance(step_output, list) and step_output and getattr(step_output[-1], "is_paused", False):
+                    all_results.extend(step_output)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
                     all_results.extend(step_output)
@@ -1006,6 +1073,8 @@ class Router:
                     current_step_input, step_output, router_step_outputs
                 )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} async failed")
@@ -1102,6 +1171,8 @@ class Router:
         router_step_outputs = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                await araise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_outputs_for_step = []
 
@@ -1135,6 +1206,18 @@ class Router:
                 step_name = getattr(step, "name", f"step_{i}")
                 log_debug(f"Router step {step_name} async streaming completed")
 
+                # Check for executor HITL pause
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         router_step_outputs[step_name] = step_outputs_for_step[0]
@@ -1158,6 +1241,8 @@ class Router:
                             current_step_input, step_outputs_for_step, router_step_outputs
                         )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} async streaming failed")

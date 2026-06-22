@@ -59,7 +59,7 @@ def mul(a: int, b: int) -> int:
 
 
 def test_logger_hook_invocation_sub_tool():
-    agent = Agent(tools=[sub])
+    agent = Agent(tools=[sub], instructions="Always use the sub tool to compute differences.")
 
     with patch.object(type(logger), "info", wraps=logger.info) as mock_info:
         response: RunOutput = agent.run("Compute 6 - 5")

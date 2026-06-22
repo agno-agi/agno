@@ -470,7 +470,17 @@ def get_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Knowledge base instructions
+    # 2.3 Learning context (user profile, user memory, session context)
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
+    # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
@@ -480,7 +490,7 @@ def get_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
-    # 2.4 Memories
+    # 2.5 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -691,7 +701,17 @@ async def aget_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Knowledge base instructions
+    # 2.3 Learning context (user profile, user memory, session context)
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = await team._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
+    # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
@@ -701,7 +721,7 @@ async def aget_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
-    # 2.4 Memories
+    # 2.5 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -1507,11 +1527,11 @@ def _get_json_output_prompt(
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, list):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema)}"
+            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, dict):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema)}"
+            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
             json_schema = output_schema.model_json_schema()
@@ -1545,13 +1565,11 @@ def _get_json_output_prompt(
 
                 if len(response_model_properties) > 0:
                     json_output_prompt += "\n<json_fields>"
-                    json_output_prompt += (
-                        f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'])}"
-                    )
+                    json_output_prompt += f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'], ensure_ascii=False)}"
                     json_output_prompt += "\n</json_fields>"
                     json_output_prompt += "\n\nHere are the properties for each field:"
                     json_output_prompt += "\n<json_field_properties>"
-                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
+                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2, ensure_ascii=False)}"
                     json_output_prompt += "\n</json_field_properties>"
         else:
             log_warning(f"Could not build json schema for {output_schema}")

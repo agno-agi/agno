@@ -1,7 +1,7 @@
 """
 Basic Agent - Your First Gemini Agent
 =======================================
-Simple Agno agent with Gemini 3 Flash.
+Simple Agno agent with Gemini 3.5 Flash.
 
 Key concepts:
 - Agent: The core building block in Agno wraps a model with instructions
@@ -25,7 +25,7 @@ from agno.models.google import Gemini
 # ---------------------------------------------------------------------------
 chat_agent = Agent(
     name="Chat Assistant",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     # markdown=True renders rich formatting in the terminal
     markdown=True,
 )

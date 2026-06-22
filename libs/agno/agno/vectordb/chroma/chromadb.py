@@ -465,7 +465,11 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            self._batch_operation(
+            # Run the synchronous ChromaDB batch on a worker thread so the
+            # asyncio event loop stays responsive while the (potentially large)
+            # write completes.
+            await asyncio.to_thread(
+                self._batch_operation,
                 ids=ids,
                 embeddings=docs_embeddings,
                 documents=docs,
@@ -656,7 +660,11 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            self._batch_operation(
+            # Run the synchronous ChromaDB batch on a worker thread so the
+            # asyncio event loop stays responsive while the (potentially large)
+            # write completes.
+            await asyncio.to_thread(
+                self._batch_operation,
                 ids=ids,
                 embeddings=docs_embeddings,
                 documents=docs,

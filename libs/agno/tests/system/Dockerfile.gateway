@@ -15,7 +15,7 @@ COPY . /app/agno
 
 # Install agno from local source
 WORKDIR /app/agno
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir .
 
 # Install additional dependencies for the server
 RUN pip install --no-cache-dir \
@@ -34,7 +34,7 @@ RUN pip install --no-cache-dir \
     PyJWT \
     mcp \
     fastmcp \
-    a2a-sdk \
+    "a2a-sdk>=0.3.0,<1.0" \
     agui \
     ag-ui-protocol \
     slack-sdk \

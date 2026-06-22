@@ -327,6 +327,25 @@ def test_default_excludes_env_family():
         assert listed == ["env.yaml", "environment.py", "keep.txt"]
 
 
+def test_default_excludes_agent_scratch_and_plural_venvs():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        (base_dir / "real.py").write_text("# TODO: real work")
+        scratch = base_dir / ".context"
+        scratch.mkdir()
+        (scratch / "notes.py").write_text("# TODO: scratch")
+        venvs_pkg = base_dir / ".venvs" / "demo" / "lib"
+        venvs_pkg.mkdir(parents=True)
+        (venvs_pkg / "installed.py").write_text("# TODO: dependency")
+
+        result = json.loads(file_tools.search_content(query="TODO", limit=10))
+        file_names = [m["file"] for m in result["files"]]
+        assert result["matches_found"] == 1
+        assert file_names == ["real.py"]
+
+
 def test_search_content_honors_exclusions():
     """search_content should not return matches inside excluded directories."""
     with tempfile.TemporaryDirectory() as tmp_dir:

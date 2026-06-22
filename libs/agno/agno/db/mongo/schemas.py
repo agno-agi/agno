@@ -113,6 +113,27 @@ LEARNINGS_COLLECTION_SCHEMA = [
     {"key": "updated_at"},
 ]
 
+SCHEDULES_COLLECTION_SCHEMA = [
+    {"key": "id", "unique": True},
+    {"key": "name", "unique": True},
+    {"key": "enabled"},
+    {"key": "next_run_at"},
+    {"key": "locked_by"},
+    {"key": "locked_at"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    {"key": [("enabled", 1), ("next_run_at", 1)]},
+]
+
+SCHEDULE_RUNS_COLLECTION_SCHEMA = [
+    {"key": "id", "unique": True},
+    {"key": "schedule_id"},
+    {"key": "status"},
+    {"key": "triggered_at"},
+    {"key": "completed_at"},
+    {"key": "created_at"},
+]
+
 
 def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
@@ -126,6 +147,8 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "traces": TRACE_COLLECTION_SCHEMA,
         "spans": SPAN_COLLECTION_SCHEMA,
         "learnings": LEARNINGS_COLLECTION_SCHEMA,
+        "schedules": SCHEDULES_COLLECTION_SCHEMA,
+        "schedule_runs": SCHEDULE_RUNS_COLLECTION_SCHEMA,
     }
 
     indexes = index_definitions.get(collection_type)

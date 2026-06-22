@@ -18,6 +18,7 @@ Examples for all supported LLM providers in Agno.
 | **Ollama** | Local models | Local |
 | **LM Studio** | Local GUI | Local |
 | **llama.cpp** | Local GGUF | Local |
+| **Tuning Engines** | Governed OpenAI-compatible endpoint | `TUNING_ENGINES_API_KEY` |
 
 ## Getting Started
 

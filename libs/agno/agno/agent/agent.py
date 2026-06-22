@@ -923,11 +923,15 @@ class Agent:
     ) -> bool:
         return _storage.delete(self, db=db, hard_delete=hard_delete)
 
-    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return _storage.get_run_output(self, run_id=run_id, session_id=session_id)
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
+        return _storage.get_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
 
-    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id)
+    async def aget_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
+        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
         return _storage.get_last_run_output(self, session_id=session_id)
@@ -1621,6 +1625,7 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
+        background: bool = False,
         **kwargs,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         return _run.acontinue_run_dispatch(
@@ -1639,6 +1644,7 @@ class Agent:
             metadata=metadata,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
+            background=background,
             **kwargs,
         )
 
@@ -1710,18 +1716,23 @@ def get_agents(
             component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
         )
         for component in components:
-            config = db.get_config(component_id=component["component_id"])
-            if config is not None:
-                agent_config = config.get("config")
-                if agent_config is not None:
-                    component_id = component["component_id"]
-                    if "id" not in agent_config:
-                        agent_config["id"] = component_id
-                    agent = Agent.from_dict(agent_config, registry=registry)
-                    agent.id = component_id
-                    agent._version = component.get("current_version")
-                    agent._stage = config.get("stage")
-                    agents.append(agent)
+            try:
+                config = db.get_config(component_id=component["component_id"])
+                if config is not None:
+                    agent_config = config.get("config")
+                    if agent_config is not None:
+                        component_id = component["component_id"]
+                        if "id" not in agent_config:
+                            agent_config["id"] = component_id
+                        agent = Agent.from_dict(agent_config, registry=registry)
+                        agent.id = component_id
+                        agent._version = component.get("current_version")
+                        agent._stage = config.get("stage")
+                        agents.append(agent)
+            except Exception as e:
+                component_id = component.get("component_id", "unknown")
+                log_error(f"Error loading Agent {component_id} from database: {str(e)}")
+                continue
         return agents
 
     except Exception as e:

@@ -24,7 +24,7 @@ class MovieScript(BaseModel):
 
 def test_structured_response():
     structured_output_agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id="gpt-5.4-mini"),
         description="You help people write movie scripts.",
         output_schema=MovieScript,
     )
@@ -52,7 +52,7 @@ def test_structured_response_with_enum_fields():
         rating: Grade
 
     structured_output_agent = Agent(
-        model=OpenRouter(id="gpt-4o"),
+        model=OpenRouter(id="gpt-5.4-mini"),
         description="You help generate recipe names and ratings.",
         output_schema=Recipe,
     )
@@ -65,7 +65,7 @@ def test_structured_response_with_enum_fields():
 def test_structured_response_strict_output_false():
     """Test structured response with strict_output=False (guided mode)"""
     guided_output_agent = Agent(
-        model=OpenRouter(id="gpt-4o", strict_output=False),
+        model=OpenRouter(id="gpt-5.4-mini", strict_output=False),
         description="You write movie scripts.",
         output_schema=MovieScript,
     )
