@@ -15,6 +15,13 @@ def _preview_message_content(content: Any, max_length: int = 120) -> Optional[st
 
 
 def _checkpoint_entry(run_output: Any, message_index: int, reason: str) -> Dict[str, Any]:
+    """Build a single checkpoint entry.
+
+    ``checkpoint_id`` is intentionally left as ``None`` here — it gets
+    assigned by :func:`list_run_checkpoints` after the full list is sorted,
+    so the value reflects display order (Checkpoint 1, 2, 3, …) rather than
+    the underlying message index.
+    """
     messages = run_output.messages or []
     message = messages[message_index - 1] if 0 < message_index <= len(messages) else None
     checkpoint_status = getattr(message, "checkpoint_status", None) if message is not None else None
@@ -22,7 +29,7 @@ def _checkpoint_entry(run_output: Any, message_index: int, reason: str) -> Dict[
     run_status = getattr(run_output.status, "value", run_output.status)
 
     return {
-        "checkpoint_id": str(message_index),
+        "checkpoint_id": None,  # filled in by list_run_checkpoints
         "run_id": run_output.run_id,
         "session_id": run_output.session_id,
         "message_index": message_index,
@@ -40,9 +47,14 @@ def _checkpoint_entry(run_output: Any, message_index: int, reason: str) -> Dict[
 def list_run_checkpoints(run_output: Any) -> List[Dict[str, Any]]:
     """Return FE-friendly checkpoint boundaries derived from the current run row.
 
-    This intentionally does not create another persistence source. Checkpoints
-    are inferred from message-level checkpoint markers and the terminal end of
-    the current transcript.
+    Entries are inferred from message-level checkpoint markers and the terminal
+    end of the current transcript — this intentionally does not introduce a
+    separate persistence source.
+
+    ``checkpoint_id`` is a 1-based display ordinal over the returned list
+    (Checkpoint 1, 2, 3, …) so the FE can label pins sequentially. Use
+    ``message_index`` (not ``checkpoint_id``) when calling back into
+    ``/continue?continue_from=...`` — that's the value the dispatch understands.
     """
     messages = run_output.messages or []
     checkpoints_by_index: Dict[int, Dict[str, Any]] = {}
@@ -60,7 +72,13 @@ def list_run_checkpoints(run_output: Any) -> List[Dict[str, Any]]:
     if messages:
         checkpoints_by_index[len(messages)] = _checkpoint_entry(run_output, len(messages), reason="end")
 
-    return [checkpoints_by_index[idx] for idx in sorted(checkpoints_by_index)]
+    # Assign sequential display IDs in sorted order so the FE shows
+    # "Checkpoint 1, 2, 3, …" instead of indices like "4, 6, 7" that look
+    # arbitrary to a user.
+    entries = [checkpoints_by_index[idx] for idx in sorted(checkpoints_by_index)]
+    for ordinal, entry in enumerate(entries, start=1):
+        entry["checkpoint_id"] = str(ordinal)
+    return entries
 
 
 def _referenced_tool_call_ids(messages: List[Any]) -> set:
@@ -108,7 +126,18 @@ def build_run_checkpoint_snapshot(run_output: Any, message_index: int) -> Dict[s
             if getattr(getattr(requirement, "tool_execution", None), "tool_call_id", None) in valid_tool_call_ids
         ]
 
+    # Match the display ordinal the FE would have seen on the timeline
+    # (Checkpoint 1, 2, 3, …) so the snapshot's checkpoint_id is consistent
+    # with GET /checkpoints. Falls back to None if the requested index isn't
+    # a known checkpoint boundary on the run.
+    entry = _checkpoint_entry(run_output, message_index, reason="snapshot")
+    timeline = list_run_checkpoints(run_output)
+    for known in timeline:
+        if known.get("message_index") == message_index:
+            entry["checkpoint_id"] = known.get("checkpoint_id")
+            break
+
     return {
-        "checkpoint": _checkpoint_entry(run_output, message_index, reason="snapshot"),
+        "checkpoint": entry,
         "snapshot": snapshot.to_dict() if hasattr(snapshot, "to_dict") else snapshot,
     }
