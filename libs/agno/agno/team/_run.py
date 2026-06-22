@@ -1892,7 +1892,7 @@ def run_dispatch(
         # Register run for cancellation tracking (after validation succeeds)
         register_run(run_id)  # type: ignore
 
-        # Normalise hook & guardails
+        # Normalise hook & guardrails
         if not team._hooks_normalised:
             if team.pre_hooks:
                 team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
@@ -4124,7 +4124,7 @@ def arun_dispatch(  # type: ignore
     # Validate input against input_schema if provided
     validated_input = validate_input(input, team.input_schema)
 
-    # Normalise hook & guardails
+    # Normalise hook & guardrails
     if not team._hooks_normalised:
         if team.pre_hooks:
             team.pre_hooks = normalize_pre_hooks(team.pre_hooks, async_mode=True)  # type: ignore
