@@ -16,7 +16,8 @@ class PIIDetectionGuardrail(BaseGuardrail):
         enable_credit_card_check: Whether to check for credit cards. True by default.
         enable_email_check: Whether to check for emails. True by default.
         enable_phone_check: Whether to check for phone numbers. True by default.
-        custom_patterns: A dictionary of custom PII patterns to detect. This is added to the default patterns.
+        custom_patterns: A dictionary of custom PII patterns to detect, mapping a name to a regex string or
+            compiled pattern. This is added to the default patterns.
     """
 
     def __init__(
@@ -41,13 +42,16 @@ class PIIDetectionGuardrail(BaseGuardrail):
             self.pii_patterns["Phone"] = re.compile(r"\b\d{3}[\s.-]?\d{3}[\s.-]?\d{4}\b")
 
         if custom_patterns:
-            # Strings are compiled once here; invalid regex raises re.error
-            # immediately at configuration time (fail-fast, not at check() call).
+            # Compile string patterns up front so an invalid regex fails here, not on the first check()
             for name, pattern in custom_patterns.items():
                 if isinstance(pattern, str):
                     self.pii_patterns[name] = re.compile(pattern)
-                else:
+                elif isinstance(pattern, re.Pattern):
                     self.pii_patterns[name] = pattern
+                else:
+                    raise TypeError(
+                        f"custom_patterns['{name}'] must be a str or re.Pattern, got {type(pattern).__name__}"
+                    )
 
     def check(self, run_input: Union[RunInput, TeamRunInput]) -> None:
         """Check for PII patterns in the input."""
