@@ -14,7 +14,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=MiniMax(id="MiniMax-M2.7"),
+    model=MiniMax(id="MiniMax-M3"),
     markdown=True,
     tools=[WebSearchTools()],
 )

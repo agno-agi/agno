@@ -590,10 +590,22 @@ class PgVector(VectorDb):
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
             results = await asyncio.gather(*embed_tasks, return_exceptions=True)
 
+            # Re-raise on rate limits to avoid writing NULL embeddings.
+            rate_limit_error: Optional[Exception] = None
+
             # Check for exceptions and handle them
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     error_msg = str(result)
+
+                    error_str = error_msg.lower()
+                    is_rate_limit = any(
+                        phrase in error_str
+                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                    )
+                    if is_rate_limit and rate_limit_error is None:
+                        rate_limit_error = result
+
                     # If it's an event loop closure error, log it but don't fail
                     if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
                         log_warning(
@@ -601,6 +613,9 @@ class PgVector(VectorDb):
                         )
                     else:
                         log_error(f"Error embedding document {i}: {result}")
+
+            if rate_limit_error is not None:
+                raise rate_limit_error
 
     async def async_upsert(
         self,
@@ -651,13 +666,6 @@ class PgVector(VectorDb):
                                 # This allows the same URL/content to be inserted with different descriptions
                                 base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
                                 record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
-
-                                if (
-                                    doc.embedding is not None
-                                    and isinstance(doc.embedding, list)
-                                    and len(doc.embedding) == 0
-                                ):
-                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
 
                                 if (
                                     doc.embedding is not None

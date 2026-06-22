@@ -14,6 +14,8 @@ from agno.os.config import (
     ChatConfig,
     EvalsConfig,
     KnowledgeConfig,
+    LearningConfig,
+    Manifest,
     MemoryConfig,
     MetricsConfig,
     SessionConfig,
@@ -101,11 +103,29 @@ class ManagerResponse(BaseModel):
     route: str = Field(..., description="API route path")
 
 
+class Model(BaseModel):
+    id: Optional[str] = Field(None, description="Model identifier")
+    provider: Optional[str] = Field(None, description="Model provider name")
+
+
+def _extract_model(entity: Any) -> Optional[Model]:
+    """Pull id/provider off an entity's model, if present."""
+    raw = getattr(entity, "model", None)
+    if raw is None:
+        return None
+    model_id = getattr(raw, "id", None)
+    provider = getattr(raw, "provider", None)
+    if model_id is None and provider is None:
+        return None
+    return Model(id=model_id, provider=provider)
+
+
 class AgentSummaryResponse(BaseModel):
     id: Optional[str] = Field(None, description="Unique identifier for the agent")
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    model: Optional[Model] = Field(None, description="Model used by the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
@@ -115,13 +135,18 @@ class AgentSummaryResponse(BaseModel):
         metadata = {"framework": framework} if framework else None
         if isinstance(agent, AgentFactory):
             return cls(
-                id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None
+                id=agent.id,
+                name=agent.name,
+                description=agent.description,
+                db_id=agent.db.id if agent.db else None,
+                model=_extract_model(agent),
             )
         return cls(
             id=agent.id,
             name=agent.name,
             description=getattr(agent, "description", None),
             db_id=agent_db.id if agent_db else None,
+            model=_extract_model(agent),
             metadata=metadata,
         )
 
@@ -132,14 +157,28 @@ class TeamSummaryResponse(BaseModel):
     description: Optional[str] = Field(None, description="Description of the team")
     db_id: Optional[str] = Field(None, description="Database identifier")
     mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
+    model: Optional[Model] = Field(None, description="Model used by the team leader")
 
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
         if isinstance(team, TeamFactory):
-            return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
+            return cls(
+                id=team.id,
+                name=team.name,
+                description=team.description,
+                db_id=team.db.id if team.db else None,
+                model=_extract_model(team),
+            )
         db_id = team.db.id if team.db else None
         mode = team.mode.value if hasattr(team, "mode") and team.mode else None
-        return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
+        return cls(
+            id=team.id,
+            name=team.name,
+            description=team.description,
+            db_id=db_id,
+            mode=mode,
+            model=_extract_model(team),
+        )
 
 
 class WorkflowSummaryResponse(BaseModel):
@@ -205,10 +244,15 @@ class ConfigResponse(BaseModel):
     os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
     databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")
+    manifest: Optional[Dict[str, Manifest]] = Field(
+        None,
+        description="Per-entity UI metadata keyed by agent/team/workflow id",
+    )
 
     session: Optional[SessionConfig] = Field(None, description="Session configuration")
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
+    learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
@@ -217,11 +261,6 @@ class ConfigResponse(BaseModel):
     teams: List[TeamSummaryResponse] = Field(..., description="List of registered teams")
     workflows: List[WorkflowSummaryResponse] = Field(..., description="List of registered workflows")
     interfaces: List[InterfaceResponse] = Field(..., description="List of available interfaces")
-
-
-class Model(BaseModel):
-    id: Optional[str] = Field(None, description="Model identifier")
-    provider: Optional[str] = Field(None, description="Model provider name")
 
 
 class ModelResponse(BaseModel):
@@ -729,6 +768,9 @@ class RegistryResourceType(str, Enum):
     FUNCTION = "function"
     AGENT = "agent"
     TEAM = "team"
+    KNOWLEDGE = "knowledge"
+    MEMORY_MANAGER = "memory_manager"
+    SESSION_SUMMARY_MANAGER = "session_summary_manager"
 
 
 class CallableMetadata(BaseModel):
@@ -805,6 +847,43 @@ class FunctionMetadata(CallableMetadata):
     pass
 
 
+class KnowledgeMetadata(BaseModel):
+    """Metadata for knowledge registry components."""
+
+    class_path: str = Field(..., description="Full module path to the knowledge class")
+    vector_db_class: Optional[str] = Field(None, description="Class of the vector database used")
+    contents_db_class: Optional[str] = Field(None, description="Class of the contents database used")
+    max_results: Optional[int] = Field(None, description="Maximum search results")
+    num_readers: Optional[int] = Field(None, description="Number of configured readers")
+
+
+class MemoryManagerMetadata(BaseModel):
+    """Metadata for memory manager registry components."""
+
+    class_path: str = Field(..., description="Full module path to the memory manager class")
+    owner_id: Optional[str] = Field(None, description="Id of the agent or team that owns this manager")
+    owner_type: Optional[str] = Field(None, description="Type of owner: 'agent' or 'team'")
+    model_class: Optional[str] = Field(None, description="Class of the model used by the manager")
+    model_id: Optional[str] = Field(None, description="Identifier of the model used by the manager")
+    db_class: Optional[str] = Field(None, description="Class of the database used by the manager")
+    add_memories: Optional[bool] = Field(None, description="Whether the manager can add memories")
+    update_memories: Optional[bool] = Field(None, description="Whether the manager can update memories")
+    delete_memories: Optional[bool] = Field(None, description="Whether the manager can delete memories")
+    clear_memories: Optional[bool] = Field(None, description="Whether the manager can clear memories")
+
+
+class SessionSummaryManagerMetadata(BaseModel):
+    """Metadata for session summary manager registry components."""
+
+    class_path: str = Field(..., description="Full module path to the session summary manager class")
+    owner_id: Optional[str] = Field(None, description="Id of the agent or team that owns this manager")
+    owner_type: Optional[str] = Field(None, description="Type of owner: 'agent' or 'team'")
+    model_class: Optional[str] = Field(None, description="Class of the model used by the manager")
+    model_id: Optional[str] = Field(None, description="Identifier of the model used by the manager")
+    last_n_runs: Optional[int] = Field(None, description="Number of recent runs included in the summary")
+    conversation_limit: Optional[int] = Field(None, description="Max number of messages in summary conversation")
+
+
 # Union of all metadata types for type hints
 RegistryMetadata = Union[
     ToolMetadata,
@@ -813,6 +892,9 @@ RegistryMetadata = Union[
     VectorDbMetadata,
     SchemaMetadata,
     FunctionMetadata,
+    KnowledgeMetadata,
+    MemoryManagerMetadata,
+    SessionSummaryManagerMetadata,
 ]
 
 

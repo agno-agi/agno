@@ -100,10 +100,12 @@ class TestCallSiteOverrides:
         assert opts.add_dependencies_to_context is True
         assert opts.add_session_state_to_context is True
 
-    def test_dependencies_override(self):
+    def test_dependencies_merge_callsite_over_agent(self):
+        # Call-site dependencies merge with agent.dependencies (call-site keys win on conflict);
+        # agent-level keys (e.g. prompt-template vars) are preserved, not clobbered.
         agent = _make_agent(dependencies={"a": 1})
         opts = resolve_run_options(agent, dependencies={"b": 2})
-        assert opts.dependencies == {"b": 2}
+        assert opts.dependencies == {"a": 1, "b": 2}
 
     def test_output_schema_override(self):
         from pydantic import BaseModel
@@ -165,6 +167,60 @@ class TestMetadataMerge:
         callsite_meta = {"b": 2}
         resolve_run_options(agent, metadata=callsite_meta)
         assert callsite_meta == {"b": 2}
+
+
+class TestDependenciesMerge:
+    """Call-site dependencies merge with agent.dependencies instead of replacing them.
+
+    Regression: interfaces (Slack/WhatsApp) always pass a non-None call-site
+    ``dependencies`` (channel/thread ids). The old replacement behavior discarded the
+    agent's own dependencies, dropping prompt-template variables on those surfaces.
+    """
+
+    def test_both_none(self):
+        agent = _make_agent()
+        opts = resolve_run_options(agent)
+        assert opts.dependencies is None
+
+    def test_only_callsite(self):
+        agent = _make_agent()
+        opts = resolve_run_options(agent, dependencies={"run": "value"})
+        assert opts.dependencies == {"run": "value"}
+
+    def test_only_agent(self):
+        agent = _make_agent(dependencies={"agent": "value"})
+        opts = resolve_run_options(agent)
+        assert opts.dependencies == {"agent": "value"}
+
+    def test_merge_preserves_agent_keys(self):
+        # The core bug: agent template vars must survive a call-site that only adds runtime context.
+        agent = _make_agent(dependencies={"owner_name": "Ash", "caller_information": "resolver"})
+        opts = resolve_run_options(agent, dependencies={"channel": "C123", "thread": "T1"})
+        assert opts.dependencies == {
+            "owner_name": "Ash",
+            "caller_information": "resolver",
+            "channel": "C123",
+            "thread": "T1",
+        }
+
+    def test_merge_callsite_takes_precedence(self):
+        agent = _make_agent(dependencies={"x": "agent", "agent_only": "a"})
+        opts = resolve_run_options(agent, dependencies={"x": "call", "run_only": "r"})
+        # call-site wins on conflict; runtime context overrides static config
+        assert opts.dependencies["x"] == "call"
+        assert opts.dependencies["agent_only"] == "a"
+        assert opts.dependencies["run_only"] == "r"
+
+    def test_merge_does_not_mutate_callsite(self):
+        agent = _make_agent(dependencies={"a": 1})
+        callsite_deps = {"b": 2}
+        resolve_run_options(agent, dependencies=callsite_deps)
+        assert callsite_deps == {"b": 2}
+
+    def test_merge_does_not_mutate_agent(self):
+        agent = _make_agent(dependencies={"a": 1})
+        resolve_run_options(agent, dependencies={"b": 2})
+        assert agent.dependencies == {"a": 1}
 
 
 class TestKnowledgeFilterMerge:
