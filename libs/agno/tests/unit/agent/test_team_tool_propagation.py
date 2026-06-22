@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 from agno.agent._tools import parse_tools
 from agno.agent.agent import Agent
+from agno.tools import tool
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 
@@ -84,3 +85,108 @@ def test_toolkit_tool_receives_team_from_member_agent():
     toolkit_funcs = [f for f in functions if isinstance(f, Function)]
     assert len(toolkit_funcs) == 1
     assert toolkit_funcs[0]._team is agent._team
+
+
+# -- Per-function instructions propagation -----------------------------------
+# Verifies that @tool(instructions=...) reaches agent._tool_instructions
+# regardless of whether the tool is registered directly or via a Toolkit.
+
+
+def test_bare_function_instructions_reach_agent():
+    @tool(instructions="bare-rule")
+    def my_tool(x: str) -> str:
+        return x
+
+    agent = Agent(tools=[my_tool])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["bare-rule"]
+
+
+def test_toolkit_per_function_instructions_reach_agent():
+    """The original bug: @tool(instructions=...) inside a Toolkit was dropped."""
+
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="my_toolkit", tools=[self.my_tool])
+
+        @tool(instructions="toolkit-func-rule")
+        def my_tool(self, x: str) -> str:
+            return x
+
+    agent = Agent(tools=[MyToolkit()])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["toolkit-func-rule"]
+
+
+def test_toolkit_level_and_per_function_instructions_both_reach_agent():
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(
+                name="my_toolkit",
+                tools=[self.my_tool],
+                instructions="toolkit-level-rule",
+                add_instructions=True,
+            )
+
+        @tool(instructions="toolkit-func-rule")
+        def my_tool(self, x: str) -> str:
+            return x
+
+    agent = Agent(tools=[MyToolkit()])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["toolkit-func-rule", "toolkit-level-rule"]
+
+
+def test_toolkit_per_function_add_instructions_false_is_respected():
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="my_toolkit", tools=[self.kept, self.dropped])
+
+        @tool(instructions="kept-rule")
+        def kept(self, x: str) -> str:
+            return x
+
+        @tool(instructions="dropped-rule", add_instructions=False)
+        def dropped(self, x: str) -> str:
+            return x
+
+    agent = Agent(tools=[MyToolkit()])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["kept-rule"]
+
+
+def test_toolkit_multiple_per_function_instructions_all_reach_agent():
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="my_toolkit", tools=[self.a, self.b])
+
+        @tool(instructions="rule-a")
+        def a(self, x: str) -> str:
+            return x
+
+        @tool(instructions="rule-b")
+        def b(self, x: str) -> str:
+            return x
+
+    agent = Agent(tools=[MyToolkit()])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["rule-a", "rule-b"]
+
+
+def test_toolkit_function_without_instructions_does_not_append_none():
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="my_toolkit", tools=[self.my_tool])
+
+        def my_tool(self, x: str) -> str:
+            return x
+
+    agent = Agent(tools=[MyToolkit()])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == []

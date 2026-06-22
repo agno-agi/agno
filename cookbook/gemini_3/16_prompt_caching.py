@@ -69,7 +69,7 @@ if not txt_file:
 # ---------------------------------------------------------------------------
 print("\nCreating cache (5 min TTL)...")
 cache = client.caches.create(
-    model="gemini-3-flash-preview",
+    model="gemini-3.5-flash",
     config={
         "system_instruction": "You are an expert at analyzing transcripts.",
         "contents": [txt_file],
@@ -85,7 +85,7 @@ print(f"Cache created: {cache.name}")
 cache_agent = Agent(
     name="Transcript Analyst",
     # cached_content links the agent to the pre-loaded cache
-    model=Gemini(id="gemini-3-flash-preview", cached_content=cache.name),
+    model=Gemini(id="gemini-3.5-flash", cached_content=cache.name),
 )
 
 # ---------------------------------------------------------------------------

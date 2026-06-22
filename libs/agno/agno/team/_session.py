@@ -675,7 +675,12 @@ def get_chat_history(
         List[Message]: The chat history from the session.
     """
     return get_session_messages(
-        team, session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
+        team,
+        session_id=session_id,
+        last_n_runs=last_n_runs,
+        skip_roles=["system", "tool"],
+        skip_member_messages=True,
+        skip_statuses=[],
     )
 
 
@@ -690,7 +695,12 @@ async def aget_chat_history(
         List[Message]: The chat history from the session.
     """
     return await aget_session_messages(
-        team, session_id=session_id, last_n_runs=last_n_runs, skip_roles=["system", "tool"], skip_member_messages=True
+        team,
+        session_id=session_id,
+        last_n_runs=last_n_runs,
+        skip_roles=["system", "tool"],
+        skip_member_messages=True,
+        skip_statuses=[],
     )
 
 

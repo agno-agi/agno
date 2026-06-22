@@ -12,7 +12,7 @@ ChromaDB:
 LanceDB:
 - File-based storage (no server needed)
 - Supports hybrid search
-- pip install lancedb tantivy
+- pip install lancedb
 
 See also: 01_qdrant.py for production, 03_managed.py for Pinecone, 04_pgvector.py for PostgreSQL.
 """
@@ -56,7 +56,7 @@ try:
     )
 except ImportError:
     knowledge_lance = None
-    print("LanceDB not installed. Run: pip install lancedb tantivy")
+    print("LanceDB not installed. Run: pip install lancedb")
 
 # ---------------------------------------------------------------------------
 # Run Demo

@@ -62,7 +62,7 @@ context to produce comprehensive asset briefs for A&R and marketing teams.
 # ---------------------------------------------------------------------------
 music_analyst = Agent(
     name="Music Analyst",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     tools=[WebSearchTools()],
     output_schema=TrackBrief,

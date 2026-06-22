@@ -35,7 +35,7 @@ class OpenAIResponses(Model):
     For more information, see: https://platform.openai.com/docs/api-reference/responses
     """
 
-    id: str = "gpt-4o"
+    id: str = "gpt-5.4-mini"
     name: str = "OpenAIResponses"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True

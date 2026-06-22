@@ -29,7 +29,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
-from agno.utils.log import log_warning, logger
+from agno.utils.log import log_debug, log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
@@ -259,6 +259,8 @@ async def get_db(
             and db.session_table_name == table_name
             or hasattr(db, "memory_table_name")
             and db.memory_table_name == table_name
+            or hasattr(db, "learnings_table_name")
+            and db.learnings_table_name == table_name
             or hasattr(db, "metrics_table_name")
             and db.metrics_table_name == table_name
             or hasattr(db, "eval_table_name")
@@ -500,6 +502,163 @@ def extract_input_media(run_dict: Dict[str, Any]) -> Dict[str, Any]:
     return input_media
 
 
+# Supported MIME types per media category, used to route uploaded files to the
+# correct processor. Keep these aligned with `File.valid_mime_types()` in agno.media
+# for document types.
+IMAGE_MIME_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/tiff",
+    "image/tif",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+}
+
+AUDIO_MIME_TYPES = {
+    "audio/wav",
+    "audio/wave",
+    "audio/mp3",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/mp4",
+    "audio/m4a",
+    "audio/aac",
+    "audio/flac",
+}
+
+VIDEO_MIME_TYPES = {
+    "video/x-flv",
+    "video/quicktime",
+    "video/mpeg",
+    "video/mpegs",
+    "video/mpgs",
+    "video/mpg",
+    "video/mp4",
+    "video/webm",
+    "video/wmv",
+    "video/3gpp",
+}
+
+# NOTE: Keep this in sync with `File.valid_mime_types()` in agno.media. Every type here must
+# be valid there, or the upload returns 200 but the file is silently dropped during FileMedia
+# construction. Office binary/OOXML formats (.doc, .docx, .ppt, .pptx, .xls, .xlsx) are accepted
+# at upload, but not all model providers support them as raw input - Anthropic and Gemini, for
+# example, 400 on PowerPoint. Those uploads succeed here and fail later with a provider error.
+DOCUMENT_MIME_TYPES = {
+    "application/pdf",
+    "application/json",
+    "application/x-javascript",
+    # Office Open XML (modern Office formats)
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+    # Legacy binary Office formats
+    "application/msword",  # .doc
+    "application/vnd.ms-powerpoint",  # .ppt
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.ms-outlook",  # .msg
+    "text/javascript",
+    "application/x-python",
+    "text/x-python",
+    "text/plain",
+    "text/html",
+    "text/css",
+    "text/markdown",
+    "text/csv",
+    "text/xml",
+    "text/rtf",
+}
+
+# Fallback mapping from file extension to media category. Used when the browser sends a
+# missing or ambiguous content type (e.g. `application/octet-stream` or empty for `.md`
+# and `.pptx`, which are not in every OS MIME registry).
+EXTENSION_CATEGORY: Dict[str, str] = {
+    # documents
+    "pdf": "document",
+    "json": "document",
+    "js": "document",
+    "docx": "document",
+    "doc": "document",
+    "pptx": "document",
+    "ppt": "document",
+    "xlsx": "document",
+    "xls": "document",
+    "msg": "document",
+    "py": "document",
+    "txt": "document",
+    "html": "document",
+    "htm": "document",
+    "css": "document",
+    "md": "document",
+    "markdown": "document",
+    "csv": "document",
+    "xml": "document",
+    "rtf": "document",
+    # images
+    "png": "image",
+    "jpg": "image",
+    "jpeg": "image",
+    "gif": "image",
+    "webp": "image",
+    "bmp": "image",
+    "tiff": "image",
+    "tif": "image",
+    "avif": "image",
+    "heic": "image",
+    "heif": "image",
+    # audio
+    "wav": "audio",
+    "mp3": "audio",
+    "ogg": "audio",
+    "m4a": "audio",
+    "aac": "audio",
+    "flac": "audio",
+    # video
+    "flv": "video",
+    "mov": "video",
+    "mpeg": "video",
+    "mpg": "video",
+    "mp4": "video",
+    "webm": "video",
+    "wmv": "video",
+    "3gp": "video",
+}
+
+# Content types that are too generic to classify on their own; fall back to the
+# file extension for these.
+_AMBIGUOUS_CONTENT_TYPES = {None, "", "application/octet-stream"}
+
+
+def classify_upload_file(file: UploadFile) -> Optional[str]:
+    """Classify an uploaded file into one of: image, audio, video, document.
+
+    Routes primarily by `content_type`. When the content type is missing or too generic
+    to be useful (common for `.md` and `.pptx` uploaded from browsers), falls back to the
+    filename extension. Returns None if the file type is not supported.
+    """
+    content_type = file.content_type
+    if content_type in IMAGE_MIME_TYPES:
+        return "image"
+    if content_type in AUDIO_MIME_TYPES:
+        return "audio"
+    if content_type in VIDEO_MIME_TYPES:
+        return "video"
+    if content_type in DOCUMENT_MIME_TYPES:
+        return "document"
+
+    # Fall back to the file extension for ambiguous/missing content types.
+    if content_type in _AMBIGUOUS_CONTENT_TYPES and file.filename and "." in file.filename:
+        extension = file.filename.rsplit(".", 1)[-1].lower()
+        return EXTENSION_CATEGORY.get(extension)
+
+    return None
+
+
 def process_image(file: UploadFile) -> Image:
     content = file.file.read()
     if not content:
@@ -521,17 +680,60 @@ def process_video(file: UploadFile) -> Video:
     return Video(content=content, format=extract_format(file), mime_type=file.content_type)
 
 
+# Map document file extensions to their canonical MIME type, used to recover a valid
+# mime_type when the browser sends a missing or generic content type (e.g. `.md`).
+_DOCUMENT_EXTENSION_MIME: Dict[str, str] = {
+    "pdf": "application/pdf",
+    "json": "application/json",
+    "js": "text/javascript",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "ppt": "application/vnd.ms-powerpoint",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "msg": "application/vnd.ms-outlook",
+    "py": "text/x-python",
+    "txt": "text/plain",
+    "html": "text/html",
+    "htm": "text/html",
+    "css": "text/css",
+    "md": "text/markdown",
+    "markdown": "text/markdown",
+    "csv": "text/csv",
+    "xml": "text/xml",
+    "rtf": "text/rtf",
+}
+
+
+def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
+    """Resolve a valid document MIME type for an upload.
+
+    Prefers a usable `content_type`; otherwise derives it from the file extension so
+    documents with ambiguous content types (e.g. `.md` sent as octet-stream) still get a
+    mime_type accepted by `FileMedia`.
+    """
+    if file.content_type and file.content_type in DOCUMENT_MIME_TYPES:
+        return file.content_type
+    if file.filename and "." in file.filename:
+        extension = file.filename.rsplit(".", 1)[-1].lower()
+        return _DOCUMENT_EXTENSION_MIME.get(extension)
+    return file.content_type
+
+
 def process_document(file: UploadFile) -> Optional[FileMedia]:
-    try:
-        content = file.file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="Empty file")
-        return FileMedia(
-            content=content, filename=file.filename, format=extract_format(file), mime_type=file.content_type
-        )
-    except Exception:
-        logger.exception(f"Error processing document {file.filename}")
-        return None
+    content = file.file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty file")
+    # FileMedia construction validates the mime_type against File.valid_mime_types(). Every
+    # type in DOCUMENT_MIME_TYPES must also be valid there, otherwise the file is silently
+    # dropped here (the upload still returns 200). The unit tests assert the two stay in sync.
+    return FileMedia(
+        content=content,
+        filename=file.filename,
+        format=extract_format(file),
+        mime_type=_resolve_document_mime_type(file),
+    )
 
 
 def extract_format(file: UploadFile) -> Optional[str]:
@@ -938,6 +1140,110 @@ def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: O
     ]
 
 
+def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
+    """Resolve JWT auth config for the WebSocket entrypoint.
+
+    AgentOS (authorization=True) eagerly populates ``app.state.jwt_validator``,
+    ``app.state.jwt_verify_audience``, ``app.state.jwt_audience``, and
+    ``app.state.admin_scope`` from the authorization config.
+
+    For the manual ``app.add_middleware(JWTMiddleware, ...)`` path those
+    attributes are only populated lazily by ``JWTMiddleware.dispatch`` on the
+    FIRST HTTP request. WebSocket connections do not run that dispatch, so a
+    WebSocket connection that arrives before any HTTP request would otherwise
+    see no validator and silently fall through to ``requires_auth=False``.
+
+    This helper bridges that gap by walking ``app.user_middleware`` to find a
+    ``JWTMiddleware`` entry, building a validator from its kwargs the same way
+    the middleware does, and caching the result on ``app.state``.
+    """
+    blank: Dict[str, Any] = {
+        "validator": None,
+        "verify_audience": False,
+        "audience": None,
+        "admin_scope": None,
+        "user_isolation": False,
+        "auth_required": False,
+    }
+
+    state = getattr(app, "state", None)
+    if state is None:
+        return blank
+
+    validator = getattr(state, "jwt_validator", None)
+    if validator is not None:
+        return {
+            "validator": validator,
+            "verify_audience": getattr(state, "jwt_verify_audience", False),
+            "audience": getattr(state, "jwt_audience", None),
+            "admin_scope": getattr(state, "admin_scope", None),
+            "user_isolation": bool(getattr(state, "user_isolation_enabled", False)),
+            "auth_required": True,
+        }
+
+    # Lazy resolution for manual setup: locate JWTMiddleware in user_middleware
+    # and build its validator from kwargs. Avoid importing JWTMiddleware at
+    # module import time to keep WebSocket-less imports light.
+    user_middleware = getattr(app, "user_middleware", None)
+    if not user_middleware:
+        return blank
+
+    from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+
+    for entry in user_middleware:
+        if getattr(entry, "cls", None) is JWTMiddleware:
+            kwargs = getattr(entry, "kwargs", {}) or {}
+            # Mirror JWTMiddleware.__init__ deprecated secret_key handling:
+            # append to verification_keys so manual setups using secret_key
+            # still get a working WebSocket validator.
+            verification_keys = list(kwargs.get("verification_keys") or [])
+            legacy_secret = kwargs.get("secret_key")
+            if legacy_secret and legacy_secret not in verification_keys:
+                verification_keys.append(legacy_secret)
+            try:
+                lazy_validator = JWTValidator(
+                    verification_keys=verification_keys or None,
+                    jwks_file=kwargs.get("jwks_file"),
+                    algorithm=kwargs.get("algorithm", "RS256"),
+                    validate=kwargs.get("validate", True),
+                    scopes_claim=kwargs.get("scopes_claim", "scopes"),
+                    user_id_claim=kwargs.get("user_id_claim", "sub"),
+                    session_id_claim=kwargs.get("session_id_claim", "session_id"),
+                    audience_claim=kwargs.get("audience_claim", "aud"),
+                )
+            except Exception as e:
+                log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")
+                # JWTMiddleware IS configured, so auth was intended. Return
+                # auth_required=True so the WS endpoint rejects connections
+                # instead of silently falling through to unauthenticated mode.
+                return {**blank, "auth_required": True}
+
+            verify_audience = bool(kwargs.get("verify_audience", False))
+            audience = kwargs.get("audience")
+            admin_scope = kwargs.get("admin_scope")
+            user_isolation = bool(kwargs.get("user_isolation", False))
+
+            # Cache on app.state so subsequent WebSocket connections and the
+            # HTTP middleware see the same validator instance.
+            state.jwt_validator = lazy_validator
+            state.jwt_verify_audience = verify_audience
+            state.jwt_audience = audience
+            if admin_scope:
+                state.admin_scope = admin_scope
+            state.user_isolation_enabled = user_isolation
+
+            return {
+                "validator": lazy_validator,
+                "verify_audience": verify_audience,
+                "audience": audience,
+                "admin_scope": admin_scope,
+                "user_isolation": user_isolation,
+                "auth_required": True,
+            }
+
+    return blank
+
+
 def update_cors_middleware(app: FastAPI, new_origins: list):
     existing_origins: List[str] = []
 
@@ -1136,6 +1442,211 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
     elif isinstance(step, Workflow):
         # Nested workflow
         collect_mcp_tools_from_workflow(step, mcp_tools)
+
+
+def _collect_fallback_models(owner: Any, registry: Registry) -> None:
+    """Add an agent's or team's fallback models to the registry.
+
+    Fallback models may be provided directly via ``fallback_models`` (before
+    initialization) or normalised into a ``FallbackConfig`` with per-trigger
+    lists (after initialization). Both shapes are handled.
+    """
+    fallback_models = getattr(owner, "fallback_models", None)
+    if isinstance(fallback_models, list):
+        for fallback_model in fallback_models:
+            # May contain plain string ids; Registry.add_model ignores non-Model values
+            registry.add_model(fallback_model)
+
+    fallback_config = getattr(owner, "fallback_config", None)
+    if fallback_config is not None:
+        for attr in ("on_error", "on_rate_limit", "on_context_overflow"):
+            models = getattr(fallback_config, attr, None)
+            if isinstance(models, list):
+                for fallback_model in models:
+                    registry.add_model(fallback_model)
+
+
+def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> None:
+    """Add the vector db and contents db backing a knowledge instance to the registry.
+
+    ``knowledge`` may be a Knowledge instance, a custom KnowledgeProtocol
+    implementation, or a callable factory. Attribute access is guarded so any
+    of these shapes is handled safely.
+    """
+    if knowledge is None:
+        return
+    registry.add_vector_db(getattr(knowledge, "vector_db", None))
+    registry.add_db(getattr(knowledge, "contents_db", None))
+
+
+def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add the models, tools, db and vector db referenced by an agent to the registry.
+
+    ``visited`` tracks already-walked agents/teams/workflows (by object id) to
+    avoid redundant work and infinite recursion on cyclic composition graphs.
+    """
+    if id(agent) in visited:
+        return
+    visited.add(id(agent))
+
+    registry.add_model(getattr(agent, "model", None))
+    registry.add_model(getattr(agent, "reasoning_model", None))
+    registry.add_model(getattr(agent, "parser_model", None))
+    registry.add_model(getattr(agent, "output_model", None))
+    _collect_fallback_models(agent, registry)
+
+    tools = getattr(agent, "tools", None)
+    if isinstance(tools, list):
+        for tool in tools:
+            registry.add_tool(tool)
+
+    registry.add_db(getattr(agent, "db", None))
+    _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
+
+
+def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add a team's components to the registry, recursing into all of its members."""
+    if id(team) in visited:
+        return
+    visited.add(id(team))
+
+    registry.add_model(getattr(team, "model", None))
+    registry.add_model(getattr(team, "reasoning_model", None))
+    registry.add_model(getattr(team, "parser_model", None))
+    registry.add_model(getattr(team, "output_model", None))
+    _collect_fallback_models(team, registry)
+
+    tools = getattr(team, "tools", None)
+    if isinstance(tools, list):
+        for tool in tools:
+            registry.add_tool(tool)
+
+    registry.add_db(getattr(team, "db", None))
+    _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
+
+    members = getattr(team, "members", None)
+    if isinstance(members, list):
+        for member in members:
+            if isinstance(member, Agent):
+                collect_components_from_agent(member, registry, visited)
+            elif isinstance(member, Team):
+                collect_components_from_team(member, registry, visited)
+
+
+def collect_components_from_workflow(workflow: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add a workflow's components (coordinator agent and step tree) to the registry."""
+    if id(workflow) in visited:
+        return
+    visited.add(id(workflow))
+
+    registry.add_db(getattr(workflow, "db", None))
+
+    # Agentic workflow coordinator (WorkflowAgent is an Agent subclass)
+    workflow_agent = getattr(workflow, "agent", None)
+    if workflow_agent is not None:
+        collect_components_from_agent(workflow_agent, registry, visited)
+
+    _collect_components_from_steps(getattr(workflow, "steps", None), registry, visited)
+
+
+def _collect_components_from_steps(steps: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add components from a workflow's ``steps`` value (list, container or callable)."""
+    if steps is None:
+        return
+    if isinstance(steps, list):
+        for step in steps:
+            _collect_components_from_step(step, registry, visited)
+    else:
+        _collect_components_from_step(steps, registry, visited)
+
+
+def _collect_components_from_step(step: Any, registry: Registry, visited: Set[int]) -> None:
+    """Add components from a single workflow step of any type.
+
+    Handles primitive steps (Step pointing at an agent/team/nested workflow),
+    agents/teams/workflows used directly as steps, and the composite container
+    types. Composite types are walked across ``steps``, ``else_steps`` (Condition)
+    and ``choices`` (Router) so no branch is missed. Plain callables are skipped.
+    """
+    from agno.workflow.condition import Condition
+    from agno.workflow.loop import Loop
+    from agno.workflow.parallel import Parallel
+    from agno.workflow.router import Router
+    from agno.workflow.step import Step
+    from agno.workflow.steps import Steps
+
+    if step is None:
+        return
+
+    if isinstance(step, Step):
+        if step.agent is not None:
+            collect_components_from_agent(step.agent, registry, visited)
+        if step.team is not None:
+            collect_components_from_team(step.team, registry, visited)
+        nested_workflow = getattr(step, "workflow", None)
+        if nested_workflow is not None:
+            collect_components_from_workflow(nested_workflow, registry, visited)
+
+    elif isinstance(step, Agent):
+        collect_components_from_agent(step, registry, visited)
+
+    elif isinstance(step, Team):
+        collect_components_from_team(step, registry, visited)
+
+    elif isinstance(step, Workflow):
+        collect_components_from_workflow(step, registry, visited)
+
+    elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
+        # Walk every sub-step container: `steps` (all), `else_steps` (Condition)
+        # and `choices` (Router, before it is prepared into `steps`).
+        for attr in ("steps", "else_steps", "choices"):
+            sub_steps = getattr(step, attr, None)
+            if isinstance(sub_steps, list):
+                for sub_step in sub_steps:
+                    _collect_components_from_step(sub_step, registry, visited)
+
+    # else: plain callable executor or unknown step type -> nothing to collect
+
+
+def collect_components_from_os(
+    agents: Optional[List[Any]],
+    teams: Optional[List[Any]],
+    workflows: Optional[List[Any]],
+    registry: Registry,
+) -> None:
+    """Walk all agents, teams and workflows of an AgentOS and add their components to ``registry``.
+
+    The registry owns deduplication (see ``Registry.add_*``), so components are
+    added directly during the walk. Each top-level node is walked inside its own
+    guard, so a single malformed agent/team/workflow degrades to "not collected"
+    rather than failing the whole walk. Remote and factory components are skipped
+    because they expose no locally-walkable instances.
+    """
+    visited: Set[int] = set()
+
+    for agent in agents or []:
+        if not isinstance(agent, Agent):
+            continue
+        try:
+            collect_components_from_agent(agent, registry, visited)
+        except Exception as e:
+            log_debug(f"Registry auto-population: skipped agent due to error: {e}")
+
+    for team in teams or []:
+        if not isinstance(team, Team):
+            continue
+        try:
+            collect_components_from_team(team, registry, visited)
+        except Exception as e:
+            log_debug(f"Registry auto-population: skipped team due to error: {e}")
+
+    for workflow in workflows or []:
+        if not isinstance(workflow, Workflow):
+            continue
+        try:
+            collect_components_from_workflow(workflow, registry, visited)
+        except Exception as e:
+            log_debug(f"Registry auto-population: skipped workflow due to error: {e}")
 
 
 def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:

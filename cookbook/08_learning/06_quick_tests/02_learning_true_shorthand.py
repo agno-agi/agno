@@ -26,7 +26,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # This is the simplest way to enable learning - just set learning=True
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     learning=True,  # <-- The shorthand we're testing
     markdown=True,

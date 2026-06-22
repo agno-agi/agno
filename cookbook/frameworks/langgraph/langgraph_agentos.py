@@ -27,7 +27,7 @@ Then call the API:
 """
 
 from agno.agents.langgraph import LangGraphAgent
-from agno.os.app import AgentOS
+from agno.os import AgentOS
 from langchain_openai import ChatOpenAI
 from langgraph.graph import MessagesState, StateGraph
 
