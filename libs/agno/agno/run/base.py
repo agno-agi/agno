@@ -319,3 +319,13 @@ class RunStatus(str, Enum):
     paused = "PAUSED"
     cancelled = "CANCELLED"
     error = "ERROR"
+
+
+# V1 Compatibility Aliases
+BaseRunResponseEvent = BaseRunOutputEvent
+
+
+@dataclass
+class RunResponseExtraData:
+    """V1-compatible extra data for run responses."""
+    pass

@@ -8,6 +8,7 @@ from agno.agent.agent import (
     get_agents,
 )
 from agno.agent.factory import AgentFactory
+from agno.agent.metrics import SessionMetrics
 from agno.agent.remote import RemoteAgent
 from agno.factory import (
     BaseFactory,
@@ -78,6 +79,7 @@ __all__ = [
     "ReasoningCompletedEvent",
     "ToolCallStartedEvent",
     "ToolCallCompletedEvent",
+    "SessionMetrics",
     "get_agent_by_id",
     "get_agents",
 ]
