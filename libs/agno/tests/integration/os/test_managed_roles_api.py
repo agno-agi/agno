@@ -38,7 +38,8 @@ def _db_url() -> str:
 def _token(sub: str) -> str:
     return jwt.encode(
         {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
-        SECRET, algorithm="HS256",
+        SECRET,
+        algorithm="HS256",
     )
 
 
@@ -81,9 +82,7 @@ def test_non_admin_is_403(client_and_store):
     client, _ = client_and_store
     # bob is a viewer, not an admin
     assert client.get("/authz/roles", headers=_auth("bob")).status_code == 403
-    assert client.post(
-        "/authz/users/carol/roles", headers=_auth("bob"), json={"role": "viewer"}
-    ).status_code == 403
+    assert client.post("/authz/users/carol/roles", headers=_auth("bob"), json={"role": "viewer"}).status_code == 403
 
 
 def test_admin_can_list_and_read_roles(client_and_store):
@@ -144,29 +143,22 @@ def test_admin_assign_and_revoke(client_and_store):
 def test_granting_via_api_takes_effect_on_next_request(client_and_store):
     client, _ = client_and_store
     # bob is a viewer: cannot run the agent
-    assert client.post(
-        "/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}
-    ).status_code == 403
+    assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
 
     # admin defines a runner role and grants it to bob via the HTTP API
     assert client.post("/authz/roles", headers=_auth("alice"), json={"slug": "runner"}).status_code == 201
-    assert client.put(
-        "/authz/roles/runner/scopes", headers=_auth("alice"), json={"scopes": ["agents:*:run"]}
-    ).status_code == 200
-    assert client.post(
-        "/authz/users/bob/roles", headers=_auth("alice"), json={"role": "runner"}
-    ).status_code == 200
+    assert (
+        client.put("/authz/roles/runner/scopes", headers=_auth("alice"), json={"scopes": ["agents:*:run"]}).status_code
+        == 200
+    )
+    assert client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "runner"}).status_code == 200
 
     # bob can now run — same token, no re-mint
-    assert client.post(
-        "/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}
-    ).status_code != 403
+    assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code != 403
 
     # admin revokes it; bob is blocked again
     assert client.delete("/authz/users/bob/roles/runner", headers=_auth("alice")).status_code == 200
-    assert client.post(
-        "/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}
-    ).status_code == 403
+    assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
 
 
 def test_scope_catalog_endpoint(client_and_store):
@@ -209,9 +201,9 @@ def test_admin_via_token_claim_can_manage():
 
     def idp_token(sub, roles):
         return jwt.encode(
-            {"sub": sub, "aud": OS_ID, "scopes": [], "roles": roles,
-             "exp": datetime.now(UTC) + timedelta(hours=1)},
-            SECRET, algorithm="HS256",
+            {"sub": sub, "aud": OS_ID, "scopes": [], "roles": roles, "exp": datetime.now(UTC) + timedelta(hours=1)},
+            SECRET,
+            algorithm="HS256",
         )
 
     admin_h = {"Authorization": f"Bearer {idp_token('idp-admin', ['admin'])}"}

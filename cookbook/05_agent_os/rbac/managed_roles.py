@@ -114,8 +114,14 @@ if __name__ == "__main__":
 
     def token(sub: str) -> str:
         return jwt.encode(
-            {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=24)},
-            JWT_SECRET, algorithm="HS256",
+            {
+                "sub": sub,
+                "aud": OS_ID,
+                "scopes": [],
+                "exp": datetime.now(UTC) + timedelta(hours=24),
+            },
+            JWT_SECRET,
+            algorithm="HS256",
         )
 
     def auth(sub: str) -> dict:
@@ -131,21 +137,53 @@ if __name__ == "__main__":
     print("=" * 78)
     print("  roles:  viewer = look at agents | member = look + run | admin = anything")
     print("  people: bob is a viewer         | alice is an admin")
-    print("  below, each person makes a real request. ALLOWED = got in, BLOCKED = bounced.\n")
+    print(
+        "  below, each person makes a real request. ALLOWED = got in, BLOCKED = bounced.\n"
+    )
 
-    show("bob (viewer)  asks to LOOK at the agent", client.get("/agents/research-agent", headers=auth("bob")), "viewers can look")
-    show("bob (viewer)  asks to RUN the agent", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "viewers can't run, so he's bounced")
+    show(
+        "bob (viewer)  asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "viewers can look",
+    )
+    show(
+        "bob (viewer)  asks to RUN the agent",
+        client.post(
+            "/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}
+        ),
+        "viewers can't run, so he's bounced",
+    )
 
     print("\n  >> now we make bob a 'member' while the server is running...\n")
     roles.assign("bob", "member")
-    show("bob (member)  asks to RUN the agent", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "same bob, same token, now allowed")
+    show(
+        "bob (member)  asks to RUN the agent",
+        client.post(
+            "/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}
+        ),
+        "same bob, same token, now allowed",
+    )
 
     print("\n  >> ...and now we take the 'member' role back...\n")
     roles.unassign("bob", "member")
-    show("bob (no role) asks to RUN the agent", client.post("/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}), "bounced again, instantly")
+    show(
+        "bob (no role) asks to RUN the agent",
+        client.post(
+            "/agents/research-agent/runs", headers=auth("bob"), data={"message": "hi"}
+        ),
+        "bounced again, instantly",
+    )
 
-    show("alice (admin) asks to RUN the agent", client.post("/agents/research-agent/runs", headers=auth("alice"), data={"message": "hi"}), "admins can do anything")
+    show(
+        "alice (admin) asks to RUN the agent",
+        client.post(
+            "/agents/research-agent/runs", headers=auth("alice"), data={"message": "hi"}
+        ),
+        "admins can do anything",
+    )
     print("=" * 78)
-    print("the point: you control access by handing out roles, and a change takes effect")
+    print(
+        "the point: you control access by handing out roles, and a change takes effect"
+    )
     print("on the very next request - no new login, no new token.")
     print("=" * 78)

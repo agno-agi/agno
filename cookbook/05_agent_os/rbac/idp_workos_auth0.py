@@ -81,7 +81,9 @@ class RoleClaimAuthorizationProvider(AuthorizationProvider):
     change.
     """
 
-    def __init__(self, role_permissions, roles_claim="roles", admin_scope="agent_os:admin"):
+    def __init__(
+        self, role_permissions, roles_claim="roles", admin_scope="agent_os:admin"
+    ):
         self.role_permissions = role_permissions
         self.roles_claim = roles_claim  # the claim your IdP puts roles in
         self.admin_scope = admin_scope
@@ -139,13 +141,17 @@ class RoleClaimAuthorizationProvider(AuthorizationProvider):
 # ---------------------------------------------------------------------------
 
 idp_private, idp_public = generate_rsa_keys()
-_jwk = json.loads(RSAAlgorithm.to_jwk(RSAAlgorithm(RSAAlgorithm.SHA256).prepare_key(idp_public)))
+_jwk = json.loads(
+    RSAAlgorithm.to_jwk(RSAAlgorithm(RSAAlgorithm.SHA256).prepare_key(idp_public))
+)
 _jwk.update({"kid": "idp-key-1", "use": "sig", "alg": "RS256"})
 with open(JWKS_PATH, "w") as f:
     json.dump({"keys": [_jwk]}, f)
 
 db = SqliteDb(db_file="tmp/agentos.db")
-research_agent = Agent(id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db)
+research_agent = Agent(
+    id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db
+)
 
 agent_os = AgentOS(
     id=OS_ID,
@@ -161,7 +167,9 @@ agent_os = AgentOS(
         audience=OS_ID,  # the token must be for THIS app
         issuer=ISSUER,  # ...and minted by the login service we trust
         # The integration: roles ride the token in the "roles" claim.
-        authorization_provider=RoleClaimAuthorizationProvider(ROLE_PERMISSIONS, roles_claim="roles"),
+        authorization_provider=RoleClaimAuthorizationProvider(
+            ROLE_PERMISSIONS, roles_claim="roles"
+        ),
     ),
 )
 app = agent_os.get_app()
@@ -182,13 +190,23 @@ if __name__ == "__main__":
     def idp_token(sub, roles=None, *, key=idp_private, iss=ISSUER, aud=OS_ID):
         """A token as the login service would mint it: signed with its key, with
         the person's role(s) in the 'roles' claim."""
-        claims = {"sub": sub, "aud": aud, "iss": iss, "exp": datetime.now(UTC) + timedelta(hours=8)}
+        claims = {
+            "sub": sub,
+            "aud": aud,
+            "iss": iss,
+            "exp": datetime.now(UTC) + timedelta(hours=8),
+        }
         if roles is not None:
             claims["roles"] = roles
         return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "idp-key-1"})
 
     def show(label, tok, method, path, note=""):
-        r = client.request(method, path, headers={"Authorization": f"Bearer {tok}"}, data={"message": "hi"})
+        r = client.request(
+            method,
+            path,
+            headers={"Authorization": f"Bearer {tok}"},
+            data={"message": "hi"},
+        )
         verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
         print(f"  {label:52s} -> {verdict:7s} ({r.status_code})  {note}")
 
@@ -196,25 +214,75 @@ if __name__ == "__main__":
     print("LOGIN SERVICE OWNS IDENTITY + ROLES - WE ONLY ENFORCE")
     print("=" * 84)
     print("  the login service signs the token and stamps the role. we verify it and")
-    print("  decide what that role may do. no users or assignments stored on our side.\n")
+    print(
+        "  decide what that role may do. no users or assignments stored on our side.\n"
+    )
 
     # Auth0-style: roles is a list. WorkOS-style: roles is a single string. Both
     # work through the same provider (it normalises a string to a list).
-    show("alice (roles=['member']) RUN the agent", idp_token("alice", ["member"]), "POST", "/agents/research-agent/runs", "member can run")
-    show("bob   (roles='member')   LOOK at agent", idp_token("bob", "member"), "GET", "/agents/research-agent", "single-string role also works")
-    show("carol (roles=['guest'])  LOOK at agent", idp_token("carol", ["guest"]), "GET", "/agents/research-agent", "guest maps to nothing -> bounced")
-    show("dave  (no roles claim)   LOOK at agent", idp_token("dave"), "GET", "/agents/research-agent", "no role -> bounced")
-    show("root  (roles=['admin'])  RUN the agent", idp_token("root", ["admin"]), "POST", "/agents/research-agent/runs", "admin can do anything")
+    show(
+        "alice (roles=['member']) RUN the agent",
+        idp_token("alice", ["member"]),
+        "POST",
+        "/agents/research-agent/runs",
+        "member can run",
+    )
+    show(
+        "bob   (roles='member')   LOOK at agent",
+        idp_token("bob", "member"),
+        "GET",
+        "/agents/research-agent",
+        "single-string role also works",
+    )
+    show(
+        "carol (roles=['guest'])  LOOK at agent",
+        idp_token("carol", ["guest"]),
+        "GET",
+        "/agents/research-agent",
+        "guest maps to nothing -> bounced",
+    )
+    show(
+        "dave  (no roles claim)   LOOK at agent",
+        idp_token("dave"),
+        "GET",
+        "/agents/research-agent",
+        "no role -> bounced",
+    )
+    show(
+        "root  (roles=['admin'])  RUN the agent",
+        idp_token("root", ["admin"]),
+        "POST",
+        "/agents/research-agent/runs",
+        "admin can do anything",
+    )
 
     print("\n  the token plumbing is enforced too (not just the role):\n")
     # A token signed by some OTHER key (an attacker who doesn't have the IdP key).
     attacker_priv, _ = generate_rsa_keys()
-    show("mallory (token signed by a DIFFERENT key)", idp_token("mallory", ["admin"], key=attacker_priv), "GET", "/agents/research-agent", "signature doesn't match the JWKS -> rejected")
+    show(
+        "mallory (token signed by a DIFFERENT key)",
+        idp_token("mallory", ["admin"], key=attacker_priv),
+        "GET",
+        "/agents/research-agent",
+        "signature doesn't match the JWKS -> rejected",
+    )
     # A real-looking token but minted for a different issuer.
-    show("eve (valid role but wrong issuer)", idp_token("eve", ["admin"], iss="https://evil.example/"), "GET", "/agents/research-agent", "issuer not trusted -> rejected")
+    show(
+        "eve (valid role but wrong issuer)",
+        idp_token("eve", ["admin"], iss="https://evil.example/"),
+        "GET",
+        "/agents/research-agent",
+        "issuer not trusted -> rejected",
+    )
 
     print("=" * 84)
-    print("the point: the login service owns WHO has a role; the ~30-line provider owns")
-    print("WHAT a role can do. tokens are verified against the service's published keys,")
-    print("and pinned to the right issuer + audience. nothing about users is stored here.")
+    print(
+        "the point: the login service owns WHO has a role; the ~30-line provider owns"
+    )
+    print(
+        "WHAT a role can do. tokens are verified against the service's published keys,"
+    )
+    print(
+        "and pinned to the right issuer + audience. nothing about users is stored here."
+    )
     print("=" * 84)

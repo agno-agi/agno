@@ -313,9 +313,7 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
     # different model. This is the per-resource gate that complements the route
     # gate in JWTMiddleware, both go through the same provider.
     provider = _resolve_authorization_provider(request)
-    ctx = _build_authorization_context(
-        request, resource_type=resource_type, resource_id=resource_id, action=action
-    )
+    ctx = _build_authorization_context(request, resource_type=resource_type, resource_id=resource_id, action=action)
     return provider.check(ctx)
 
 

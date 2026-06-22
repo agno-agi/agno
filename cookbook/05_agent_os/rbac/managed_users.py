@@ -61,7 +61,9 @@ users.upsert("bob", email="bob@co", name="Bob")
 roles.assign("bob", "viewer")
 
 db = SqliteDb(db_file="tmp/managed_users_agentos.db")
-research_agent = Agent(id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db)
+research_agent = Agent(
+    id="research-agent", name="Research Agent", model=OpenAIChat(id="gpt-4o"), db=db
+)
 
 # Wire BOTH stores into AgentOS. user_store= turns on the directory + off-switch.
 agent_os = AgentOS(
@@ -93,8 +95,14 @@ if __name__ == "__main__":
 
     def token(sub: str) -> str:
         return jwt.encode(
-            {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=24)},
-            JWT_SECRET, algorithm="HS256",
+            {
+                "sub": sub,
+                "aud": OS_ID,
+                "scopes": [],
+                "exp": datetime.now(UTC) + timedelta(hours=24),
+            },
+            JWT_SECRET,
+            algorithm="HS256",
         )
 
     def auth(sub: str) -> dict:
@@ -110,23 +118,43 @@ if __name__ == "__main__":
 
     # The admin can list everyone in the directory, with their roles merged in.
     print("\n  the directory (asked for by alice, an admin):")
-    listing = client.get("/authz/users", headers=auth("alice")).json()["data"]  # paginated {data, meta}
+    listing = client.get("/authz/users", headers=auth("alice")).json()[
+        "data"
+    ]  # paginated {data, meta}
     for u in listing:
-        print(f"    - {u['id']:8s} {str(u['email'] or ''):12s} role={u['role']}  disabled={u['disabled']}")
+        print(
+            f"    - {u['id']:8s} {str(u['email'] or ''):12s} role={u['role']}  disabled={u['disabled']}"
+        )
 
     print("\n  bob is a viewer, so he can look at the agent:")
-    show("bob asks to LOOK at the agent", client.get("/agents/research-agent", headers=auth("bob")), "viewers can look")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "viewers can look",
+    )
 
     print("\n  >> now an admin DISABLES bob (e.g. he left the company)...\n")
     client.patch("/authz/users/bob", headers=auth("alice"), json={"disabled": True})
-    show("bob asks to LOOK at the agent", client.get("/agents/research-agent", headers=auth("bob")), "same valid token, but he's blocked now")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "same valid token, but he's blocked now",
+    )
 
     print("\n  >> ...bob is back, re-enable him...\n")
     client.patch("/authz/users/bob", headers=auth("alice"), json={"disabled": False})
-    show("bob asks to LOOK at the agent", client.get("/agents/research-agent", headers=auth("bob")), "allowed again, instantly")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "allowed again, instantly",
+    )
 
     print("=" * 80)
-    print("the point: you keep the list of users and an off-switch per person. disabling")
+    print(
+        "the point: you keep the list of users and an off-switch per person. disabling"
+    )
     print("someone blocks their NEXT request even though their token is still valid -")
-    print("something you can't do with tokens alone. no passwords are ever stored here.")
+    print(
+        "something you can't do with tokens alone. no passwords are ever stored here."
+    )
     print("=" * 80)
