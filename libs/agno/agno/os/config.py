@@ -130,10 +130,10 @@ class AuthorizationConfig(BaseModel):
     admin_scope: Optional[str] = None
     # Pluggable authorization strategy. When None, AgentOS uses the built-in
     # ScopeAuthorizationProvider (JWT-scope RBAC, no external dependency). Supply an
-    # AuthorizationProvider to swap in a different model (ReBAC/ABAC/OpenFGA/Cerbos),
-    # or a LIST of them to run several planes at once (allow if any allows) — without
-    # changing the request pipeline.
-    authorization_provider: Optional[Union[AuthorizationProvider, List[AuthorizationProvider]]] = None
+    # AuthorizationProvider to swap in a different model (ReBAC/ABAC/OpenFGA/Cerbos)
+    # without changing the request pipeline. (Running several providers at once as a
+    # composite arrives with the multi-plane PR.)
+    authorization_provider: Optional[AuthorizationProvider] = None
     # Optional AuditSink. When set, AgentOS records each authorization decision
     # (allow/deny) at the route gate — principal, route, required scopes, and a
     # non-secret token reference — so you get an access trail, not just a change
