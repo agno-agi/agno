@@ -351,13 +351,25 @@ The default scope matcher above is one implementation of a swappable seam:
 request pipeline. Two enforcement points (the middleware route gate and the
 per-resource handler check) both go through it.
 
-Three tiers, pick the lowest that fits:
+### The three tiers (a ladder - pick the lowest that fits)
 
-| Tier | You write | Dependency |
-|------|-----------|------------|
-| Scopes (default) | scopes in the JWT | none |
-| Managed roles | `store.set_role_scopes(...)`, `store.assign(...)` in agno scope terms, changed at runtime and persisted to your DB | `agno[roles]` (native engine, no third-party) |
-| Custom provider | your own `AuthorizationProvider` (map token claims to permissions however you like) | none |
+Each tier is a strict superset of the one below it: you only climb when you hit
+the previous tier's ceiling. All three plug into the *same* seam
+(`AuthorizationConfig`) and the *same* two enforcement points, so moving up a tier
+changes only what you pass in - not your app.
+
+| Tier | When to use it | What it adds over the tier below | You write | Dependency |
+|------|----------------|----------------------------------|-----------|------------|
+| **1. Scope-based RBAC** (default `ScopeAuthorizationProvider`) | Permissions are known at token-mint time and rarely change; whoever issues tokens can put scopes on them. The simplest thing that works. | — (the baseline) | scopes in the JWT (`agents:*:read`, `agents:research-agent:run`, `agent_os:admin`) | none |
+| **2. Managed roles** (`ManagedRoleStore`) | You want to define/assign roles yourself and change them at runtime without re-minting tokens, and keep the policy in your own DB. | **Runtime-mutable** roles + per-resource scopes + **deny** rules + **agent-aware change audit** (who changed what), all **persisted** and read fresh per request (no stale cache, consistent across replicas). | `store.set_role_scopes(...)` / `store.assign(...)` in agno scope terms | `agno[roles]` (agno's native engine, no third-party) |
+| **3. Custom / external provider** | Your model isn't scopes at all - ReBAC ("is this user an owner?"), ABAC ("same tenant?"), or role names that live in an external IdP / policy engine (OpenFGA, etc.). | Total control of the decision: any model, any backend. agno still owns the request pipeline + the two enforcement points. | your own `AuthorizationProvider` (implement `check` / `accessible_resource_ids`, optionally `authorize_route`) | yours |
+
+**Why managed roles even when your IdP already has role names?** An IdP knows
+*who* is a "member" or "admin"; it does not know what those words mean *inside your
+AgentOS*. Tier 2 (or a tier-3 provider keyed off the IdP's `roles` claim) is where
+**agno owns the per-resource scopes, the deny rules, and the decision audit** - the
+mapping from "admin" to "may run research-agent but not delete sessions" lives with
+your app, not in the IdP. `idp_workos_auth0.py` shows exactly this split.
 
 Each cookbook below runs the whole scenario for you and prints a plain
 `ALLOWED` / `BLOCKED` transcript that explains itself, then exits (no server, no
@@ -365,33 +377,43 @@ curl needed). Every file starts with a short plain-English explainer at the top.
 
 New to authorization? Read them in this order — each is runnable on its own:
 
-1. `managed_roles.py` — start here. What roles are, and how handing someone a role
-   decides what they can do. Shows a change taking effect instantly (no re-login).
+1. `managed_roles.py` — **start here (Tier 2).** What roles are, and how handing
+   someone a role decides what they can do. Shows a change taking effect instantly
+   (no re-login). Wired with the preferred `AuthorizationConfig(role_store=store)`
+   shortcut; the constructor params are documented inline at the call site.
 2. `managed_roles_sessions.py` — roles protecting real data: who may delete a saved
    chat session (and who is stopped before any data is touched).
-3. `idp_workos_auth0.py` — they already have a login service (WorkOS/Auth0/Okta):
-   the role rides the token, you only enforce, via a ~30-line custom
-   `AuthorizationProvider` (JWKS verification + issuer/audience pinning).
-4. `managed_roles_audit.py` — the governance angle: the two append-only trails
+3. `managed_roles_audit.py` — the governance angle: the two append-only trails
    (who changed what, and every allow/deny), turned on with a `DbAuditSink`.
-5. `managed_users.py` — the user directory: list users, give roles, and disable
+4. `custom_authorization_provider.py` — **Tier 3, minimal.** The smallest possible
+   custom `AuthorizationProvider`: a `tier` claim drives a non-scope decision model.
+   Implement the ABC (`check` / `accessible_resource_ids`), wire it via
+   `AuthorizationConfig(authorization_provider=...)`. Start here for the custom path.
+5. `idp_workos_auth0.py` — **Tier 3, production-shaped.** They already have a login
+   service (WorkOS/Auth0/Okta): the role rides the token, you only enforce, via a
+   ~30-line custom `AuthorizationProvider`. Adds JWKS verification + issuer/audience
+   pinning. (Enforcement only — no user store needed.)
+6. `managed_users.py` — the user directory: list users, give roles, and disable
    someone instantly (blocked on their next request, even with a valid token).
-6. `manage_users_and_roles.py` — runs a real AgentOS server that serves the
+7. `manage_users_and_roles.py` — runs a real AgentOS server that serves the
    `/authz` user + role management API (admin-only, with audit) for a frontend/
    admin UI, with CORS and a seeded admin + users. Prints a ready-to-use admin token.
    Pair it with `console.html` — a single-file test client (no build, no deps):
    start the server, open the file in a browser, paste the printed token, and
    click around users / roles / scopes / both audit trails.
 
-### The two ways a company runs this
+### How a company runs this
 
-A company either already has a login service (WorkOS/Okta/Auth0) or it doesn't,
-and either way we handle the "what are you allowed to do" part:
+This covers the ways a company runs authorization — whether or not they already
+have a login service (WorkOS/Okta/Auth0), and whether we also store the user
+directory or only enforce decisions:
 
-| # | Their situation | Who owns "who has which role" | Do we store users? | Cookbook |
+| Their situation | Tier | Who owns "who has which role" | Do we store users? | Cookbook |
 |---|---|---|---|---|
-| 1 | They have a login service; we only enforce | the login service (role on the token) | no | `idp_workos_auth0.py` |
-| 2 | No login service; they want us to manage it | us (define + assign roles, manage over HTTP) | yes | `manage_users_and_roles.py` (+ `managed_users.py`) |
+| Scopes are on the token already | 1 | the token issuer (scopes claim) | no | `symmetric/`, `asymmetric/` |
+| No login service; we define + assign roles | 2 | us, in the managed store | yes | `managed_roles.py` (+ user directory: `manage_users_and_roles.py` / `managed_users.py`) |
+| They have a login service; we only enforce | 3 | the login service (role on the token) | no | `idp_workos_auth0.py` |
+| You want a custom decision model (ReBAC/ABAC/own engine) | 3 | you (your own `AuthorizationProvider`) | optional | `custom_authorization_provider.py` |
 
 A mix of the two is possible without a separate cookbook: a custom
 `AuthorizationProvider` that uses the token's role when present and falls back to

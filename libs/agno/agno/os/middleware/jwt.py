@@ -605,6 +605,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
         user_isolation: bool = False,
+        authorization_provider: Optional["AuthorizationProvider"] = None,
     ):
         """
         Initialize the JWT middleware.
@@ -653,6 +654,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
                 ownership/scoping gates stay dormant — preserves backwards
                 compatibility with deployments that handle isolation in their
                 own application layer.
+            authorization_provider: Optional custom AuthorizationProvider that owns the
+                access decision. Mainly for the manual
+                ``app.add_middleware(JWTMiddleware, ...)`` setup path, which never
+                populates ``app.state.authorization_provider``. When set, this provider
+                takes precedence over ``app.state.authorization_provider`` and the
+                default ``ScopeAuthorizationProvider``. The AgentOS path normally seeds
+                the provider on ``app.state`` instead (see ``_resolve_provider``).
 
         Note:
             - At least one verification key or JWKS file must be provided if validate=True
@@ -736,9 +744,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
         )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
         self.user_isolation = user_isolation
+        # Explicit provider passed to this middleware instance (manual-setup path).
+        # Takes precedence over app.state.authorization_provider and the default.
+        self.authorization_provider = authorization_provider
         # Lazily-built default provider for manual-setup deployments that don't
         # populate app.state.authorization_provider (see _resolve_provider).
         self._fallback_provider: Optional["AuthorizationProvider"] = None
+        # Warn once (not per request) the first time we have to manufacture the
+        # DEFAULT provider — i.e. neither this middleware nor app.state supplied
+        # one. Signals a likely misconfiguration on the manual-install path.
+        self._warned_default_fallback = False
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
@@ -755,16 +770,40 @@ class JWTMiddleware(BaseHTTPMiddleware):
     def _resolve_provider(self, request: Request):
         """Resolve the active AuthorizationProvider.
 
-        Prefers the instance AgentOS set on ``app.state.authorization_provider``;
-        falls back to a default ``ScopeAuthorizationProvider`` for manual
-        ``app.add_middleware(JWTMiddleware)`` setups that never populated it.
-        Cached on the middleware instance after first use to avoid rebuilding a
-        fallback provider on every request.
+        Resolution precedence:
+        1. An explicit provider passed to this middleware instance
+           (``JWTMiddleware(..., authorization_provider=...)``) — the manual
+           ``app.add_middleware(JWTMiddleware)`` path's way to supply one.
+        2. The provider AgentOS seeds on ``app.state.authorization_provider``
+           (the normal ``AgentOS(authorization=True)`` path).
+        3. A default ``ScopeAuthorizationProvider`` manufactured here, for manual
+           setups that configured neither. This last case is the silent
+           fail-open the warning below makes observable.
+
+        The default fallback is cached on the instance after first use to avoid
+        rebuilding it on every request.
         """
-        provider = getattr(getattr(request, "app", None), "state", None)
-        provider = getattr(provider, "authorization_provider", None) if provider is not None else None
+        # (1) Explicit middleware kwarg wins.
+        if self.authorization_provider is not None:
+            return self.authorization_provider
+
+        # (2) Provider seeded on app.state by AgentOS.
+        state = getattr(getattr(request, "app", None), "state", None)
+        provider = getattr(state, "authorization_provider", None) if state is not None else None
         if provider is not None:
             return provider
+
+        # (3) Default fallback. Warn once if authorization is actually enforced,
+        # so a manual install that *expected* a custom provider isn't silently
+        # downgraded to default scope-based RBAC without any signal.
+        if self.authorization and not self._warned_default_fallback:
+            self._warned_default_fallback = True
+            log_warning(
+                "JWTMiddleware: no AuthorizationProvider configured — falling back to the default "
+                "ScopeAuthorizationProvider. If you intended to use a custom provider, pass it via "
+                "JWTMiddleware(authorization_provider=...) or AgentOS(authorization_config=...). "
+                "Authorization decisions will use default scope-based RBAC."
+            )
         if self._fallback_provider is None:
             from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 
@@ -1052,6 +1091,19 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authorization_enabled = self.authorization or False
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
+            # Mark this as the verified internal service caller. This flag can ONLY
+            # be set here, AFTER the constant-time hmac comparison above succeeds —
+            # request.state is a fresh, server-only namespace per request and is
+            # never populated from client input, so a client cannot forge it.
+            # The per-resource handler gate (check_resource_access) honours this
+            # flag so the scheduler isn't re-denied by a provider that doesn't know
+            # the "__scheduler__" subject (e.g. managed roles): the caller was
+            # already authorized at the route gate via INTERNAL_SERVICE_SCOPES.
+            request.state.is_internal_service = True
+            # Set minimal claims so anything reading request.state.claims (e.g. the
+            # authorization context) sees a consistent, non-None subject for the
+            # internal caller rather than an empty dict.
+            request.state.claims = {"sub": "__scheduler__"}
 
             # Enforce RBAC for internal token (do not skip scope checks)
             if self.authorization:

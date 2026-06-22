@@ -865,3 +865,164 @@ class TestUserIsolationDefaultOff:
         assert resp.status_code == 200, resp.text
         ids = [s["session_id"] for s in resp.json()["data"]]
         assert session_id in ids
+
+
+# ---------------------------------------------------------------------------
+# WebSocket workflow RBAC honours the configured authorization provider
+# ---------------------------------------------------------------------------
+
+pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the native engine + SQLAlchemy
+
+
+def _managed_roles_db_url() -> str:
+    """A throwaway file-backed SQLite URL for the managed-role store. File-backed
+    so the same DB is visible across the threads TestClient uses."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".authz.db")
+    os.close(fd)
+    return f"sqlite:///{path}"
+
+
+def make_empty_scope_token(user_id: str) -> str:
+    """A signed JWT whose ``scopes`` claim is EMPTY. In a ManagedRoleStore
+    deployment permissions live in the store, not the token — so this proves the
+    WS gate consults the store rather than the JWT scopes claim."""
+    payload = {
+        "sub": user_id,
+        "aud": TEST_OS_ID,
+        "scopes": [],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+class TestWebSocketWorkflowRBACViaProvider:
+    """The WS workflow gates must route through the configured authorization
+    provider (app.state.authorization_provider), not match the JWT scopes claim
+    directly. With a ManagedRoleStore the JWT scopes claim is empty and the
+    store decides — so a user whose store role grants ``workflows:run`` is
+    allowed and a user with no role is denied, over WebSocket."""
+
+    _MAX_FRAMES = 8
+
+    def _drain_until(self, ws, predicate):
+        for _ in range(self._MAX_FRAMES):
+            frame = json.loads(ws.receive_text())
+            if predicate(frame):
+                return frame
+        raise AssertionError(f"Expected frame matching predicate within {self._MAX_FRAMES} messages")
+
+    def _authenticate(self, ws, token):
+        self._drain_until(ws, lambda f: f.get("event") == "connected")
+        ws.send_text(json.dumps({"action": "authenticate", "token": token}))
+        self._drain_until(ws, lambda f: f.get("event") == "authenticated" and f.get("user_id") is not None)
+
+    @pytest.fixture
+    def managed_roles_client(self, test_agent, test_workflow):
+        """AgentOS wired with a ManagedRoleStore provider. ``granted`` has a role
+        granting ``workflows:*:run``; ``denied`` has no role at all. The role
+        grants a wildcard run so the granted user passes the gate for ANY
+        workflow_id (used to reach a deterministic downstream reply)."""
+        from agno.os.authz.role_store import ManagedRoleStore
+
+        store = ManagedRoleStore(db_url=_managed_roles_db_url())
+        store.set_role_scopes("runner", ["workflows:*:run"])
+        store.assign("granted", "runner")
+
+        agent_os = AgentOS(
+            id=TEST_OS_ID,
+            agents=[test_agent],
+            workflows=[test_workflow],
+            authorization=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=[JWT_SECRET],
+                algorithm="HS256",
+                authorization_provider=store.provider,
+            ),
+        )
+        return TestClient(agent_os.get_app())
+
+    def test_start_workflow_denied_without_store_role(self, managed_roles_client):
+        """A user with NO store role (and empty JWT scopes) is denied at the
+        start-workflow gate — the store, not the JWT, governs."""
+        token = make_empty_scope_token("denied")
+        with managed_roles_client.websocket_connect("/workflows/ws") as ws:
+            self._authenticate(ws, token)
+            ws.send_text(
+                json.dumps(
+                    {
+                        "action": "start-workflow",
+                        "workflow_id": "test-workflow",
+                        "input": "hi",
+                    }
+                )
+            )
+            event = self._drain_until(ws, lambda f: f.get("event") == "error")
+        assert event["error"] == "Insufficient permissions to run this workflow", event
+
+    def test_start_workflow_allowed_via_store_role(self, managed_roles_client):
+        """A user whose store role grants workflows:run is allowed PAST the gate,
+        even though the JWT scopes claim is empty.
+
+        Proof without invoking a model: the granted role grants ``workflows:*:run``
+        (wildcard), so the gate passes for a workflow_id that doesn't exist. The
+        downstream handler then replies with a deterministic "not found" error —
+        NOT the RBAC denial. The previous direct has_required_scopes check would
+        have denied this user outright (empty JWT scopes), never reaching the
+        not-found reply.
+        """
+        token = make_empty_scope_token("granted")
+        denial = "Insufficient permissions to run this workflow"
+        with managed_roles_client.websocket_connect("/workflows/ws") as ws:
+            self._authenticate(ws, token)
+            ws.send_text(
+                json.dumps(
+                    {
+                        "action": "start-workflow",
+                        "workflow_id": "no-such-workflow",
+                        "input": "hi",
+                    }
+                )
+            )
+            event = self._drain_until(ws, lambda f: f.get("event") == "error")
+        # Got past RBAC: the error is the downstream not-found, not the denial.
+        assert event["error"] != denial, event
+        assert "not found" in event["error"].lower(), event
+
+    def test_continue_workflow_denied_without_store_role(self, managed_roles_client):
+        """The continue-workflow gate also routes through the provider."""
+        token = make_empty_scope_token("denied")
+        with managed_roles_client.websocket_connect("/workflows/ws") as ws:
+            self._authenticate(ws, token)
+            ws.send_text(
+                json.dumps(
+                    {
+                        "action": "continue-workflow",
+                        "workflow_id": "test-workflow",
+                        "run_id": "some-run",
+                    }
+                )
+            )
+            event = self._drain_until(ws, lambda f: f.get("event") == "error")
+        assert event["error"] == "Insufficient permissions to continue this workflow", event
+
+    def test_reconnect_denied_without_store_role(self, managed_roles_client):
+        """The reconnect gate also routes through the provider."""
+        token = make_empty_scope_token("denied")
+        with managed_roles_client.websocket_connect("/workflows/ws") as ws:
+            self._authenticate(ws, token)
+            ws.send_text(
+                json.dumps(
+                    {
+                        "action": "reconnect",
+                        "run_id": "some-run",
+                        "session_id": "some-session",
+                        "workflow_id": "test-workflow",
+                    }
+                )
+            )
+            event = self._drain_until(ws, lambda f: f.get("event") == "error")
+        assert event["error"] == INSUFFICIENT_PERMISSIONS_WS_RECONNECT, event
