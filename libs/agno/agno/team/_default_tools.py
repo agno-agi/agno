@@ -186,7 +186,7 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         if num_chats is not None:
             history = history[-num_chats:]
 
-        return json.dumps(history)
+        return json.dumps(history, ensure_ascii=False)
 
     async def aget_chat_history(num_chats: Optional[int] = None) -> str:
         """
@@ -217,7 +217,7 @@ def _get_chat_history_function(team: "Team", session: TeamSession, async_mode: b
         if num_chats is not None:
             history = history[-num_chats:]
 
-        return json.dumps(history)
+        return json.dumps(history, ensure_ascii=False)
 
     if async_mode:
         get_chat_history_func = aget_chat_history
@@ -287,7 +287,7 @@ def _search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     async def asearch_past_sessions() -> str:
         """List previous chat sessions with short previews.
@@ -324,7 +324,7 @@ def _search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     if async_mode and _has_async_db(team):
         return Function.from_callable(asearch_past_sessions, name="search_past_sessions")
@@ -757,7 +757,7 @@ def _get_delegate_task_function(
                 else:
                     import json
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
             except Exception as e:
                 yield str(e)
 
@@ -940,7 +940,7 @@ def _get_delegate_task_function(
                 else:
                     import json
 
-                    yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
+                    yield json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)  # type: ignore
             except Exception as e:
                 yield str(e)
 
@@ -1109,7 +1109,7 @@ def _get_delegate_task_function(
                     else:
                         import json
 
-                        yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"  # type: ignore
+                        yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}"  # type: ignore
                 except Exception as e:
                     yield f"Agent {member_agent.name}: Error - {str(e)}"
 
@@ -1372,7 +1372,7 @@ def _get_delegate_task_function(
                             import json
 
                             return (
-                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2)}",
+                                f"Agent {member_name}: {json.dumps(member_agent_run_response.content, indent=2, ensure_ascii=False)}",
                                 None,
                                 None,
                             )
@@ -1449,7 +1449,7 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
         return "Knowledge base does not support adding content"
 
     document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
-    document_content = json.dumps({"query": query, "result": result})
+    document_content = json.dumps({"query": query, "result": result}, ensure_ascii=False)
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
