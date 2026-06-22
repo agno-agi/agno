@@ -234,11 +234,6 @@ class Model(ABC):
         with optional exponential backoff.
         """
         last_exception: Optional[ModelProviderError] = None
-        # Pop once, before the loop.  Placing this inside the loop would reset
-        # the counter to 0 on every retry attempt (because the key is only present
-        # on the first iteration), breaking the guidance-retry limit when a plain
-        # ModelProviderError is retried and is then followed by a
-        # RetryableModelProviderError in a later attempt.
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):

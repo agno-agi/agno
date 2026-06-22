@@ -6,7 +6,8 @@ import pytest
 # Set test API key to avoid env var lookup errors
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
-from agno.exceptions import ModelProviderError
+from agno.exceptions import ModelProviderError, RetryableModelProviderError
+from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat
 
 
@@ -26,6 +27,18 @@ def model_with_retries():
 def model_with_two_retries():
     """Create a model instance with 2 retries and no delay."""
     return OpenAIChat(id="gpt-4o-mini", retries=2, delay_between_retries=0)
+
+
+@pytest.fixture
+def model_with_guidance_limit():
+    """Create a Gemini model with one plain retry and a guidance-retry limit of 1.
+
+    Guidance retries are a Gemini-specific feature: it is the only model that raises
+    RetryableModelProviderError, so the scoping tests below use it.
+    """
+    return Gemini(
+        id="gemini-2.0-flash", api_key="test-key", retries=1, delay_between_retries=0, retry_with_guidance_limit=1
+    )
 
 
 # =============================================================================
@@ -437,54 +450,96 @@ def test_default_status_code(model):
 
 
 # =============================================================================
-# Tests for retries_with_guidance_count scoping in _invoke_with_retry
+# Tests for guidance-retry count scoping across plain retries
 # =============================================================================
 
 
-def test_guidance_count_preserved_across_plain_retries():
-    """retries_with_guidance_count must not be reset to 0 on subsequent retry attempts.
+def test_guidance_count_preserved_across_plain_retries(model_with_guidance_limit):
+    """Verify that a plain retry does not reset the guidance counter (sync)."""
+    call_count = 0
 
-    Previously, ``kwargs.pop("retries_with_guidance_count", 0)`` was called on
-    every iteration of the retry loop.  Because the key is consumed on the first
-    iteration, every subsequent iteration would see the default value of 0,
-    silently resetting the guidance counter.
-
-    Scenario: model is already on guidance-retry #1 (count=1, limit=1).
-    - attempt 0: ModelProviderError → plain retry (sleep, continue loop)
-    - attempt 1: RetryableModelProviderError
-
-    With the bug: count read as 0 (re-popped = default), 0 < 1 → guidance retry allowed
-    (limit bypassed).  With the fix: count read as 1, 1 >= 1 → raises ModelProviderError
-    immediately.
-    """
-    from agno.exceptions import RetryableModelProviderError
-    from unittest.mock import MagicMock
-
-    model = OpenAIChat(id="gpt-4o-mini", retries=1, delay_between_retries=0)
-    model.retry_with_guidance_limit = 1  # Only 1 guidance retry allowed
-
-    call_count = [0]
-
-    def invoke_side_effect(**kwargs):
-        n = call_count[0]
-        call_count[0] += 1
-        if n == 0:
-            # First attempt: plain retryable error → normal sleep-retry
+    def mock_invoke(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
             raise ModelProviderError("rate limit", status_code=429)
-        # Second attempt: guidance-needed error
-        raise RetryableModelProviderError(
-            retry_guidance_message="please fix your output",
-            original_error="bad output",
-        )
+        raise RetryableModelProviderError(retry_guidance_message="Fix your output", original_error="bad output")
 
-    with patch.object(model, "invoke", side_effect=invoke_side_effect):
-        # We call with retries_with_guidance_count=1 to simulate being on the last
-        # allowed guidance retry.  With the fix, attempt 1 of the retry loop reads
-        # count=1 (>= limit=1) and raises ModelProviderError.
-        # With the bug, attempt 1 reads count=0 (reset by the second pop call)
-        # and would proceed to a recursive guidance retry instead.
+    with patch.object(model_with_guidance_limit, "invoke", side_effect=mock_invoke):
         with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
-            model._invoke_with_retry(
-                messages=[MagicMock()],
-                retries_with_guidance_count=1,  # already at guidance retry limit
+            model_with_guidance_limit._invoke_with_retry(messages=[MagicMock()], retries_with_guidance_count=1)
+
+        # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
+        # a reset counter would allow a 3rd invoke instead.
+        assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+
+
+@pytest.mark.asyncio
+async def test_async_guidance_count_preserved_across_plain_retries(model_with_guidance_limit):
+    """Verify that a plain retry does not reset the guidance counter (async)."""
+    call_count = 0
+
+    async def mock_ainvoke(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ModelProviderError("rate limit", status_code=429)
+        raise RetryableModelProviderError(retry_guidance_message="Fix your output", original_error="bad output")
+
+    with patch.object(model_with_guidance_limit, "ainvoke", side_effect=mock_ainvoke):
+        with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
+            await model_with_guidance_limit._ainvoke_with_retry(messages=[MagicMock()], retries_with_guidance_count=1)
+
+        # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
+        # a reset counter would allow a 3rd invoke instead.
+        assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+
+
+def test_stream_guidance_count_preserved_across_plain_retries(model_with_guidance_limit):
+    """Verify that a plain retry does not reset the guidance counter (stream)."""
+    call_count = 0
+
+    def mock_invoke_stream(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ModelProviderError("rate limit", status_code=429)
+        raise RetryableModelProviderError(retry_guidance_message="Fix your output", original_error="bad output")
+        yield  # make this a generator
+
+    with patch.object(model_with_guidance_limit, "invoke_stream", side_effect=mock_invoke_stream):
+        with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
+            list(
+                model_with_guidance_limit._invoke_stream_with_retry(
+                    messages=[MagicMock()], retries_with_guidance_count=1
+                )
             )
+
+        # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
+        # a reset counter would allow a 3rd invoke instead.
+        assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+
+
+@pytest.mark.asyncio
+async def test_async_stream_guidance_count_preserved_across_plain_retries(model_with_guidance_limit):
+    """Verify that a plain retry does not reset the guidance counter (async stream)."""
+    call_count = 0
+
+    async def mock_ainvoke_stream(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ModelProviderError("rate limit", status_code=429)
+        raise RetryableModelProviderError(retry_guidance_message="Fix your output", original_error="bad output")
+        yield  # make this an async generator
+
+    with patch.object(model_with_guidance_limit, "ainvoke_stream", side_effect=mock_ainvoke_stream):
+        with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
+            async for _ in model_with_guidance_limit._ainvoke_stream_with_retry(
+                messages=[MagicMock()], retries_with_guidance_count=1
+            ):
+                pass
+
+        # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
+        # a reset counter would allow a 3rd invoke instead.
+        assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
