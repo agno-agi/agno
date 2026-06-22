@@ -1,4 +1,4 @@
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Optional
 from uuid import uuid4
 
@@ -53,7 +53,9 @@ class LocalFileSystemTools(Toolkit):
         """
         try:
             filename = filename or str(uuid4())
-            directory = directory or self.target_directory
+            if self._filename_has_path_components(filename):
+                return f"Error: Path '{filename}' is outside the allowed target directory"
+
             if filename and "." in filename:
                 path_obj = Path(filename)
                 filename = path_obj.stem
@@ -63,14 +65,18 @@ class LocalFileSystemTools(Toolkit):
 
             extension = (extension or self.default_extension).lstrip(".")
 
-            # Create directory if it doesn't exist
-            dir_path = Path(directory)
-            dir_path.mkdir(parents=True, exist_ok=True)
+            target_path = Path(self.target_directory).resolve()
+            dir_path = self._resolve_write_directory(directory, target_path)
+            if dir_path is None:
+                return f"Error: Directory '{directory}' is outside the allowed target directory"
 
             # Construct full filename with extension
             full_filename = f"{filename}.{extension}"
-            file_path = dir_path / full_filename
+            file_path = (dir_path / full_filename).resolve()
+            if not self._is_path_within_base(file_path, target_path):
+                return f"Error: Path '{full_filename}' is outside the allowed target directory"
 
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content)
 
             return f"Successfully wrote file to: {file_path}"
@@ -79,6 +85,45 @@ class LocalFileSystemTools(Toolkit):
             error_msg = f"Failed to write file: {str(e)}"
             log_error(error_msg)
             return f"Error: {error_msg}"
+
+    def _resolve_write_directory(self, directory: Optional[str], target_path: Path) -> Optional[Path]:
+        if not directory:
+            return target_path
+
+        requested_directory = Path(directory)
+        if requested_directory.is_absolute():
+            resolved_directory = requested_directory.resolve()
+        else:
+            safe, resolved_directory = self._check_path(directory, target_path)
+            if not safe:
+                return None
+
+        if not self._is_path_within_base(resolved_directory, target_path):
+            return None
+
+        return resolved_directory
+
+    @staticmethod
+    def _filename_has_path_components(filename: str) -> bool:
+        if filename in (".", ".."):
+            return True
+
+        native_path = Path(filename)
+        windows_path = PureWindowsPath(filename)
+        return (
+            native_path.is_absolute()
+            or windows_path.is_absolute()
+            or len(native_path.parts) > 1
+            or len(windows_path.parts) > 1
+        )
+
+    @staticmethod
+    def _is_path_within_base(path: Path, base: Path) -> bool:
+        try:
+            path.relative_to(base)
+        except ValueError:
+            return False
+        return True
 
     def read_file(self, filename: str, directory: Optional[str] = None) -> str:
         """
