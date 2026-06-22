@@ -1,6 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pytest.importorskip("google.genai")
+
 from agno.models.google import Gemini
 
 
