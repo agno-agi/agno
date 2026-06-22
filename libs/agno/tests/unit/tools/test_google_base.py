@@ -793,10 +793,7 @@ def test_resolve_creds_uses_service_account():
 
     sa_creds = _make_creds(valid=True, scopes=["scope1"])
 
-    with (
-        patch("google.oauth2.service_account.Credentials.from_service_account_file") as mock_sa,
-        patch.object(toolkit, "_make_auth_request") as mock_request,
-    ):
+    with patch("google.oauth2.service_account.Credentials.from_service_account_file") as mock_sa:
         mock_sa.return_value = sa_creds
         result = toolkit._resolve_creds()
 
