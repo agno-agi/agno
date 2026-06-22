@@ -524,7 +524,7 @@ class Workspace(Toolkit):
                     continue
                 files.append(
                     {
-                        "path": str(p.relative_to(self.root)),
+                        "path": p.relative_to(self.root).as_posix(),
                         "type": "dir" if is_dir else "file",
                         "size": size,
                     }
@@ -592,7 +592,7 @@ class Workspace(Toolkit):
                     except Exception:
                         continue
                     if lower_query in content.lower():
-                        rel_path = str(file_path.relative_to(self.root))
+                        rel_path = file_path.relative_to(self.root).as_posix()
                         matches.append(
                             {
                                 "file": rel_path,
