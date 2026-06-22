@@ -99,6 +99,11 @@ class RoleClaimAuthorizationProvider(AuthorizationProvider):
     def check(self, ctx: AuthorizationContext) -> bool:
         # Per-resource question, e.g. "may they run agent X?"
         if not ctx.resource_type or not ctx.action:
+            # Non-resource check: defer (do NOT deny here). This mirrors the
+            # framework's native engine (native_engine.check_resource: "non-resource
+            # check: defer"). The route-level gate (authorize_route) already governs
+            # these paths; returning False would wrongly deny non-resource routes
+            # that the route gate has already decided on.
             return True
         return has_required_scopes(
             self._scopes_for(ctx),

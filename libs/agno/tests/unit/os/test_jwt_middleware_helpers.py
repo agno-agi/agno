@@ -658,3 +658,187 @@ async def test_dispatch_keeps_user_isolation_false_when_disabled():
     await mw.dispatch(request, call_next)
 
     assert request.state.user_isolation_enabled is False
+
+
+# ---------------------------------------------------------------------------
+# Provider resolution (manual-install path / silent fail-open fix)
+# ---------------------------------------------------------------------------
+
+
+class _DenyAllProvider:
+    """Custom AuthorizationProvider that denies everything.
+
+    Used to prove that a provider supplied via the manual-install path is
+    actually consulted — if the middleware silently fell back to the default
+    ScopeAuthorizationProvider, an admin-scoped token would be allowed through.
+    """
+
+    def check(self, ctx):  # pragma: no cover - exercised via authorize_route
+        return False
+
+    def authorize_route(self, ctx, required_scopes):
+        return False
+
+    def accessible_resource_ids(self, ctx):
+        return set()
+
+
+def _make_request(secret: str, path: str, scopes, *, app_state=None):
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    import jwt
+
+    request = MagicMock()
+    request.url = SimpleNamespace(path=path)
+    request.method = "GET"
+    token = jwt.encode(
+        {"sub": "u", "scopes": scopes, "exp": datetime.now(UTC) + timedelta(minutes=5)},
+        secret,
+        algorithm="HS256",
+    )
+    request.headers = {"Authorization": f"Bearer {token}", "origin": None}
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = app_state if app_state is not None else SimpleNamespace()
+    request.state = _FakeState()
+    return request
+
+
+@pytest.mark.asyncio
+async def test_manual_install_uses_custom_provider_kwarg():
+    """The documented manual app.add_middleware(JWTMiddleware, ...) path can now
+    pass a custom provider, and it is actually consulted: a deny-all provider
+    must produce a 403 even for an admin-scoped token (which the default
+    scope provider would allow)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    secret = "manual-provider-secret"
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[secret],
+        algorithm="HS256",
+        authorization=True,
+        authorization_provider=_DenyAllProvider(),
+        excluded_route_paths=[],
+    )
+
+    # admin scope would pass the default ScopeAuthorizationProvider for any route
+    request = _make_request(secret, "/agents/some-agent/runs", ["agent_os:admin"])
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+
+    response = await mw.dispatch(request, call_next)
+
+    # The custom deny-all provider was consulted -> 403, and the route handler
+    # was never reached.
+    assert response.status_code == 403
+    call_next.assert_not_awaited()
+
+
+def test_resolve_provider_precedence_kwarg_over_app_state():
+    """An explicit middleware kwarg outranks app.state.authorization_provider."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    explicit = _DenyAllProvider()
+    state_provider = _DenyAllProvider()
+
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        authorization=True,
+        authorization_provider=explicit,
+    )
+
+    request = MagicMock()
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace(authorization_provider=state_provider)
+
+    assert mw._resolve_provider(request) is explicit
+
+
+def test_resolve_provider_warns_once_on_default_fallback():
+    """When neither a kwarg nor app.state supplies a provider AND authorization
+    is enforced, the manufactured default fallback emits a one-time warning so
+    the misconfiguration is observable instead of silent.
+
+    The agno logger has propagate=False, so we patch log_warning at its use site
+    rather than relying on caplog.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        authorization=True,
+    )
+
+    request = MagicMock()
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()  # no authorization_provider
+
+    with patch("agno.os.middleware.jwt.log_warning") as mock_warn:
+        provider1 = mw._resolve_provider(request)
+        provider2 = mw._resolve_provider(request)
+
+    assert isinstance(provider1, ScopeAuthorizationProvider)
+    assert provider2 is provider1  # cached
+    fallback_warnings = [c for c in mock_warn.call_args_list if "falling back to the default" in c.args[0]]
+    assert len(fallback_warnings) == 1  # warns once, not per request
+
+
+def test_resolve_provider_no_warning_when_app_state_has_provider():
+    """The normal AgentOS path seeds app.state.authorization_provider; resolving
+    it must NOT warn (it is not a misconfiguration)."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    seeded = ScopeAuthorizationProvider()
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        authorization=True,
+    )
+
+    request = MagicMock()
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace(authorization_provider=seeded)
+
+    with patch("agno.os.middleware.jwt.log_warning") as mock_warn:
+        resolved = mw._resolve_provider(request)
+
+    assert resolved is seeded
+    fallback_warnings = [c for c in mock_warn.call_args_list if "falling back to the default" in c.args[0]]
+    assert len(fallback_warnings) == 0
+
+
+def test_resolve_provider_no_warning_when_authorization_disabled():
+    """No warning when authorization is not enforced — plain JWT-extraction
+    setups legitimately have no provider configured."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+
+    mw = JWTMiddleware(
+        app=None,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+    )
+
+    request = MagicMock()
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace()
+
+    with patch("agno.os.middleware.jwt.log_warning") as mock_warn:
+        mw._resolve_provider(request)
+
+    fallback_warnings = [c for c in mock_warn.call_args_list if "falling back to the default" in c.args[0]]
+    assert len(fallback_warnings) == 0

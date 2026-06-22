@@ -13,6 +13,7 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
+from agno.os.authz.provider import AuthorizationContext
 from agno.os.managers import websocket_manager
 from agno.os.middleware.jwt import JWTValidator
 from agno.os.middleware.user_scope import (
@@ -39,7 +40,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
     WorkflowSummaryResponse,
 )
-from agno.os.scopes import AgentOSScope, has_required_scopes
+from agno.os.scopes import AgentOSScope
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import resolve_ws_jwt_config
 from agno.team.factory import TeamFactory
@@ -312,6 +313,19 @@ def get_websocket_router(
         # silently falling through to unauthenticated mode on misconfiguration.
         jwt_auth_required = bool(ws_jwt_config.get("auth_required", False))
 
+        # Resolve the active authorization provider, mirroring the HTTP path
+        # (JWTMiddleware._resolve_provider / auth._resolve_authorization_provider).
+        # AgentOS sets app.state.authorization_provider from AuthorizationConfig;
+        # fall back to the default ScopeAuthorizationProvider for manual setups so
+        # the WebSocket gates honour managed-role/custom providers instead of
+        # matching the JWT scopes claim directly. Behaviour is identical to before
+        # when no custom provider is configured.
+        authorization_provider = getattr(websocket.app.state, "authorization_provider", None)
+        if authorization_provider is None:
+            from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+            authorization_provider = ScopeAuthorizationProvider()
+
         # Determine auth requirements - JWT takes precedence over legacy
         requires_auth = jwt_auth_enabled or jwt_auth_required or bool(settings.os_security_key)
 
@@ -463,14 +477,16 @@ def get_websocket_router(
                     # side-effects.
                     workflow_id = message.get("workflow_id")
                     if jwt_auth_enabled:
-                        user_scopes = websocket_user_context.get("scopes", [])
-                        if not has_required_scopes(
-                            user_scopes,
-                            ["workflows:run"],
+                        authz_ctx = AuthorizationContext(
+                            principal_id=websocket_user_context.get("user_id"),
+                            scopes=websocket_user_context.get("scopes", []),
+                            claims=websocket_user_context.get("payload", {}),
                             resource_type="workflows",
                             resource_id=workflow_id,
+                            action="run",
                             admin_scope=ws_admin_scope,
-                        ):
+                        )
+                        if not authorization_provider.authorize_route(authz_ctx, ["workflows:run"]):
                             await websocket.send_text(
                                 json.dumps({"event": "error", "error": "Insufficient permissions to run this workflow"})
                             )
@@ -520,14 +536,16 @@ def get_websocket_router(
                             )
                             continue
 
-                        user_scopes = websocket_user_context.get("scopes", [])
-                        if not has_required_scopes(
-                            user_scopes,
-                            ["workflows:run"],
+                        authz_ctx = AuthorizationContext(
+                            principal_id=websocket_user_context.get("user_id"),
+                            scopes=websocket_user_context.get("scopes", []),
+                            claims=websocket_user_context.get("payload", {}),
                             resource_type="workflows",
                             resource_id=workflow_id_for_reconnect,
+                            action="run",
                             admin_scope=ws_admin_scope,
-                        ):
+                        )
+                        if not authorization_provider.authorize_route(authz_ctx, ["workflows:run"]):
                             await websocket.send_text(
                                 json.dumps(
                                     {
@@ -551,14 +569,16 @@ def get_websocket_router(
                     # Enforce workflow-level RBAC, mirroring start-workflow.
                     workflow_id = message.get("workflow_id")
                     if jwt_auth_enabled:
-                        user_scopes = websocket_user_context.get("scopes", [])
-                        if not has_required_scopes(
-                            user_scopes,
-                            ["workflows:run"],
+                        authz_ctx = AuthorizationContext(
+                            principal_id=websocket_user_context.get("user_id"),
+                            scopes=websocket_user_context.get("scopes", []),
+                            claims=websocket_user_context.get("payload", {}),
                             resource_type="workflows",
                             resource_id=workflow_id,
+                            action="run",
                             admin_scope=ws_admin_scope,
-                        ):
+                        )
+                        if not authorization_provider.authorize_route(authz_ctx, ["workflows:run"]):
                             await websocket.send_text(
                                 json.dumps(
                                     {"event": "error", "error": "Insufficient permissions to continue this workflow"}
