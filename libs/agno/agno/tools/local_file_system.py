@@ -34,6 +34,17 @@ class LocalFileSystemTools(Toolkit):
 
         super().__init__(name="write_to_local", tools=tools, **kwargs)
 
+    def _validate_path(self, file_path: Path) -> Optional[str]:
+        """Validate that the resolved path is within the target directory.
+
+        Returns None if valid, or an error message if path traversal is detected.
+        """
+        target_base = Path(self.target_directory).resolve()
+        resolved = file_path.resolve()
+        if not resolved.is_relative_to(target_base):
+            return f"Error: Path traversal detected. Cannot access paths outside of {target_base}"
+        return None
+
     def write_file(
         self,
         content: str,
@@ -71,6 +82,11 @@ class LocalFileSystemTools(Toolkit):
             full_filename = f"{filename}.{extension}"
             file_path = dir_path / full_filename
 
+            # Prevent path traversal
+            error = self._validate_path(file_path)
+            if error:
+                return error
+
             file_path.write_text(content)
 
             return f"Successfully wrote file to: {file_path}"
@@ -85,6 +101,11 @@ class LocalFileSystemTools(Toolkit):
         Read content from a local file.
         """
         file_path = Path(directory or self.target_directory) / filename
+
+        error = self._validate_path(file_path)
+        if error:
+            return error
+
         if not file_path.exists():
             return f"File not found: {file_path}"
         return file_path.read_text()
