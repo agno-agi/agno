@@ -2232,7 +2232,6 @@ class Knowledge(RemoteKnowledge):
         if content.description:
             hash_parts.append(content.description)
         if content.metadata:
-
             hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
 
         remote_identity = self._build_remote_content_identity(content.remote_content)
