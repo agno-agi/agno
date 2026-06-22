@@ -4,7 +4,9 @@ This cookbook shows how to use the FileGenerationTool to generate various file t
 and save them to an AWS S3 bucket instead of (or in addition to) the local disk.
 
 Providing s3_bucket implies save_to_s3=True, mirroring how output_directory implies save_files.
-The S3 location (s3://bucket/key) is reported in the agent's response.
+The S3 location (s3://bucket/key) is reported in the agent's response, and
+the generated File artifact includes a temporary presigned HTTPS URL at file.url
+for browser rendering or downloading.
 
 Requires boto3 (`pip install boto3`) and AWS credentials available via environment variables,
 ~/.aws config, or an IAM role. Set S3_BUCKET below to your own bucket name before running.
@@ -35,7 +37,10 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/test.db"),
     tools=[
         FileGenerationTools(
-            s3_bucket=S3_BUCKET, s3_prefix=S3_PREFIX, region_name=AWS_REGION
+            s3_bucket=S3_BUCKET,
+            s3_prefix=S3_PREFIX,
+            region_name=AWS_REGION,
+            s3_presigned_url_expires_in=3600,
         )
     ],
     debug_mode=True,
@@ -60,7 +65,7 @@ def example_json_generation():
         for file in response.files:
             print(f"Generated file: {file.filename} ({file.size} bytes)")
             if file.url:
-                print(f"File location: {file.url}")
+                print(f"Temporary render URL: {file.url}")
     print()
     return response
 
@@ -76,7 +81,7 @@ def example_csv_generation():
         for file in response.files:
             print(f"Generated file: {file.filename} ({file.size} bytes)")
             if file.url:
-                print(f"File location: {file.url}")
+                print(f"Temporary render URL: {file.url}")
     print()
     return response
 
@@ -92,7 +97,7 @@ def example_pdf_generation():
         for file in response.files:
             print(f"Generated file: {file.filename} ({file.size} bytes)")
             if file.url:
-                print(f"File location: {file.url}")
+                print(f"Temporary render URL: {file.url}")
     print()
     return response
 
@@ -127,7 +132,7 @@ def example_text_generation():
         for file in response.files:
             print(f"Generated file: {file.filename} ({file.size} bytes)")
             if file.url:
-                print(f"File location: {file.url}")
+                print(f"Temporary render URL: {file.url}")
     print()
     return response
 
@@ -143,7 +148,7 @@ def example_docx_generation():
         for file in response.files:
             print(f"Generated file: {file.filename} ({file.size} bytes)")
             if file.url:
-                print(f"File location: {file.url}")
+                print(f"Temporary render URL: {file.url}")
     print()
     return response
 
@@ -159,7 +164,7 @@ def example_html_generation():
         for file in response.files:
             print(f"Generated file: {file.filename} ({file.size} bytes)")
             if file.url:
-                print(f"File location: {file.url}")
+                print(f"Temporary render URL: {file.url}")
     print()
     return response
 

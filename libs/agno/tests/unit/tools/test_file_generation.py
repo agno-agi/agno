@@ -4,9 +4,11 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any, Optional
 
 import pytest
 
+from agno.tools import file_generation as file_generation_module
 from agno.tools.file_generation import DOCX_AVAILABLE, PDF_AVAILABLE, FileGenerationTools
 
 
@@ -14,6 +16,33 @@ def _get_single_file(result):
     assert result.files
     assert len(result.files) == 1
     return result.files[0]
+
+
+class FakeS3Client:
+    def __init__(self, presigned_url: Optional[str] = None, presign_error: Optional[Exception] = None):
+        self.presigned_url = presigned_url
+        self.presign_error = presign_error
+        self.put_object_calls = []
+        self.generate_presigned_url_calls = []
+
+    def put_object(self, **kwargs: Any):
+        self.put_object_calls.append(kwargs)
+
+    def generate_presigned_url(self, client_method: str, **kwargs: Any):
+        self.generate_presigned_url_calls.append({"client_method": client_method, **kwargs})
+        if self.presign_error:
+            raise self.presign_error
+        return self.presigned_url
+
+
+class FakeBoto3:
+    def __init__(self, s3_client: FakeS3Client):
+        self.s3_client = s3_client
+        self.client_calls = []
+
+    def client(self, service_name: str, **kwargs: Any):
+        self.client_calls.append({"service_name": service_name, **kwargs})
+        return self.s3_client
 
 
 def test_generate_json_file_from_dict():
@@ -100,6 +129,89 @@ def test_generate_text_file():
         saved_path = Path(file_artifact.filepath)
         assert saved_path.exists()
         assert saved_path.read_text(encoding="utf-8") == "Hello there"
+
+
+def test_s3_upload_sets_presigned_url_on_file_artifact(monkeypatch):
+    """S3-backed generated files should expose a browser-renderable HTTPS URL."""
+    s3_client = FakeS3Client(presigned_url="https://signed.example.com/generated/page.html?expires=900")
+    fake_boto3 = FakeBoto3(s3_client)
+    monkeypatch.setattr(file_generation_module, "BOTO3_AVAILABLE", True)
+    monkeypatch.setattr(file_generation_module, "boto3", fake_boto3, raising=False)
+
+    tools = FileGenerationTools(
+        s3_bucket="render-bucket",
+        s3_prefix="generated",
+        region_name="us-west-2",
+        s3_presigned_url_expires_in=900,
+    )
+    result = tools.generate_html_file("<h1>Hello</h1>", filename="page")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.filename == "page.html"
+    assert file_artifact.url == "https://signed.example.com/generated/page.html?expires=900"
+    assert file_artifact.content == b"<h1>Hello</h1>"
+    assert file_artifact.mime_type == "text/html"
+    assert file_artifact.file_type == "html"
+    assert file_artifact.filepath is None
+    assert "uploaded to s3://render-bucket/generated/page.html" in result.content
+    assert "render URL available" in result.content
+
+    assert s3_client.put_object_calls == [
+        {
+            "Bucket": "render-bucket",
+            "Key": "generated/page.html",
+            "Body": b"<h1>Hello</h1>",
+            "ContentType": "text/html",
+        }
+    ]
+    assert s3_client.generate_presigned_url_calls == [
+        {
+            "client_method": "get_object",
+            "Params": {"Bucket": "render-bucket", "Key": "generated/page.html"},
+            "ExpiresIn": 900,
+        }
+    ]
+
+
+def test_s3_upload_can_return_url_without_inline_content(monkeypatch):
+    """S3-backed generated files can avoid embedding bytes in the run response."""
+    s3_client = FakeS3Client(presigned_url="https://signed.example.com/generated/report.txt?expires=900")
+    fake_boto3 = FakeBoto3(s3_client)
+    monkeypatch.setattr(file_generation_module, "BOTO3_AVAILABLE", True)
+    monkeypatch.setattr(file_generation_module, "boto3", fake_boto3, raising=False)
+
+    tools = FileGenerationTools(
+        s3_bucket="render-bucket",
+        s3_prefix="generated",
+        include_content=False,
+    )
+    result = tools.generate_text_file("Hello there", filename="report")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.filename == "report.txt"
+    assert file_artifact.url == "https://signed.example.com/generated/report.txt?expires=900"
+    assert file_artifact.content is None
+    assert file_artifact.size == len("Hello there")
+    assert file_artifact.filepath is None
+    assert s3_client.put_object_calls[0]["Body"] == b"Hello there"
+
+
+def test_s3_upload_still_succeeds_when_presigned_url_generation_fails(monkeypatch):
+    """Upload success should not be lost if only the render URL cannot be signed."""
+    s3_client = FakeS3Client(presign_error=RuntimeError("signing disabled"))
+    fake_boto3 = FakeBoto3(s3_client)
+    monkeypatch.setattr(file_generation_module, "BOTO3_AVAILABLE", True)
+    monkeypatch.setattr(file_generation_module, "boto3", fake_boto3, raising=False)
+
+    tools = FileGenerationTools(s3_bucket="render-bucket", s3_prefix="generated")
+    result = tools.generate_text_file("Hello there", filename="note")
+
+    file_artifact = _get_single_file(result)
+    assert file_artifact.filename == "note.txt"
+    assert file_artifact.url is None
+    assert file_artifact.content == b"Hello there"
+    assert "uploaded to s3://render-bucket/generated/note.txt" in result.content
+    assert "render URL failed: signing disabled" in result.content
 
 
 def test_generate_pdf_file_when_unavailable():

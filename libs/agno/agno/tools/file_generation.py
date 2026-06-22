@@ -59,6 +59,8 @@ class FileGenerationTools(Toolkit):
         s3_bucket: Optional[str] = None,
         s3_prefix: Optional[str] = None,
         save_to_s3: bool = False,
+        s3_presigned_url_expires_in: Optional[int] = 3600,
+        include_content: bool = True,
         region_name: Optional[str] = None,
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
@@ -88,6 +90,8 @@ class FileGenerationTools(Toolkit):
         # S3 saving is independent of local saving: either, both, or neither can be enabled.
         self.save_to_s3 = save_to_s3 or (s3_bucket is not None)
         self.s3_prefix = s3_prefix
+        self.s3_presigned_url_expires_in = s3_presigned_url_expires_in
+        self.include_content = include_content
         self.s3_client: Optional[Any] = None
 
         if self.save_to_s3:
@@ -151,26 +155,46 @@ class FileGenerationTools(Toolkit):
         log_debug(f"File saved to: {file_path}")
         return str(file_path), None
 
+    def _generate_s3_presigned_url(self, key: str) -> Tuple[Optional[str], Optional[str]]:
+        """Generate a temporary HTTPS URL for browser rendering/downloading."""
+        if self.s3_client is None or self.s3_presigned_url_expires_in is None:
+            return None, None
+        if self.s3_presigned_url_expires_in <= 0:
+            return None, None
+        try:
+            url = self.s3_client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self.s3_bucket, "Key": key},
+                ExpiresIn=self.s3_presigned_url_expires_in,
+            )
+        except Exception as e:
+            log_warning(f"Failed to generate S3 presigned URL: {str(e)}")
+            return None, str(e)
+        return url, None
+
     def _upload_file_to_s3(
         self, content: Union[str, bytes], filename: str, mime_type: str
-    ) -> Tuple[Optional[str], Optional[str]]:
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """Upload file content to the configured S3 bucket.
 
         Returns:
-            Tuple of (s3_uri, error_message). If successful, error is None.
+            Tuple of (s3_uri, presigned_url, error_message). If upload is
+            successful, s3_uri is populated. If presigned URL generation fails,
+            s3_uri remains populated and error contains the presign failure.
         """
         if self.s3_client is None:
-            return None, "S3 client is not configured."
+            return None, None, "S3 client is not configured."
         key = f"{self.s3_prefix.rstrip('/')}/{filename}" if self.s3_prefix else filename
         body = content.encode("utf-8") if isinstance(content, str) else content
         try:
             self.s3_client.put_object(Bucket=self.s3_bucket, Key=key, Body=body, ContentType=mime_type)
         except Exception as e:
             log_warning(f"Failed to upload file to S3: {str(e)}")
-            return None, str(e)
+            return None, None, str(e)
         s3_uri = f"s3://{self.s3_bucket}/{key}"
         log_debug(f"File uploaded to: {s3_uri}")
-        return s3_uri, None
+        presigned_url, presigned_error = self._generate_s3_presigned_url(key)
+        return s3_uri, presigned_url, presigned_error
 
     def _create_file_artifact(
         self,
@@ -202,13 +226,16 @@ class FileGenerationTools(Toolkit):
             file_path, file_path_error = self._save_file_to_disk(content, file_name)
 
         s3_uri: Optional[str] = None
+        s3_url: Optional[str] = None
         s3_error: Optional[str] = None
         if self.save_to_s3 and self.s3_client:
-            s3_uri, s3_error = self._upload_file_to_s3(content_bytes, file_name, mime_type)
+            s3_uri, s3_url, s3_error = self._upload_file_to_s3(content_bytes, file_name, mime_type)
 
+        artifact_content = content_bytes if self.include_content or not s3_url else None
         file_artifact = File(
             id=str(uuid4()),
-            content=content_bytes,
+            url=s3_url,
+            content=artifact_content,
             mime_type=mime_type,
             file_type=file_type,
             filename=file_name,
@@ -224,8 +251,12 @@ class FileGenerationTools(Toolkit):
             success_msg += f" (save failed: {file_path_error})"
         if s3_uri:
             success_msg += f" → uploaded to {s3_uri}"
+            if s3_url:
+                success_msg += " (render URL available)"
         elif s3_error:
             success_msg += f" (S3 upload failed: {s3_error})"
+        if s3_uri and s3_error:
+            success_msg += f" (render URL failed: {s3_error})"
 
         return ToolResult(content=success_msg, files=[file_artifact])
 
