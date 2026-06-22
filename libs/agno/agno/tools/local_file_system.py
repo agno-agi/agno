@@ -6,6 +6,14 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
 
+def _path_is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.relative_to(base)
+    except ValueError:
+        return False
+    return True
+
+
 class LocalFileSystemTools(Toolkit):
     def __init__(
         self,
@@ -53,7 +61,18 @@ class LocalFileSystemTools(Toolkit):
         """
         try:
             filename = filename or str(uuid4())
-            directory = directory or self.target_directory
+            target_path = Path(self.target_directory).resolve()
+            if directory:
+                directory_path = Path(directory)
+                dir_path = directory_path.resolve()
+                if not directory_path.is_absolute() and not _path_is_relative_to(dir_path, target_path):
+                    dir_path = (target_path / directory_path).resolve()
+            else:
+                dir_path = target_path
+
+            if not _path_is_relative_to(dir_path, target_path):
+                return f"Error: Cannot write outside target directory: {target_path}"
+
             if filename and "." in filename:
                 path_obj = Path(filename)
                 filename = path_obj.stem
@@ -64,12 +83,13 @@ class LocalFileSystemTools(Toolkit):
             extension = (extension or self.default_extension).lstrip(".")
 
             # Create directory if it doesn't exist
-            dir_path = Path(directory)
             dir_path.mkdir(parents=True, exist_ok=True)
 
             # Construct full filename with extension
             full_filename = f"{filename}.{extension}"
-            file_path = dir_path / full_filename
+            file_path = (dir_path / full_filename).resolve()
+            if not _path_is_relative_to(file_path, target_path):
+                return f"Error: Cannot write outside target directory: {target_path}"
 
             file_path.write_text(content)
 
