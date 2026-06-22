@@ -408,7 +408,7 @@ def test_reconstruct_file_from_plain_text():
     Regression test for https://github.com/agno-agi/agno/issues/8451: text/* content is
     persisted as raw UTF-8 (see File._normalise_content), and from_base64 must not run it
     through base64.b64decode. This also covers content that is *coincidentally* valid
-    base64 (all-alphabet, length a multiple of 4), which a bare validate=True does not fix.
+    base64 (all-alphabet, length a multiple of 4), which base64-decoding would silently corrupt.
     """
     cases = [
         b"col_a,col_b,col_c\n1,x,y\n2,x,y\n3,x,y\n4,x,y\n",  # the issue's CSV

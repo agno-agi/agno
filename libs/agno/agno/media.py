@@ -101,7 +101,7 @@ class Image(BaseModel):
         import base64
 
         try:
-            content_bytes = base64.b64decode(base64_content, validate=True)
+            content_bytes = base64.b64decode(base64_content)
         except Exception:
             content_bytes = base64_content.encode("utf-8")
 
@@ -220,7 +220,7 @@ class Audio(BaseModel):
         import base64
 
         try:
-            content_bytes = base64.b64decode(base64_content, validate=True)
+            content_bytes = base64.b64decode(base64_content)
         except Exception:
             # If not valid base64, encode as UTF-8 bytes
             content_bytes = base64_content.encode("utf-8")
@@ -349,7 +349,7 @@ class Video(BaseModel):
         import base64
 
         try:
-            content_bytes = base64.b64decode(base64_content, validate=True)
+            content_bytes = base64.b64decode(base64_content)
         except Exception:
             content_bytes = base64_content.encode("utf-8")
 
@@ -477,7 +477,7 @@ class File(BaseModel):
             content_bytes = base64_content.encode("utf-8")
         else:
             try:
-                content_bytes = base64.b64decode(base64_content, validate=True)
+                content_bytes = base64.b64decode(base64_content)
             except Exception:
                 # Not valid base64 - fall back to treating it as raw UTF-8 text.
                 content_bytes = base64_content.encode("utf-8")
