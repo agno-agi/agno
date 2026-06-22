@@ -52,6 +52,23 @@ os.makedirs("tmp", exist_ok=True)
 
 # Define your roles in agno scope terms. Policy persists to your DB (point the
 # url at Postgres in production). This is the entire authorization model.
+#
+# ManagedRoleStore constructor parameters (a DB is REQUIRED - there is no
+# in-memory mode; roles must persist and stay consistent across replicas):
+#   db_url       SQLAlchemy URL for the DB that holds the policy, e.g.
+#                "postgresql+psycopg://..." or "sqlite:///roles.db".
+#   db           an agno Db object (e.g. SqliteDb/PostgresDb) instead of a url;
+#                reuses that DB's engine so roles live beside your agent data.
+#                Takes precedence over db_url. (Pass one of db_url / db - or hand
+#                the store to AuthorizationConfig(role_store=...) and let AgentOS
+#                adopt its db for you.)
+#   roles_claim  JWT claim carrying a caller's roles (external-IdP case). Omitted
+#                here, so roles come from this store's own assignments below.
+#   audit        an AuditSink: when set, every role/assignment change emits an
+#                append-only AuditEvent (the actor + before/after). Off here.
+#                See managed_roles_audit.py.
+#   decision_log when True, raises the "agno.authz.engine" logger to INFO so every
+#                allow/deny decision is logged. Off by default. Off here.
 roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_roles.db")
 roles.set_role_scopes("viewer", ["agents:*:read"])
 roles.set_role_scopes("member", ["agents:*:read", "agents:research-agent:run"])
@@ -69,7 +86,11 @@ research_agent = Agent(
     db=db,
 )
 
-# Create AgentOS using the managed-role store as the provider. The only wiring.
+# Create AgentOS using the managed-role store. The only wiring.
+# `role_store=store` is the preferred shortcut: AgentOS uses the store's provider
+# internally (equivalent to authorization_provider=roles.provider, which also
+# works). The store already has its own db_url above; had we created it without a
+# db, this shortcut would also let AgentOS adopt the OS db= for it.
 agent_os = AgentOS(
     id=OS_ID,
     description="Managed-roles AgentOS",
@@ -80,7 +101,7 @@ agent_os = AgentOS(
         algorithm="HS256",
         verify_audience=True,
         audience=OS_ID,
-        authorization_provider=roles.provider,
+        role_store=roles,
     ),
 )
 
