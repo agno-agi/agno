@@ -416,10 +416,12 @@ class ScheduleExecutor:
                     params={"session_id": session_id},
                 )
             except Exception as exc:
-                log_warning(f"Poll request failed for run {run_id}: {exc}: {exc}")
+                log_warning(f"Poll request failed for run {run_id}: {exc}")
+                await asyncio.sleep(self.poll_interval)
                 continue
 
             if resp.status_code == 404:
+                await asyncio.sleep(self.poll_interval)
                 continue
 
             if resp.status_code >= 400:
@@ -437,7 +439,8 @@ class ScheduleExecutor:
             try:
                 data = resp.json()
             except (json.JSONDecodeError, ValueError) as e:
-                log_warning(f"Invalid JSON in poll response for run {run_id}: {str(e)}")
+                log_warning(f"Invalid JSON in poll response for run {run_id}: {e}")
+                await asyncio.sleep(self.poll_interval)
                 continue
 
             run_status = data.get("status")
