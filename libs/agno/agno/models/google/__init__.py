@@ -1,4 +1,9 @@
+from typing import TYPE_CHECKING
+
 from agno.models.google.gemini import Gemini
+
+if TYPE_CHECKING:
+    from agno.models.google.gemini_interactions import GeminiInteractions
 
 __all__ = [
     "Gemini",
