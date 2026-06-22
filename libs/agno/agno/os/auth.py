@@ -104,6 +104,9 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             request.state.authenticated = True
             request.state.user_id = "__scheduler__"
             request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+            # Verified internal service caller — see check_resource_access. Set only
+            # after the constant-time token match on the server-only request.state.
+            request.state.is_internal_service = True
             return True
 
         # Verify the token against security key
@@ -307,6 +310,17 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
         >>> check_resource_access(request, "my-agent", "agents", "run")
         False
     """
+    # The verified internal service caller (scheduler executor) was already
+    # authorized at the route gate via INTERNAL_SERVICE_SCOPES. This per-resource
+    # gate must not then re-deny it under a provider that doesn't know the
+    # "__scheduler__" subject (e.g. managed roles, where __scheduler__ has no role
+    # assignment and provider.check ignores scopes). The flag is set ONLY by the
+    # JWT middleware after a constant-time match against the internal service
+    # token (request.state is server-only and never populated from client input),
+    # so a normal user can never trigger this bypass.
+    if getattr(request.state, "is_internal_service", False):
+        return True
+
     # Delegate to the active authorization provider. The default
     # ScopeAuthorizationProvider reproduces the original scope-matching
     # behaviour; a custom provider (ReBAC/ABAC/external engine) can decide from a

@@ -972,6 +972,19 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authorization_enabled = self.authorization or False
             request.state.admin_scope = self.admin_scope
             request.state.user_isolation_enabled = self.user_isolation
+            # Mark this as the verified internal service caller. This flag can ONLY
+            # be set here, AFTER the constant-time hmac comparison above succeeds —
+            # request.state is a fresh, server-only namespace per request and is
+            # never populated from client input, so a client cannot forge it.
+            # The per-resource handler gate (check_resource_access) honours this
+            # flag so the scheduler isn't re-denied by a provider that doesn't know
+            # the "__scheduler__" subject (e.g. managed roles): the caller was
+            # already authorized at the route gate via INTERNAL_SERVICE_SCOPES.
+            request.state.is_internal_service = True
+            # Set minimal claims so anything reading request.state.claims (e.g. the
+            # authorization context) sees a consistent, non-None subject for the
+            # internal caller rather than an empty dict.
+            request.state.claims = {"sub": "__scheduler__"}
 
             # Enforce RBAC for internal token (do not skip scope checks)
             if self.authorization:
