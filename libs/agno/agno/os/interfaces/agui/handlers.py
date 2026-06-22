@@ -25,12 +25,14 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from agno.os.interfaces.agui import workflow_handlers, workflow_progress
 from agno.os.interfaces.agui.state import StreamState
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
 from agno.run.base import BaseRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
+from agno.run.workflow import WorkflowRunEvent
 from agno.utils.message import get_text_from_message
 
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
@@ -118,6 +120,7 @@ def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEv
         )
 
     if content:
+        state.streamed_any_text = True
         events.append(
             TextMessageContentEvent(
                 type=EventType.TEXT_MESSAGE_CONTENT,
@@ -308,7 +311,8 @@ def on_unknown_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     return [RawEvent(type=EventType.RAW, event=raw_dict, source="agno")]
 
 
-def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+def _close_open_streams(state: StreamState) -> List[BaseEvent]:
+    """Close any open reasoning session, active tool calls, and text message."""
     events: List[BaseEvent] = []
 
     # Close orphaned reasoning session
@@ -330,6 +334,13 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
         state.close_text_message()
 
+    return events
+
+
+def _finalize_run(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Emit external-execution tool calls for paused runs, the final state snapshot, and RUN_FINISHED."""
+    events: List[BaseEvent] = []
+
     # Emit external execution tools for paused runs
     from agno.run.agent import RunPausedEvent
 
@@ -347,6 +358,7 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
 
             content = getattr(chunk, "content", None)
             if content:
+                state.streamed_any_text = True
                 events.append(
                     TextMessageContentEvent(
                         type=EventType.TEXT_MESSAGE_CONTENT,
@@ -384,10 +396,19 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     if state.run_state is not None:
         authoritative_state = getattr(chunk, "session_state", None)
         final_state = authoritative_state if authoritative_state is not None else state.run_state
+        # workflow_progress is transient: stripped from session_state before the DB save, and the
+        # engine's authoritative session_state may not carry it. Re-inject the tracked progress so
+        # the final snapshot doesn't blank the steps the deltas already rendered.
+        if state.workflow_progress is not None:
+            final_state = {**final_state, "workflow_progress": state.workflow_progress}
         events.append(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(final_state)))
 
     events.append(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=state.thread_id, run_id=state.run_id))
     return events
+
+
+def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    return _close_open_streams(state) + _finalize_run(chunk, state)
 
 
 def _normalize_event(event: str) -> str:
@@ -407,6 +428,16 @@ HANDLERS: Dict[str, EventHandler] = {
     RunEvent.custom_event.value: on_custom_event,
 }
 
+# Workflow structural events -> native STATE workflow_progress (+ native STEP at step
+# boundaries). custom_event is excluded so the author's own event keeps its CustomEvent
+# passthrough via the RunEvent.custom_event registration above (same wire value "CustomEvent").
+HANDLERS.update(
+    {
+        value: workflow_progress.progress_handler
+        for value in workflow_handlers.STRUCTURAL_EVENT_VALUES - {WorkflowRunEvent.custom_event.value}
+    }
+)
+
 # Terminal events that trigger completion handling
 _COMPLETION_EVENTS = frozenset(
     {
@@ -414,6 +445,8 @@ _COMPLETION_EVENTS = frozenset(
         RunEvent.run_paused.value,
         TeamRunEvent.run_completed.value,
         TeamRunEvent.run_paused.value,
+        WorkflowRunEvent.workflow_completed.value,
+        WorkflowRunEvent.workflow_error.value,
     }
 )
 
@@ -444,5 +477,15 @@ def process_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEve
 
 
 def process_completion(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    """Process completion event (run_completed/run_paused) and return cleanup events."""
-    return on_run_completed(chunk, state)
+    """Process a terminal event (run or workflow) and return cleanup events."""
+    if not workflow_handlers.is_workflow_terminal(chunk):
+        return on_run_completed(chunk, state)
+
+    # Workflow terminal: close open streams, emit the workflow-specific events,
+    # and finalize only for completed (error ends on RunErrorEvent, no finish).
+    events = _close_open_streams(state)
+    events += workflow_handlers.workflow_completion_events(chunk, state)
+    if workflow_handlers.is_workflow_completed(chunk):
+        workflow_progress.mark_completed(state)
+        events += _finalize_run(chunk, state)
+    return events
