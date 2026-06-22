@@ -164,6 +164,68 @@ class TestSalesforceInit:
         assert "delete_record" not in fn_names
         assert "get_report" not in fn_names
 
+    def test_init_oauth2_client_credentials(self, mock_sf_client):
+        from agno.tools.salesforce import Salesforce
+
+        tools = SalesforceTools(
+            consumer_key="test-consumer-key",
+            consumer_secret="test-consumer-secret",
+        )
+        assert tools.sf is not None
+        Salesforce.assert_called_with(
+            consumer_key="test-consumer-key",
+            consumer_secret="test-consumer-secret",
+        )
+
+    def test_init_oauth2_with_env_variables(self, mock_sf_client):
+        with patch.dict(
+            "os.environ",
+            {
+                "SALESFORCE_CONSUMER_KEY": "env-consumer-key",
+                "SALESFORCE_CONSUMER_SECRET": "env-consumer-secret",
+            },
+        ):
+            tools = SalesforceTools()
+            assert tools.sf is not None
+            from agno.tools.salesforce import Salesforce
+
+            Salesforce.assert_called_with(
+                consumer_key="env-consumer-key",
+                consumer_secret="env-consumer-secret",
+            )
+
+    def test_init_oauth2_with_custom_domain(self, mock_sf_client):
+        from agno.tools.salesforce import Salesforce
+
+        tools = SalesforceTools(
+            consumer_key="test-key",
+            consumer_secret="test-secret",
+            domain="myorg.my",
+        )
+        assert tools.sf is not None
+        Salesforce.assert_called_with(
+            consumer_key="test-key",
+            consumer_secret="test-secret",
+            domain="myorg.my",
+        )
+
+    def test_init_oauth2_with_username_password(self, mock_sf_client):
+        from agno.tools.salesforce import Salesforce
+
+        tools = SalesforceTools(
+            consumer_key="test-key",
+            consumer_secret="test-secret",
+            username="user@example.com",
+            password="pass123",
+        )
+        assert tools.sf is not None
+        Salesforce.assert_called_with(
+            consumer_key="test-key",
+            consumer_secret="test-secret",
+            username="user@example.com",
+            password="pass123",
+        )
+
     def test_tool_registration_selective(self, mock_sf_client):
         tools = SalesforceTools(
             username="test@example.com",
