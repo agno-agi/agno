@@ -285,7 +285,7 @@ def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -
         if "content" in message:
             return get_text_from_message(message["content"])
         else:
-            return json.dumps(message, indent=2)
+            return json.dumps(message, indent=2, ensure_ascii=False)
     if isinstance(message, Message) and message.content is not None:
         return get_text_from_message(message.content)
     return ""
