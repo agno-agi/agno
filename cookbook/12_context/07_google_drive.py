@@ -2,10 +2,9 @@
 Google Drive Context Provider
 =============================
 
-GDriveContextProvider wraps a read-only slice of `GoogleDriveTools`
-(via an `AllDrivesGoogleDriveTools` subclass that injects
-`corpora=allDrives` so a service account can see folders shared with
-it and files in Shared Drives). The calling agent gets a single
+GoogleDriveContextProvider wraps a read-only slice of `GoogleDriveTools`
+with `corpora="allDrives"` so a service account can see folders shared
+with it and files in Shared Drives. The calling agent gets a single
 `query_<id>` tool that routes through a sub-agent trained to
 escalate searches when the naive query comes back empty.
 
@@ -27,13 +26,13 @@ from __future__ import annotations
 import asyncio
 
 from agno.agent import Agent
-from agno.context.gdrive import GDriveContextProvider
+from agno.context.gdrive import GoogleDriveContextProvider
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
 # Create the provider (service-account path from env)
 # ---------------------------------------------------------------------------
-gdrive = GDriveContextProvider(model=OpenAIResponses(id="gpt-5.4-mini"))
+gdrive = GoogleDriveContextProvider(model=OpenAIResponses(id="gpt-5.4-mini"))
 
 # ---------------------------------------------------------------------------
 # Create the Agent

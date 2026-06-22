@@ -30,7 +30,7 @@ Then call the API:
 import dspy
 from agno.agents.dspy import DSPyAgent
 from agno.db.postgres import PostgresDb
-from agno.os.app import AgentOS
+from agno.os import AgentOS
 from ddgs import DDGS
 
 

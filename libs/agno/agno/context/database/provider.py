@@ -15,6 +15,7 @@ supply both engines and the schema the provider is scoped to.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
@@ -82,7 +83,7 @@ class DatabaseContextProvider(ContextProvider):
         return Status(ok=True, detail=detail)
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     # ------------------------------------------------------------------
     # Query / update
@@ -132,6 +133,12 @@ class DatabaseContextProvider(ContextProvider):
     # ------------------------------------------------------------------
     # Sub-agents
     # ------------------------------------------------------------------
+
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_read_agent()
+
+    async def _aget_update_agent(self, run_context):
+        return self._ensure_write_agent()
 
     def _ensure_read_agent(self) -> Agent:
         if self._read_agent is None:

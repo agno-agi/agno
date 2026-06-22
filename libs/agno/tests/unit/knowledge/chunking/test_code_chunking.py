@@ -78,10 +78,15 @@ def test_code_chunking_word_tokenizer(sample_python_code):
 
 def test_code_chunking_gpt2_tokenizer(sample_python_code):
     """Test with gpt2 tokenizer."""
+    from chonkie.tokenizer import InvalidTokenizerError
+
     chunker = CodeChunking(tokenizer="gpt2", chunk_size=30, language="python")
     doc = Document(content=sample_python_code, name="test.py")
 
-    chunks = chunker.chunk(doc)
+    try:
+        chunks = chunker.chunk(doc)
+    except InvalidTokenizerError as e:
+        pytest.skip(f"Tokenizer could not be downloaded: {e}")
 
     assert len(chunks) > 0
     assert all(chunk.content for chunk in chunks)
@@ -89,10 +94,15 @@ def test_code_chunking_gpt2_tokenizer(sample_python_code):
 
 def test_code_chunking_cl100k_tokenizer(sample_python_code):
     """Test with cl100k_base tokenizer."""
+    from chonkie.tokenizer import InvalidTokenizerError
+
     chunker = CodeChunking(tokenizer="cl100k_base", chunk_size=30, language="python")
     doc = Document(content=sample_python_code, name="test.py")
 
-    chunks = chunker.chunk(doc)
+    try:
+        chunks = chunker.chunk(doc)
+    except InvalidTokenizerError as e:
+        pytest.skip(f"Tokenizer could not be downloaded: {e}")
 
     assert len(chunks) > 0
     assert all(chunk.content for chunk in chunks)

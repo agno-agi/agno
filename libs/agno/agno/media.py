@@ -421,11 +421,24 @@ class File(BaseModel):
 
     @classmethod
     def valid_mime_types(cls) -> List[str]:
+        # NOTE: Keep this in sync with `DOCUMENT_MIME_TYPES` in agno.os.utils. Every MIME type
+        # the upload routers accept must be valid here, otherwise FileMedia construction fails
+        # and the file is silently dropped. Not all of these are accepted by every model
+        # provider (e.g. Anthropic/Gemini reject Office binary formats); those fail at the
+        # model with a provider error rather than being dropped at upload.
         return [
             "application/pdf",
             "application/json",
             "application/x-javascript",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            # Office Open XML (modern Office formats)
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+            # Legacy binary Office formats
+            "application/msword",  # .doc
+            "application/vnd.ms-powerpoint",  # .ppt
+            "application/vnd.ms-excel",  # .xls
+            "application/vnd.ms-outlook",  # .msg
             "text/javascript",
             "application/x-python",
             "text/x-python",

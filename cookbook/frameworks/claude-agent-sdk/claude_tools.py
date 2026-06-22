@@ -16,7 +16,7 @@ from agno.agents.claude import ClaudeAgent
 # ----- Agent with built-in tools -----
 agent = ClaudeAgent(
     name="Claude Coder",
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     allowed_tools=["Read", "Bash", "Glob"],
     permission_mode="acceptEdits",
     max_turns=5,

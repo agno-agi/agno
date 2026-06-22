@@ -14,14 +14,14 @@ Usage:
 
 from agno.agents.claude import ClaudeAgent
 from agno.db.postgres import PostgresDb
-from agno.os.app import AgentOS
+from agno.os import AgentOS
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 pg_db = PostgresDb(db_url=db_url)
 
 agent = ClaudeAgent(
     name="Claude Chat",
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     allowed_tools=["WebSearch"],
     permission_mode="acceptEdits",
     max_turns=7,

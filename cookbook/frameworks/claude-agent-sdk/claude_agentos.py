@@ -31,7 +31,7 @@ Then call the API:
 """
 
 from agno.agents.claude import ClaudeAgent
-from agno.os.app import AgentOS
+from agno.os import AgentOS
 
 # ---------------------------------------------------------------------------
 # Create the Claude Agent SDK agent
@@ -39,7 +39,7 @@ from agno.os.app import AgentOS
 claude_agent = ClaudeAgent(
     name="Claude Assistant",
     description="A Claude-powered assistant served through AgentOS",
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     allowed_tools=["Read", "Bash"],
     permission_mode="acceptEdits",
     max_turns=10,

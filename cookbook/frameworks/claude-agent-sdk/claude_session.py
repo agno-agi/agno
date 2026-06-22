@@ -20,7 +20,7 @@ pg_db = PostgresDb(db_url=db_url)
 
 agent = ClaudeAgent(
     name="Claude Chat",
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     allowed_tools=["WebSearch"],
     permission_mode="acceptEdits",
     max_turns=7,

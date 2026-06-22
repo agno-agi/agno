@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from typing import Dict
+from typing import Dict, Set
 
 from agno.exceptions import RunCancelledException
 from agno.run.cancellation_management.base import BaseRunCancellationManager
@@ -12,6 +12,7 @@ from agno.utils.log import logger
 class InMemoryRunCancellationManager(BaseRunCancellationManager):
     def __init__(self):
         self._cancelled_runs: Dict[str, bool] = {}
+        self._member_runs: Dict[str, Set[str]] = {}
         self._lock = threading.Lock()
         self._async_lock = asyncio.Lock()
 
@@ -114,3 +115,33 @@ class InMemoryRunCancellationManager(BaseRunCancellationManager):
         """Get all currently tracked runs and their cancellation status (async version)."""
         async with self._async_lock:
             return self._cancelled_runs.copy()
+
+    def register_member_run(self, team_run_id: str, member_run_id: str) -> None:
+        """Record that a member run belongs to a team run for cancel-cascade."""
+        with self._lock:
+            self._member_runs.setdefault(team_run_id, set()).add(member_run_id)
+
+    async def aregister_member_run(self, team_run_id: str, member_run_id: str) -> None:
+        """Record that a member run belongs to a team run for cancel-cascade (async version)."""
+        async with self._async_lock:
+            self._member_runs.setdefault(team_run_id, set()).add(member_run_id)
+
+    def get_member_run_ids(self, team_run_id: str) -> Set[str]:
+        """Return the in-flight member run_ids of a team run."""
+        with self._lock:
+            return set(self._member_runs.get(team_run_id, set()))
+
+    async def aget_member_run_ids(self, team_run_id: str) -> Set[str]:
+        """Return the in-flight member run_ids of a team run (async version)."""
+        async with self._async_lock:
+            return set(self._member_runs.get(team_run_id, set()))
+
+    def cleanup_member_runs(self, team_run_id: str) -> None:
+        """Drop a team run's member mapping when the team run finishes."""
+        with self._lock:
+            self._member_runs.pop(team_run_id, None)
+
+    async def acleanup_member_runs(self, team_run_id: str) -> None:
+        """Drop a team run's member mapping when the team run finishes (async version)."""
+        async with self._async_lock:
+            self._member_runs.pop(team_run_id, None)

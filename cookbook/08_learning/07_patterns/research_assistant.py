@@ -39,7 +39,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 def create_research_assistant(user_id: str, session_id: str) -> Agent:
     return Agent(
-        model=OpenAIResponses(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.5"),
         db=db,
         instructions=(
             "You are a research assistant. Search the web when asked about "

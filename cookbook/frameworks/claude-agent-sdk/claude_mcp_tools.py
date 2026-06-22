@@ -51,7 +51,7 @@ try:
     # ----- Agent with custom MCP tools -----
     agent = ClaudeAgent(
         name="Claude City Agent",
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         mcp_servers={"city-tools": server},
         allowed_tools=[
             "mcp__city-tools__get_weather",

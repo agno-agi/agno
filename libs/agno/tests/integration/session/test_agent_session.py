@@ -673,6 +673,38 @@ def test_from_dict_basic(shared_db):
     assert agent_session.runs[0].run_id == "run1"
 
 
+def test_from_dict_empty_runs(shared_db):
+    """Test that from_dict handles an empty runs list without raising IndexError"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    session_data = {
+        "session_id": session_id,
+        "agent_id": "test_agent",
+        "runs": [],
+    }
+
+    # Should not raise IndexError when indexing runs[0]
+    agent_session = AgentSession.from_dict(session_data)
+
+    assert agent_session is not None
+    assert agent_session.session_id == session_id
+    assert agent_session.runs == []
+
+
+def test_to_dict_from_dict_round_trip_empty_runs(shared_db):
+    """Round-tripping a session with no runs should not raise"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    session = AgentSession(session_id=session_id, agent_id="test_agent", runs=[])
+
+    # Previously raised IndexError: list index out of range
+    restored = AgentSession.from_dict(session.to_dict())
+
+    assert restored is not None
+    assert restored.session_id == session_id
+    assert restored.runs == []
+
+
 def test_from_dict_missing_session_id(shared_db):
     """Test that from_dict returns None when session_id is missing"""
     session_data = {

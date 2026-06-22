@@ -83,7 +83,7 @@ You are a personal language tutor that adapts to each student.
 # ---------------------------------------------------------------------------
 tutor_agent = Agent(
     name="Personal Tutor",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     # ReasoningTools gives the agent a "think" tool for structured reasoning
     tools=[ReasoningTools()],
