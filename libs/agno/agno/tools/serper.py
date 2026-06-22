@@ -133,7 +133,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching Google for query {query}: {e}")
+            log_error(f"Unexpected error searching Google for query {query}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def search_news(
@@ -172,7 +172,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching news for query {query}: {e}")
+            log_error(f"Unexpected error searching news for query {query}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def search_scholar(
@@ -211,7 +211,7 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error searching scholar for query {query}: {e}")
+            log_error(f"Unexpected error searching scholar for query {query}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def scrape_webpage(
@@ -251,5 +251,5 @@ class SerperTools(Toolkit):
                 return json.dumps({"error": result["error"]}, indent=2)
 
         except Exception as e:
-            log_error(f"Unexpected error scraping webpage {url}: {e}")
+            log_error(f"Unexpected error scraping webpage {url}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)

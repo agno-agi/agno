@@ -94,7 +94,7 @@ def format_message_with_state_variables(
         result = template.safe_substitute(format_variables)
         return result
     except Exception as e:
-        log_warning(f"Template substitution failed: {e}")
+        log_warning(f"Template substitution failed: {str(e)}")
         return message
 
 
@@ -194,8 +194,8 @@ def get_system_message(
                 from zoneinfo import ZoneInfo
 
                 tz = ZoneInfo(agent.timezone_identifier)
-            except Exception:
-                log_warning("Invalid timezone identifier")
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
 
         time = datetime.now(tz) if tz else datetime.now()
 
@@ -542,8 +542,8 @@ async def aget_system_message(
                 from zoneinfo import ZoneInfo
 
                 tz = ZoneInfo(agent.timezone_identifier)
-            except Exception:
-                log_warning("Invalid timezone identifier")
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
 
         time = datetime.now(tz) if tz else datetime.now()
 
@@ -898,7 +898,7 @@ def get_user_message(
             try:
                 return Message.model_validate(input)
             except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
+                log_warning(f"Failed to validate message: {str(e)}")
                 raise Exception(f"Failed to validate message: {e}")
 
         # If message is provided as a BaseModel, convert it to a Message
@@ -908,7 +908,7 @@ def get_user_message(
                 content = input.model_dump_json(indent=2, exclude_none=True)
                 return Message(role=agent.user_message_role, content=content)
             except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
+                log_warning(f"Failed to convert BaseModel to message: {str(e)}")
                 raise Exception(f"Failed to convert BaseModel to message: {e}")
         else:
             user_msg_content = input
@@ -939,7 +939,7 @@ def get_user_message(
                     retrieval_timer.stop()
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                 except Exception as e:
-                    log_warning(f"Failed to get references: {e}")
+                    log_warning(f"Failed to get references: {str(e)}")
 
             if agent.resolve_in_context:
                 user_msg_content = format_message_with_state_variables(
@@ -1063,7 +1063,7 @@ async def aget_user_message(
             try:
                 return Message.model_validate(input)
             except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
+                log_warning(f"Failed to validate message: {str(e)}")
                 raise Exception(f"Failed to validate message: {e}")
 
         # If message is provided as a BaseModel, convert it to a Message
@@ -1073,7 +1073,7 @@ async def aget_user_message(
                 content = input.model_dump_json(indent=2, exclude_none=True)
                 return Message(role=agent.user_message_role, content=content)
             except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
+                log_warning(f"Failed to convert BaseModel to message: {str(e)}")
                 raise Exception(f"Failed to convert BaseModel to message: {e}")
         else:
             user_msg_content = input
@@ -1104,7 +1104,7 @@ async def aget_user_message(
                     retrieval_timer.stop()
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                 except Exception as e:
-                    log_warning(f"Failed to get references: {e}")
+                    log_warning(f"Failed to get references: {str(e)}")
 
             if agent.resolve_in_context:
                 user_msg_content = format_message_with_state_variables(
@@ -1228,7 +1228,7 @@ def get_run_messages(
                     run_messages.messages.append(_m_parsed)
                     run_messages.extra_messages.append(_m_parsed)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
         # Add the extra messages to the run_response
         if len(messages_to_add_to_run_response) > 0:
             log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
@@ -1314,7 +1314,7 @@ def get_run_messages(
             else:
                 user_message = Message.model_validate(input)
         except Exception as e:
-            log_warning(f"Failed to validate message: {e}")
+            log_warning(f"Failed to validate message: {str(e)}")
 
     # 4.4 If input is provided as a BaseModel, convert it to a Message
     elif isinstance(input, BaseModel):
@@ -1323,7 +1323,7 @@ def get_run_messages(
             content = input.model_dump_json(indent=2, exclude_none=True)
             user_message = Message(role=agent.user_message_role, content=content)
         except Exception as e:
-            log_warning(f"Failed to convert BaseModel to message: {e}")
+            log_warning(f"Failed to convert BaseModel to message: {str(e)}")
 
     # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
     if (
@@ -1345,7 +1345,7 @@ def get_run_messages(
                         run_messages.extra_messages = []
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
 
     # Add user message to run_messages
     if user_message is not None:
@@ -1433,7 +1433,7 @@ async def aget_run_messages(
                     run_messages.messages.append(_m_parsed)
                     run_messages.extra_messages.append(_m_parsed)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
         # Add the extra messages to the run_response
         if len(messages_to_add_to_run_response) > 0:
             log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
@@ -1519,7 +1519,7 @@ async def aget_run_messages(
             else:
                 user_message = Message.model_validate(input)
         except Exception as e:
-            log_warning(f"Failed to validate message: {e}")
+            log_warning(f"Failed to validate message: {str(e)}")
 
     # 4.4 If input is provided as a BaseModel, convert it to a Message
     elif isinstance(input, BaseModel):
@@ -1528,7 +1528,7 @@ async def aget_run_messages(
             content = input.model_dump_json(indent=2, exclude_none=True)
             user_message = Message(role=agent.user_message_role, content=content)
         except Exception as e:
-            log_warning(f"Failed to convert BaseModel to message: {e}")
+            log_warning(f"Failed to convert BaseModel to message: {str(e)}")
 
     # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
     if (
@@ -1550,7 +1550,7 @@ async def aget_run_messages(
                         run_messages.extra_messages = []
                     run_messages.extra_messages.append(msg)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
 
     # Add user message to run_messages
     if user_message is not None:
@@ -1807,7 +1807,7 @@ def get_relevant_docs_from_knowledge(
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
             return agent.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
+            log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e
 
     # Use knowledge protocol's retrieve method
@@ -1833,7 +1833,7 @@ def get_relevant_docs_from_knowledge(
 
         return [doc.to_dict() for doc in relevant_docs]
     except Exception as e:
-        log_warning(f"Error retrieving from knowledge base: {e}")
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
         raise e
 
 
@@ -1898,7 +1898,7 @@ async def aget_relevant_docs_from_knowledge(
 
             return result
         except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
+            log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e
 
     # Use knowledge protocol's retrieve method
@@ -1932,5 +1932,5 @@ async def aget_relevant_docs_from_knowledge(
 
         return [doc.to_dict() for doc in relevant_docs]
     except Exception as e:
-        log_warning(f"Error retrieving from knowledge base: {e}")
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
         raise e

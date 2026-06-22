@@ -260,10 +260,10 @@ class HuggingFace(Model):
             return self._parse_provider_response(provider_response, response_format=response_format)
 
         except InferenceTimeoutError as e:
-            log_error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -291,10 +291,10 @@ class HuggingFace(Model):
             return self._parse_provider_response(provider_response, response_format=response_format)
 
         except InferenceTimeoutError as e:
-            log_error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -327,10 +327,10 @@ class HuggingFace(Model):
             assistant_message.metrics.stop_timer()
 
         except InferenceTimeoutError as e:
-            log_error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -362,10 +362,10 @@ class HuggingFace(Model):
             assistant_message.metrics.stop_timer()
 
         except InferenceTimeoutError as e:
-            log_error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
@@ -442,7 +442,7 @@ class HuggingFace(Model):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {str(e)}")
 
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response)

@@ -10,6 +10,7 @@ from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.tools.function import Function
 from agno.utils.log import log_warning
+from agno.utils.media import get_image_type
 
 # Default image dimensions used as fallback when actual dimensions cannot be determined.
 # These values provide a more conservative estimate for high-detail image token counting.
@@ -29,8 +30,8 @@ def _get_tiktoken_encoding(model_id: str):
             return tiktoken.encoding_for_model(model_id)
         except KeyError:
             return tiktoken.get_encoding("o200k_base")
-    except ImportError:
-        log_warning("tiktoken not installed. Please install it using `pip install tiktoken`.")
+    except ImportError as e:
+        log_warning(f"tiktoken not installed. Please install it using `pip install tiktoken`.: {str(e)}")
         return None
 
 
@@ -54,8 +55,8 @@ def _get_hf_tokenizer(model_id: str):
             return Tokenizer.from_pretrained("Xenova/c4ai-command-r-v01-tokenizer")
 
         return None
-    except ImportError:
-        log_warning("tokenizers not installed. Please install it using `pip install tokenizers`.")
+    except ImportError as e:
+        log_warning(f"tokenizers not installed. Please install it using `pip install tokenizers`.: {str(e)}")
         return None
     except Exception:
         return None
@@ -217,31 +218,6 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
 # =============================================================================
 # Multi-modal Token Counting
 # =============================================================================
-# Image dimension parsing uses magic byte detection to identify file formats
-# without relying on external libraries. This allows efficient header-only reads.
-# =============================================================================
-
-
-def get_image_type(data: bytes) -> Optional[str]:
-    """Returns the image format from magic bytes in the file header."""
-    if len(data) < 12:
-        return None
-    # PNG: 8-byte signature
-    if data[0:8] == b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a":
-        return "png"
-    # GIF: "GIF8" followed by "9a" or "7a" (we check for 'a')
-    if data[0:4] == b"GIF8" and data[5:6] == b"a":
-        return "gif"
-    # JPEG: SOI marker (Start of Image)
-    if data[0:3] == b"\xff\xd8\xff":
-        return "jpeg"
-    # HEIC/HEIF: ftyp box at offset 4
-    if data[4:8] == b"ftyp":
-        return "heic"
-    # WebP: RIFF container with WEBP identifier
-    if data[0:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "webp"
-    return None
 
 
 def _parse_image_dimensions_from_bytes(data: bytes, img_type: Optional[str] = None) -> Tuple[int, int]:

@@ -1,18 +1,25 @@
 """Logic used by the AG-UI router."""
 
+import copy
 import json
 import uuid
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
 from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     EventType,
+    RawEvent,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunFinishedEvent,
-    StepFinishedEvent,
-    StepStartedEvent,
+    StateDeltaEvent,
+    StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -24,11 +31,19 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
-from agno.models.message import Message
+from agno.reasoning.step import ReasoningStep
+from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
+from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
+from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
+from agno.run.agent import ReasoningStepEvent as AgentReasoningStepEvent
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
+from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
+from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
+from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
+from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 
 
@@ -73,6 +88,11 @@ class EventBuffer:
     current_text_message_id: str = ""  # ID of the current text message context (for tool call parenting)
     next_text_message_id: str = ""  # Pre-generated ID for the next text message
     pending_tool_calls_parent_id: str = ""  # Parent message ID for pending tool calls
+    reasoning_message_id: Optional[str] = None  # Active reasoning session ID, set by reasoning_started
+    reasoning_step_count: int = 0  # Step counter for ReasoningTools (reset each session)
+    _last_snapshot: Optional[Dict[str, Any]] = field(
+        default=None, repr=False
+    )  # Snapshot of last state for delta computation
 
     def __init__(self):
         self.active_tool_call_ids = set()
@@ -80,6 +100,9 @@ class EventBuffer:
         self.current_text_message_id = ""
         self.next_text_message_id = str(uuid.uuid4())
         self.pending_tool_calls_parent_id = ""
+        self.reasoning_message_id = None
+        self.reasoning_step_count = 0
+        self._last_snapshot = None
 
     def start_tool_call(self, tool_call_id: str) -> None:
         """Start a new tool call."""
@@ -113,47 +136,75 @@ class EventBuffer:
         """Clear the pending parent ID when a new text message starts."""
         self.pending_tool_calls_parent_id = ""
 
+    def start_reasoning(self) -> str:
+        """Start a new reasoning session and return its message ID."""
+        self.reasoning_message_id = str(uuid.uuid4())
+        self.reasoning_step_count = 0
+        return self.reasoning_message_id
 
-def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
-    """Convert AG-UI messages to Agno messages."""
-    # First pass: collect all tool_call_ids that have results
-    tool_call_ids_with_results: Set[str] = set()
-    for msg in messages:
-        if msg.role == "tool" and msg.tool_call_id:
-            tool_call_ids_with_results.add(msg.tool_call_id)
+    def set_state_snapshot(self, state: Dict[str, Any]) -> None:
+        """Store deep copy of current state for delta computation."""
+        self._last_snapshot = copy.deepcopy(state)
 
-    # Second pass: convert messages
-    result: List[Message] = []
-    seen_tool_call_ids: Set[str] = set()
+    def compute_state_delta(self, current_state: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
+        """Compute JSON Patch delta between last snapshot and current state.
 
-    for msg in messages:
-        if msg.role == "tool":
-            # Deduplicate tool results - keep only first occurrence
-            if msg.tool_call_id in seen_tool_call_ids:
-                log_debug(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
-                continue
-            seen_tool_call_ids.add(msg.tool_call_id)
-            result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
+        Returns a list of JSON Patch ops (RFC 6902) or None if unchanged/error.
+        """
+        if self._last_snapshot is None:
+            return None
+        try:
+            import jsonpatch
 
-        elif msg.role == "assistant":
-            tool_calls = None
-            if msg.tool_calls:
-                # Filter tool_calls to only those with results in this message sequence
-                filtered_calls = [call for call in msg.tool_calls if call.id in tool_call_ids_with_results]
-                if filtered_calls:
-                    tool_calls = [call.model_dump() for call in filtered_calls]
-            result.append(Message(role="assistant", content=msg.content, tool_calls=tool_calls))
+            patch = jsonpatch.make_patch(self._last_snapshot, current_state)
+            ops = patch.patch
+            if not ops:
+                return None
+            return ops
+        except Exception as e:
+            log_warning(f"Failed to compute state delta: {e}")
+            return None
 
-        elif msg.role == "user":
-            result.append(Message(role="user", content=msg.content))
+    def next_reasoning_step(self) -> int:
+        """Increment and return the current reasoning step number."""
+        self.reasoning_step_count += 1
+        return self.reasoning_step_count
 
-        elif msg.role == "system":
-            pass  # Skip - agent builds its own system message from configuration
+    def ensure_reasoning_started(self) -> Tuple[str, bool]:
+        """Return the active reasoning session ID, starting one if needed.
+        Returns (reasoning_id, is_new) where is_new is True if a new session was created.
+        """
+        if self.reasoning_message_id is not None:
+            return self.reasoning_message_id, False
+        return self.start_reasoning(), True
 
-        else:
-            log_warning(f"Unknown AGUI message role: {msg.role}")
+    def end_reasoning(self) -> None:
+        """End the active reasoning session."""
+        self.reasoning_message_id = None
+        self.reasoning_step_count = 0
 
-    return result
+
+def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
+    """Extract the last user message content from AG-UI messages.
+
+    AG-UI frontends send the full conversation history on every request.
+    The agent manages its own history via session DB, so we only need the
+    latest user message as input — matching the REST API pattern.
+    """
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content is not None:
+            # UserMessage.content is Union[str, List[InputContent]]
+            if isinstance(msg.content, str):
+                return msg.content
+            # Multimodal: extract text parts
+            if isinstance(msg.content, list):
+                text_parts = []
+                for part in msg.content:
+                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "\n".join(text_parts)
+    return ""
 
 
 def extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
@@ -192,11 +243,53 @@ def extract_response_chunk_content(response: RunContentEvent) -> str:
     return get_text_from_message(response.content) if response.content is not None else ""
 
 
+def _create_state_delta_events(
+    run_state: Optional[Dict[str, Any]],
+    event_buffer: EventBuffer,
+) -> List[BaseEvent]:
+    """Compute state delta and return StateDeltaEvent if state changed."""
+    if run_state is None:
+        return []
+    ops = event_buffer.compute_state_delta(run_state)
+    if ops is None:
+        return []
+    # Update the snapshot to current state for next delta computation
+    event_buffer.set_state_snapshot(run_state)
+    return [StateDeltaEvent(type=EventType.STATE_DELTA, delta=ops)]
+
+
+def _format_reasoning_step_delta(step: Optional[ReasoningStep], step_number: int = 0) -> str:
+    """Format a single ReasoningStep as a text delta for REASONING_MESSAGE_CONTENT.
+
+    ReasoningStepEvent.content holds a ReasoningStep object (title, reasoning,
+    action, result, confidence). We format just this one step — NOT the
+    accumulated reasoning_content field, which duplicates prior steps.
+    """
+    if step is None:
+        return ""
+    parts: List[str] = []
+    title = step.title or "Thinking"
+    if step_number > 0:
+        parts.append(f"## Step {step_number}: {title}")
+    else:
+        parts.append(f"## {title}")
+    if step.reasoning:
+        parts.append(step.reasoning)
+    if step.action:
+        parts.append(f"Action: {step.action}")
+    if step.result:
+        parts.append(f"Result: {step.result}")
+    if step.confidence is not None:
+        parts.append(f"Confidence: {step.confidence}")
+    return "\n".join(parts) + "\n\n" if parts else ""
+
+
 def _create_events_from_chunk(
     chunk: Union[RunOutputEvent, TeamRunOutputEvent],
     message_id: str,
     message_started: bool,
     event_buffer: EventBuffer,
+    run_state: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[BaseEvent], bool, str]:
     """
     Process a single chunk and return events to emit + updated message_started state.
@@ -205,18 +298,22 @@ def _create_events_from_chunk(
         chunk: The event chunk to process
         message_id: Current message identifier
         message_started: Whether a message is currently active
-        event_buffer: Event buffer for tracking tool call state
+        event_buffer: Event buffer for tracking tool call state (includes reasoning session state)
+        run_state: Mutable dict reference to the agent's session state (for delta tracking)
 
     Returns:
         Tuple of (events_to_emit, new_message_started_state, message_id)
     """
     events_to_emit: List[BaseEvent] = []
+    is_content_event = False
 
     # Extract content if the contextual event is a content event
     if chunk.event == RunEvent.run_content:
         content = extract_response_chunk_content(chunk)  # type: ignore
+        is_content_event = True
     elif chunk.event == TeamRunEvent.run_content:
         content = extract_team_response_chunk_content(chunk)  # type: ignore
+        is_content_event = True
     else:
         content = None
 
@@ -326,16 +423,76 @@ def _create_events_from_chunk(
                     )
                     events_to_emit.append(result_event)
 
-    # Handle reasoning
-    elif chunk.event == RunEvent.reasoning_started:
-        step_started_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
-        events_to_emit.append(step_started_event)
-    elif chunk.event == RunEvent.reasoning_completed:
-        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-        events_to_emit.append(step_finished_event)
+                # Emit state delta after tool call completion (state may have been mutated by the tool)
+                events_to_emit.extend(_create_state_delta_events(run_state, event_buffer))
+
+    # Handle reasoning events
+    elif isinstance(chunk, (AgentReasoningStartedEvent, TeamReasoningStartedEvent)):
+        if message_started:
+            events_to_emit.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
+            message_started = False
+            message_id = str(uuid.uuid4())
+        reasoning_id = event_buffer.start_reasoning()
+        events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
+        events_to_emit.append(
+            ReasoningMessageStartEvent(
+                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+            )
+        )
+
+    elif isinstance(chunk, (AgentReasoningContentDeltaEvent, TeamReasoningContentDeltaEvent)):
+        if message_started:
+            events_to_emit.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
+            message_started = False
+            message_id = str(uuid.uuid4())
+        reasoning_id, is_new = event_buffer.ensure_reasoning_started()
+        if is_new:
+            events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
+            events_to_emit.append(
+                ReasoningMessageStartEvent(
+                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                )
+            )
+        if chunk.reasoning_content:
+            events_to_emit.append(
+                ReasoningMessageContentEvent(
+                    type=EventType.REASONING_MESSAGE_CONTENT, message_id=reasoning_id, delta=chunk.reasoning_content
+                )
+            )
+
+    elif isinstance(chunk, (AgentReasoningStepEvent, TeamReasoningStepEvent)):
+        if message_started:
+            events_to_emit.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id))
+            message_started = False
+            message_id = str(uuid.uuid4())
+        reasoning_id, is_new = event_buffer.ensure_reasoning_started()
+        if is_new:
+            events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
+            events_to_emit.append(
+                ReasoningMessageStartEvent(
+                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                )
+            )
+        step_num = event_buffer.next_reasoning_step()
+        delta = _format_reasoning_step_delta(chunk.content, step_num)
+        if delta:
+            events_to_emit.append(
+                ReasoningMessageContentEvent(
+                    type=EventType.REASONING_MESSAGE_CONTENT, message_id=reasoning_id, delta=delta
+                )
+            )
+
+    elif isinstance(chunk, (AgentReasoningCompletedEvent, TeamReasoningCompletedEvent)):
+        if event_buffer.reasoning_message_id is not None:
+            reasoning_id = event_buffer.reasoning_message_id
+            events_to_emit.append(
+                ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=reasoning_id)
+            )
+            events_to_emit.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=reasoning_id))
+            event_buffer.end_reasoning()
 
     # Handle custom events
-    elif chunk.event == RunEvent.custom_event:
+    elif chunk.event in (RunEvent.custom_event, TeamRunEvent.custom_event):
         # Use the name of the event class if available, otherwise default to the CustomEvent
         try:
             custom_event_name = chunk.__class__.__name__
@@ -351,6 +508,14 @@ def _create_events_from_chunk(
         custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
 
+    # Catch-all: emit unmapped events as RawEvent (skip content events which may have None content)
+    elif not is_content_event:
+        try:
+            raw_dict = chunk.to_dict()
+        except Exception:
+            raw_dict = {"event": str(chunk.event)}
+        events_to_emit.append(RawEvent(type=EventType.RAW, event=raw_dict, source="agno"))
+
     return events_to_emit, message_started, message_id
 
 
@@ -361,9 +526,20 @@ def _create_completion_events(
     message_id: str,
     thread_id: str,
     run_id: str,
+    run_state: Optional[Dict[str, Any]] = None,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit: List[BaseEvent] = []
+
+    # Close orphaned reasoning session if stream ended mid-reasoning
+    if event_buffer.reasoning_message_id is not None:
+        events_to_emit.append(
+            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=event_buffer.reasoning_message_id)
+        )
+        events_to_emit.append(
+            ReasoningEndEvent(type=EventType.REASONING_END, message_id=event_buffer.reasoning_message_id)
+        )
+        event_buffer.end_reasoning()
 
     # End remaining active tool calls if needed
     for tool_call_id in list(event_buffer.active_tool_call_ids):
@@ -434,6 +610,15 @@ def _create_completion_events(
                 )
                 events_to_emit.append(end_event)
 
+    # Emit final state snapshot before finishing the run (only if frontend opted into state tracking)
+    if run_state is not None:
+        # Use session_state from RunCompletedEvent (authoritative) if available, otherwise fall back to run_state.
+        # Deep-copy so the emitted event doesn't alias the live agent state (consistent with set_state_snapshot).
+        authoritative_state = getattr(chunk, "session_state", None)
+        final_state = authoritative_state if authoritative_state is not None else run_state
+        snapshot_event = StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(final_state))
+        events_to_emit.append(snapshot_event)
+
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)
 
@@ -458,13 +643,20 @@ def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseE
 
 
 def stream_agno_response_as_agui_events(
-    response_stream: Iterator[Union[RunOutputEvent, TeamRunOutputEvent]], thread_id: str, run_id: str
+    response_stream: Iterator[Union[RunOutputEvent, TeamRunOutputEvent]],
+    thread_id: str,
+    run_id: str,
+    run_state: Optional[Dict[str, Any]] = None,
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
     message_id = ""  # Will be set by EventBuffer when text message starts
     message_started = False
     event_buffer = EventBuffer()
     stream_completed = False
+
+    # Establish baseline state snapshot for delta tracking
+    if run_state is not None:
+        event_buffer.set_state_snapshot(run_state)
 
     completion_chunk = None
 
@@ -474,6 +666,7 @@ def stream_agno_response_as_agui_events(
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
+            or chunk.event == TeamRunEvent.run_paused
         ):
             # Store completion chunk but don't process it yet
             completion_chunk = chunk
@@ -481,7 +674,7 @@ def stream_agno_response_as_agui_events(
         else:
             # Process regular chunk immediately
             events_from_chunk, message_started, message_id = _create_events_from_chunk(
-                chunk, message_id, message_started, event_buffer
+                chunk, message_id, message_started, event_buffer, run_state=run_state
             )
 
             for event in events_from_chunk:
@@ -492,7 +685,7 @@ def stream_agno_response_as_agui_events(
     # Process ONLY completion cleanup events, not content from completion chunk
     if completion_chunk:
         completion_events = _create_completion_events(
-            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id
+            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id, run_state=run_state
         )
         for event in completion_events:
             events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
@@ -506,7 +699,7 @@ def stream_agno_response_as_agui_events(
 
         synthetic_completion = RunCompletedEvent()
         completion_events = _create_completion_events(
-            synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id
+            synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id, run_state=run_state
         )
         for event in completion_events:
             events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
@@ -519,12 +712,17 @@ async def async_stream_agno_response_as_agui_events(
     response_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]],
     thread_id: str,
     run_id: str,
+    run_state: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
     message_id = ""  # Will be set by EventBuffer when text message starts
     message_started = False
     event_buffer = EventBuffer()
     stream_completed = False
+
+    # Establish baseline state snapshot for delta tracking
+    if run_state is not None:
+        event_buffer.set_state_snapshot(run_state)
 
     completion_chunk = None
 
@@ -534,6 +732,7 @@ async def async_stream_agno_response_as_agui_events(
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
+            or chunk.event == TeamRunEvent.run_paused
         ):
             # Store completion chunk but don't process it yet
             completion_chunk = chunk
@@ -541,7 +740,7 @@ async def async_stream_agno_response_as_agui_events(
         else:
             # Process regular chunk immediately
             events_from_chunk, message_started, message_id = _create_events_from_chunk(
-                chunk, message_id, message_started, event_buffer
+                chunk, message_id, message_started, event_buffer, run_state=run_state
             )
 
             for event in events_from_chunk:
@@ -552,7 +751,7 @@ async def async_stream_agno_response_as_agui_events(
     # Process ONLY completion cleanup events, not content from completion chunk
     if completion_chunk:
         completion_events = _create_completion_events(
-            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id
+            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id, run_state=run_state
         )
         for event in completion_events:
             events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
@@ -566,7 +765,7 @@ async def async_stream_agno_response_as_agui_events(
 
         synthetic_completion = RunCompletedEvent()
         completion_events = _create_completion_events(
-            synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id
+            synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id, run_state=run_state
         )
         for event in completion_events:
             events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)

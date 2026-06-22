@@ -20,6 +20,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.memory.manager import MemoryManager
 from agno.models.anthropic.claude import Claude
+from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.websearch import WebSearchTools
@@ -37,7 +38,7 @@ memory_manager = MemoryManager(
                     Collect Information about the users likes and dislikes,
                     Collect information about what the user is doing with their life right now
                 """,
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=OpenAIChat(id="gpt-4o-mini"),
 )
 
 

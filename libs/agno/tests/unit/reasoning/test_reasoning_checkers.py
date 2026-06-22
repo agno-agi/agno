@@ -163,22 +163,13 @@ def test_openai_chat_with_o1_model():
     assert is_openai_reasoning_model(model) is True
 
 
-def test_openai_chat_with_4_1_in_id():
-    """Test OpenAIChat model with 4.1 in ID returns True."""
+def test_openai_chat_with_gpt_4_1_in_id():
+    """Test GPT-4.1 is not treated as a native reasoning model."""
     model = MockModel(
         class_name="OpenAIChat",
-        model_id="claude-opus-4.1",
+        model_id="gpt-4.1",
     )
-    assert is_openai_reasoning_model(model) is True
-
-
-def test_openai_chat_with_4_5_in_id():
-    """Test OpenAIChat model with 4.5 in ID returns True."""
-    model = MockModel(
-        class_name="OpenAIChat",
-        model_id="claude-sonnet-4.5",
-    )
-    assert is_openai_reasoning_model(model) is True
+    assert is_openai_reasoning_model(model) is False
 
 
 def test_openai_chat_with_5_1_in_id():
@@ -475,6 +466,87 @@ def test_deepseek_with_v3_model():
     model = MockModel(
         class_name="DeepSeek",
         model_id="deepseek-v3",
+    )
+    assert is_deepseek_reasoning_model(model) is False
+
+
+def test_deepseek_with_r1_0528_model():
+    """Test DeepSeek model with deepseek-r1-0528 returns True."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-r1-0528",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_v4_flash_model():
+    """Test DeepSeek model with deepseek-v4-flash returns True (hybrid, thinking by default)."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v4-flash",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_v4_pro_model():
+    """Test DeepSeek model with deepseek-v4-pro returns True (hybrid, thinking by default)."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v4-pro",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_v3_1_model():
+    """Test DeepSeek model with deepseek-v3.1 returns True (hybrid)."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v3.1",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_v3_1_terminus_model():
+    """Test DeepSeek model with deepseek-v3.1-terminus returns True (hybrid)."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v3.1-terminus",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_v3_2_model():
+    """Test DeepSeek model with deepseek-v3.2 returns True (hybrid)."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v3.2",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_v3_2_exp_model():
+    """Test DeepSeek model with deepseek-v3.2-exp returns True (hybrid)."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v3.2-exp",
+    )
+    assert is_deepseek_reasoning_model(model) is True
+
+
+def test_deepseek_with_v3_0324_model():
+    """Test DeepSeek model with deepseek-v3-0324 returns False (non-reasoning chat update)."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v3-0324",
+    )
+    assert is_deepseek_reasoning_model(model) is False
+
+
+def test_deepseek_with_v2_model():
+    """Test DeepSeek model with deepseek-v2 returns False (pre-reasoning)."""
+    model = MockModel(
+        class_name="DeepSeek",
+        model_id="deepseek-v2",
     )
     assert is_deepseek_reasoning_model(model) is False
 

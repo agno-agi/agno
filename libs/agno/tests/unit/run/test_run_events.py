@@ -82,6 +82,7 @@ def test_workflow_run_events():
         "age": 30,
         "created_at": event.created_at,
         "event": "",
+        "nested_depth": 0,
     }
     assert json.loads(event.to_json(indent=None)) == expected_json_dict
 
@@ -102,6 +103,45 @@ def test_agent_session_state_in_run_output():
     # Test deserialization
     reconstructed = RunOutput.from_dict(run_dict)
     assert reconstructed.session_state == {"key": "value", "counter": 10}
+
+
+def test_run_completed_event_includes_files():
+    """Test that RunCompletedEvent includes files in stream serialization."""
+    from agno.media import File
+    from agno.run.agent import RunOutput
+    from agno.utils.events import create_run_completed_event
+
+    run_output = RunOutput(
+        run_id="test_123",
+        agent_id="agent_456",
+        agent_name="TestAgent",
+        files=[
+            File(
+                id="file-1",
+                filename="report.pdf",
+                mime_type="application/pdf",
+                content="base64content",
+                file_type="pdf",
+                size=1024,
+            )
+        ],
+    )
+
+    event = create_run_completed_event(from_run_response=run_output)
+
+    assert event.files is not None
+    assert len(event.files) == 1
+    assert event.files[0].filename == "report.pdf"
+
+    event_dict = event.to_dict()
+    assert "files" in event_dict
+    assert len(event_dict["files"]) == 1
+    assert event_dict["files"][0]["filename"] == "report.pdf"
+
+    reconstructed = type(event).from_dict(event_dict)
+    assert reconstructed.files is not None
+    assert len(reconstructed.files) == 1
+    assert reconstructed.files[0].filename == "report.pdf"
 
 
 def test_agent_session_state_in_completed_event():

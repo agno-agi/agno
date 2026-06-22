@@ -58,7 +58,7 @@ def make_memories(
                 try:
                     parsed_messages.append(Message(**_im))
                 except Exception as e:
-                    log_warning(f"Failed to validate message during memory update: {e}")
+                    log_warning(f"Failed to validate message during memory update: {str(e)}")
             else:
                 log_warning(f"Unsupported message type: {type(_im)}")
                 continue
@@ -113,7 +113,7 @@ async def amake_memories(
                 try:
                     parsed_messages.append(Message(**_im))
                 except Exception as e:
-                    log_warning(f"Failed to validate message during memory update: {e}")
+                    log_warning(f"Failed to validate message during memory update: {str(e)}")
             else:
                 log_warning(f"Unsupported message type: {type(_im)}")
                 continue
@@ -162,8 +162,11 @@ async def astart_memory_task(
             pass
 
     # Create new task if conditions are met
+    has_content = run_messages.user_message is not None or (
+        run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0
+    )
     if (
-        run_messages.user_message is not None
+        has_content
         and agent.memory_manager is not None
         and agent.update_memory_on_run
         and not agent.enable_agentic_memory
@@ -197,8 +200,11 @@ def start_memory_future(
         existing_future.cancel()
 
     # Create new future if conditions are met
+    has_content = run_messages.user_message is not None or (
+        run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0
+    )
     if (
-        run_messages.user_message is not None
+        has_content
         and agent.memory_manager is not None
         and agent.update_memory_on_run
         and not agent.enable_agentic_memory
@@ -396,8 +402,8 @@ def process_learnings(
 
     collector = RunMetrics()
     try:
-        # Convert run messages to list format expected by LearningMachine
-        messages = run_messages.messages if run_messages else []
+        # Snapshot: learning runs concurrently while the model call appends to the live list
+        messages = list(run_messages.messages) if run_messages else []
 
         agent._learning.process(
             messages=messages,
@@ -409,7 +415,7 @@ def process_learnings(
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
-        log_warning(f"Error processing learnings: {e}")
+        log_warning(f"Error processing learnings: {str(e)}")
     return collector
 
 
@@ -427,7 +433,8 @@ async def aprocess_learnings(
 
     collector = RunMetrics()
     try:
-        messages = run_messages.messages if run_messages else []
+        # Snapshot: learning runs concurrently while the model call appends to the live list
+        messages = list(run_messages.messages) if run_messages else []
         await agent._learning.aprocess(
             messages=messages,
             user_id=user_id,
@@ -438,7 +445,7 @@ async def aprocess_learnings(
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
-        log_warning(f"Error processing learnings: {e}")
+        log_warning(f"Error processing learnings: {str(e)}")
     return collector
 
 

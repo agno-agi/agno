@@ -7,10 +7,10 @@ from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
-from agno.exceptions import AgentRunException
+from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
-from agno.utils.log import log_debug, log_error, log_exception, log_warning
+from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
 
@@ -382,7 +382,7 @@ class Function(BaseModel):
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
-            log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
+            log_warning(f"Could not parse args for {function_name}: {str(e)}")
 
         entrypoint = cls._wrap_callable(c)
 
@@ -450,19 +450,25 @@ class Function(BaseModel):
                 "files",
             ]
 
-            # Also exclude parameters whose types are Agent or Team,
+            # Also exclude parameters whose types are framework-injected,
             # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
             try:
                 from agno.agent.agent import Agent
                 from agno.team.team import Team
 
-                framework_types = (Agent, Team)
+                framework_types = (Agent, Team, RunContext, Image, Video, Audio, File)
                 for param_name, hint in list(type_hints.items()):
                     if isinstance(hint, type) and issubclass(hint, framework_types):
                         del type_hints[param_name]
                         excluded_params.append(param_name)
             except Exception:
                 pass
+
+            # Snapshot excluded_params before user_input_fields are added,
+            # so we can use it to filter user_input_schema later.
+            if self.requires_user_input:
+                _excluded_framework_params = list(excluded_params)
+
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -490,7 +496,9 @@ class Function(BaseModel):
                             param_descriptions[param_name] = param.description or ""
                         param_descriptions_clean[param_name] = param.description or ""
 
-            # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
+            # If the function requires user input, set user_input_schema to all parameters
+            # except framework-injected ones (using the snapshot taken before user_input_fields
+            # were added to excluded_params, since those should remain in the schema).
             if self.requires_user_input:
                 self.user_input_schema = [
                     UserInputField(
@@ -499,6 +507,7 @@ class Function(BaseModel):
                         field_type=type_hints.get(name, str),
                     )
                     for name in sig.parameters
+                    if name not in _excluded_framework_params
                 ]
 
             # Get JSON schema for parameters only
@@ -536,7 +545,7 @@ class Function(BaseModel):
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
         except Exception as e:
-            log_warning(f"Could not parse args for {self.name}: {e}", exc_info=True)
+            log_warning(f"Could not parse args for {self.name}: {str(e)}")
 
         if not params_set_by_user:
             self.parameters = parameters
@@ -547,7 +556,7 @@ class Function(BaseModel):
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
-            log_warning(f"Failed to add validate decorator to entrypoint: {e}")
+            log_warning(f"Failed to add validate decorator to entrypoint: {str(e)}")
 
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
@@ -716,8 +725,8 @@ class Function(BaseModel):
 
             # Remove expired entry
             cache_path.unlink()
-        except Exception as e:
-            log_error(f"Error reading cache: {e}")
+        except Exception:
+            log_exception("Error reading cache")
 
         return None
 
@@ -730,8 +739,8 @@ class Function(BaseModel):
             serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
             with open(cache_file, "w") as f:
                 json.dump({"timestamp": time(), "result": serializable_result}, f)
-        except Exception as e:
-            log_error(f"Error writing cache: {e}")
+        except Exception:
+            log_exception("Error writing cache")
 
 
 class FunctionExecutionResult(BaseModel):
@@ -846,8 +855,10 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
-                log_warning(f"Error in pre-hook callback: {e}")
+                log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
 
     def _handle_post_hook(self):
@@ -874,8 +885,10 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
-                log_warning(f"Error in post-hook callback: {e}")
+                log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
 
     def _build_entrypoint_args(self) -> Dict[str, Any]:
@@ -897,6 +910,16 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an fc argument
         if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
+
+        # `_agno_`-prefixed variants are used by internal wrappers so framework
+        # objects can be injected without colliding with user-facing tool
+        # arguments that happen to be named "agent", "team" and "run_context".
+        if "_agno_agent" in sig.parameters:
+            entrypoint_args["_agno_agent"] = self.function._agent
+        if "_agno_team" in sig.parameters:
+            entrypoint_args["_agno_team"] = self.function._team
+        if "_agno_run_context" in sig.parameters:
+            entrypoint_args["_agno_run_context"] = self.function._run_context
 
         # Check if the entrypoint has media arguments
         if "images" in sig.parameters:
@@ -1080,8 +1103,10 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
+        except RunCancelledException:
+            raise
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}")
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
             self.error = str(e)
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
@@ -1119,8 +1144,10 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
-                log_warning(f"Error in pre-hook callback: {e}")
+                log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
 
     async def _handle_post_hook_async(self):
@@ -1148,8 +1175,10 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
-                log_warning(f"Error in post-hook callback: {e}")
+                log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
 
     async def _build_nested_execution_chain_async(self, entrypoint_args: Dict[str, Any]):
@@ -1178,9 +1207,9 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
             return self.function.entrypoint(**arguments)  # type: ignore
 
-        # If no hooks, just return the entrypoint execution function
+        # If no hooks, just return the async entrypoint execution function
         if not self.function.tool_hooks:
-            return execute_entrypoint
+            return execute_entrypoint_async
 
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
@@ -1300,8 +1329,10 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
+        except RunCancelledException:
+            raise
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}")
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
             self.error = str(e)
             execution_result = FunctionExecutionResult(status="failure", error=str(e))

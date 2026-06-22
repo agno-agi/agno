@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 
 try:
     import duckdb
@@ -66,7 +66,7 @@ class DuckDbTools(Toolkit):
                         self._connection.sql(command)
             except Exception as e:
                 logger.exception(e)
-                logger.warning("Failed to run duckdb init commands")
+                log_warning(f"Failed to run duckdb init commands: {str(e)}")
 
         return self._connection
 

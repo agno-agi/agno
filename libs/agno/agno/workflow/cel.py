@@ -167,7 +167,7 @@ def _evaluate_cel_raw(expression: str, context: Dict[str, Any]) -> Any:
         prog = env.program(env.compile(expression))
         return prog.evaluate({k: _to_cel(v) for k, v in context.items()})
     except Exception as e:
-        logger.error(f"CEL evaluation failed for '{expression}': {e}")
+        logger.exception(f"CEL evaluation failed for '{expression}'")
         raise ValueError(f"Failed to evaluate CEL expression '{expression}': {e}") from e
 
 

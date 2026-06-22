@@ -176,7 +176,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -208,7 +208,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -242,7 +242,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -270,7 +270,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()

@@ -1,9 +1,10 @@
 import asyncio
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, PropertyMock, patch
 
 import pytest
 from pymongo import AsyncMongoClient
 
+from agno.db.base import SessionType
 from agno.db.mongo import AsyncMongoDb
 
 
@@ -232,9 +233,15 @@ def test_should_reset_collection_cache():
     assert db._should_reset_collection_cache() is False
 
     # After setting event loop
-    db._event_loop = asyncio.get_event_loop()
-    # Should return False when same loop
-    assert db._should_reset_collection_cache() is False
+    loop = asyncio.new_event_loop()
+    try:
+        db._event_loop = loop
+        asyncio.set_event_loop(loop)
+        # Should return False when same loop
+        assert db._should_reset_collection_cache() is False
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 def test_client_type_constants():
@@ -293,3 +300,68 @@ def test_auto_select_preferred_client_from_url():
         assert db._client_type == AsyncMongoDb.CLIENT_TYPE_MOTOR
     else:
         pytest.fail("Neither client type available")
+
+
+@pytest.mark.asyncio
+async def test_get_session_query_does_not_include_session_type():
+    """Test that get_session queries only by session_id (and user_id), not session_type.
+
+    This ensures consistency with all other database implementations where
+    session_type is used only for deserialization, not as a query filter.
+    """
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+
+    mock_collection = AsyncMock()
+    mock_collection.find_one.return_value = None
+
+    with patch.object(db, "_get_collection", return_value=mock_collection):
+        result = await db.get_session(
+            session_id="test-session-id",
+            session_type=SessionType.AGENT,
+            user_id="test-user",
+        )
+
+    assert result is None
+    mock_collection.find_one.assert_called_once_with({"session_id": "test-session-id", "user_id": "test-user"})
+
+
+@pytest.mark.asyncio
+async def test_get_session_query_without_user_id():
+    """Test that get_session omits user_id from query when not provided."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+
+    mock_collection = AsyncMock()
+    mock_collection.find_one.return_value = None
+
+    with patch.object(db, "_get_collection", return_value=mock_collection):
+        result = await db.get_session(
+            session_id="test-session-id",
+            session_type=SessionType.TEAM,
+        )
+
+    assert result is None
+    mock_collection.find_one.assert_called_once_with({"session_id": "test-session-id"})
+
+
+@pytest.mark.asyncio
+async def test_get_collection_refetches_when_cached_none():
+    """Regression: a read with create_collection_if_not_found=False on a not-yet-created
+    collection must NOT cache None. Otherwise a GET before the first write would poison the
+    cache and every later write would be silently dropped (reproduced on the learnings path:
+    GET then POST saved nothing; POST first worked)."""
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_none_cache", learnings_collection="learnings")
+    sentinel = object()
+    db._should_reset_collection_cache = Mock(return_value=False)
+    db._get_or_create_collection = AsyncMock(side_effect=[None, sentinel])
+
+    # Stub the client property so nothing tries to connect.
+    with patch.object(type(db), "db_client", new_callable=PropertyMock, return_value=Mock()):
+        # 1) Read on a missing collection -> None, and must not be cached.
+        first = await db._get_collection("learnings", create_collection_if_not_found=False)
+        assert first is None
+
+        # 2) A subsequent write must re-fetch (and actually get the collection), not the cached None.
+        second = await db._get_collection("learnings", create_collection_if_not_found=True)
+
+    assert second is sentinel
+    assert db._get_or_create_collection.await_count == 2

@@ -735,3 +735,109 @@ class TestAgentDeepCopyCallable:
         copied = agent.deep_copy()
         # The factory should be shared by reference (not deep-copied)
         assert copied.tools is agent.tools
+
+    def test_deep_copy_no_warning_on_callable_factory(self):
+        """Regression: deep_copy() must not try to iterate a callable factory."""
+        import logging
+
+        def factory():
+            return [_dummy_tool]
+
+        agent = Agent(name="test", tools=factory, cache_callables=False)
+
+        records: list = []
+
+        class _Recorder(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        agno_logger = logging.getLogger("agno")
+        handler = _Recorder(level=logging.WARNING)
+        agno_logger.addHandler(handler)
+        try:
+            copied = agent.deep_copy()
+        finally:
+            agno_logger.removeHandler(handler)
+
+        assert copied.tools is factory
+        offenders = [r.getMessage() for r in records if "Failed to process tools for deep copy" in r.getMessage()]
+        assert not offenders, f"Unexpected warning(s) emitted: {offenders}"
+
+    def test_deep_copy_callable_factory_still_resolves(self):
+        """After deep_copy, the factory should still resolve to the expected tool list."""
+        sentinel = _dummy_tool
+
+        def factory():
+            return [sentinel]
+
+        agent = Agent(name="test", tools=factory, cache_callables=False)
+        copied = agent.deep_copy()
+
+        ctx = _make_run_context(user_id="u1")
+        resolve_callable_tools(copied, ctx)
+        assert ctx.tools == [sentinel]
+
+    def test_deep_copy_lambda_factory_preserved(self):
+        factory = lambda: [_dummy_tool]  # noqa: E731
+        agent = Agent(name="test", tools=factory)
+        copied = agent.deep_copy()
+        assert copied.tools is factory
+
+    def test_deep_copy_toolkit_not_treated_as_factory(self):
+        """A Toolkit instance is callable-adjacent but must still be deep-copied as a tool."""
+        tk = Toolkit(name="tk", tools=[Function.from_callable(_dummy_tool)])
+        agent = Agent(name="test", tools=[tk])
+        copied = agent.deep_copy()
+        assert isinstance(copied.tools, list)
+        assert len(copied.tools) == 1
+        # The Toolkit must actually be deep-copied, not shared by reference.
+        assert copied.tools[0] is not tk
+        assert copied.tools is not agent.tools
+
+    def test_deep_copy_async_factory_preserved(self):
+        """An `async def` factory must be shared by reference, not deep-copied."""
+
+        async def afactory():
+            return [_dummy_tool]
+
+        agent = Agent(name="test", tools=afactory)
+        copied = agent.deep_copy()
+        assert copied.tools is afactory
+
+    def test_deep_copy_partial_factory_preserved(self):
+        """A functools.partial factory must be shared by reference."""
+        from functools import partial
+
+        def _fac(extra):
+            return [_dummy_tool]
+
+        pf = partial(_fac, extra=1)
+        agent = Agent(name="test", tools=pf)
+        copied = agent.deep_copy()
+        assert copied.tools is pf
+
+    def test_deep_copy_callable_instance_factory_preserved(self):
+        """A callable class instance (has __call__) must be shared by reference."""
+
+        class Factory:
+            def __call__(self):
+                return [_dummy_tool]
+
+        inst = Factory()
+        agent = Agent(name="test", tools=inst)
+        copied = agent.deep_copy()
+        assert copied.tools is inst
+
+    def test_deep_copy_bound_method_factory_preserved(self):
+        """A bound method factory is shared by reference and still resolves."""
+
+        class Builder:
+            def make(self):
+                return [_dummy_tool]
+
+        holder = Builder()
+        agent = Agent(name="test", tools=holder.make)
+        copied = agent.deep_copy()
+        # Bound methods are transient, so compare identity via the receiver
+        assert getattr(copied.tools, "__self__", None) is holder
+        assert copied.tools() == [_dummy_tool]

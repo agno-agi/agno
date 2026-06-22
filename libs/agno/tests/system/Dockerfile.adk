@@ -9,10 +9,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Google ADK and dependencies
-RUN pip install --no-cache-dir \
-    google-adk \
-    a2a-sdk \
-    uvicorn
+# Pin a2a-sdk to 0.3.x (compatible with latest google-adk)
+# a2a-sdk 1.0 removed a2a.server.apps which google-adk needs
+RUN pip install --no-cache-dir google-adk "a2a-sdk>=0.3.0,<1.0" uvicorn
 
 # Copy the server script
 COPY tests/system/adk_server.py /app/adk_server.py

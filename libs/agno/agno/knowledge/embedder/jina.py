@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from typing_extensions import Literal
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
 
 try:
     import requests
@@ -64,7 +64,7 @@ class JinaEmbedder(Embedder):
             result = self._response(text)
             return result["data"][0]["embedding"]
         except Exception as e:
-            logger.warning(f"Failed to get embedding: {e}")
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -74,7 +74,7 @@ class JinaEmbedder(Embedder):
             usage = result.get("usage")
             return embedding, usage
         except Exception as e:
-            logger.warning(f"Failed to get embedding and usage: {e}")
+            log_warning(f"Failed to get embedding and usage: {str(e)}")
             return [], None
 
     async def _async_response(self, text: str) -> Dict[str, Any]:
@@ -104,7 +104,7 @@ class JinaEmbedder(Embedder):
             result = await self._async_response(text)
             return result["data"][0]["embedding"]
         except Exception as e:
-            logger.warning(f"Failed to get embedding: {e}")
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -115,7 +115,7 @@ class JinaEmbedder(Embedder):
             usage = result.get("usage")
             return embedding, usage
         except Exception as e:
-            logger.warning(f"Failed to get embedding and usage: {e}")
+            log_warning(f"Failed to get embedding and usage: {str(e)}")
             return [], None
 
     async def _async_batch_response(self, texts: List[str]) -> Dict[str, Any]:
@@ -167,7 +167,7 @@ class JinaEmbedder(Embedder):
                 usage_dict = result.get("usage")
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
-                logger.warning(f"Error in async batch embedding: {e}")
+                log_warning(f"Error in async batch embedding: {str(e)}")
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -175,7 +175,7 @@ class JinaEmbedder(Embedder):
                         all_embeddings.append(embedding)
                         all_usage.append(usage)
                     except Exception as e2:
-                        logger.warning(f"Error in individual async embedding fallback: {e2}")
+                        log_warning(f"Error in individual async embedding fallback: {e2}")
                         all_embeddings.append([])
                         all_usage.append(None)
 

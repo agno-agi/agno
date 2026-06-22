@@ -75,7 +75,7 @@ class S3Reader(Reader):
                 return documents
 
         except Exception as e:
-            log_error(f"Error reading: {s3_object.uri}: {e}")
+            log_error(f"Error reading: {s3_object.uri}: {str(e)}")
 
         return []
 

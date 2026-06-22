@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Type, Union
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -85,7 +86,15 @@ class MemoryManager:
         add_memories: bool = True,
         clear_memories: bool = False,
         debug_mode: bool = False,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        owner_type: Optional[str] = None,
     ):
+        self.id = id if id is not None else f"memory_manager_{uuid4().hex[:8]}"
+        self.name = name
+        self.owner_id = owner_id
+        self.owner_type = owner_type
         self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
@@ -566,8 +575,8 @@ class MemoryManager:
             self.db.upsert_user_memory(memory=memory)
             return "Memory added successfully"
         except Exception as e:
-            log_warning(f"Error storing memory in db: {e}")
-            return f"Error adding memory: {e}"
+            log_warning(f"Error storing memory in db: {str(e)}")
+            return "Error adding memory"
 
     def _delete_db_memory(self, memory_id: str, user_id: Optional[str] = None) -> str:
         """Use this function to delete a memory from the database."""
@@ -581,8 +590,8 @@ class MemoryManager:
             self.db.delete_user_memory(memory_id=memory_id, user_id=user_id)
             return "Memory deleted successfully"
         except Exception as e:
-            log_warning(f"Error deleting memory in db: {e}")
-            return f"Error deleting memory: {e}"
+            log_warning(f"Error deleting memory in db: {str(e)}")
+            return "Error deleting memory"
 
     # -*- Utility Functions
     def search_user_memories(
@@ -716,7 +725,7 @@ class MemoryManager:
                     log_warning("Failed to convert memory_search response to MemorySearchResponse")
                     return []
             except Exception as e:
-                log_warning(f"Failed to convert memory_search response to MemorySearchResponse: {e}")
+                log_warning(f"Failed to convert memory_search response to MemorySearchResponse: {str(e)}")
                 return []
 
         memories_to_return = []
@@ -951,7 +960,7 @@ class MemoryManager:
                 _functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return _functions
 
@@ -1356,8 +1365,8 @@ class MemoryManager:
                 log_debug(f"Memory added: {memory_id}")
                 return "Memory added successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
-                return f"Error adding memory: {e}"
+                log_warning(f"Error storing memory in db: {str(e)}")
+                return "Error adding memory"
 
         def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
             """Use this function to update an existing memory in the database.
@@ -1377,17 +1386,19 @@ class MemoryManager:
                 db.upsert_user_memory(
                     UserMemory(
                         memory_id=memory_id,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
                         memory=memory,
                         topics=topics,
-                        user_id=user_id,
                         input=input_string,
                     )
                 )
                 log_debug("Memory updated")
                 return "Memory updated successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
-                return f"Error adding memory: {e}"
+                log_warning(f"Error storing memory in db: {str(e)}")
+                return "Error adding memory"
 
         def delete_memory(memory_id: str) -> str:
             """Use this function to delete a single memory from the database.
@@ -1401,8 +1412,8 @@ class MemoryManager:
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:
-                log_warning(f"Error deleting memory in db: {e}")
-                return f"Error deleting memory: {e}"
+                log_warning(f"Error deleting memory in db: {str(e)}")
+                return "Error deleting memory"
 
         def clear_memory() -> str:
             """Use this function to remove all (or clear all) memories from the database.
@@ -1478,8 +1489,8 @@ class MemoryManager:
                 log_debug(f"Memory added: {memory_id}")
                 return "Memory added successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
-                return f"Error adding memory: {e}"
+                log_warning(f"Error storing memory in db: {str(e)}")
+                return "Error adding memory"
 
         async def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
             """Use this function to update an existing memory in the database.
@@ -1500,6 +1511,9 @@ class MemoryManager:
                     await db.upsert_user_memory(
                         UserMemory(
                             memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
                             memory=memory,
                             topics=topics,
                             input=input_string,
@@ -1509,6 +1523,9 @@ class MemoryManager:
                     db.upsert_user_memory(
                         UserMemory(
                             memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
                             memory=memory,
                             topics=topics,
                             input=input_string,
@@ -1517,8 +1534,8 @@ class MemoryManager:
                 log_debug("Memory updated")
                 return "Memory updated successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
-                return f"Error adding memory: {e}"
+                log_warning(f"Error storing memory in db: {str(e)}")
+                return "Error adding memory"
 
         async def delete_memory(memory_id: str) -> str:
             """Use this function to delete a single memory from the database.
@@ -1529,14 +1546,14 @@ class MemoryManager:
             """
             try:
                 if isinstance(db, AsyncBaseDb):
-                    await db.delete_user_memory(memory_id=memory_id)
+                    await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
                 else:
-                    db.delete_user_memory(memory_id=memory_id)
+                    db.delete_user_memory(memory_id=memory_id, user_id=user_id)
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:
-                log_warning(f"Error deleting memory in db: {e}")
-                return f"Error deleting memory: {e}"
+                log_warning(f"Error deleting memory in db: {str(e)}")
+                return "Error deleting memory"
 
         async def clear_memory() -> str:
             """Use this function to remove all (or clear all) memories from the database.

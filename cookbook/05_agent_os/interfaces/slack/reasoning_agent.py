@@ -36,6 +36,8 @@ reasoning_finance_agent = Agent(
         WebSearchTools(),
     ],
     instructions="Use tables to display data. When you use thinking tools, keep the thinking brief.",
+    add_history_to_context=True,
+    num_history_runs=3,
     add_datetime_to_context=True,
     markdown=True,
 )

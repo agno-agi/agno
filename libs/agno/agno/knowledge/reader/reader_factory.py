@@ -76,6 +76,10 @@ class ReaderFactory:
             "name": "WebSearchReader",
             "description": "Executes web searches and processes results with relevance ranking and content extraction",
         },
+        "llms_txt": {
+            "name": "LLMsTxtReader",
+            "description": "Reads llms.txt files, discovers linked documentation URLs, and fetches their content",
+        },
         "docling": {
             "name": "DoclingReader",
             "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
@@ -280,6 +284,18 @@ class ReaderFactory:
         return WebSearchReader(**config)
 
     @classmethod
+    def _get_llms_txt_reader(cls, **kwargs) -> Reader:
+        """Get LLMs Text reader instance."""
+        from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
+
+        config: Dict[str, Any] = {
+            "name": "LLMs Text Reader",
+            "description": "Reads llms.txt files, discovers linked documentation URLs, and fetches their content",
+        }
+        config.update(kwargs)
+        return LLMsTxtReader(**config)
+
+    @classmethod
     def _get_docling_reader(cls, **kwargs) -> Reader:
         """Get Docling reader instance."""
         from agno.knowledge.reader.docling_reader import DoclingReader
@@ -334,6 +350,7 @@ class ReaderFactory:
             "arxiv": ("agno.knowledge.reader.arxiv_reader", "ArxivReader"),
             "wikipedia": ("agno.knowledge.reader.wikipedia_reader", "WikipediaReader"),
             "web_search": ("agno.knowledge.reader.web_search_reader", "WebSearchReader"),
+            "llms_txt": ("agno.knowledge.reader.llms_txt_reader", "LLMsTxtReader"),
             "docling": ("agno.knowledge.reader.docling_reader", "DoclingReader"),
         }
 

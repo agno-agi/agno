@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning
 
 
 def run_shell_command(args: List[str], tail: int = 100) -> str:
@@ -18,5 +18,5 @@ def run_shell_command(args: List[str], tail: int = 100) -> str:
         # return only the last n lines of the output
         return "\n".join(result.stdout.split("\n")[-tail:])
     except Exception as e:
-        logger.warning(f"Failed to run shell command: {e}")
+        log_warning(f"Failed to run shell command: {str(e)}")
         return f"Error: {e}"

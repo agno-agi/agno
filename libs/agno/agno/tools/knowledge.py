@@ -89,7 +89,7 @@ class KnowledgeTools(Toolkit):
             ).strip()
             return formatted_thoughts
         except Exception as e:
-            log_error(f"Error recording thought: {e}")
+            log_error(f"Error recording thought: {str(e)}")
             return f"Error recording thought: {e}"
 
     def search_knowledge(self, run_context: RunContext, query: str) -> str:
@@ -111,7 +111,7 @@ class KnowledgeTools(Toolkit):
                 return "No documents found"
             return json.dumps([doc.to_dict() for doc in relevant_docs])
         except Exception as e:
-            log_error(f"Error searching knowledge base: {e}")
+            log_error(f"Error searching knowledge base: {str(e)}")
             return f"Error searching knowledge base: {e}"
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
@@ -145,7 +145,7 @@ class KnowledgeTools(Toolkit):
             ).strip()
             return formatted_analysis
         except Exception as e:
-            log_error(f"Error recording analysis: {e}")
+            log_error(f"Error recording analysis: {str(e)}")
             return f"Error recording analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\

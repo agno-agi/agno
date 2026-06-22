@@ -13,7 +13,7 @@ import asyncio
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=Gemini(id="gemini-3-flash-preview"), markdown=True)
+agent = Agent(model=Gemini(id="gemini-3.5-flash"), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

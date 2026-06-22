@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
 
 POSTGRES_INVALID_CHARS_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
@@ -154,7 +154,7 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
     try:
         return output_schema.model_validate(merged_data)
     except ValidationError as e:
-        logger.warning("Validation failed on merged data: %s", e)
+        log_warning(f"Validation failed on merged data: {str(e)}")
         return None
 
 
@@ -170,19 +170,30 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
         if reasoning_content:
             content = output_content
 
-    # Clean content first to simplify all parsing attempts
+    # First attempt: try parsing raw content directly (preserves valid JSON with code blocks in strings)
+    try:
+        structured_output = output_schema.model_validate_json(content)
+    except (ValidationError, json.JSONDecodeError):
+        try:
+            data = json.loads(content)
+            structured_output = output_schema.model_validate(data)
+        except (ValidationError, json.JSONDecodeError):
+            pass
+
+    if structured_output is not None:
+        return structured_output
+
+    # Second attempt: clean content and try again
     cleaned_content = _clean_json_content(content)
 
     try:
-        # First attempt: direct JSON validation on cleaned content
         structured_output = output_schema.model_validate_json(cleaned_content)
     except (ValidationError, json.JSONDecodeError):
         try:
-            # Second attempt: Parse as Python dict
             data = json.loads(cleaned_content)
             structured_output = output_schema.model_validate(data)
         except (ValidationError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to parse cleaned JSON: {e}")
+            log_warning(f"Failed to parse cleaned JSON: {str(e)}")
 
             # Third attempt: Extract individual JSON objects
             candidate_jsons = _extract_json_objects(cleaned_content)
@@ -214,14 +225,19 @@ def parse_response_dict_str(content: str) -> Optional[dict]:
         if reasoning_content:
             content = output_content
 
-    # Clean content first to simplify all parsing attempts
+    # First attempt: try parsing raw content directly (preserves valid JSON with code blocks in strings)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # Second attempt: clean content and try again
     cleaned_content = _clean_json_content(content)
 
     try:
-        # First attempt: direct JSON parsing on cleaned content
         return json.loads(cleaned_content)
     except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse cleaned JSON: {e}")
+        log_warning(f"Failed to parse cleaned JSON: {str(e)}")
 
         # Second attempt: Extract individual JSON objects
         candidate_jsons = _extract_json_objects(cleaned_content)

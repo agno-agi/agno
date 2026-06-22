@@ -255,7 +255,7 @@ class ReasoningManager:
                 reasoning_message = get_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
         except Exception as e:
-            log_error(f"Reasoning error: {e}")
+            log_error(f"Reasoning error: {str(e)}")
             return ReasoningResult(success=False, error=str(e))
 
         if reasoning_message is None:
@@ -331,7 +331,7 @@ class ReasoningManager:
                 reasoning_message = await aget_vertexai_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
         except Exception as e:
-            log_error(f"Reasoning error: {e}")
+            log_error(f"Reasoning error: {str(e)}")
             return ReasoningResult(success=False, error=str(e))
 
         if reasoning_message is None:
@@ -875,7 +875,7 @@ class ReasoningManager:
                     break
 
             except Exception as e:
-                log_error(f"Reasoning error: {e}")
+                log_error(f"Reasoning error: {str(e)}")
                 break
 
             step_count += 1
@@ -987,7 +987,7 @@ class ReasoningManager:
                     break
 
             except Exception as e:
-                log_error(f"Reasoning error: {e}")
+                log_error(f"Reasoning error: {str(e)}")
                 break
 
         log_debug(f"Total Reasoning steps: {len(all_reasoning_steps)}")

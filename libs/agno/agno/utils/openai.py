@@ -1,13 +1,10 @@
 import base64
-import mimetypes
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 from agno.media import Audio, File, Image
 from agno.utils.log import log_error, log_warning
-
-# Ensure .webp is recognized
-mimetypes.add_type("image/webp", ".webp")
+from agno.utils.media import resolve_image_mime_type
 
 
 def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
@@ -56,8 +53,9 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                             audio_format = "wav"
                     except Exception as e:
                         log_warning(
-                            f"Could not determine audio format from URL: {audio_snippet.url}. Error: {e}. Defaulting."
+                            f"Could not determine audio format from URL: {audio_snippet.url}. Defaulting.: {e}",
                         )
+
                         audio_format = "wav"  # Default if guessing fails
 
         # The audio is a file path
@@ -70,7 +68,7 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                     if not audio_format:
                         audio_format = path.suffix.lstrip(".")
                 except Exception as e:
-                    log_error(f"Failed to read audio file {path}: {e}")
+                    log_error(f"Failed to read audio file {path}: {str(e)}")
                     continue  # Skip this audio snippet if file reading fails
             else:
                 log_error(f"Audio file not found or is not a file: {path}")
@@ -93,45 +91,37 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
     return audio_messages
 
 
-def _process_bytes_image(image: bytes, image_format: Optional[str] = None) -> Dict[str, Any]:
-    """Process bytes image data."""
+def _process_bytes_image(
+    image: bytes, mime_type: Optional[str] = None, image_format: Optional[str] = None
+) -> Dict[str, Any]:
     base64_image = base64.b64encode(image).decode("utf-8")
-
-    # Use provided format or attempt detection, defaulting to JPEG
-    if image_format:
-        mime_type = f"image/{image_format.lower()}"
-    else:
-        # Try to detect the image format from the bytes
-        try:
-            import imghdr
-
-            detected_format = imghdr.what(None, h=image)
-            mime_type = f"image/{detected_format}" if detected_format else "image/jpeg"
-        except Exception:
-            mime_type = "image/jpeg"
-
-    image_url = f"data:{mime_type};base64,{base64_image}"
+    resolved_mime = resolve_image_mime_type(mime_type=mime_type, image_format=image_format, image_bytes=image)
+    image_url = f"data:{resolved_mime};base64,{base64_image}"
     return {"type": "image_url", "image_url": {"url": image_url}}
 
 
-def _process_image_path(image_path: Union[Path, str]) -> Dict[str, Any]:
-    """Process image ( file path)."""
-    # Process local file image
-    path = Path(image_path)  # Ensure it's a Path object
+def _process_image_path(
+    image_path: Union[Path, str], mime_type: Optional[str] = None, image_format: Optional[str] = None
+) -> Dict[str, Any]:
+    path = Path(image_path)
     if not path.exists():
         raise FileNotFoundError(f"Image file not found: {image_path}")
     if not path.is_file():
         raise IsADirectoryError(f"Image path is not a file: {image_path}")
 
-    mime_type = mimetypes.guess_type(path)[0] or "image/jpeg"  # Default to jpeg if guess fails
     try:
         with open(path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
-            image_url = f"data:{mime_type};base64,{base64_image}"
-            return {"type": "image_url", "image_url": {"url": image_url}}
+            image_data = image_file.read()
     except Exception as e:
-        log_error(f"Failed to read image file {path}: {e}")
-        raise  # Re-raise the exception after logging
+        log_error(f"Failed to read image file {path}: {str(e)}")
+        raise
+
+    base64_image = base64.b64encode(image_data).decode("utf-8")
+    resolved_mime = resolve_image_mime_type(
+        mime_type=mime_type, image_format=image_format, file_path=path, image_bytes=image_data
+    )
+    image_url = f"data:{resolved_mime};base64,{base64_image}"
+    return {"type": "image_url", "image_url": {"url": image_url}}
 
 
 def _process_image_url(image_url: str) -> Dict[str, Any]:
@@ -151,27 +141,22 @@ def process_image(image: Image) -> Optional[Dict[str, Any]]:
             image_payload = _process_image_url(image.url)
 
         elif image.filepath is not None:
-            image_payload = _process_image_path(image.filepath)
+            image_payload = _process_image_path(image.filepath, mime_type=image.mime_type, image_format=image.format)
 
         elif image.content is not None:
-            # Pass the format from the Image object
-            image_payload = _process_bytes_image(image.content, image.format)
+            image_payload = _process_bytes_image(image.content, mime_type=image.mime_type, image_format=image.format)
 
         else:
             log_warning(f"Unsupported image format or no data provided: {image}")
             return None
 
-        if image_payload and image.detail:  # Check if payload was created before adding detail
-            # Ensure image_url key exists before trying to access its sub-dictionary
-            if "image_url" not in image_payload:
-                # Initialize if missing (though unlikely based on helper funcs)
-                image_payload["image_url"] = {}
+        if image_payload and image.detail:
             image_payload["image_url"]["detail"] = image.detail
 
         return image_payload
 
-    except (FileNotFoundError, IsADirectoryError, ValueError) as e:
-        log_error(f"Failed to process image due to invalid input: {str(e)}")
+    except (FileNotFoundError, IsADirectoryError, ValueError):
+        log_error("Failed to process image due to invalid input")
         return None  # Return None for handled validation errors
     except Exception as e:
         log_error(f"An unexpected error occurred while processing image: {str(e)}")

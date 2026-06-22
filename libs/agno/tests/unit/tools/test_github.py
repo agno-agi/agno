@@ -1575,3 +1575,72 @@ def test_search_code(mock_github):
 
     assert "error" in result_data
     assert "API rate limit exceeded" in result_data["error"]
+
+
+def test_get_pull_requests_fewer_than_limit(mock_github):
+    """Test that get_pull_requests works when there are fewer PRs than the requested limit.
+
+    Regression test for https://github.com/agno-agi/agno/issues/7342
+    PyGithub's PaginatedList does not support slicing with [:limit] when there are
+    fewer items than the limit, raising an IndexError.
+    """
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    # Create only 2 mock PRs
+    mock_pr1 = MagicMock(spec=PullRequest)
+    mock_pr1.number = 1
+    mock_pr1.title = "First PR"
+    mock_pr1.html_url = "https://github.com/test-org/test-repo/pull/1"
+    mock_pr1.state = "open"
+    mock_pr1.user.login = "test-user"
+    mock_pr1.created_at.isoformat.return_value = "2024-02-04T12:00:00"
+    mock_pr1.updated_at.isoformat.return_value = "2024-02-04T13:00:00"
+
+    mock_pr2 = MagicMock(spec=PullRequest)
+    mock_pr2.number = 2
+    mock_pr2.title = "Second PR"
+    mock_pr2.html_url = "https://github.com/test-org/test-repo/pull/2"
+    mock_pr2.state = "open"
+    mock_pr2.user.login = "another-user"
+    mock_pr2.created_at.isoformat.return_value = "2024-02-03T12:00:00"
+    mock_pr2.updated_at.isoformat.return_value = "2024-02-03T14:00:00"
+
+    # Return only 2 PRs but request limit=50 (the default)
+    mock_repo.get_pulls.return_value = iter([mock_pr1, mock_pr2])
+
+    result = github_tools.get_pull_requests("test-org/test-repo", state="open", limit=50)
+    result_data = json.loads(result)
+
+    assert len(result_data) == 2
+    assert result_data[0]["number"] == 1
+    assert result_data[1]["number"] == 2
+
+
+def test_get_pull_requests_limit_respected(mock_github):
+    """Test that get_pull_requests respects the limit parameter."""
+    mock_client, mock_repo = mock_github
+    github_tools = GithubTools()
+
+    # Create 5 mock PRs
+    mock_prs = []
+    for i in range(5):
+        pr = MagicMock(spec=PullRequest)
+        pr.number = i + 1
+        pr.title = f"PR #{i + 1}"
+        pr.html_url = f"https://github.com/test-org/test-repo/pull/{i + 1}"
+        pr.state = "open"
+        pr.user.login = "test-user"
+        pr.created_at.isoformat.return_value = "2024-02-04T12:00:00"
+        pr.updated_at.isoformat.return_value = "2024-02-04T13:00:00"
+        mock_prs.append(pr)
+
+    mock_repo.get_pulls.return_value = iter(mock_prs)
+
+    # Request only 3
+    result = github_tools.get_pull_requests("test-org/test-repo", state="open", limit=3)
+    result_data = json.loads(result)
+
+    assert len(result_data) == 3
+    assert result_data[0]["number"] == 1
+    assert result_data[2]["number"] == 3

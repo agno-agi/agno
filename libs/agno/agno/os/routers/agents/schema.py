@@ -1,7 +1,12 @@
-from typing import Any, Dict, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.agent.factory import AgentFactory
 
 from agno.agent import Agent
 from agno.models.message import Message
@@ -21,6 +26,7 @@ class AgentResponse(BaseModel):
     db_id: Optional[str] = None
     description: Optional[str] = None
     role: Optional[str] = None
+    is_factory: bool = False
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -35,9 +41,30 @@ class AgentResponse(BaseModel):
     streaming: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    factory_input_schema: Optional[Dict[str, Any]] = None  # JSON Schema for factory_input
     is_component: bool = False
     current_version: Optional[int] = None
     stage: Optional[str] = None
+
+    @classmethod
+    def from_factory(cls, factory: AgentFactory) -> AgentResponse:
+        """Create an AgentResponse from an AgentFactory for /config discovery."""
+        factory_input_schema = None
+        if factory.input_schema is not None:
+            try:
+                factory_input_schema = factory.input_schema.model_json_schema()
+            except Exception:
+                pass
+
+        return cls(
+            id=factory.id,
+            name=factory.name,
+            description=factory.description,
+            db_id=factory.db.id if factory.db else None,
+            is_factory=True,
+            input_schema=factory_input_schema,
+            factory_input_schema=factory_input_schema,
+        )
 
     @classmethod
     async def from_agent(
@@ -140,7 +167,12 @@ class AgentResponse(BaseModel):
             _agent_model_data["provider"] = model_provider
 
         session_table = agent.db.session_table_name if agent.db else None
-        knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
+        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+        knowledge_table = (
+            contents_db.knowledge_table_name
+            if contents_db
+            else (agent.db.knowledge_table_name if agent.db and agent.knowledge else None)
+        )
 
         tools_info = {
             "tools": formatted_tools,
@@ -158,8 +190,6 @@ class AgentResponse(BaseModel):
             "num_past_session_runs_in_search": agent.num_past_session_runs_in_search,
             "cache_session": agent.cache_session,
         }
-
-        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
         knowledge_info = {
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,

@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
@@ -289,3 +289,22 @@ def get_text_from_message(message: Union[List, Dict, str, Message, BaseModel]) -
     if isinstance(message, Message) and message.content is not None:
         return get_text_from_message(message.content)
     return ""
+
+
+def get_conversation_text(messages: Sequence[Message]) -> str:
+    """Convert messages to a plain-text conversation transcript.
+
+    Keeps only user/assistant/model roles, extracts text content
+    (dropping tool_calls and other metadata), and normalizes labels.
+    """
+    parts = []
+    for msg in messages:
+        if msg.role == "user":
+            content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
+            if content and content.strip():
+                parts.append(f"User: {content}")
+        elif msg.role in ("assistant", "model"):
+            content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
+            if content and content.strip():
+                parts.append(f"Assistant: {content}")
+    return "\n".join(parts)

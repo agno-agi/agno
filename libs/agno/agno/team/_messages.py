@@ -311,6 +311,12 @@ def _build_trailing_sections(
     if team.additional_context is not None:
         content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
 
+    # Add skills to the system prompt
+    if team.skills is not None:
+        skills_snippet = team.skills.get_system_prompt_snippet()
+        if skills_snippet:
+            content += f"\n{skills_snippet}\n"
+
     if add_session_state_to_context and session_state is not None:
         content += _get_formatted_session_state_for_system_message(team, session_state)
 
@@ -427,8 +433,8 @@ def get_system_message(
                 from zoneinfo import ZoneInfo
 
                 tz = ZoneInfo(team.timezone_identifier)
-            except Exception:
-                log_warning("Invalid timezone identifier")
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
 
         time = datetime.now(tz) if tz else datetime.now()
 
@@ -464,7 +470,17 @@ def get_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Knowledge base instructions
+    # 2.3 Learning context (user profile, user memory, session context)
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
+    # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
@@ -474,7 +490,7 @@ def get_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
-    # 2.4 Memories
+    # 2.5 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -648,8 +664,8 @@ async def aget_system_message(
                 from zoneinfo import ZoneInfo
 
                 tz = ZoneInfo(team.timezone_identifier)
-            except Exception:
-                log_warning("Invalid timezone identifier")
+            except Exception as e:
+                log_warning(f"Invalid timezone identifier: {str(e)}")
 
         time = datetime.now(tz) if tz else datetime.now()
 
@@ -685,7 +701,17 @@ async def aget_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Knowledge base instructions
+    # 2.3 Learning context (user profile, user memory, session context)
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = await team._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
+    # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
@@ -695,7 +721,7 @@ async def aget_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
-    # 2.4 Memories
+    # 2.5 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -847,7 +873,7 @@ def _get_run_messages(
                     run_messages.messages.append(_m_parsed)
                     run_messages.extra_messages.append(_m_parsed)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
         # Add the extra messages to the run_response
         if len(messages_to_add_to_run_response) > 0:
             log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
@@ -982,7 +1008,7 @@ async def _aget_run_messages(
                     run_messages.messages.append(_m_parsed)
                     run_messages.extra_messages.append(_m_parsed)
                 except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
+                    log_warning(f"Failed to validate message: {str(e)}")
         # Add the extra messages to the run_response
         if len(messages_to_add_to_run_response) > 0:
             log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
@@ -1121,7 +1147,7 @@ def _get_user_message(
                 else:
                     return Message.model_validate(input_message)
             except Exception as e:
-                log_warning(f"Failed to validate input: {e}")
+                log_warning(f"Failed to validate input: {str(e)}")
 
         # If message is provided as a BaseModel, convert it to a Message
         elif isinstance(input_message, BaseModel):
@@ -1130,7 +1156,7 @@ def _get_user_message(
                 content = input_message.model_dump_json(indent=2, exclude_none=True)
                 return Message(role="user", content=content)
             except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
+                log_warning(f"Failed to convert BaseModel to message: {str(e)}")
         else:
             user_msg_content = input_message
             if team.add_knowledge_to_context:
@@ -1163,7 +1189,7 @@ def _get_user_message(
                     retrieval_timer.stop()
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                 except Exception as e:
-                    log_warning(f"Failed to get references: {e}")
+                    log_warning(f"Failed to get references: {str(e)}")
 
             if team.resolve_in_context:
                 user_msg_content = _format_message_with_state_variables(
@@ -1279,7 +1305,7 @@ async def _aget_user_message(
                 else:
                     return Message.model_validate(input_message)
             except Exception as e:
-                log_warning(f"Failed to validate input: {e}")
+                log_warning(f"Failed to validate input: {str(e)}")
 
         # If message is provided as a BaseModel, convert it to a Message
         elif isinstance(input_message, BaseModel):
@@ -1288,7 +1314,7 @@ async def _aget_user_message(
                 content = input_message.model_dump_json(indent=2, exclude_none=True)
                 return Message(role="user", content=content)
             except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
+                log_warning(f"Failed to convert BaseModel to message: {str(e)}")
         else:
             user_msg_content = input_message
             if team.add_knowledge_to_context:
@@ -1321,7 +1347,7 @@ async def _aget_user_message(
                     retrieval_timer.stop()
                     log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                 except Exception as e:
-                    log_warning(f"Failed to get references: {e}")
+                    log_warning(f"Failed to get references: {str(e)}")
 
             if team.resolve_in_context:
                 user_msg_content = _format_message_with_state_variables(
@@ -1481,7 +1507,7 @@ def _format_message_with_state_variables(
         result = template.safe_substitute(format_variables)
         return result
     except Exception as e:
-        log_warning(f"Template substitution failed: {e}")
+        log_warning(f"Template substitution failed: {str(e)}")
         return message
 
 

@@ -656,7 +656,7 @@ class GoogleCalendarTools(Toolkit):
             return json.dumps(result)
 
         except Exception as e:
-            log_error(f"An error occurred while finding available slots: {e}")
+            log_error(f"An error occurred while finding available slots: {str(e)}")
             return json.dumps({"error": f"An error occurred: {str(e)}"})
 
     @authenticate
