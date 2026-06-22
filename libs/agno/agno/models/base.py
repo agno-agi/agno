@@ -234,10 +234,10 @@ class Model(ABC):
         with optional exponential backoff.
         """
         last_exception: Optional[ModelProviderError] = None
+        retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
             try:
-                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return self.invoke(**kwargs)
             except ModelProviderError as e:
                 last_exception = self.classify_error(e)
@@ -282,10 +282,10 @@ class Model(ABC):
         with optional exponential backoff.
         """
         last_exception: Optional[ModelProviderError] = None
+        retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
             try:
-                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 return await self.ainvoke(**kwargs)
             except ModelProviderError as e:
                 last_exception = self.classify_error(e)
@@ -331,10 +331,10 @@ class Model(ABC):
         with optional exponential backoff. Note that retries restart the entire stream.
         """
         last_exception: Optional[ModelProviderError] = None
+        retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
             try:
-                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 yield from self.invoke_stream(**kwargs)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
@@ -383,10 +383,10 @@ class Model(ABC):
         with optional exponential backoff. Note that retries restart the entire stream.
         """
         last_exception: Optional[ModelProviderError] = None
+        retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
             try:
-                retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
                 async for response in self.ainvoke_stream(**kwargs):
                     yield response
                 return  # Success, exit the retry loop
