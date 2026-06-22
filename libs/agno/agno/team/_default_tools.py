@@ -48,6 +48,7 @@ from agno.run.agent import (
     RunOutputEvent,
 )
 from agno.run.cancel import (
+    araise_if_cancelled,
     aregister_member_run,
     raise_if_cancelled,
     register_member_drain_task,
@@ -858,7 +859,7 @@ def _get_delegate_task_function(
 
                     try:
                         if run_response.run_id is not None:
-                            raise_if_cancelled(run_response.run_id)
+                            await araise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
                         if member_run_id:
                             await _acascading_cancel_run(member_run_id)
@@ -894,7 +895,7 @@ def _get_delegate_task_function(
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
                 # Also check if the parent team's run was cancelled while the member was executing
                 if run_response.run_id is not None:
-                    raise_if_cancelled(run_response.run_id)
+                    await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             use_team_logger()
             _process_delegate_task_to_member(
@@ -1208,7 +1209,7 @@ def _get_delegate_task_function(
                             # Check if the parent team's run is cancelled - propagate to member
                             try:
                                 if run_response.run_id is not None:
-                                    raise_if_cancelled(run_response.run_id)
+                                    await araise_if_cancelled(run_response.run_id)
                             except RunCancelledException:
                                 if member_run_id:
                                     await _acascading_cancel_run(member_run_id)
@@ -1312,7 +1313,7 @@ def _get_delegate_task_function(
                         )
                         check_if_run_cancelled(member_agent_run_response)
                         if run_response.run_id is not None:
-                            raise_if_cancelled(run_response.run_id)
+                            await araise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
                         _process_delegate_task_to_member(
                             member_agent_run_response,

@@ -1323,7 +1323,7 @@ def run_dispatch(
     # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Normalise hook & guardails
+    # Normalise hook & guardrails
     if not agent._hooks_normalised:
         if agent.pre_hooks:
             agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
@@ -2753,10 +2753,10 @@ def arun_dispatch(  # type: ignore
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
-    # 2. Validate input against input_schema if provided
+    # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Normalise hooks & guardails
+    # Normalise hooks & guardrails
     if not agent._hooks_normalised:
         if agent.pre_hooks:
             agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
