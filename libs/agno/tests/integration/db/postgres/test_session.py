@@ -1,5 +1,6 @@
 """Integration tests for the Session related methods of the PostgresDb class"""
 
+import copy
 import time
 from datetime import datetime
 
@@ -1061,3 +1062,74 @@ def test_rename_session_without_type(
     assert result is not None
     assert isinstance(result, AgentSession)
     assert result.session_data.get("session_name") == "Renamed Session"
+
+
+# ---------------------------------------------------------------------------
+# upsert_run — atomic per-run persistence (sync)
+# ---------------------------------------------------------------------------
+
+
+def test_upsert_run_appends_new_run(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+    """upsert_run appends a new run to an existing session."""
+    postgres_db_real.upsert_session(sample_agent_session)
+
+    new_run = RunOutput(
+        run_id="test_agent_run_2",
+        agent_id="test_agent_1",
+        user_id="test_user_1",
+        status=RunStatus.completed,
+        messages=[],
+    )
+    postgres_db_real.upsert_run(
+        session_id="test_agent_session_1",
+        session_type=SessionType.AGENT,
+        run_data=new_run.to_dict(),
+    )
+
+    result = postgres_db_real.get_session(session_id="test_agent_session_1", session_type=SessionType.AGENT)
+    assert result is not None
+    assert len(result.runs) == 2
+    run_ids = {r.run_id for r in result.runs}
+    assert run_ids == {"test_agent_run_1", "test_agent_run_2"}
+
+
+def test_upsert_run_updates_existing_run(postgres_db_real: PostgresDb, sample_agent_session: AgentSession):
+    """upsert_run with the same run_id updates the existing entry instead of duplicating."""
+    postgres_db_real.upsert_session(sample_agent_session)
+
+    updated_run = RunOutput(
+        run_id="test_agent_run_1",
+        agent_id="test_agent_1",
+        user_id="test_user_1",
+        status=RunStatus.error,
+        messages=[],
+    )
+    postgres_db_real.upsert_run(
+        session_id="test_agent_session_1",
+        session_type=SessionType.AGENT,
+        run_data=updated_run.to_dict(),
+    )
+
+    result = postgres_db_real.get_session(session_id="test_agent_session_1", session_type=SessionType.AGENT)
+    assert result is not None
+    assert len(result.runs) == 1
+    assert result.runs[0].run_id == "test_agent_run_1"
+    assert result.runs[0].status == RunStatus.error
+
+
+def test_upsert_session_with_none_runs_preserves_existing(
+    postgres_db_real: PostgresDb, sample_agent_session: AgentSession
+):
+    """upsert_session with runs=None must not overwrite existing runs."""
+    postgres_db_real.upsert_session(sample_agent_session)
+
+    meta_session = copy.copy(sample_agent_session)
+    meta_session.runs = None
+    meta_session.session_data = {"session_name": "Updated Metadata"}
+    postgres_db_real.upsert_session(meta_session)
+
+    result = postgres_db_real.get_session(session_id="test_agent_session_1", session_type=SessionType.AGENT)
+    assert result is not None
+    assert result.session_data["session_name"] == "Updated Metadata"
+    assert len(result.runs) == 1
+    assert result.runs[0].run_id == "test_agent_run_1"
