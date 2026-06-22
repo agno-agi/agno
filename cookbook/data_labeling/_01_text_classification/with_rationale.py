@@ -9,7 +9,6 @@ for training datasets where the reasoning trace is itself an artifact.
 from typing import Literal
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -39,7 +38,7 @@ words that drove your decision in the rationale.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=Classification,
 )

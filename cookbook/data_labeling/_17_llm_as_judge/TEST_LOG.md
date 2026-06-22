@@ -1,6 +1,6 @@
 # Test Log - _17_llm_as_judge
 
-Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
+Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
 
 Score schemas switched from `Literal[1, 2, 3, 4, 5]` to `int` with `ge=1, le=5`. Gemini's structured-output enforcement requires string-valued enums, not integer enums; bounded `int` keeps the same 1-5 scale and the discrete-output guarantee without the Literal incompatibility.
 

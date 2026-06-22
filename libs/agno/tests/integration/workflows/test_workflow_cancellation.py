@@ -9,8 +9,14 @@ from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunContentEvent
 from agno.run.base import RunStatus
+from agno.run.cancel import cancel_run
 from agno.run.workflow import WorkflowCancelledEvent
 from agno.workflow import Step, Workflow
+from agno.workflow.condition import Condition
+from agno.workflow.loop import Loop
+from agno.workflow.parallel import Parallel
+from agno.workflow.router import Router
+from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
 
 # ============================================================================
@@ -726,3 +732,185 @@ class TestCancellationDoesNotAffectOnErrorSkip:
 
         assert result.step_results[1].step_name == "success_step"
         assert result.step_results[1].content == "success"
+
+
+# ============================================================================
+# NESTED PRIMITIVE CANCELLATION TESTS (Loop / Parallel / Condition / Router / Steps)
+# ============================================================================
+
+
+def _cancel_after_third_content(workflow, session_id):
+    """Stream a workflow, cancel after content '3', drain, and return collected events."""
+    events = []
+    run_id = None
+    stream = workflow.run(input="test", session_id=session_id, stream=True, stream_events=True)
+    for event in stream:
+        events.append(event)
+        if run_id is None and hasattr(event, "run_id"):
+            run_id = event.run_id
+        if isinstance(event, RunContentEvent) and event.content == "3" and run_id:
+            workflow.cancel_run(run_id)
+            for remaining in stream:
+                events.append(remaining)
+            break
+    return events
+
+
+class TestNestedPrimitiveCancellation:
+    """Cancellation must propagate + persist through Loop/Parallel/Condition/Router/Steps."""
+
+    def test_loop_streaming_cancel_persists(self, shared_db):
+        """Cancelling a streaming Loop propagates the cancel and persists status=cancelled."""
+        workflow = Workflow(
+            name="Loop Cancel",
+            db=shared_db,
+            telemetry=False,
+            steps=[
+                Loop(
+                    name="loop",
+                    max_iterations=5,
+                    steps=[Step(name="ls", executor=sync_streaming_executor)],
+                    end_condition=lambda outputs: False,
+                )
+            ],
+        )
+        events = _cancel_after_third_content(workflow, "wf_loop_cancel")
+        assert len([e for e in events if isinstance(e, WorkflowCancelledEvent)]) == 1
+        last_run = workflow.get_session(session_id="wf_loop_cancel").runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+    def test_parallel_streaming_cancel_persists(self, shared_db):
+        """Cancelling a streaming Parallel propagates the cancel and persists status=cancelled."""
+        workflow = Workflow(
+            name="Parallel Cancel",
+            db=shared_db,
+            telemetry=False,
+            steps=[
+                Parallel(
+                    Step(name="p1", executor=sync_streaming_executor),
+                    Step(name="p2", executor=sync_streaming_executor),
+                    name="par",
+                )
+            ],
+        )
+        events = _cancel_after_third_content(workflow, "wf_parallel_cancel")
+        assert len([e for e in events if isinstance(e, WorkflowCancelledEvent)]) == 1
+        last_run = workflow.get_session(session_id="wf_parallel_cancel").runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+    def test_condition_streaming_cancel_persists(self, shared_db):
+        """Cancelling a streaming Condition propagates the cancel and persists status=cancelled."""
+        workflow = Workflow(
+            name="Condition Cancel",
+            db=shared_db,
+            telemetry=False,
+            steps=[
+                Condition(
+                    name="cond",
+                    evaluator=lambda step_input: True,
+                    steps=[Step(name="cs", executor=sync_streaming_executor)],
+                )
+            ],
+        )
+        events = _cancel_after_third_content(workflow, "wf_condition_cancel")
+        assert len([e for e in events if isinstance(e, WorkflowCancelledEvent)]) == 1
+        last_run = workflow.get_session(session_id="wf_condition_cancel").runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+    def test_router_streaming_cancel_persists(self, shared_db):
+        """Cancelling a streaming Router propagates the cancel and persists status=cancelled."""
+        routed = Step(name="rs", executor=sync_streaming_executor)
+        workflow = Workflow(
+            name="Router Cancel",
+            db=shared_db,
+            telemetry=False,
+            steps=[Router(name="router", choices=[routed], selector=lambda step_input: routed)],
+        )
+        events = _cancel_after_third_content(workflow, "wf_router_cancel")
+        assert len([e for e in events if isinstance(e, WorkflowCancelledEvent)]) == 1
+        last_run = workflow.get_session(session_id="wf_router_cancel").runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+    def test_nested_steps_streaming_cancel_persists(self, shared_db):
+        """Cancelling a streaming nested Steps propagates the cancel and persists status=cancelled."""
+        inner = Steps(name="inner", steps=[Step(name="ns", executor=sync_streaming_executor)])
+        workflow = Workflow(name="Nested Cancel", db=shared_db, telemetry=False, steps=[inner])
+        events = _cancel_after_third_content(workflow, "wf_nested_cancel")
+        assert len([e for e in events if isinstance(e, WorkflowCancelledEvent)]) == 1
+        last_run = workflow.get_session(session_id="wf_nested_cancel").runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+    @pytest.mark.asyncio
+    async def test_async_loop_streaming_cancel_persists(self, shared_db):
+        """Cancelling an async streaming Loop propagates the cancel and persists status=cancelled."""
+        workflow = Workflow(
+            name="Async Loop Cancel",
+            db=shared_db,
+            telemetry=False,
+            steps=[
+                Loop(
+                    name="loop",
+                    max_iterations=5,
+                    steps=[Step(name="ls", executor=async_streaming_executor)],
+                    end_condition=lambda outputs: False,
+                )
+            ],
+        )
+        session_id = "wf_async_loop_cancel"
+        events = []
+        run_id = None
+        stream = workflow.arun(input="test", session_id=session_id, stream=True, stream_events=True)
+        async for event in stream:
+            events.append(event)
+            if run_id is None and hasattr(event, "run_id"):
+                run_id = event.run_id
+            if isinstance(event, RunContentEvent) and event.content == "3" and run_id:
+                await workflow.acancel_run(run_id)
+                async for remaining in stream:
+                    events.append(remaining)
+                break
+        assert len([e for e in events if isinstance(e, WorkflowCancelledEvent)]) == 1
+        last_run = workflow.get_session(session_id=session_id).runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+    def test_loop_non_streaming_cancels_between_iterations(self, shared_db):
+        """Regression: non-streaming Loop must check cancellation between iterations.
+
+        The step executor does NOT check cancellation itself, so the only checkpoint is
+        the loop's per-iteration check. A background thread cancels mid-run; the loop must
+        stop with status=cancelled rather than running all iterations to completion.
+        """
+
+        def sleepy_step(step_input: StepInput) -> StepOutput:
+            time.sleep(0.25)  # no cancellation check inside the step
+            return StepOutput(content="iteration done")
+
+        workflow = Workflow(
+            name="NonStream Loop Cancel",
+            db=shared_db,
+            telemetry=False,
+            steps=[
+                Loop(
+                    name="loop",
+                    max_iterations=10,
+                    steps=[Step(name="ls", executor=sleepy_step)],
+                    end_condition=lambda outputs: False,
+                )
+            ],
+        )
+
+        session_id = "wf_nonstream_loop_cancel"
+        run_id = "nonstream-loop-run"
+
+        def cancel_soon():
+            time.sleep(0.4)  # let the loop start, then cancel mid-run
+            cancel_run(run_id)
+
+        canceller = threading.Thread(target=cancel_soon)
+        canceller.start()
+        result = workflow.run(input="test", session_id=session_id, run_id=run_id, stream=False)
+        canceller.join()
+
+        assert result.status == RunStatus.cancelled, f"expected cancelled, got {result.status}"
+        last_run = workflow.get_session(session_id=session_id).runs[-1]
+        assert last_run.status == RunStatus.cancelled

@@ -58,7 +58,8 @@ the flag.
 **Status:** PASS (after two fixes)
 
 **Description:** Triggered the ingest workflow against the 38 Picsum URLs
-with `INGEST_CONCURRENCY=8`.
+with `INGEST_CONCURRENCY=8` (the shipped default has since been lowered to
+3 to stay clear of transient 5xx bursts — see settings.py).
 
 **Result:** all 38 indexed in ~10s.
 

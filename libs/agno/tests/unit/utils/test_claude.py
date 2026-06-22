@@ -16,7 +16,8 @@ class TestFormatFileForMessage:
 
         assert result["type"] == "document"
         assert result["source"]["type"] == "text"
-        assert result["source"]["media_type"] == "text/csv"
+        # Anthropic's text document source only accepts "text/plain" as the media_type.
+        assert result["source"]["media_type"] == "text/plain"
         assert result["source"]["data"] == csv_content
         assert result["citations"] == {"enabled": True}
 
@@ -38,7 +39,7 @@ class TestFormatFileForMessage:
         result = _format_file_for_message(File(content=raw, mime_type="text/csv"))
 
         assert result["source"]["type"] == "text"
-        assert result["source"]["media_type"] == "text/csv"
+        assert result["source"]["media_type"] == "text/plain"
         assert result["source"]["data"] == "col1,col2\na,b"
 
     def test_bytes_content_pdf_returns_base64_source(self):
@@ -66,7 +67,16 @@ class TestFormatFileForMessage:
 
     @pytest.mark.parametrize(
         "mime_type",
-        ["text/plain", "text/html", "text/xml", "text/javascript", "application/json", "application/x-python"],
+        [
+            "text/plain",
+            "text/html",
+            "text/xml",
+            "text/javascript",
+            "text/markdown",
+            "text/csv",
+            "application/json",
+            "application/x-python",
+        ],
     )
     def test_all_text_mimes_route_to_text_source(self, mime_type):
         raw = b"some text content"
@@ -74,7 +84,9 @@ class TestFormatFileForMessage:
         result = _format_file_for_message(File(content=raw, mime_type=mime_type))
 
         assert result["source"]["type"] == "text"
-        assert result["source"]["media_type"] == mime_type
+        # Regardless of the original text subtype, Anthropic only accepts "text/plain"
+        # for a text document source, so all of these must be normalised to it.
+        assert result["source"]["media_type"] == "text/plain"
 
     def test_text_data_is_not_base64_encoded(self, tmp_path):
         """Regression: old code base64-encoded before checking MIME, sending gibberish as text."""

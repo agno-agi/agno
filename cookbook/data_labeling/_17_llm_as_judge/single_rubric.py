@@ -8,7 +8,6 @@ graders.
 """
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -45,7 +44,7 @@ clarity, but the overall should reflect the worst dimension.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=RubricScore,
 )

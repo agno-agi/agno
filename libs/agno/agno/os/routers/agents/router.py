@@ -49,6 +49,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    classify_upload_file,
     find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
@@ -634,36 +635,15 @@ def get_agent_router(
 
         if files:
             for file in files:
-                if file.content_type in [
-                    "image/png",
-                    "image/jpeg",
-                    "image/jpg",
-                    "image/gif",
-                    "image/webp",
-                    "image/bmp",
-                    "image/tiff",
-                    "image/tif",
-                    "image/avif",
-                    "image/heic",
-                    "image/heif",
-                ]:
+                file_category = classify_upload_file(file)
+                if file_category == "image":
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {str(e)}")
                         continue
-                elif file.content_type in [
-                    "audio/wav",
-                    "audio/wave",
-                    "audio/mp3",
-                    "audio/mpeg",
-                    "audio/ogg",
-                    "audio/mp4",
-                    "audio/m4a",
-                    "audio/aac",
-                    "audio/flac",
-                ]:
+                elif file_category == "audio":
                     try:
                         audio = process_audio(file)
                         base64_audios.append(audio)
@@ -672,42 +652,14 @@ def get_agent_router(
                             f"Error processing audio {file.filename} with content type {file.content_type}: {str(e)}"
                         )
                         continue
-                elif file.content_type in [
-                    "video/x-flv",
-                    "video/quicktime",
-                    "video/mpeg",
-                    "video/mpegs",
-                    "video/mpgs",
-                    "video/mpg",
-                    "video/mpg",
-                    "video/mp4",
-                    "video/webm",
-                    "video/wmv",
-                    "video/3gpp",
-                ]:
+                elif file_category == "video":
                     try:
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
                     except Exception as e:
                         log_error(f"Error processing video {file.filename}: {str(e)}")
                         continue
-                elif file.content_type in [
-                    "application/pdf",
-                    "application/json",
-                    "application/x-javascript",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "application/vnd.ms-outlook",
-                    "text/javascript",
-                    "application/x-python",
-                    "text/x-python",
-                    "text/plain",
-                    "text/html",
-                    "text/css",
-                    "text/markdown",
-                    "text/csv",
-                    "text/xml",
-                    "text/rtf",
-                ]:
+                elif file_category == "document":
                     # Process document files
                     try:
                         input_file = process_document(file)

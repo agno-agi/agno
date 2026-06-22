@@ -39,9 +39,11 @@ from typing import TYPE_CHECKING
 
 from agno.context.mode import ContextMode
 from agno.run import RunContext
+from agno.run.agent import RunOutput
 from agno.tools import tool
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.models.base import Model
 
 
@@ -86,6 +88,7 @@ class ContextProvider(ABC):
         write: bool = True,
         query_tool_name: str | None = None,
         update_tool_name: str | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
         if not read and not write:
             raise ValueError(
@@ -105,6 +108,7 @@ class ContextProvider(ABC):
         self.write = write
         self.query_tool_name = query_tool_name or f"query_{_sanitize_id(id)}"
         self.update_tool_name = update_tool_name or f"update_{_sanitize_id(id)}"
+        self.stream_sub_agent_events = stream_sub_agent_events
 
     @abstractmethod
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer: ...
@@ -181,6 +185,14 @@ class ContextProvider(ABC):
     # Internals
     # ------------------------------------------------------------------
 
+    async def _aget_query_agent(self, run_context: RunContext | None) -> "Agent | None":
+        """Override to return the read sub-agent for streaming; None falls back to aquery()."""
+        return None
+
+    async def _aget_update_agent(self, run_context: RunContext | None) -> "Agent | None":
+        """Override to return the write sub-agent for streaming; None falls back to aupdate()."""
+        return None
+
     def _run_kwargs_for_sub_agent(self, run_context: RunContext | None) -> dict:
         """Extract kwargs to pass to a sub-agent ``arun()`` from the
         caller's RunContext.
@@ -205,6 +217,35 @@ class ContextProvider(ABC):
         the provider's recommended exposure."""
         return [self._query_tool()]
 
+    async def _stream_from_agent(
+        self,
+        agent: "Agent",
+        message: str,
+        run_context: RunContext | None,
+    ):
+        """Shared streaming logic for query and update tools."""
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        run_id = run_context.run_id if run_context else None
+        final_output: RunOutput | None = None
+
+        async for event in agent.arun(
+            message,
+            stream=True,
+            stream_events=self.stream_sub_agent_events,
+            yield_run_output=True,
+            **kwargs,
+        ):
+            if isinstance(event, RunOutput):
+                final_output = event
+                continue
+            event.parent_run_id = getattr(event, "parent_run_id", None) or run_id
+            yield event
+
+        if final_output is not None:
+            from agno.context._utils import answer_from_run
+
+            yield answer_from_run(final_output)
+
     def _read_write_tools(self) -> list:
         """Helper for subclasses with both query + update tools.
 
@@ -224,12 +265,30 @@ class ContextProvider(ABC):
         provider = self
 
         @tool(name=self.query_tool_name)
-        async def _query(question: str, run_context: RunContext | None = None) -> str:
+        async def _query(question: str, run_context: RunContext | None = None):
             try:
-                answer = await provider.aquery(question, run_context=run_context)
+                agent = await provider._aget_query_agent(run_context)
             except Exception as exc:
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            return json.dumps(_serialize_answer(answer))
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return
+
+            if agent is None:
+                try:
+                    answer = await provider.aquery(question, run_context=run_context)
+                except Exception as exc:
+                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                yield json.dumps(serialize_answer(answer))
+                return
+
+            try:
+                async for chunk in provider._stream_from_agent(agent, question, run_context):
+                    if isinstance(chunk, Answer):
+                        yield json.dumps(serialize_answer(chunk))
+                    else:
+                        yield chunk
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
         return _query
 
@@ -237,14 +296,36 @@ class ContextProvider(ABC):
         provider = self
 
         @tool(name=self.update_tool_name)
-        async def _update(instruction: str, run_context: RunContext | None = None) -> str:
+        async def _update(instruction: str, run_context: RunContext | None = None):
             try:
-                answer = await provider.aupdate(instruction, run_context=run_context)
+                agent = await provider._aget_update_agent(run_context)
             except NotImplementedError:
-                return json.dumps({"error": f"{provider.name} is read-only"})
+                yield json.dumps({"error": f"{provider.name} is read-only"})
+                return
             except Exception as exc:
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            return json.dumps(_serialize_answer(answer))
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return
+
+            if agent is None:
+                try:
+                    answer = await provider.aupdate(instruction, run_context=run_context)
+                except NotImplementedError:
+                    yield json.dumps({"error": f"{provider.name} is read-only"})
+                    return
+                except Exception as exc:
+                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                yield json.dumps(serialize_answer(answer))
+                return
+
+            try:
+                async for chunk in provider._stream_from_agent(agent, instruction, run_context):
+                    if isinstance(chunk, Answer):
+                        yield json.dumps(serialize_answer(chunk))
+                    else:
+                        yield chunk
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
         return _update
 
@@ -257,7 +338,7 @@ def _sanitize_id(raw: str) -> str:
     return s.strip("_") or "context"
 
 
-def _serialize_answer(answer: Answer) -> dict:
+def serialize_answer(answer: Answer) -> dict:
     """Build the JSON payload returned to the calling agent.
 
     Omit empty fields so the calling agent doesn't see filler. Today

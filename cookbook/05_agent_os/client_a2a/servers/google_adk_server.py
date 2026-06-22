@@ -24,7 +24,7 @@ Prerequisites:
     export GOOGLE_API_KEY=your_key
 
 Usage:
-    python cookbook/06_agent_os/client_a2a/servers/google_adk_server.py
+    python cookbook/05_agent_os/client_a2a/servers/google_adk_server.py
 
 The server will start at http://localhost:8001
 """

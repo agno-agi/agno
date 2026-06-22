@@ -1,6 +1,6 @@
 # Test Log - _18_quality_review
 
-Tested 2026-05-19 against `gemini-3.5-flash` (Gemini) for labeler A and `claude-opus-4-7` (Claude) for labeler B / reviewer / adjudicator, agno 2.6.8.
+Tested 2026-05-22 against `gemini-3.5-flash` for labeler A and `claude-opus-4-7` for labeler B / reviewer / adjudicator, agno 2.6.9.
 
 ### basic.py
 

@@ -23,6 +23,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
@@ -1718,16 +1719,26 @@ def _get_followups_response_format(model: Model) -> Optional[Union[Dict, Type[Ba
 
 
 def _build_followup_messages(
-    response_content: Any, num_suggestions: int, user_message: Optional[str] = None
+    response_content: Any,
+    num_suggestions: int,
+    user_message: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
 ) -> List[Message]:
     """Build the messages for the followups model call."""
     import json
+
+    from agno.utils.prompts import get_json_output_prompt
 
     system_prompt = (
         "Based on the user's message and the assistant's response below, generate follow-up suggestions. "
         "Each suggestion should be a short action-oriented prompt (5-10 words). "
         "Cover different angles: dig deeper, practical next step, or alternative perspective."
     )
+
+    # json_object-only providers (e.g. DeepSeek) require the word "json" in the prompt
+    # and an example of the expected shape when response_format={"type": "json_object"}
+    if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+        system_prompt += "\n\n" + get_json_output_prompt(Followups)  # type: ignore
 
     # Stringify content if needed
     if isinstance(response_content, str):
@@ -1803,7 +1814,9 @@ def generate_followups(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, agent.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1812,6 +1825,8 @@ def generate_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1830,7 +1845,9 @@ async def agenerate_followups(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, agent.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1839,6 +1856,8 @@ async def agenerate_followups(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1866,7 +1885,9 @@ def generate_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, agent.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = model.response(
@@ -1875,6 +1896,8 @@ def generate_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 
@@ -1910,7 +1933,9 @@ async def agenerate_followups_stream(
 
     response_format = _get_followups_response_format(model)
     user_message = run_response.input.input_content_string() if run_response.input else None
-    messages = _build_followup_messages(run_response.content, agent.num_followups, user_message=user_message)
+    messages = _build_followup_messages(
+        run_response.content, agent.num_followups, user_message=user_message, response_format=response_format
+    )
 
     try:
         model_response: ModelResponse = await model.aresponse(
@@ -1919,6 +1944,8 @@ async def agenerate_followups_stream(
         )
         run_response.followups = _parse_followups_response(model_response)
         _accumulate_followups_metrics(model_response, model, run_response)
+    except RunCancelledException:
+        raise
     except Exception as e:
         log_warning(f"Error generating followups: {str(e)}")
 

@@ -19,7 +19,6 @@ from agno.agent import Agent
 from agno.knowledge.document import Document
 from agno.knowledge.embedder.google import GeminiEmbedder
 from agno.media import Image
-from agno.models.google import Gemini
 from agno.vectordb.lancedb import LanceDb, SearchType
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -41,7 +40,7 @@ class ImageDescription(BaseModel):
 # Create Extraction Agent
 # ---------------------------------------------------------------------------
 extractor = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model="google:gemini-3.5-flash",
     instructions="You describe images as structured, search-friendly metadata.",
     output_schema=ImageDescription,
 )

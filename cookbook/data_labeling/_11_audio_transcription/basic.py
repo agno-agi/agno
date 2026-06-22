@@ -8,7 +8,6 @@ Speech-to-text on an audio clip. The output is a flat transcript string.
 import requests
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Audio
-from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -34,7 +33,7 @@ transcript. Do not add commentary.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=Transcript,
 )

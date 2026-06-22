@@ -15,8 +15,6 @@ from typing import List, Optional
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.anthropic import Claude
-from agno.models.google import Gemini
 from agno.workflow import Step, Workflow
 from agno.workflow.condition import Condition
 from agno.workflow.parallel import Parallel
@@ -63,21 +61,21 @@ shows. If a field is missing, leave it null. Do not guess.
 
 labeler_a = Agent(
     name="Labeler A",
-    model=Gemini(id="gemini-3.5-flash"),
+    model="google:gemini-3.5-flash",
     instructions=LABELER_INSTRUCTIONS,
     output_schema=Contact,
 )
 
 labeler_b = Agent(
     name="Labeler B",
-    model=Claude(id="claude-opus-4-7"),
+    model="anthropic:claude-opus-4-7",
     instructions=LABELER_INSTRUCTIONS,
     output_schema=Contact,
 )
 
 reviewer = Agent(
     name="Reviewer",
-    model=Claude(id="claude-opus-4-7"),
+    model="anthropic:claude-opus-4-7",
     instructions="""\
 You are given two labelers' Contact outputs. Compare them field by field.
 A field needs adjudication when both labelers report non-null but
@@ -89,7 +87,7 @@ needs_adjudication=true if any field needs adjudication.
 
 adjudicator = Agent(
     name="Adjudicator",
-    model=Claude(id="claude-opus-4-7"),
+    model="anthropic:claude-opus-4-7",
     instructions="""\
 Re-read the original input text and resolve every reported disagreement.
 Return a FinalLabel.contact populated with the correct values for all

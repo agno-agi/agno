@@ -11,7 +11,6 @@ from typing import List, Optional
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import File
-from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -45,7 +44,7 @@ fields null if not present. Do not invent recipes or paraphrase names.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=RecipeBook,
 )

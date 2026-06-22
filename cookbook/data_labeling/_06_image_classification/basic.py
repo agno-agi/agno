@@ -10,7 +10,6 @@ from typing import Literal
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Image
-from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -28,7 +27,7 @@ class Classification(BaseModel):
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model="google:gemini-3.5-flash",
     instructions="You classify images by scene type.",
     output_schema=Classification,
 )

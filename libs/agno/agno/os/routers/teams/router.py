@@ -45,6 +45,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    classify_upload_file,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
@@ -639,54 +640,29 @@ def get_team_router(
 
         if files:
             for file in files:
-                if file.content_type in [
-                    "image/png",
-                    "image/jpeg",
-                    "image/jpg",
-                    "image/webp",
-                    "image/heic",
-                    "image/heif",
-                ]:
+                file_category = classify_upload_file(file)
+                if file_category == "image":
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
                     except Exception:
                         logger.exception(f"Error processing image {file.filename}")
                         continue
-                elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
+                elif file_category == "audio":
                     try:
                         base64_audio = process_audio(file)
                         base64_audios.append(base64_audio)
                     except Exception:
                         logger.exception(f"Error processing audio {file.filename}")
                         continue
-                elif file.content_type in [
-                    "video/x-flv",
-                    "video/quicktime",
-                    "video/mpeg",
-                    "video/mpegs",
-                    "video/mpgs",
-                    "video/mpg",
-                    "video/mpg",
-                    "video/mp4",
-                    "video/webm",
-                    "video/wmv",
-                    "video/3gpp",
-                ]:
+                elif file_category == "video":
                     try:
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
                     except Exception:
                         logger.exception(f"Error processing video {file.filename}")
                         continue
-                elif file.content_type in [
-                    "application/pdf",
-                    "text/csv",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "application/vnd.ms-outlook",
-                    "text/plain",
-                    "application/json",
-                ]:
+                elif file_category == "document":
                     document_file = process_document(file)
                     if document_file is not None:
                         document_files.append(document_file)

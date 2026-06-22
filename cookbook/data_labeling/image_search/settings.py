@@ -27,9 +27,9 @@ KNOWLEDGE_TABLE = "image_library_contents"
 
 # How many URLs to process concurrently inside the ingest workflow. Each
 # in-flight URL holds an httpx fetch + a Gemini vision call + an embedding
-# call. 8 is a comfortable middle for Gemini Flash without tripping the
-# transient 5xx burst behavior we saw at higher concurrency.
-INGEST_CONCURRENCY = 8
+# call. 3 keeps us comfortably under Gemini Flash's limits; we saw
+# transient 5xx bursts at higher concurrency.
+INGEST_CONCURRENCY = 3
 
 # HTTP fetch timeout when downloading image bytes (per URL).
 FETCH_TIMEOUT_SECONDS = 30.0
