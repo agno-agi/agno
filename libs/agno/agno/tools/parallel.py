@@ -40,8 +40,7 @@ class ParallelTools(Toolkit):
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         max_results (int): Default maximum number of results for search operations. Default is 10.
         max_chars_per_result (int): Default maximum characters per result for search operations. Default is 10000.
-        beta_version (str): Beta API version header. Default is "search-extract-2025-10-10".
-        mode (Optional[str]): Default search mode. Options: "one-shot" or "agentic". Default is None.
+        mode (Optional[str]): Default search mode. Options: "turbo", "basic", or "advanced". Default is None (uses "advanced").
         include_domains (Optional[List[str]]): Default domains to restrict results to. Default is None.
         exclude_domains (Optional[List[str]]): Default domains to exclude from results. Default is None.
         max_age_seconds (Optional[int]): Default cache age threshold (minimum 600). Default is None.
@@ -63,7 +62,6 @@ class ParallelTools(Toolkit):
         all: bool = False,
         max_results: int = 10,
         max_chars_per_result: int = 10000,
-        beta_version: str = "search-extract-2025-10-10",
         mode: Optional[str] = None,
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
@@ -82,7 +80,6 @@ class ParallelTools(Toolkit):
 
         self.max_results = max_results
         self.max_chars_per_result = max_chars_per_result
-        self.beta_version = beta_version
         self.mode = mode
         self.include_domains = include_domains
         self.exclude_domains = exclude_domains
@@ -94,9 +91,7 @@ class ParallelTools(Toolkit):
         self.default_timeout = default_timeout
         self.default_output_schema = default_output_schema
 
-        self.parallel_client = ParallelClient(
-            api_key=self.api_key, default_headers={"parallel-beta": self.beta_version}
-        )
+        self.parallel_client = ParallelClient(api_key=self.api_key)
 
         tools: List[Any] = []
         if all or enable_search:
@@ -142,64 +137,53 @@ class ParallelTools(Toolkit):
             if not objective and not search_queries:
                 return json.dumps({"error": "Please provide at least one of: objective or search_queries"}, indent=2)
 
-            # Use instance defaults if not provided
             final_max_results = max_results if max_results is not None else self.max_results
 
-            search_params: Dict[str, Any] = {
-                "max_results": final_max_results,
-            }
+            search_params: Dict[str, Any] = {}
 
-            # Add objective if provided
             if objective:
                 search_params["objective"] = objective
 
-            # Add search_queries if provided
+            # search_queries is required — auto-populate from objective if not provided
             if search_queries:
                 search_params["search_queries"] = search_queries
+            elif objective:
+                search_params["search_queries"] = [objective]
 
-            # Add mode from constructor default
-            if self.mode:
-                search_params["mode"] = self.mode
+            search_params["mode"] = self.mode if self.mode else "advanced"
 
-            # Add excerpts configuration
-            excerpts_config: Dict[str, Any] = {}
+            advanced_settings: Dict[str, Any] = {"max_results": final_max_results}
+
             final_max_chars = max_chars_per_result if max_chars_per_result is not None else self.max_chars_per_result
             if final_max_chars is not None:
-                excerpts_config["max_chars_per_result"] = final_max_chars
+                advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_max_chars}
 
-            if excerpts_config:
-                search_params["excerpts"] = excerpts_config
-
-            # Add source_policy from constructor defaults
             source_policy: Dict[str, Any] = {}
             if self.include_domains:
                 source_policy["include_domains"] = self.include_domains
             if self.exclude_domains:
                 source_policy["exclude_domains"] = self.exclude_domains
-
             if source_policy:
-                search_params["source_policy"] = source_policy
+                advanced_settings["source_policy"] = source_policy
 
-            # Add fetch_policy from constructor defaults
             fetch_policy: Dict[str, Any] = {}
             if self.max_age_seconds is not None:
                 fetch_policy["max_age_seconds"] = self.max_age_seconds
             if self.disable_cache_fallback is not None:
                 fetch_policy["disable_cache_fallback"] = self.disable_cache_fallback
-
             if fetch_policy:
-                search_params["fetch_policy"] = fetch_policy
+                advanced_settings["fetch_policy"] = fetch_policy
 
-            search_result = self.parallel_client.beta.search(**search_params)
+            search_params["advanced_settings"] = advanced_settings
 
-            # Use model_dump() if available, otherwise convert to dict
+            search_result = self.parallel_client.search(**search_params)
+
+            # Prefer SDK's model_dump() for complete response, fall back to manual formatting
             try:
                 if hasattr(search_result, "model_dump"):
                     return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
             except Exception:
                 pass
-
-            # Manually format the results
             formatted_results: Dict[str, Any] = {
                 "search_id": getattr(search_result, "search_id", ""),
                 "results": [],
@@ -207,7 +191,7 @@ class ParallelTools(Toolkit):
 
             if hasattr(search_result, "results") and search_result.results:
                 results_list: List[Dict[str, Any]] = []
-                for result in search_result.results:
+                for result in search_result.results[:final_max_results]:
                     formatted_result: Dict[str, Any] = {
                         "title": getattr(result, "title", ""),
                         "url": getattr(result, "url", ""),
@@ -234,7 +218,6 @@ class ParallelTools(Toolkit):
         urls: List[str],
         objective: Optional[str] = None,
         search_queries: Optional[List[str]] = None,
-        excerpts: bool = True,
         max_chars_per_excerpt: Optional[int] = None,
         full_content: bool = False,
         max_chars_for_full_content: Optional[int] = None,
@@ -245,8 +228,7 @@ class ParallelTools(Toolkit):
             urls (List[str]): List of public URLs to extract content from.
             objective (Optional[str]): Search focus to guide content extraction.
             search_queries (Optional[List[str]]): Keywords for targeting relevant content.
-            excerpts (bool): Include relevant text snippets.
-            max_chars_per_excerpt (Optional[int]): Upper bound on total characters per url. Only used when excerpts is True.
+            max_chars_per_excerpt (Optional[int]): Upper bound on characters per URL for excerpts.
             full_content (bool): Include complete page text.
             max_chars_for_full_content (Optional[int]): Limit on characters per url. Only used when full_content is True.
 
@@ -257,50 +239,48 @@ class ParallelTools(Toolkit):
             if not urls:
                 return json.dumps({"error": "Please provide at least one URL to extract"}, indent=2)
 
-            extract_params: Dict[str, Any] = {
-                "urls": urls,
-            }
+            extract_params: Dict[str, Any] = {"urls": urls}
 
-            # Add objective if provided
             if objective:
                 extract_params["objective"] = objective
 
-            # Add search_queries if provided
             if search_queries:
                 extract_params["search_queries"] = search_queries
 
-            # Add excerpts configuration
-            if excerpts and max_chars_per_excerpt is not None:
-                extract_params["excerpts"] = {"max_chars_per_result": max_chars_per_excerpt}
-            else:
-                extract_params["excerpts"] = excerpts
+            advanced_settings: Dict[str, Any] = {}
 
-            # Add full_content configuration
-            if full_content and max_chars_for_full_content is not None:
-                extract_params["full_content"] = {"max_chars_per_result": max_chars_for_full_content}
-            else:
-                extract_params["full_content"] = full_content
+            final_excerpt_chars = (
+                max_chars_per_excerpt if max_chars_per_excerpt is not None else self.max_chars_per_result
+            )
+            if final_excerpt_chars is not None:
+                advanced_settings["excerpt_settings"] = {"max_chars_per_result": final_excerpt_chars}
 
-            # Add fetch_policy from constructor defaults
+            if full_content:
+                if max_chars_for_full_content is not None:
+                    advanced_settings["full_content"] = {"max_chars_per_result": max_chars_for_full_content}
+                else:
+                    advanced_settings["full_content"] = True
+
             fetch_policy: Dict[str, Any] = {}
             if self.max_age_seconds is not None:
                 fetch_policy["max_age_seconds"] = self.max_age_seconds
             if self.disable_cache_fallback is not None:
                 fetch_policy["disable_cache_fallback"] = self.disable_cache_fallback
-
             if fetch_policy:
-                extract_params["fetch_policy"] = fetch_policy
+                advanced_settings["fetch_policy"] = fetch_policy
 
-            extract_result = self.parallel_client.beta.extract(**extract_params)
+            if advanced_settings:
+                extract_params["advanced_settings"] = advanced_settings
 
-            # Use model_dump() if available, otherwise convert to dict
+            extract_result = self.parallel_client.extract(**extract_params)
+
+            # Prefer SDK's model_dump() for complete response, fall back to manual formatting
             try:
                 if hasattr(extract_result, "model_dump"):
                     return json.dumps(extract_result.model_dump(), cls=CustomJSONEncoder)
             except Exception:
                 pass
 
-            # Manually format the results
             formatted_results: Dict[str, Any] = {
                 "extract_id": getattr(extract_result, "extract_id", ""),
                 "results": [],
@@ -316,7 +296,7 @@ class ParallelTools(Toolkit):
                         "publish_date": getattr(result, "publish_date", ""),
                     }
 
-                    if excerpts and hasattr(result, "excerpts"):
+                    if hasattr(result, "excerpts"):
                         formatted_result["excerpts"] = result.excerpts
 
                     if full_content and hasattr(result, "full_content"):

@@ -1716,18 +1716,23 @@ def get_agents(
             component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
         )
         for component in components:
-            config = db.get_config(component_id=component["component_id"])
-            if config is not None:
-                agent_config = config.get("config")
-                if agent_config is not None:
-                    component_id = component["component_id"]
-                    if "id" not in agent_config:
-                        agent_config["id"] = component_id
-                    agent = Agent.from_dict(agent_config, registry=registry)
-                    agent.id = component_id
-                    agent._version = component.get("current_version")
-                    agent._stage = config.get("stage")
-                    agents.append(agent)
+            try:
+                config = db.get_config(component_id=component["component_id"])
+                if config is not None:
+                    agent_config = config.get("config")
+                    if agent_config is not None:
+                        component_id = component["component_id"]
+                        if "id" not in agent_config:
+                            agent_config["id"] = component_id
+                        agent = Agent.from_dict(agent_config, registry=registry)
+                        agent.id = component_id
+                        agent._version = component.get("current_version")
+                        agent._stage = config.get("stage")
+                        agents.append(agent)
+            except Exception as e:
+                component_id = component.get("component_id", "unknown")
+                log_error(f"Error loading Agent {component_id} from database: {str(e)}")
+                continue
         return agents
 
     except Exception as e:
