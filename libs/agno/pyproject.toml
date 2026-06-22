@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.6.12"
+version = "2.6.18"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -88,7 +88,7 @@ azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
 cohere = ["cohere"]
 infinity = ["infinity_client"]
-google = ["google-genai>=1.52.0"]
+google = ["google-genai>=1.52.0", "pydantic>=2.12.5"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
 litellm = ["litellm<=1.82.6"]
@@ -138,7 +138,7 @@ memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
 opencv = ["opencv-python"]
-parallel = ["parallel-web"]
+parallel = ["parallel-web>=1.0"]
 psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
@@ -393,7 +393,7 @@ demo = [
     "opentelemetry-api",
     "opentelemetry-sdk",
     "pandas",
-    "parallel-web",
+    "parallel-web>=1.0",
     "pgvector",
     "pillow",
     "psycopg[binary]",

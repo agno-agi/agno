@@ -12,7 +12,13 @@ from agno.models.response import ToolExecution
 from agno.os.interfaces.slack.event_handler import EventContext, SlackEventHandler
 from agno.os.interfaces.slack.helpers import BotNameResolver
 from agno.os.interfaces.slack.hitl import HITLHandler
-from agno.os.interfaces.slack.ids import ACTION_SUBMIT, encode_submit_button_value, row_block_id
+from agno.os.interfaces.slack.ids import (
+    ACTION_CHECK_STATUS,
+    ACTION_SUBMIT,
+    encode_admin_approval_button_value,
+    encode_submit_button_value,
+    row_block_id,
+)
 from agno.os.interfaces.slack.state import StreamState
 from agno.run.requirement import RunRequirement
 
@@ -93,6 +99,38 @@ def _make_submit_payload(blocks: list[dict[str, Any]], awaiting_ts: str | None =
                 "action_id": ACTION_SUBMIT,
                 "block_id": "pause:run-1",
                 "value": encode_submit_button_value("run-1", awaiting_ts),
+            }
+        ],
+    }
+
+
+def _make_check_status_payload(
+    approval_id: str = "appr-1",
+    req_id: str = "r1",
+    run_id: str = "run-1",
+    awaiting_ts: str = "await-1",
+) -> dict[str, Any]:
+    return {
+        "type": "block_actions",
+        "team": {"id": "T123"},
+        "user": {"id": "U123"},
+        "channel": {"id": "C123"},
+        "message": {
+            "ts": "222.333",
+            "thread_ts": "111.222",
+            "blocks": [
+                {
+                    "type": "card",
+                    "block_id": "admin_approval:r1",
+                    "title": {"text": "*deploy_schema*"},
+                    "body": {"text": "Args: table=users"},
+                }
+            ],
+        },
+        "actions": [
+            {
+                "action_id": ACTION_CHECK_STATUS,
+                "value": encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts),
             }
         ],
     }
@@ -418,7 +456,9 @@ class TestRouterWiring:
         ):
             mock_cls.return_value = make_slack_mock(token="xoxb-explicit-token")
             build_app(agent_mock, token="xoxb-explicit-token")
-            mock_cls.assert_called_once_with(token="xoxb-explicit-token", ssl=None, max_file_size=1_073_741_824)
+            mock_cls.assert_called_once_with(
+                token="xoxb-explicit-token", user_token=None, ssl=None, max_file_size=1_073_741_824
+            )
 
     def test_explicit_signing_secret_used(self):
         agent_mock = make_agent_mock()
@@ -889,3 +929,207 @@ class TestHITLFlow:
         mock_open.assert_awaited_once_with(mock_client, "C123", "111.222", "U123", "T123", "plan", 100)
         assert continued["called"] is True
         stream.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_submit_skips_required_approval_tools(self):
+        """Required approval tools are skipped in submit flow — they use Check Status."""
+        regular_req = _make_requirement(req_id="r1")
+        required_req = _make_requirement(req_id="r2", approval_type="required", approval_id="appr-1")
+        entity = AsyncMock()
+        entity.aget_run_output = AsyncMock(
+            return_value=Mock(active_requirements=[regular_req, required_req], user_id="user@test.com")
+        )
+
+        continued = {"called": False}
+
+        async def _continue_run(*args: Any, **kwargs: Any):
+            continued["called"] = True
+            yield Mock(
+                event=RunEvent.run_content.value,
+                content="resumed",
+                images=None,
+                videos=None,
+                audio=None,
+                files=None,
+                tool=None,
+            )
+
+        entity.acontinue_run = _continue_run
+        handler = HITLHandler(
+            slack_tools=make_slack_mock(token="xoxb-test"),
+            ssl=None,
+            entity=entity,
+            entity_id="agent-1",
+            entity_name="Test Agent",
+            entity_type="agent",
+            task_display_mode="plan",
+            buffer_size=100,
+        )
+        mock_client = make_async_client_mock()
+        mock_client.chat_delete = AsyncMock()
+        stream = make_stream_mock()
+        payload = _make_submit_payload(
+            blocks=[{"type": "section", "block_id": row_block_id("r1", "confirmation", decided="approve")}]
+        )
+
+        with (
+            patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.hitl.open_chat_stream", new=AsyncMock(return_value=stream)),
+        ):
+            await handler.handle_submit(payload)
+
+        # Regular tool is confirmed, required tool is untouched (skipped by parse_submit_payload)
+        assert regular_req.confirmation is True
+        assert required_req.confirmation is None
+        assert continued["called"] is True
+
+
+class TestAdminApprovalFlow:
+    """Tests for approval_type='required' tools resolved via admin dashboard + Check Status."""
+
+    @pytest.mark.asyncio
+    async def test_check_status_pending_updates_card(self):
+        """When admin hasn't approved yet, Check Status updates card to show pending."""
+        entity = AsyncMock()
+        db = Mock()
+        db.get_approval = Mock(return_value={"id": "appr-1", "status": "pending"})
+        entity.db = db
+
+        handler = HITLHandler(
+            slack_tools=make_slack_mock(token="xoxb-test"),
+            ssl=None,
+            entity=entity,
+            entity_id="agent-1",
+            entity_name="Test Agent",
+            entity_type="agent",
+            task_display_mode="plan",
+            buffer_size=100,
+        )
+        mock_client = make_async_client_mock()
+        payload = _make_check_status_payload()
+
+        with patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client):
+            await handler.handle_check_status(payload)
+
+        db.get_approval.assert_called_once_with("appr-1")
+        mock_client.chat_update.assert_awaited_once()
+        call = mock_client.chat_update.call_args
+        assert call.kwargs["text"] == "Status: pending"
+
+    @pytest.mark.asyncio
+    async def test_check_status_approved_resumes_run(self):
+        """When admin has approved via dashboard, Check Status resumes the run."""
+        requirement = _make_requirement(approval_type="required", approval_id="appr-1")
+        entity = AsyncMock()
+        entity.aget_run_output = AsyncMock(
+            return_value=Mock(active_requirements=[requirement], user_id="user@test.com")
+        )
+
+        db = Mock()
+        db.get_approval = Mock(return_value={"id": "appr-1", "status": "approved"})
+        entity.db = db
+
+        continued = {"called": False}
+
+        async def _continue_run(*args: Any, **kwargs: Any):
+            continued["called"] = True
+            yield Mock(
+                event=RunEvent.run_content.value,
+                content="resumed",
+                images=None,
+                videos=None,
+                audio=None,
+                files=None,
+                tool=None,
+            )
+
+        entity.acontinue_run = _continue_run
+        handler = HITLHandler(
+            slack_tools=make_slack_mock(token="xoxb-test"),
+            ssl=None,
+            entity=entity,
+            entity_id="agent-1",
+            entity_name="Test Agent",
+            entity_type="agent",
+            task_display_mode="plan",
+            buffer_size=100,
+        )
+        mock_client = make_async_client_mock()
+        mock_client.chat_delete = AsyncMock()
+        stream = make_stream_mock()
+        payload = _make_check_status_payload()
+
+        with (
+            patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client),
+            patch("agno.os.interfaces.slack.hitl.open_chat_stream", new=AsyncMock(return_value=stream)),
+        ):
+            await handler.handle_check_status(payload)
+
+        db.get_approval.assert_called_once_with("appr-1")
+        mock_client.chat_delete.assert_awaited_once_with(channel="C123", ts="await-1")
+        # Card updated to show approved status and button removed
+        mock_client.chat_update.assert_awaited_once()
+        update_call = mock_client.chat_update.call_args
+        assert update_call.kwargs["text"] == "Approved"
+        updated_blocks = update_call.kwargs["blocks"]
+        card_block = next(b for b in updated_blocks if b.get("type") == "card")
+        assert card_block["actions"] == []
+        assert card_block["subtext"]["text"] == ":white_check_mark: Approved"
+        # Run resumes after card update
+        assert continued["called"] is True
+        stream.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_check_status_rejected_updates_card(self):
+        """When admin has rejected, Check Status updates card to show rejected."""
+        entity = AsyncMock()
+        db = Mock()
+        db.get_approval = Mock(return_value={"id": "appr-1", "status": "rejected"})
+        entity.db = db
+
+        handler = HITLHandler(
+            slack_tools=make_slack_mock(token="xoxb-test"),
+            ssl=None,
+            entity=entity,
+            entity_id="agent-1",
+            entity_name="Test Agent",
+            entity_type="agent",
+            task_display_mode="plan",
+            buffer_size=100,
+        )
+        mock_client = make_async_client_mock()
+        payload = _make_check_status_payload()
+
+        with patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client):
+            await handler.handle_check_status(payload)
+
+        db.get_approval.assert_called_once_with("appr-1")
+        mock_client.chat_update.assert_awaited_once()
+        call = mock_client.chat_update.call_args
+        assert call.kwargs["text"] == "Status: rejected"
+
+    @pytest.mark.asyncio
+    async def test_check_status_no_db_returns_pending(self):
+        """Without a DB, _get_approval_status returns pending."""
+        entity = AsyncMock()
+        entity.db = None
+
+        handler = HITLHandler(
+            slack_tools=make_slack_mock(token="xoxb-test"),
+            ssl=None,
+            entity=entity,
+            entity_id="agent-1",
+            entity_name="Test Agent",
+            entity_type="agent",
+            task_display_mode="plan",
+            buffer_size=100,
+        )
+        mock_client = make_async_client_mock()
+        payload = _make_check_status_payload()
+
+        with patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client):
+            await handler.handle_check_status(payload)
+
+        mock_client.chat_update.assert_awaited_once()
+        call = mock_client.chat_update.call_args
+        assert call.kwargs["text"] == "Status: pending"
