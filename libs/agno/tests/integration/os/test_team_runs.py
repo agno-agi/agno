@@ -167,7 +167,7 @@ def test_continue_team_run_requires_session_id_for_local_teams(test_os_client, t
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "session_id is required to continue a run"
+    assert response.json()["detail"] == "session_id is required for this action"
 
 
 def test_continue_team_run_allows_empty_requirements_payload(test_os_client, test_team: Team):

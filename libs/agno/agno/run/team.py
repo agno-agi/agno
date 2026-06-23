@@ -277,6 +277,7 @@ class RunCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images attached to the response
     videos: Optional[List[Video]] = None  # Videos attached to the response
     audio: Optional[List[Audio]] = None  # Audio attached to the response
+    files: Optional[List[File]] = None  # Files attached to the response
     response_audio: Optional[Audio] = None  # Model audio response
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
@@ -425,6 +426,7 @@ class ToolCallCompletedEvent(BaseTeamRunEvent):
     images: Optional[List[Image]] = None  # Images produced by the tool call
     videos: Optional[List[Video]] = None  # Videos produced by the tool call
     audio: Optional[List[Audio]] = None  # Audio produced by the tool call
+    files: Optional[List[File]] = None  # Files produced by the tool call
 
 
 @dataclass

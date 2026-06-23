@@ -23,7 +23,7 @@ Providers ship in this package:
 | `WorkspaceContextProvider` | Local project workspace | `query_<id>` (read-only `Workspace` sub-agent with project-aware excludes) |
 | `WebContextProvider` + `ExaMCPBackend` | Web via Exa's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ExaBackend` | Web via Exa's direct SDK | `query_<id>` (search + fetch sub-agent) |
-| `WebContextProvider` + `ParallelBackend` | Web via Parallel's beta API | `query_<id>` (search + fetch sub-agent) |
+| `WebContextProvider` + `ParallelBackend` | Web via Parallel's direct SDK | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ParallelMCPBackend` | Web via Parallel's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
 | `DatabaseContextProvider` | Any SQL database (SQLAlchemy) | `query_<id>`, `update_<id>` (separate read/write sub-agents) |
 | `SlackContextProvider` | A Slack workspace | `query_<id>`, `update_<id>` (separate read/write sub-agents; writer only gets `send_message` + the lookup tools it needs) |
@@ -31,6 +31,7 @@ Providers ship in this package:
 | `GDriveContextProvider` | Google Drive via service account | `query_<id>` (list / search / read sub-agent; all-drives aware) |
 | `WikiContextProvider` + `FileSystemBackend` | A directory of markdown files | `query_<id>`, `update_<id>` (separate read/write sub-agents over `Workspace` tools) |
 | `WikiContextProvider` + `GitBackend` | A clone of a git repo (PAT auth) | `query_<id>`, `update_<id>`; writes auto-commit, rebase, and push |
+| `WikiContextProvider` + `NotionDatabaseBackend` | A Notion database (one row per page) mirrored as flat `.md` files; `notion_page_id` / `notion_last_edited` in frontmatter | `query_<id>`, `update_<id>`; writes round-trip through Notion blocks; conflict-detected on update |
 | `WikiContextProvider` + `web=ContextBackend` | Wiki + web ingestion (e.g. `ExaMCPBackend`) | Write sub-agent gains web search/fetch so `update_<id>("add this paper")` fetches and digests in one hop |
 
 All read+write providers (`WikiContextProvider`, `DatabaseContextProvider`, `SlackContextProvider`) accept `read=True, write=True` flags. Set `write=False` for a read-only surface (e.g. a code-managed voice wiki, an analytics-only DB), or `read=False` for a write-only sink. Both `False` raises.
@@ -42,7 +43,7 @@ All read+write providers (`WikiContextProvider`, `DatabaseContextProvider`, `Sla
 | `00_filesystem.py` | Browse local files via `FilesystemContextProvider` |
 | `01_web_exa.py` | Web research via Exa's direct SDK (needs `EXA_API_KEY`) |
 | `02_web_exa_mcp.py` | Web research via Exa's keyless public MCP endpoint |
-| `03_web_parallel.py` | Web research via Parallel's beta API |
+| `03_web_parallel.py` | Web research via Parallel's direct SDK |
 | `04_database_read_write.py` | Read + write a SQLite DB; end-to-end round trip |
 | `05_slack.py` | Slack workspace: read channels (always) + optional post via `SLACK_WRITE_CHANNEL` |
 | `06_mcp_server.py` | Wrap an MCP server; explicit `asetup` / `aclose` lifecycle |
@@ -55,6 +56,7 @@ All read+write providers (`WikiContextProvider`, `DatabaseContextProvider`, `Sla
 | `13_workspace.py` | Browse a repository root via `WorkspaceContextProvider` without virtualenv / scratch noise |
 | `14_wiki_filesystem.py` | Read + write a local markdown wiki via `WikiContextProvider(backend=FileSystemBackend(...))` |
 | `15_wiki_git.py` | Same provider against a real git remote; auto-commits and pushes (env-gated on `WIKI_REPO_URL` / `WIKI_GITHUB_TOKEN`) |
+| `15a_wiki_notion.py` | Same provider against a Notion database (flat: one row per page); files a customer call summary and prints the local mirror path + Notion page URL (env-gated on `NOTION_API_KEY` / `NOTION_DATABASE_ID`) |
 | `16_wiki_with_web.py` | Wiki + Exa MCP web backend; "add this paper" fetches the URL, digests it, and files it in one update call |
 | `17_wiki_dual.py` | Two `WikiContextProvider` instances on one agent — `company_knowledge` (full) + `company_voice` (`write=False`) |
 
@@ -75,6 +77,12 @@ OPENAI_API_KEY=... \
     WIKI_REPO_URL=https://github.com/<owner>/<repo>.git \
     WIKI_GITHUB_TOKEN=ghp_... \
     .venvs/demo/bin/python cookbook/12_context/15_wiki_git.py
+
+# Wiki against a Notion database (integration token + database id)
+OPENAI_API_KEY=... \
+    NOTION_API_KEY=ntn_... \
+    NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+    .venvs/demo/bin/python cookbook/12_context/15a_wiki_notion.py
 
 # Exa SDK (keyed) — higher throughput
 OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/01_web_exa.py

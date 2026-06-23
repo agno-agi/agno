@@ -61,6 +61,7 @@ class MongoDb(BaseDb):
         spans_collection: Optional[str] = None,
         schedules_collection: Optional[str] = None,
         schedule_runs_collection: Optional[str] = None,
+        learnings_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -80,6 +81,7 @@ class MongoDb(BaseDb):
             spans_collection (Optional[str]): Name of the collection to store spans.
             schedules_collection (Optional[str]): Name of the collection to store schedules.
             schedule_runs_collection (Optional[str]): Name of the collection to store schedule runs.
+            learnings_collection (Optional[str]): Name of the collection to store learnings.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -103,6 +105,7 @@ class MongoDb(BaseDb):
             spans_table=spans_collection,
             schedules_table=schedules_collection,
             schedule_runs_table=schedule_runs_collection,
+            learnings_table=learnings_collection,
         )
 
         _client: Optional[MongoClient] = db_client
@@ -264,6 +267,19 @@ class MongoDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.spans_collection
+
+        if table_type == "learnings":
+            # getattr(...) is None (not `not hasattr`) so a read with create=False that returns
+            # None isn't cached and silently swallows later writes.
+            if getattr(self, "learnings_collection", None) is None:
+                if self.learnings_table_name is None:
+                    raise ValueError("Learnings collection was not provided on initialization")
+                self.learnings_collection = self._get_or_create_collection(
+                    collection_name=self.learnings_table_name,
+                    collection_type="learnings",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.learnings_collection
 
         if table_type == "schedules":
             if not hasattr(self, "schedules_collection"):
@@ -945,8 +961,11 @@ class MongoDb(BaseDb):
             log_error(f"Error deleting memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: The topics.
@@ -959,7 +978,8 @@ class MongoDb(BaseDb):
             if collection is None:
                 return []
 
-            topics = collection.distinct("topics", {})
+            match_filter: Dict[str, Any] = {} if user_id is None else {"user_id": user_id}
+            topics = collection.distinct("topics", match_filter)
             return [topic for topic in topics if topic]
 
         except Exception as e:
@@ -2185,13 +2205,17 @@ class MongoDb(BaseDb):
                                 "else": {"$max": ["$end_time", trace_dict.get("end_time")]},
                             }
                         },
-                        # Preserve existing non-null context values using $ifNull
-                        "run_id": {"$ifNull": [trace.run_id, "$run_id"]},
-                        "session_id": {"$ifNull": [trace.session_id, "$session_id"]},
-                        "user_id": {"$ifNull": [trace.user_id, "$user_id"]},
-                        "agent_id": {"$ifNull": [trace.agent_id, "$agent_id"]},
-                        "team_id": {"$ifNull": [trace.team_id, "$team_id"]},
-                        "workflow_id": {"$ifNull": [trace.workflow_id, "$workflow_id"]},
+                        # Preserve existing non-null context values: $ifNull returns
+                        # the first non-null arg, so put the existing field first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": {"$ifNull": ["$run_id", trace.run_id]},
+                        "session_id": {"$ifNull": ["$session_id", trace.session_id]},
+                        "user_id": {"$ifNull": ["$user_id", trace.user_id]},
+                        "agent_id": {"$ifNull": ["$agent_id", trace.agent_id]},
+                        "team_id": {"$ifNull": ["$team_id", trace.team_id]},
+                        "workflow_id": {"$ifNull": ["$workflow_id", trace.workflow_id]},
                     }
                 },
                 {
@@ -2903,7 +2927,36 @@ class MongoDb(BaseDb):
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Learning methods not yet implemented for MongoDb")
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return None
+
+            query: Dict[str, Any] = {"learning_type": learning_type}
+            if user_id is not None:
+                query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if session_id is not None:
+                query["session_id"] = session_id
+            if namespace is not None:
+                query["namespace"] = namespace
+            if entity_id is not None:
+                query["entity_id"] = entity_id
+            if entity_type is not None:
+                query["entity_type"] = entity_type
+
+            result = collection.find_one(query)
+            if result is None:
+                return None
+            result.pop("_id", None)
+            return {"content": result.get("content")}
+
+        except Exception as e:
+            log_debug(f"Error retrieving learning: {e}")
+            return None
 
     def upsert_learning(
         self,
@@ -2919,10 +2972,75 @@ class MongoDb(BaseDb):
         entity_type: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
-        raise NotImplementedError("Learning methods not yet implemented for MongoDb")
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=True)
+            if collection is None:
+                return
+
+            current_time = int(time.time())
+            document = {
+                "learning_id": id,
+                "learning_type": learning_type,
+                "namespace": namespace,
+                "user_id": user_id,
+                "agent_id": agent_id,
+                "team_id": team_id,
+                "session_id": session_id,
+                "entity_id": entity_id,
+                "entity_type": entity_type,
+                "content": content,
+                "metadata": metadata,
+                "updated_at": current_time,
+            }
+            collection.update_one(
+                {"learning_id": id},
+                {"$set": document, "$setOnInsert": {"created_at": current_time}},
+                upsert=True,
+            )
+            log_debug(f"Upserted learning: {id}")
+
+        except Exception as e:
+            log_debug(f"Error upserting learning: {e}")
 
     def delete_learning(self, id: str) -> bool:
-        raise NotImplementedError("Learning methods not yet implemented for MongoDb")
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return False
+            result = collection.delete_one({"learning_id": id})
+            return result.deleted_count > 0
+        except Exception as e:
+            log_debug(f"Error deleting learning: {e}")
+            return False
+
+    def update_learning(self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None) -> bool:
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return False
+            # No upsert: only an existing row is updated, never inserted.
+            result = collection.update_one(
+                {"learning_id": id},
+                {"$set": {"content": content, "metadata": metadata, "updated_at": int(time.time())}},
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
+    def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return 0
+            query: Dict[str, Any] = {"user_id": user_id}
+            if learning_type is not None:
+                query["learning_type"] = learning_type
+            result = collection.delete_many(query)
+            return int(result.deleted_count or 0)
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
 
     def get_learnings(
         self,
@@ -2936,4 +3054,169 @@ class MongoDb(BaseDb):
         entity_type: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Learning methods not yet implemented for MongoDb")
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return []
+
+            query: Dict[str, Any] = {}
+            if learning_type is not None:
+                query["learning_type"] = learning_type
+            if user_id is not None:
+                query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if session_id is not None:
+                query["session_id"] = session_id
+            if namespace is not None:
+                query["namespace"] = namespace
+            if entity_id is not None:
+                query["entity_id"] = entity_id
+            if entity_type is not None:
+                query["entity_type"] = entity_type
+
+            cursor = collection.find(query)
+            if limit is not None:
+                cursor = cursor.limit(limit)
+
+            learnings = []
+            for row in list(cursor):
+                row.pop("_id", None)
+                learnings.append(row)
+            return learnings
+
+        except Exception as e:
+            log_debug(f"Error getting learnings: {e}")
+            return []
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return None
+            result = collection.find_one({"learning_id": id})
+            if result is None:
+                return None
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise e
+
+    def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return [], 0
+
+            query: Dict[str, Any] = {}
+            if learning_type is not None:
+                query["learning_type"] = learning_type
+            if user_id is not None:
+                if include_global:
+                    query["$or"] = [{"user_id": user_id}, {"user_id": None}]
+                else:
+                    query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if session_id is not None:
+                query["session_id"] = session_id
+            if namespace is not None:
+                query["namespace"] = namespace
+            if entity_id is not None:
+                query["entity_id"] = entity_id
+            if entity_type is not None:
+                query["entity_type"] = entity_type
+
+            total_count = collection.count_documents(query)
+
+            sort_direction = 1 if sort_order == "asc" else -1
+            cursor = (
+                collection.find(query)
+                .sort(sort_by or "updated_at", sort_direction)
+                .skip((page - 1) * limit)
+                .limit(limit)
+            )
+
+            learnings = []
+            for row in list(cursor):
+                row.pop("_id", None)
+                learnings.append(row)
+            return learnings, int(total_count)
+
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise e
+
+    def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return [], 0
+
+            # Exclude ownerless records: both explicit null and a missing user_id field
+            # (otherwise they group under _id: null and break LearningUserStats validation).
+            match_stage: Dict[str, Any] = {"user_id": {"$ne": None, "$exists": True}}
+            if learning_type is not None:
+                match_stage["learning_type"] = learning_type
+            if user_id is not None:
+                match_stage["user_id"] = user_id
+
+            # The grouped user_id is the "_id" field after $group.
+            sort_field = (
+                "_id"
+                if (sort_by or "last_learning_updated_at") == "user_id"
+                else (sort_by or "last_learning_updated_at")
+            )
+            sort_direction = 1 if sort_order == "asc" else -1
+
+            pipeline: List[Dict[str, Any]] = [
+                {"$match": match_stage},
+                {"$group": {"_id": "$user_id", "last_learning_updated_at": {"$max": "$updated_at"}}},
+                {"$sort": {sort_field: sort_direction}},
+            ]
+
+            count_result = list(collection.aggregate(pipeline + [{"$count": "total"}]))
+            total_count = count_result[0]["total"] if count_result else 0
+
+            if limit is not None:
+                if page is not None:
+                    pipeline.append({"$skip": (page - 1) * limit})
+                pipeline.append({"$limit": limit})
+
+            formatted_results = [
+                {"user_id": result["_id"], "last_learning_updated_at": result["last_learning_updated_at"]}
+                for result in list(collection.aggregate(pipeline))
+            ]
+            return formatted_results, int(total_count)
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e

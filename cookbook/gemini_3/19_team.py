@@ -46,7 +46,7 @@ writer = Agent(
     name="Writer",
     # role helps the team leader understand what this agent does
     role="Write engaging blog post drafts",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=writer_instructions,
     tools=[WebSearchTools()],
     db=gemini_agents_db,
@@ -78,7 +78,7 @@ You are a senior editor. Review content for quality and suggest improvements.
 editor = Agent(
     name="Editor",
     role="Review and improve content for clarity and quality",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=editor_instructions,
     db=gemini_agents_db,
     add_datetime_to_context=True,
@@ -109,7 +109,7 @@ fact_checker_member = Agent(
     name="Fact Checker",
     role="Verify factual claims using web search",
     # Uses Gemini's native search for fact-checking
-    model=Gemini(id="gemini-3-flash-preview", search=True),
+    model=Gemini(id="gemini-3.5-flash", search=True),
     instructions=fact_checker_instructions,
     db=gemini_agents_db,
     add_datetime_to_context=True,

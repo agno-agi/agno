@@ -45,7 +45,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 
 try:
     from google.auth.transport.requests import Request
@@ -94,7 +94,14 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
     - `sharedWithMe` — files shared with the user
     - `starred` — starred files
     - Combine with `and` / `or`: `name contains 'report' and mimeType = 'application/pdf'`
-    - Trashed files are filtered automatically. Do not add trashed clauses.""")
+    - Trashed files are filtered automatically. Do not add trashed clauses.
+
+    ## Handling Incomplete Results
+    If search returns `incompleteSearch: true`, some shared drives could not be searched.
+    This is a server-side limitation of the `allDrives` corpus, not a problem with your query.
+    - Inform the user that results may be incomplete due to shared drive limitations
+    - Do NOT retry the same query — the limitation is server-side
+    - For complete results, the user must reconfigure with `corpora="user"` or `corpora="drive"`""")
 
 
 authenticate = google_authenticate("drive")
@@ -241,7 +248,7 @@ class GoogleDriveTools(Toolkit):
     }
 
     # Partial response fields — only fetch what each tool needs
-    SEARCH_FIELDS = "nextPageToken, files(id, name, mimeType, modifiedTime, size, parents, description, webViewLink, webContentLink, owners(displayName, emailAddress))"
+    SEARCH_FIELDS = "nextPageToken, incompleteSearch, files(id, name, mimeType, modifiedTime, size, parents, description, webViewLink, webContentLink, owners(displayName, emailAddress))"
     READ_METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
 
     service: Optional[Resource]
@@ -513,12 +520,19 @@ class GoogleDriveTools(Toolkit):
                 list_kwargs["pageToken"] = page_token
             results = service.files().list(**list_kwargs).execute()
             files = results.get("files", [])
+            incomplete = results.get("incompleteSearch", False)
+            if incomplete:
+                log_debug(
+                    f"Google Drive returned incomplete search results "
+                    f"(corpora={self.corpora!r}); some drives could not be searched."
+                )
             return json.dumps(
                 {
                     "query": effective_query,
                     "files": files,
                     "count": len(files),
                     "nextPageToken": results.get("nextPageToken"),
+                    "incompleteSearch": incomplete,
                 }
             )
         except HttpError as e:

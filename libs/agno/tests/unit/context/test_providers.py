@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 
+from agno import __version__ as AGNO_VERSION
 from agno.context.calendar import GoogleCalendarContextProvider
 from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
@@ -239,7 +240,10 @@ def test_parallel_mcp_backend_builds_mcp_tools_with_bearer_header():
     mcp_tools = tools[0]
     params = mcp_tools.server_params
     assert params.url == "https://search.parallel.ai/mcp"
-    assert params.headers == {"Authorization": "Bearer secret"}
+    assert params.headers == {
+        "User-Agent": f"agno/{AGNO_VERSION}",
+        "Authorization": "Bearer secret",
+    }
     assert mcp_tools.include_tools == ["web_search", "web_fetch"]
     assert mcp_tools.timeout_seconds == 60
 
@@ -248,7 +252,9 @@ def test_parallel_mcp_backend_keyless_has_no_auth_header(monkeypatch):
     monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
     b = ParallelMCPBackend()
     tools = b.get_tools()
-    assert tools[0].server_params.headers is None
+    headers = tools[0].server_params.headers
+    assert headers == {"User-Agent": f"agno/{AGNO_VERSION}"}
+    assert "Authorization" not in headers
 
 
 def test_parallel_mcp_backend_custom_timeout_propagates():
@@ -444,6 +450,26 @@ def test_slack_read_surfaces_are_split_by_mode():
     assert "search_workspace" in assisted_tools.functions
     assert "get_channel_history" in assisted_tools.functions
     assert "get_thread" in assisted_tools.functions
+
+
+def test_slack_bot_token_without_user_token_excludes_search_messages():
+    """Without a user token, search_messages should not be registered."""
+    p = SlackContextProvider(token="xoxb-x")
+    bot_tools = p._ensure_bot_read_tools()
+    assisted_tools = p._ensure_assisted_read_tools()
+
+    assert "search_messages" not in bot_tools.functions
+    assert "search_messages" not in assisted_tools.functions
+
+
+def test_slack_user_token_enables_search_messages():
+    """With a user token, search_messages should be registered."""
+    p = SlackContextProvider(token="xoxb-x", user_token="xoxp-user")
+    bot_tools = p._ensure_bot_read_tools()
+    assisted_tools = p._ensure_assisted_read_tools()
+
+    assert "search_messages" in bot_tools.functions
+    assert "search_messages" in assisted_tools.functions
 
 
 def test_slack_read_instructions_override_both_read_agents(monkeypatch):

@@ -48,7 +48,7 @@ if not mime_type:
 # Create model and store
 # ---------------------------------------------------------------------------
 
-model = Gemini(id="gemini-3-flash-preview")
+model = Gemini(id="gemini-3.5-flash")
 agent = Agent(model=model, markdown=True)
 
 # Create a multimodal store with gemini-embedding-2 for image support

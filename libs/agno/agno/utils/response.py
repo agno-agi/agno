@@ -52,7 +52,8 @@ def escape_markdown_tags(content: str, tags: Set[str]) -> str:
 
 def check_if_run_cancelled(run_output: Union[RunOutput, RunOutputEvent, TeamRunOutput, TeamRunOutputEvent]):
     if run_output.is_cancelled:
-        raise RunCancelledException()
+        run_id = getattr(run_output, "run_id", None)
+        raise RunCancelledException(f"Run {run_id} was cancelled" if run_id else "Run was cancelled")
 
 
 def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:
