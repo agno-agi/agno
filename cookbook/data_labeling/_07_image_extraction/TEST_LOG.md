@@ -1,24 +1,16 @@
 # Test Log - _07_image_extraction
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6. Inputs are public Wikimedia URLs.
+Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
 
 ### basic.py
 
 **Status:** PASS
 
-**Description:** Extract a `Scene` (subject, setting, time of day, colors, objects) from a Golden Gate Bridge photo.
+**Description:** Extract a `Scene` (subject, setting, time of day, colors, objects) from a photo of Krakow's St. Mary's Basilica.
 
 **Result:** All fields populated correctly.
 
----
-
-### with_confidence.py
-
-**Status:** PASS
-
-**Description:** Same task with `ConfidentField` / `ConfidentList` wrapping each output (Eiffel Tower image).
-
-**Result:** All fields populated with `high` confidence; nested confidence wrappers serialize correctly.
+**Note:** Test image switched from a Wikimedia URL (Gemini can't fetch those) to `agno-public.s3.amazonaws.com/images/krakow_mariacki.jpg`.
 
 ---
 
@@ -26,10 +18,20 @@ Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6. Inputs are pu
 
 **Status:** PASS
 
-**Description:** OCR a sign image into typed fields (primary text, secondary text, color scheme).
+**Description:** OCR a text-heavy image into typed fields (primary text, secondary text, color scheme).
 
-**Result:** "Welcome to Fabulous Las Vegas / NEVADA" read correctly with multi-color palette.
+**Result:** Reads the Agno wordmark and body copy from the intro image into the typed schema.
 
-**Note:** Original URL (`Stop_sign_London_2020.jpg`) was 404. Replaced with the canonical Las Vegas welcome-sign URL (verified via Wikimedia API); also gives a richer multi-text example than a single-word stop sign.
+**Note:** Input switched from a Wikimedia "Welcome to Las Vegas" sign (Gemini can't fetch those URLs) to `agno-public.s3.us-east-1.amazonaws.com/images/agno-intro.png`. The schema is still about extracting text from an image — content changed from a sign to a marketing graphic.
+
+---
+
+### with_confidence.py
+
+**Status:** PASS
+
+**Description:** Same task with `ConfidentStr` / `ConfidentList` wrapping each output (fjord landscape from the gstatic gallery).
+
+**Result:** All fields populated with `high` confidence; nested confidence wrappers serialize correctly.
 
 ---

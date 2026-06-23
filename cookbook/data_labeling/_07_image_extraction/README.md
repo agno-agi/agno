@@ -29,4 +29,4 @@ python cookbook/data_labeling/_07_image_extraction/with_confidence.py
 python cookbook/data_labeling/_07_image_extraction/ocr_fields.py
 ```
 
-Requires `OPENAI_API_KEY`. Swap the URLs for your own images as needed.
+Requires `GOOGLE_API_KEY`. Swap the URLs for your own images as needed.

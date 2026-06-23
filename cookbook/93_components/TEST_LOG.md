@@ -21,4 +21,22 @@ Test results for `cookbook/93_components/` examples.
 
 ## Runtime Validation
 
-No runtime cookbook executions were performed in this pass.
+### auto_populate_registry.py
+
+**Status:** PASS
+
+**Description:** Builds a team (two agents with distinct models, one with a custom tool and a db) and a workflow, hands them to AgentOS without an explicit registry, and prints the auto-populated registry. Runs offline (no model calls).
+
+**Result:** Discovered `OpenAI:gpt-5.4` (collected once though shared by two agents), `OpenAI:gpt-5.4-mini`, the `get_weather` tool, and the `auto-registry-db` database. No registry was passed.
+
+---
+
+### auto_populate_registry_os.py
+
+**Status:** PASS
+
+**Description:** Same setup served as an AgentOS app. Verified `get_app()` builds and the registry is auto-populated; the components are served at `GET /registry?resource_type=...`. Constructed without serving (no blocking run).
+
+**Result:** Registry contained the member agents' models and tool with no registry passed. App built successfully.
+
+---

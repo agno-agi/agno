@@ -1564,6 +1564,8 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> List[str]:
         """Get all unique memory topics.
 
@@ -1571,6 +1573,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID to filter topics for (keyword-only)
 
         Returns:
             List[str]: List of unique topic names
@@ -1578,7 +1581,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {"db_id": db_id, "table": table}
+        params = {"user_id": user_id, "db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
         return await self._aget("/memory_topics", params=params, headers=headers)
@@ -1590,6 +1593,8 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> PaginatedResponse[UserStatsSchema]:
         """Get user memory statistics.
 
@@ -1599,6 +1604,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID to filter statistics for (keyword-only)
 
         Returns:
             PaginatedResponse[UserStatsSchema]: Paginated user statistics
@@ -1606,7 +1612,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"limit": limit, "page": page, "db_id": db_id, "table": table}
+        params: Dict[str, Any] = {"user_id": user_id, "limit": limit, "page": page, "db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/user_memory_stats", params=params, headers=headers)

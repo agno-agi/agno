@@ -38,4 +38,4 @@ python cookbook/data_labeling/_08_image_bounding_boxes/with_confidence.py
 python cookbook/data_labeling/_08_image_bounding_boxes/multi_object.py
 ```
 
-Requires `OPENAI_API_KEY`.
+Requires `GOOGLE_API_KEY`.

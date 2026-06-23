@@ -1,15 +1,15 @@
 # Test Log - _09_image_extraction_to_vectordb
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses) + `text-embedding-3-small`, agno 2.6.6.
+Tested 2026-05-22 against `gemini-3.5-flash` + `gemini-embedding-001` (embedder), agno 2.6.9.
 
 ### basic.py
 
 **Status:** PASS
 
-**Description:** Describe three images, embed the descriptions, store in LanceDb, then run two semantic queries.
+**Description:** Describe three images (Krakow basilica, fjord, savanna wildlife), embed the descriptions with `GeminiEmbedder`, store in LanceDb, then run two semantic queries.
 
-**Result:** "a famous landmark" returns Golden Gate and Eiffel; "a sleeping pet" returns the cat as top hit.
+**Result:** "a historic city at night" returns the Krakow basilica as top hit; "wildlife on the savanna" returns the elephants/giraffes/zebras scene.
 
-**Note:** Requires `lancedb` (not in the `agno[demo]` extras). Install with `uv pip install lancedb` into `.venvs/demo`. Worth either adding to the demo extras or shipping a `requirements.in` for this folder.
+**Note:** Requires `lancedb` (not in the `agno[demo]` extras). Install with `uv pip install lancedb` into `.venvs/demo`. Test inputs were also swapped off Wikimedia URLs since Gemini can't fetch those.
 
 ---

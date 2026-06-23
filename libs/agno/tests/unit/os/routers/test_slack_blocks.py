@@ -134,6 +134,15 @@ class TestConfirmationRow:
         assert card.actions[0].confirm is None
         assert card.actions[1].confirm is None
 
+    def test_long_tool_args_truncated_to_200_chars(self):
+        # Slack Card block body has 200 char limit; exceeding causes invalid_blocks
+        long_comment = "x" * 300
+        card = build_pause_message(
+            "A1", [_make_requirement(tool_name="comment_on_issue", tool_args={"body": long_comment})]
+        )[0]
+        assert len(card.body.text) <= 200
+        assert card.body.text.endswith("…")
+
 
 # -- User-input row --
 
@@ -453,6 +462,21 @@ class TestBuildConfirmationToggleCard:
         )
         assert card.title.text == "*cancel_subscription*"
         assert card.body.text == "• customer_id: `C-42`"
+
+    def test_long_body_truncated_to_200_chars(self):
+        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+
+        long_body = "• body: `" + "x" * 300 + "`"
+        card = build_confirmation_toggle_card(
+            req_id="r1",
+            run_id="A1",
+            awaiting_ts=None,
+            tool_name="comment_on_issue",
+            body_text=long_body,
+            selected="approve",
+        )
+        assert len(card.body.text) <= 200
+        assert card.body.text.endswith("…")
 
 
 # -- response_blocks --

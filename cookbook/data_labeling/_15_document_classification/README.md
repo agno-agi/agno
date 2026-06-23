@@ -24,5 +24,5 @@ python cookbook/data_labeling/_15_document_classification/basic.py
 python cookbook/data_labeling/_15_document_classification/with_confidence.py
 ```
 
-Requires `OPENAI_API_KEY`. The samples use a public PDF hosted by
+Requires `GOOGLE_API_KEY`. The samples use a public PDF hosted by
 agno-public; swap the URL for your own PDF.

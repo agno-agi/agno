@@ -11,7 +11,6 @@ This example extracts contact info from an email signature.
 from typing import Optional
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -41,7 +40,7 @@ not guess.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=Contact,
 )

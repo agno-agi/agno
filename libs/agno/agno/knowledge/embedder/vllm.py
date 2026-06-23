@@ -181,7 +181,7 @@ class VLLMEmbedder(Embedder):
                 return []
         else:
             # Local mode: use thread executor for CPU-bound operations
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, self.get_embedding, text)
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -204,7 +204,7 @@ class VLLMEmbedder(Embedder):
         else:
             # Local mode: use thread executor for CPU-bound operations
             try:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 return await loop.run_in_executor(None, self.get_embedding_and_usage, text)
             except Exception as e:
                 log_warning(f"Error in async local embedding: {str(e)}")

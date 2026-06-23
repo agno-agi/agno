@@ -7,25 +7,24 @@ score, plus an overall. Use this for eval consistency across runs and
 graders.
 """
 
-from typing import Literal
-
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
-
-Score = Literal[1, 2, 3, 4, 5]
 
 
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
 class RubricScore(BaseModel):
-    correctness: Score = Field(..., description="Is everything stated true")
-    completeness: Score = Field(..., description="Does it answer the prompt fully")
-    clarity: Score = Field(..., description="Easy to understand for the target reader")
-    concision: Score = Field(..., description="Free of wasted words")
-    overall: Score = Field(..., description="Holistic quality")
+    correctness: int = Field(..., ge=1, le=5, description="Is everything stated true")
+    completeness: int = Field(
+        ..., ge=1, le=5, description="Does it answer the prompt fully"
+    )
+    clarity: int = Field(
+        ..., ge=1, le=5, description="Easy to understand for the target reader"
+    )
+    concision: int = Field(..., ge=1, le=5, description="Free of wasted words")
+    overall: int = Field(..., ge=1, le=5, description="Holistic quality")
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ clarity, but the overall should reflect the worst dimension.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=RubricScore,
 )

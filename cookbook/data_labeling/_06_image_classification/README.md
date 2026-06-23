@@ -24,5 +24,5 @@ python cookbook/data_labeling/_06_image_classification/basic.py
 python cookbook/data_labeling/_06_image_classification/multilabel.py
 ```
 
-Requires `OPENAI_API_KEY`. The samples use stable Wikimedia URLs - swap
+Requires `GOOGLE_API_KEY`. The samples use stable Wikimedia URLs - swap
 your own image URLs or local paths in the `Image(...)` call.

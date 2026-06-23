@@ -243,6 +243,7 @@ async def test_get_agentos_config(mcp_client: MCPTestClient):
     workflow_ids = [workflow["id"] for workflow in result["workflows"]]
     assert "gateway-workflow" in workflow_ids, "Local workflow 'gateway-workflow' should be present"
     assert "qa-workflow" in workflow_ids, "Remote workflow 'qa-workflow' should be present"
+    assert "learning" in result
 
 
 @pytest.mark.asyncio

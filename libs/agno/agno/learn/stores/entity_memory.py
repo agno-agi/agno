@@ -39,11 +39,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union, cast
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
+from agno.learn.utils import build_learning_id
 from agno.utils.log import (
     log_debug,
     log_warning,
@@ -3095,7 +3096,10 @@ class EntityMemoryStore(LearningStore):
         namespace: str,
     ) -> str:
         """Build unique DB ID for entity."""
-        return f"entity_{namespace}_{entity_type}_{entity_id}"
+        return cast(
+            str,
+            build_learning_id("entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace),
+        )
 
     def _format_entity_basic(self, entity: Any) -> str:
         """Basic entity formatting fallback."""

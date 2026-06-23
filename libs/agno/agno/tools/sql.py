@@ -150,7 +150,7 @@ class SQLTools(Toolkit):
             # DML (INSERT/UPDATE/DELETE) and DDL don't return rows — don't
             # try to fetch. The `sess.begin()` context still commits on
             # clean exit.
-            if not result.returns_rows:
+            if not result.returns_rows:  # type: ignore[attr-defined]
                 return []
 
             try:

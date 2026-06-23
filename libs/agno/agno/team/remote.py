@@ -21,6 +21,9 @@ class RemoteTeam(BaseRemote):
     # Private cache for team config with TTL: (config, timestamp)
     _cached_team_config: Optional[Tuple["TeamResponse", float]] = None
 
+    knowledge_filters: Optional[Dict[str, Any]] = None
+    enable_agentic_knowledge_filters: Optional[bool] = False
+
     def __init__(
         self,
         base_url: str,

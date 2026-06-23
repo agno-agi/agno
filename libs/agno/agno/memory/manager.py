@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Type, Union
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -85,7 +86,15 @@ class MemoryManager:
         add_memories: bool = True,
         clear_memories: bool = False,
         debug_mode: bool = False,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        owner_type: Optional[str] = None,
     ):
+        self.id = id if id is not None else f"memory_manager_{uuid4().hex[:8]}"
+        self.name = name
+        self.owner_id = owner_id
+        self.owner_type = owner_type
         self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions

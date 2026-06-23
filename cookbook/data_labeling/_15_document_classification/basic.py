@@ -10,7 +10,6 @@ from typing import Literal
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import File
-from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -44,7 +43,7 @@ on the document's structure and content, not on a few keywords.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model="google:gemini-3.5-flash",
     instructions=instructions,
     output_schema=Classification,
 )

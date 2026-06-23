@@ -1,6 +1,6 @@
 # Test Log - _11_audio_transcription
 
-Tested 2026-05-17 against `gemini-3-flash-preview` (Gemini), agno 2.6.6.
+Tested 2026-05-22 against `gemini-3.5-flash`, agno 2.6.9.
 
 ### basic.py
 
