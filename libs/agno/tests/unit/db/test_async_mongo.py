@@ -233,9 +233,15 @@ def test_should_reset_collection_cache():
     assert db._should_reset_collection_cache() is False
 
     # After setting event loop
-    db._event_loop = asyncio.get_event_loop()
-    # Should return False when same loop
-    assert db._should_reset_collection_cache() is False
+    loop = asyncio.new_event_loop()
+    try:
+        db._event_loop = loop
+        asyncio.set_event_loop(loop)
+        # Should return False when same loop
+        assert db._should_reset_collection_cache() is False
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
 
 
 def test_client_type_constants():
