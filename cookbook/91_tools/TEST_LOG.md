@@ -1,5 +1,15 @@
 # Test Log
 
+### strale_compliance_agent.py
+
+**Status:** PASS
+
+**Description:** Added a Strale compliance cookbook with custom Agno tool wrappers for KYB checks, sanctions screening, and IBAN validation. The example includes a compliance-focused prompt, `output_schema`-based structured reporting, and setup comments for `straleio`, `STRALE_API_KEY`, `STRALE_MAX_PRICE_CENTS`, and model provider credentials.
+
+**Result:** Syntax validation passed with `PYTHONPATH=libs/agno python3 -m py_compile cookbook/91_tools/strale_compliance_agent.py`. Ruff validation passed with `python3 -m ruff check cookbook/91_tools/strale_compliance_agent.py cookbook/91_tools/README.md cookbook/91_tools/TEST_LOG.md`. Full runtime execution was not performed because this checkout does not have the demo virtual environment installed and live execution requires Strale and model provider credentials.
+
+---
+
 ### file_tools.py (Examples 6-8: exclude_patterns)
 
 **Status:** PASS
