@@ -22,9 +22,26 @@ DEFAULT_DENSE_VECTOR_NAME = "dense"
 DEFAULT_SPARSE_VECTOR_NAME = "sparse"
 DEFAULT_SPARSE_MODEL = "Qdrant/bm25"
 
+# Per-user RAG isolation (K2):
+# Qdrant's vendor-recommended multi-tenancy uses a single collection with a
+# tenant key in the payload, indexed with ``is_tenant=True`` so the engine
+# stores tenant data contiguously and can prune by tenant before traversing
+# the HNSW graph. We name the tenant field ``user_id``.
+#
+# Semantics:
+# * Inserts with ``user_id`` stamp the column in the payload.
+# * Inserts with ``user_id=None`` leave the column NULL — the SHARED bucket.
+# * Searches with ``user_id=X`` use a Filter with ``should`` matching either
+#   the caller's id OR is_empty(user_id). The shared bucket is always merged
+#   into per-user reads — admin uploads stay discoverable.
+# * Searches with ``user_id=None`` apply no scope (admin view, sees all).
+USER_ID_PAYLOAD_KEY = "user_id"
+
 
 class Qdrant(VectorDb):
     """Vector DB implementation powered by Qdrant - https://qdrant.tech/"""
+
+    USER_ID_KEY = USER_ID_PAYLOAD_KEY
 
     def __init__(
         self,
@@ -232,6 +249,28 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
+            self._ensure_user_id_payload_index_sync()
+
+    def _ensure_user_id_payload_index_sync(self) -> None:
+        """Create the tenant-style payload index on ``user_id``.
+
+        ``is_tenant=True`` tells Qdrant to store points sharing a tenant key
+        contiguously on disk — the engine can then prune by tenant before
+        walking the HNSW graph, which is what makes per-user reads cheap
+        on a single multi-tenant collection.
+        """
+        try:
+            self.client.create_payload_index(
+                collection_name=self.collection,
+                field_name=self.USER_ID_KEY,
+                field_schema=models.KeywordIndexParams(
+                    type=models.KeywordIndexType.KEYWORD,
+                    is_tenant=True,
+                ),
+            )
+        except Exception as e:
+            # Index may already exist on a re-created collection — that's fine.
+            log_debug(f"Skipping user_id payload index creation: {e}")
 
     async def async_create(self) -> None:
         """Create the collection asynchronously."""
@@ -262,6 +301,21 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
+            await self._ensure_user_id_payload_index_async()
+
+    async def _ensure_user_id_payload_index_async(self) -> None:
+        """Async counterpart to ``_ensure_user_id_payload_index_sync``."""
+        try:
+            await self.async_client.create_payload_index(
+                collection_name=self.collection,
+                field_name=self.USER_ID_KEY,
+                field_schema=models.KeywordIndexParams(
+                    type=models.KeywordIndexType.KEYWORD,
+                    is_tenant=True,
+                ),
+            )
+        except Exception as e:
+            log_debug(f"Skipping async user_id payload index creation: {e}")
 
     def name_exists(self, name: str) -> bool:
         """
@@ -311,6 +365,7 @@ class Qdrant(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 10,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Insert documents into the database.
@@ -319,6 +374,8 @@ class Qdrant(VectorDb):
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
             batch_size (int): Batch size for inserting documents
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+                ``None`` (default) writes to the shared bucket.
         """
         log_debug(f"Inserting {len(documents)} documents")
         points = []
@@ -350,7 +407,9 @@ class Qdrant(VectorDb):
                         iter(self.sparse_encoder.embed([document.content]))
                     ).as_object()  # type: ignore
 
-            # Create payload with document properties
+            # Create payload with document properties.
+            # ``user_id`` is a top-level payload field (not inside meta_data) so the
+            # tenant-style payload index can prune on it before HNSW traversal.
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,
@@ -358,6 +417,7 @@ class Qdrant(VectorDb):
                 "usage": document.usage,
                 "content_id": document.content_id,
                 "content_hash": content_hash,
+                self.USER_ID_KEY: user_id,
             }
 
             # Add filters as metadata if provided
@@ -380,7 +440,11 @@ class Qdrant(VectorDb):
         log_debug(f"Upsert {len(points)} documents")
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Insert documents asynchronously.
@@ -388,6 +452,8 @@ class Qdrant(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+                ``None`` (default) writes to the shared bucket.
         """
         log_debug(f"Inserting {len(documents)} documents asynchronously")
 
@@ -457,7 +523,8 @@ class Qdrant(VectorDb):
                         iter(self.sparse_encoder.embed([document.content]))
                     ).as_object()  # type: ignore
 
-            # Create payload with document properties
+            # Create payload with document properties.
+            # ``user_id`` is a top-level payload field (not inside meta_data).
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,
@@ -465,6 +532,7 @@ class Qdrant(VectorDb):
                 "usage": document.usage,
                 "content_id": document.content_id,
                 "content_hash": content_hash,
+                self.USER_ID_KEY: user_id,
             }
 
             # Add filters as metadata if provided
@@ -490,28 +558,43 @@ class Qdrant(VectorDb):
             await self.async_client.upsert(collection_name=self.collection, wait=False, points=points)
         log_debug(f"Upserted {len(points)} documents asynchronously")
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Upsert documents into the database.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         log_debug("Redirecting the request to insert")
         if self.content_hash_exists(content_hash):
             self._delete_by_content_hash(content_hash)
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
         log_debug("Redirecting the async request to async_insert")
-        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Search for documents in the collection.
@@ -520,6 +603,8 @@ class Qdrant(VectorDb):
             query (str): Query to search for
             limit (int): Number of search results to return
             filters (Optional[Dict[str, Any]]): Filters to apply while searching
+            user_id (Optional[str]): Restrict results to the caller's chunks
+                plus the shared bucket. ``None`` means no scope (admin view).
         """
 
         if isinstance(filters, List):
@@ -527,31 +612,37 @@ class Qdrant(VectorDb):
             filters = None
 
         formatted_filters = self._format_filters(filters or {})  # type: ignore
+        scoped_filter = self._merge_filters(formatted_filters, self._user_scope_filter(user_id))
         if self.search_type == SearchType.vector:
-            results = self._run_vector_search_sync(query, limit, formatted_filters=formatted_filters)  # type: ignore
+            results = self._run_vector_search_sync(query, limit, formatted_filters=scoped_filter)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = self._run_keyword_search_sync(query, limit, formatted_filters=formatted_filters)  # type: ignore
+            results = self._run_keyword_search_sync(query, limit, formatted_filters=scoped_filter)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = self._run_hybrid_search_sync(query, limit, formatted_filters=formatted_filters)  # type: ignore
+            results = self._run_hybrid_search_sync(query, limit, formatted_filters=scoped_filter)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
         return self._build_search_results(results, query)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Qdrant. No filters will be applied.")
             filters = None
 
         formatted_filters = self._format_filters(filters or {})  # type: ignore
+        scoped_filter = self._merge_filters(formatted_filters, self._user_scope_filter(user_id))
         if self.search_type == SearchType.vector:
-            results = await self._run_vector_search_async(query, limit, formatted_filters=formatted_filters)  # type: ignore
+            results = await self._run_vector_search_async(query, limit, formatted_filters=scoped_filter)  # type: ignore
         elif self.search_type == SearchType.keyword:
-            results = await self._run_keyword_search_async(query, limit, formatted_filters=formatted_filters)  # type: ignore
+            results = await self._run_keyword_search_async(query, limit, formatted_filters=scoped_filter)  # type: ignore
         elif self.search_type == SearchType.hybrid:
-            results = await self._run_hybrid_search_async(query, limit, formatted_filters=formatted_filters)  # type: ignore
+            results = await self._run_hybrid_search_async(query, limit, formatted_filters=scoped_filter)  # type: ignore
         else:
             raise ValueError(f"Unsupported search type: {self.search_type}")
 
@@ -731,6 +822,43 @@ class Qdrant(VectorDb):
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
+    def _user_scope_filter(self, user_id: Optional[str]) -> Optional[models.Filter]:
+        """Build the tenant scope predicate for a search/delete.
+
+        ``user_id=None`` returns ``None`` (no scope — admin view).
+
+        ``user_id="alice"`` returns a Filter that matches either:
+        * payload[user_id] == "alice"  (caller's own chunks), OR
+        * payload[user_id] is empty    (the shared/admin-uploaded bucket)
+
+        Using ``should`` (logical OR) is the documented Qdrant way to express
+        "this OR that". ``IsEmptyCondition`` matches both NULL and absent.
+        """
+        if not user_id:
+            return None
+        return models.Filter(
+            should=[
+                models.FieldCondition(
+                    key=self.USER_ID_KEY,
+                    match=models.MatchValue(value=user_id),
+                ),
+                models.IsEmptyCondition(is_empty=models.PayloadField(key=self.USER_ID_KEY)),
+            ]
+        )
+
+    def _merge_filters(self, base: Optional[models.Filter], scope: Optional[models.Filter]) -> Optional[models.Filter]:
+        """Combine the user-supplied metadata filter with the tenant scope.
+
+        Tenant scope is OR-based (caller's bucket OR shared), so we can't
+        flatten it into the user filter's ``must`` list. Instead nest it:
+        the result must match the metadata filter AND must match the scope.
+        """
+        if scope is None:
+            return base
+        if base is None:
+            return scope
+        return models.Filter(must=[base, scope])
+
     def _format_filters(self, filters: Optional[Dict[str, Any]]) -> Optional[models.Filter]:
         if filters:
             filter_conditions = []
@@ -900,15 +1028,29 @@ class Qdrant(VectorDb):
             log_warning(f"Error deleting points with metadata {metadata}: {str(e)}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete all points that have the specified content_id in their payload."""
-        try:
-            log_info(f"Attempting to delete all points with content_id: {content_id}")
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete all points that have the specified content_id in their payload.
 
-            # Create a filter to find all points with the specified content_id
-            filter_condition = models.Filter(
-                must=[models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))]
-            )
+        Per-user isolation contract:
+        * ``user_id="alice"``: only Alice's chunks with this content_id are
+          removed. Bob's chunks (and shared chunks) under the same content_id
+          remain untouched. This is what stops Bob from guessing Alice's
+          content_id to wipe her data.
+        * ``user_id=None`` (legacy default): deletes ALL chunks with this
+          content_id regardless of owner. Mirrors LanceDB's unscoped semantic.
+        """
+        try:
+            log_info(f"Attempting to delete all points with content_id: {content_id} (user_id={user_id})")
+
+            must_conditions: List[Any] = [
+                models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))
+            ]
+            if user_id:
+                must_conditions.append(
+                    models.FieldCondition(key=self.USER_ID_KEY, match=models.MatchValue(value=user_id))
+                )
+
+            filter_condition = models.Filter(must=must_conditions)
 
             # First, count how many points will be deleted
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)

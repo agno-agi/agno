@@ -37,27 +37,33 @@ class MockVectorDb(VectorDb):
     def content_hash_exists(self, content_hash: str) -> bool:
         return False
 
-    def insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters=None, user_id=None) -> None:
         self.inserted_documents.extend(documents)
 
-    async def async_insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
+    async def async_insert(self, content_hash: str, documents: List[Document], filters=None, user_id=None) -> None:
         self.inserted_documents.extend(documents)
 
-    def upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters=None, user_id=None) -> None:
         pass
 
-    async def async_upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
+    async def async_upsert(self, content_hash: str, documents: List[Document], filters=None, user_id=None) -> None:
         pass
 
     def upsert_available(self) -> bool:
         return True
 
-    def search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
-        self.search_calls.append({"query": query, "limit": limit, "filters": filters})
+    def search(self, query: str, limit: int = 5, filters=None, user_id=None) -> List[Document]:
+        self.search_calls.append(
+            {"query": query, "limit": limit, "filters": filters, "user_id": user_id}
+        )
         return [Document(name="test", content="test content")]
 
-    async def async_search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
-        self.search_calls.append({"query": query, "limit": limit, "filters": filters})
+    async def async_search(
+        self, query: str, limit: int = 5, filters=None, user_id=None
+    ) -> List[Document]:
+        self.search_calls.append(
+            {"query": query, "limit": limit, "filters": filters, "user_id": user_id}
+        )
         return [Document(name="test", content="test content")]
 
     def drop(self) -> None:

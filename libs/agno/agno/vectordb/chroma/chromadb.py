@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import md5
@@ -128,8 +129,16 @@ class ChromaDb(VectorDb):
         # Chroma client instance
         self._client: Optional[ClientAPI] = None
 
-        # Chroma collection instance
+        # Chroma collection instance for the BASE / unscoped path.
+        # Per-user collections (see ``_get_or_create_collection``) are
+        # resolved on demand and cached in ``_user_collections``.
         self._collection: Optional[Collection] = None
+        # Per-user collection cache keyed by resolved collection name.
+        # Chroma's vendor-recommended multi-tenancy primitive is one
+        # collection per tenant; we lift that pattern into the wrapper
+        # so callers see a uniform ``Knowledge.asearch(user_id=...)`` API
+        # while the backend routes to the right physical collection.
+        self._user_collections: Dict[str, Collection] = {}
 
         # Persistent Chroma client instance
         self.persistent_client: bool = persistent_client
@@ -147,6 +156,84 @@ class ChromaDb(VectorDb):
 
         # Batch size for ChromaDB operations
         self._batch_size: Optional[int] = batch_size
+
+    # ----------------------------------------------------------------
+    # Per-user collection routing (Chroma multi-tenancy primitive)
+    # ----------------------------------------------------------------
+    # Chroma's vendor-recommended pattern for isolating tenants is one
+    # collection per tenant — not metadata filtering. Collections give us
+    # physical separation: a scoped search physically cannot see chunks
+    # outside the collection(s) it queries, which sidesteps Chroma's
+    # version-dependent ``where`` filter semantics entirely.
+    #
+    # Naming:
+    #   - ``user_id`` is a non-empty string  → ``{collection_name}__{user_id}``
+    #   - ``user_id`` is None or ``""``      → ``self.collection_name`` (base,
+    #     unscoped / backwards-compatible path)
+    #   - Admin uploads with no owner go to the BASE collection. Scoped
+    #     searches always read both the caller's collection AND the base
+    #     collection so org-wide content stays discoverable. That's why
+    #     ``user_id=None`` doesn't go to a ``__shared__`` collection —
+    #     using the base collection means existing deployments keep
+    #     working with no migration.
+    #
+    # Sanitisation: Chroma collection names must be 3-63 chars,
+    # alphanumeric + ``_`` / ``.`` / ``-``. We pass simple values through
+    # and hash anything that wouldn't survive that rule.
+
+    _CHROMA_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,61}[A-Za-z0-9]$")
+
+    def _sanitize_user_id_for_collection(self, user_id: str) -> str:
+        """Return a Chroma-safe component for the per-user collection
+        name. Simple alphanumeric IDs flow through unchanged (debuggable);
+        anything with weird characters gets hashed to a stable suffix.
+        """
+        candidate = user_id
+        # Reserve enough budget for the base ``{collection_name}__`` prefix.
+        suffix_budget = 63 - len(self.collection_name) - 2  # "__"
+        if (
+            self._CHROMA_NAME_RE.match(candidate)
+            and len(candidate) <= suffix_budget
+            and ".." not in candidate
+        ):
+            return candidate
+        # Fallback: 16-char hex hash. Stable per-user across processes.
+        return md5(user_id.encode("utf-8")).hexdigest()[:16]
+
+    def _collection_name_for(self, user_id: Optional[str]) -> str:
+        """Resolve the physical collection name for a scope.
+
+        Empty / None → base collection (unchanged from pre-isolation
+        behaviour, so deployments that don't use ``user_id`` keep working
+        with the same name they always had).
+        """
+        if not user_id:
+            return self.collection_name
+        safe = self._sanitize_user_id_for_collection(user_id)
+        return f"{self.collection_name}__{safe}"
+
+    def _get_or_create_collection(self, user_id: Optional[str]) -> Collection:
+        """Resolve, cache, and (if needed) create the collection for the
+        given owner scope. Cheap on the hot path: cache lookup first."""
+        name = self._collection_name_for(user_id)
+        # Base path is cached on ``self._collection`` for backwards-compat
+        # with anything that still touches that attribute directly.
+        if name == self.collection_name and self._collection is not None:
+            return self._collection
+        cached = self._user_collections.get(name)
+        if cached is not None:
+            return cached
+
+        # Create-or-get. ``get_or_create_collection`` handles both branches
+        # atomically — we don't have to call ``exists`` first.
+        collection = self.client.get_or_create_collection(
+            name=name, metadata={"hnsw:space": self.distance.value}
+        )
+        if name == self.collection_name:
+            self._collection = collection
+        else:
+            self._user_collections[name] = collection
+        return collection
 
     def _flatten_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Union[str, int, float, bool]]:
         """
@@ -304,12 +391,23 @@ class ChromaDb(VectorDb):
         """Check if a document with given name exists asynchronously."""
         return await asyncio.to_thread(self.name_exists, name)
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert documents into the collection.
 
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to merge with document metadata
+            user_id (Optional[str]): Owner for per-user RAG isolation. Routes
+                the insert to a per-user collection (Chroma's vendor-
+                recommended multi-tenancy primitive). ``None`` writes to
+                the base collection — that's the unscoped / shared bucket
+                that scoped searches read alongside the caller's own.
         """
         log_info(f"Inserting {len(documents)} documents")
         ids: List = []
@@ -317,8 +415,7 @@ class ChromaDb(VectorDb):
         docs_embeddings: List = []
         docs_metadata: List = []
 
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
+        target_collection = self._get_or_create_collection(user_id)
 
         id_counts: Dict[str, int] = {}
         for document in documents:
@@ -358,20 +455,21 @@ class ChromaDb(VectorDb):
             docs_metadata.append(flattened_metadata)
             log_debug(f"Prepared document: {document.id} | {document.name} | {flattened_metadata}")
 
-        if self._collection is None:
-            logger.warning("Collection does not exist")
-        else:
-            self._batch_operation(
-                ids=ids,
-                embeddings=docs_embeddings,
-                documents=docs,
-                metadatas=docs_metadata,
-                operation_name="insert",
-                operation_func=self._collection.add,
-            )
+        self._batch_operation(
+            ids=ids,
+            embeddings=docs_embeddings,
+            documents=docs,
+            metadatas=docs_metadata,
+            operation_name="insert",
+            operation_func=target_collection.add,
+        )
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Insert documents asynchronously by running in a thread."""
         log_info(f"Async Inserting {len(documents)} documents")
@@ -380,8 +478,7 @@ class ChromaDb(VectorDb):
         docs_embeddings: List = []
         docs_metadata: List = []
 
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
+        target_collection = self._get_or_create_collection(user_id)
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -462,47 +559,58 @@ class ChromaDb(VectorDb):
             docs_metadata.append(flattened_metadata)
             log_debug(f"Prepared document: {document.id} | {document.name} | {flattened_metadata}")
 
-        if self._collection is None:
-            logger.warning("Collection does not exist")
-        else:
-            # Run the synchronous ChromaDB batch on a worker thread so the
-            # asyncio event loop stays responsive while the (potentially large)
-            # write completes.
-            await asyncio.to_thread(
-                self._batch_operation,
-                ids=ids,
-                embeddings=docs_embeddings,
-                documents=docs,
-                metadatas=docs_metadata,
-                operation_name="async_insert",
-                operation_func=self._collection.add,
-            )
+        # Run the synchronous ChromaDB batch on a worker thread so the
+        # asyncio event loop stays responsive while the (potentially large)
+        # write completes.
+        await asyncio.to_thread(
+            self._batch_operation,
+            ids=ids,
+            embeddings=docs_embeddings,
+            documents=docs,
+            metadatas=docs_metadata,
+            operation_name="async_insert",
+            operation_func=target_collection.add,
+        )
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
         return True
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Upsert documents into the collection.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): See ``insert``.
         """
         try:
             if self.content_hash_exists(content_hash):
                 self._delete_by_content_hash(content_hash)
-            self._upsert(content_hash, documents, filters)
+            self._upsert(content_hash, documents, filters, user_id=user_id)
         except Exception:
             logger.exception("Error upserting documents by content hash")
             raise
 
-    def _upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def _upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Upsert documents into the collection.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): See ``insert``.
         """
         log_info(f"Upserting {len(documents)} documents")
         ids: List = []
@@ -510,8 +618,7 @@ class ChromaDb(VectorDb):
         docs_embeddings: List = []
         docs_metadata: List = []
 
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
+        target_collection = self._get_or_create_collection(user_id)
 
         id_counts: Dict[str, int] = {}
         for document in documents:
@@ -551,20 +658,21 @@ class ChromaDb(VectorDb):
             docs_metadata.append(flattened_metadata)
             log_debug(f"Upserted document: {document.id} | {document.name} | {flattened_metadata}")
 
-        if self._collection is None:
-            logger.warning("Collection does not exist")
-        else:
-            self._batch_operation(
-                ids=ids,
-                embeddings=docs_embeddings,
-                documents=docs,
-                metadatas=docs_metadata,
-                operation_name="upsert",
-                operation_func=self._collection.upsert,
-            )
+        self._batch_operation(
+            ids=ids,
+            embeddings=docs_embeddings,
+            documents=docs,
+            metadatas=docs_metadata,
+            operation_name="upsert",
+            operation_func=target_collection.upsert,
+        )
 
     async def _async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents into the collection.
 
@@ -578,8 +686,7 @@ class ChromaDb(VectorDb):
         docs_embeddings: List = []
         docs_metadata: List = []
 
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
+        target_collection = self._get_or_create_collection(user_id)
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -657,36 +764,88 @@ class ChromaDb(VectorDb):
             docs_metadata.append(flattened_metadata)
             log_debug(f"Upserted document: {document.id} | {document.name} | {flattened_metadata}")
 
-        if self._collection is None:
-            logger.warning("Collection does not exist")
-        else:
-            # Run the synchronous ChromaDB batch on a worker thread so the
-            # asyncio event loop stays responsive while the (potentially large)
-            # write completes.
-            await asyncio.to_thread(
-                self._batch_operation,
-                ids=ids,
-                embeddings=docs_embeddings,
-                documents=docs,
-                metadatas=docs_metadata,
-                operation_name="async_upsert",
-                operation_func=self._collection.upsert,
-            )
+        # Run the synchronous ChromaDB batch on a worker thread so the
+        # asyncio event loop stays responsive while the (potentially large)
+        # write completes.
+        await asyncio.to_thread(
+            self._batch_operation,
+            ids=ids,
+            embeddings=docs_embeddings,
+            documents=docs,
+            metadatas=docs_metadata,
+            operation_name="async_upsert",
+            operation_func=target_collection.upsert,
+        )
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Upsert documents asynchronously by running in a thread."""
+        """Upsert documents asynchronously by running in a thread.
+
+        ``user_id`` routes the write to the per-user collection (see ``insert``).
+        """
         try:
             if self.content_hash_exists(content_hash):
                 self._delete_by_content_hash(content_hash)
-            await self._async_upsert(content_hash, documents, filters)
+            await self._async_upsert(content_hash, documents, filters, user_id=user_id)
         except Exception:
             logger.exception("Error upserting documents by content hash")
             raise
 
+    def _collections_to_query(self, user_id: Optional[str]) -> List[Collection]:
+        """Build the list of collections to query for a scoped search.
+
+        ``user_id`` is ``None`` → just the base collection (legacy / admin
+        view, sees everything in the unscoped collection).
+
+        ``user_id`` is set → caller's collection PLUS the base collection.
+        The base holds admin / org-wide content uploaded with no owner;
+        scoped retrieval includes it so shared content stays discoverable
+        alongside the caller's own chunks.
+
+        Collections that don't exist yet are skipped silently (no rows yet
+        for that user is the same as zero results).
+        """
+        if not user_id:
+            try:
+                return [self._get_or_create_collection(None)]
+            except Exception:
+                return []
+
+        result: List[Collection] = []
+        # Caller's own collection (may not exist yet — that's fine).
+        try:
+            user_name = self._collection_name_for(user_id)
+            cached = self._user_collections.get(user_name)
+            if cached is not None:
+                result.append(cached)
+            else:
+                # Use ``get_collection`` (not get_or_create) so we don't
+                # spuriously create empty collections on every query.
+                result.append(self.client.get_collection(name=user_name))
+                # Cache for next time.
+                self._user_collections[user_name] = result[-1]
+        except Exception:
+            log_debug(f"No collection yet for user_id={user_id!r}; only shared scope will be queried")
+
+        # Base/shared collection — always queried alongside.
+        try:
+            result.append(self._get_or_create_collection(None))
+        except Exception:
+            log_debug("Base collection unavailable for scoped query")
+
+        return result
+
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search the collection for a query.
 
@@ -699,6 +858,10 @@ class ChromaDb(VectorDb):
                 - $gt, $gte, $lt, $lte: Numeric comparisons
                 - $in, $nin: List inclusion/exclusion
                 - $and, $or: Logical operators
+            user_id (Optional[str]): Per-user RAG isolation scope. When set,
+                results are restricted to the caller's per-user collection
+                plus the base (shared) collection. When ``None``, only the
+                base collection is queried (admin / unscoped behaviour).
         Returns:
             List[Document]: List of search results.
         """
@@ -706,19 +869,47 @@ class ChromaDb(VectorDb):
             log_warning("Filter Expressions are not yet supported in ChromaDB. No filters will be applied.")
             filters = None
 
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
-
-        # Route to appropriate search method based on search_type
-        if self.search_type == SearchType.vector:
-            search_results = self._vector_search(query, limit, filters)
-        elif self.search_type == SearchType.keyword:
-            search_results = self._keyword_search(query, limit, filters)
-        elif self.search_type == SearchType.hybrid:
-            search_results = self._hybrid_search(query, limit, filters)
-        else:
-            log_error(f"Invalid search type '{self.search_type}'.")
+        collections = self._collections_to_query(user_id)
+        if not collections:
             return []
+
+        # Query each collection for ``limit`` results, merge by score/distance,
+        # take top ``limit``. Over-fetches up to 2×limit total but guarantees
+        # we don't drop a high-scoring caller chunk just because the shared
+        # bucket has many irrelevant matches (or vice-versa).
+        merged: List[Document] = []
+        for coll in collections:
+            if self.search_type == SearchType.vector:
+                merged.extend(self._vector_search(query, limit, filters, collection=coll))
+            elif self.search_type == SearchType.keyword:
+                merged.extend(self._keyword_search(query, limit, filters, collection=coll))
+            elif self.search_type == SearchType.hybrid:
+                merged.extend(self._hybrid_search(query, limit, filters, collection=coll))
+            else:
+                log_error(f"Invalid search type '{self.search_type}'.")
+                return []
+
+        # Dedupe by ``(name, content)`` so the same chunk doesn't surface
+        # twice if it somehow lives in both collections (shouldn't, but
+        # defend in depth).
+        seen: set = set()
+        unique: List[Document] = []
+        for doc in merged:
+            key = (doc.name, doc.content)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(doc)
+
+        # Sort by Chroma distance (lower = better) when available. Documents
+        # without a similarity score (e.g. hybrid-search results scored via
+        # RRF instead of distance) get sorted to the end stably via inf.
+        def _sort_key(d: Document) -> float:
+            score = d.meta_data.get("similarity_score") if d.meta_data else None
+            return float(score) if score is not None else float("inf")
+
+        unique.sort(key=_sort_key)
+        search_results = unique[:limit]
 
         if self.reranker and search_results:
             try:
@@ -729,13 +920,23 @@ class ChromaDb(VectorDb):
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
-    def _vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def _vector_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        collection: Optional[Collection] = None,
+    ) -> List[Document]:
         """Perform pure vector similarity search.
 
         Args:
             query (str): Query to search for.
             limit (int): Number of results to return.
             filters (Optional[Dict[str, Any]]): Metadata filters to apply.
+            collection: The Chroma collection to query. Defaults to the
+                base collection (``self._collection``) for backwards
+                compatibility; ``search`` passes per-user collections
+                explicitly when scoped.
 
         Returns:
             List[Document]: List of search results.
@@ -745,13 +946,12 @@ class ChromaDb(VectorDb):
             log_error(f"Error getting embedding for Query: {query}")
             return []
 
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
+        target = collection if collection is not None else self._get_or_create_collection(None)
 
         # Convert simple filters to ChromaDB's format if needed
         where_filter = self._convert_filters(filters) if filters else None
 
-        result: QueryResult = self._collection.query(
+        result: QueryResult = target.query(
             query_embeddings=query_embedding,
             n_results=limit,
             where=where_filter,
@@ -760,7 +960,13 @@ class ChromaDb(VectorDb):
 
         return self._build_search_results(result)
 
-    def _keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def _keyword_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        collection: Optional[Collection] = None,
+    ) -> List[Document]:
         """Perform keyword-based search using document content filtering.
 
         This uses ChromaDB's where_document filter with $contains operator
@@ -770,12 +976,12 @@ class ChromaDb(VectorDb):
             query (str): Query to search for (keywords to match in document content).
             limit (int): Number of results to return.
             filters (Optional[Dict[str, Any]]): Metadata filters to apply.
+            collection: The Chroma collection to query. See ``_vector_search``.
 
         Returns:
             List[Document]: List of search results.
         """
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
+        target = collection if collection is not None else self._get_or_create_collection(None)
 
         # Convert simple filters to ChromaDB's format if needed
         where_filter = self._convert_filters(filters) if filters else None
@@ -790,7 +996,7 @@ class ChromaDb(VectorDb):
 
         try:
             # Get documents matching the keyword filter
-            result = self._collection.get(
+            result = target.get(
                 where=where_filter,
                 where_document=cast(Any, where_document),
                 limit=limit,
@@ -802,7 +1008,13 @@ class ChromaDb(VectorDb):
             logger.exception("Error in keyword search")
             return []
 
-    def _hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def _hybrid_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        collection: Optional[Collection] = None,
+    ) -> List[Document]:
         """Perform hybrid search combining vector similarity with full-text search using RRF.
 
         This method combines:
@@ -815,6 +1027,7 @@ class ChromaDb(VectorDb):
             query (str): Query to search for.
             limit (int): Number of results to return.
             filters (Optional[Dict[str, Any]]): Metadata filters to apply.
+            collection: The Chroma collection to query. See ``_vector_search``.
 
         Returns:
             List[Document]: List of search results with RRF-fused ranking.
@@ -824,8 +1037,7 @@ class ChromaDb(VectorDb):
             log_error(f"Error getting embedding for Query: {query}")
             return []
 
-        if not self._collection:
-            self._collection = self.client.get_collection(name=self.collection_name)
+        target = collection if collection is not None else self._get_or_create_collection(None)
 
         # Convert simple filters to ChromaDB's format if needed
         where_filter = self._convert_filters(filters) if filters else None
@@ -836,7 +1048,7 @@ class ChromaDb(VectorDb):
         def dense_vector_similarity_search() -> List[Tuple[str, float]]:
             """Dense vector similarity search."""
             try:
-                results = self._collection.query(  # type: ignore
+                results = target.query(  # type: ignore
                     query_embeddings=query_embedding,
                     n_results=fetch_k,
                     where=where_filter,
@@ -865,7 +1077,7 @@ class ChromaDb(VectorDb):
                 # Use first word for $contains filter
                 fts_where_document: Dict[str, Any] = {"$contains": query_words[0]}
 
-                results = self._collection.query(  # type: ignore
+                results = target.query(  # type: ignore
                     query_embeddings=query_embedding,
                     n_results=fetch_k,
                     where=where_filter,
@@ -913,7 +1125,7 @@ class ChromaDb(VectorDb):
 
         # Fetch full document data for top results
         try:
-            full_results = self._collection.get(
+            full_results = target.get(
                 ids=top_ids,
                 include=["documents", "metadatas", "embeddings"],
             )
@@ -1050,6 +1262,10 @@ class ChromaDb(VectorDb):
         for idx, distance in enumerate(distances):
             if idx < len(metadata):
                 metadata[idx]["distances"] = distance
+                # Stash the distance under a stable key the cross-collection
+                # merge in ``search`` uses to sort. Lower distance = closer
+                # match in Chroma's L2/cosine spaces — sort ascending.
+                metadata[idx]["similarity_score"] = distance
 
         try:
             for idx, (id_, doc_metadata, document) in enumerate(zip(ids, metadata, documents)):
@@ -1195,13 +1411,40 @@ class ChromaDb(VectorDb):
         return converted
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
-        return await asyncio.to_thread(self.search, query, limit, filters)
+        return await asyncio.to_thread(self.search, query, limit, filters, user_id)
 
     def drop(self) -> None:
-        """Delete the collection."""
+        """Delete the collection — and any per-user collections that share
+        its base name. Without the latter, dropping ``my_kb`` would leave
+        ``my_kb__alice`` / ``my_kb__bob`` etc. as orphans on disk."""
+        # Per-user collections live alongside the base, named
+        # ``{collection_name}__{...}``. Walk the client and drop any that
+        # match. Use list_collections to discover them; in older Chroma
+        # versions this returns Collection objects, in newer ones it
+        # returns names — handle both.
+        prefix = f"{self.collection_name}__"
+        try:
+            collections = self.client.list_collections()
+        except Exception:
+            collections = []
+        for item in collections:
+            name = getattr(item, "name", item)
+            if isinstance(name, str) and name.startswith(prefix):
+                try:
+                    self.client.delete_collection(name=name)
+                except Exception:
+                    log_debug(f"Could not delete per-user collection {name!r}")
+        # Drop the user-collection cache too — the underlying objects are
+        # gone.
+        self._user_collections.clear()
+
         if self.exists():
             log_debug(f"Deleting collection: {self.collection_name}")
             self.client.delete_collection(name=self.collection_name)
@@ -1321,26 +1564,45 @@ class ChromaDb(VectorDb):
             logger.exception(f"Error deleting documents by metadata '{metadata}'")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete documents by content ID."""
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content ID, scoped to ``user_id`` when set.
+
+        With ``user_id``: only the caller's per-user collection is checked.
+        Chroma's collection-based isolation makes this physical — a
+        scoped delete cannot reach into another user's collection even by
+        accident. ``None`` deletes from the base collection only (legacy
+        / unscoped behaviour).
+        """
         if not self.client:
             log_error("Client not initialized")
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
+            collection_name = self._collection_name_for(user_id)
+            # ``get_collection`` raises if the collection doesn't exist.
+            # Treat that as "nothing to delete" rather than an error —
+            # consistent with the "no rows found" branch below.
+            try:
+                collection: Collection = self.client.get_collection(name=collection_name)
+            except Exception:
+                log_debug(
+                    f"No collection {collection_name!r} for content_id={content_id!r} delete; treating as no-op"
+                )
+                return False
 
             # Find all documents with the given content_id
             result = collection.get(where=cast(Any, {"content_id": {"$eq": content_id}}))
             ids_to_delete = result.get("ids", [])
 
             if not ids_to_delete:
-                log_info(f"No documents found with content_id '{content_id}'")
+                log_info(f"No documents found with content_id '{content_id}' in {collection_name!r}")
                 return False
 
             # Delete all matching documents
             collection.delete(ids=ids_to_delete)
-            log_info(f"Deleted {len(ids_to_delete)} documents with content_id '{content_id}'")
+            log_info(
+                f"Deleted {len(ids_to_delete)} documents with content_id '{content_id}' from {collection_name!r}"
+            )
             return True
         except Exception:
             logger.exception(f"Error deleting documents by content_id '{content_id}'")
