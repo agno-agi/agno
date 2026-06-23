@@ -109,10 +109,14 @@ class KnowledgeTools(Toolkit):
             # ``run_context.user_id`` is the owner of the current run (set
             # from ``Agent.user_id`` or per-call ``agent.run(user_id=...)``)
             # — ``None`` means no owner / admin-equivalent retrieval (see
-            # Knowledge.search docstring).
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, user_id=run_context.user_id
-            )
+            # Knowledge.search docstring). Admin callers under AgentOS
+            # user_isolation get a RAG_SCOPE_ALL override on dependencies
+            # so retrieval is unscoped while session attribution stays
+            # tied to their own user_id.
+            from agno.knowledge._rag_scope import resolve_rag_user_id
+
+            scope_user_id = resolve_rag_user_id(run_context.user_id, run_context.dependencies)
+            relevant_docs: List[Document] = self.knowledge.search(query=query, user_id=scope_user_id)
             if len(relevant_docs) == 0:
                 return "No documents found"
             return json.dumps([doc.to_dict() for doc in relevant_docs])

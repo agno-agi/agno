@@ -1828,9 +1828,14 @@ def get_relevant_docs_from_knowledge(
         # Owner scope flows from the run context (which carries the JWT sub
         # for routed runs, or whatever ``Agent.user_id`` was set to). When
         # None, retrieval is unscoped — see Knowledge.search docstring.
+        # Admin callers under AgentOS user_isolation get the RAG_SCOPE_ALL
+        # override on dependencies so their retrieval is unscoped while
+        # session/trace attribution still uses their own user_id.
         # Probe the retrieve signature so a custom Knowledge subclass that
         # doesn't accept user_id keeps working — passing the kwarg would
         # blow up.
+        from agno.knowledge._rag_scope import resolve_rag_user_id
+
         retrieve_kwargs: Dict[str, Any] = {
             "query": query,
             "max_results": num_documents,
@@ -1840,7 +1845,8 @@ def get_relevant_docs_from_knowledge(
 
         try:
             if "user_id" in _sig(retrieve_fn).parameters:
-                retrieve_kwargs["user_id"] = run_context.user_id if run_context is not None else None
+                rc_user_id = run_context.user_id if run_context is not None else None
+                retrieve_kwargs["user_id"] = resolve_rag_user_id(rc_user_id, dependencies)
         except (TypeError, ValueError):
             # Some callables (builtins, C-extensions) don't have inspectable
             # signatures. Skip user_id rather than crash.
@@ -1941,9 +1947,14 @@ async def aget_relevant_docs_from_knowledge(
 
         # Probe the retrieve signatures and only pass user_id if the
         # underlying method accepts it (see sync variant for rationale).
+        # Admin-bypass: dependencies may carry an override that promotes
+        # retrieval to unscoped (None) even when the run has a user_id.
         from inspect import signature as _sig
 
-        scope_user_id = run_context.user_id if run_context is not None else None
+        from agno.knowledge._rag_scope import resolve_rag_user_id
+
+        rc_user_id = run_context.user_id if run_context is not None else None
+        scope_user_id = resolve_rag_user_id(rc_user_id, dependencies)
 
         def _maybe_with_user_id(fn: Any) -> Dict[str, Any]:
             base = {"query": query, "max_results": num_documents, "filters": filters}

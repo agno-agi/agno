@@ -36,6 +36,7 @@ from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
     get_scoped_user_id,
+    is_admin_request,
     run_matches_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
@@ -620,6 +621,20 @@ def get_agent_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        # Admin-bypass for per-user RAG isolation: when isolation is on AND
+        # the caller carries the admin scope, the run's ``user_id`` is the
+        # admin's own sub (so sessions/traces stay attributed to them), but
+        # vector-DB retrieval should NOT be filtered to that sub — otherwise
+        # admins see zero member content. The override is carried on the
+        # reserved dependencies key; ``_messages`` and ``KnowledgeTools``
+        # read it on the retrieval path. No public signatures change.
+        if getattr(request.state, "user_isolation_enabled", False) and is_admin_request(request):
+            from agno.knowledge._rag_scope import RAG_SCOPE_ALL, RAG_SCOPE_OVERRIDE_KEY
+
+            deps = kwargs.get("dependencies") or {}
+            # Don't trample if userland already set it explicitly.
+            deps.setdefault(RAG_SCOPE_OVERRIDE_KEY, RAG_SCOPE_ALL)
+            kwargs["dependencies"] = deps
         if hasattr(request.state, "metadata") and request.state.metadata is not None:
             metadata = request.state.metadata
             if "metadata" in kwargs:
@@ -935,6 +950,15 @@ def get_agent_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        # Admin-bypass for per-user RAG isolation (see create_agent_run for
+        # rationale). Carried on the reserved dependencies key so resumed
+        # admin runs also see the shared+all-owners corpus on retrieval.
+        if getattr(request.state, "user_isolation_enabled", False) and is_admin_request(request):
+            from agno.knowledge._rag_scope import RAG_SCOPE_ALL, RAG_SCOPE_OVERRIDE_KEY
+
+            deps = kwargs.get("dependencies") or {}
+            deps.setdefault(RAG_SCOPE_OVERRIDE_KEY, RAG_SCOPE_ALL)
+            kwargs["dependencies"] = deps
         if hasattr(request.state, "metadata") and request.state.metadata is not None:
             metadata = request.state.metadata
             if "metadata" in kwargs:

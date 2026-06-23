@@ -586,9 +586,7 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(
-                query=query, limit=_max_results, filters=search_filters, user_id=user_id
-            )
+            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -627,9 +625,7 @@ class Knowledge(RemoteKnowledge):
                 )
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(
-                    query=query, limit=_max_results, filters=search_filters, user_id=user_id
-                )
+                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -1878,9 +1874,7 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        self.vector_db.upsert(
-                            doc_hash, source_docs, content.metadata, user_id=content.user_id
-                        )
+                        self.vector_db.upsert(doc_hash, source_docs, content.metadata, user_id=content.user_id)
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
@@ -3224,9 +3218,18 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         Args:
             agent: Agent or Team instance for custom document conversion.
         """
+        # Resolve the user_id once when the tool is built. Per-user RAG
+        # isolation forwards run_context.user_id to the vector DB; admin
+        # callers under AgentOS user_isolation get an override on
+        # run_context.dependencies that promotes retrieval to unscoped.
+        from agno.knowledge._rag_scope import resolve_rag_user_id as _resolve_rag_user_id
         from agno.models.message import MessageReferences
         from agno.tools.function import Function
         from agno.utils.timer import Timer
+
+        _rc_user_id = getattr(run_context, "user_id", None) if run_context is not None else None
+        _rc_deps = getattr(run_context, "dependencies", None) if run_context is not None else None
+        _scope_user_id = _resolve_rag_user_id(_rc_user_id, _rc_deps)
 
         def search_knowledge_base(query: str) -> str:
             """Use this function to search the knowledge base for information about a query.
@@ -3241,7 +3244,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = self.search(query=query, filters=knowledge_filters)
+                docs = self.search(query=query, filters=knowledge_filters, user_id=_scope_user_id)
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -3278,7 +3281,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = await self.asearch(query=query, filters=knowledge_filters)
+                docs = await self.asearch(query=query, filters=knowledge_filters, user_id=_scope_user_id)
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -3330,6 +3333,14 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         except ImportError:
             get_agentic_or_user_search_filters = None  # type: ignore[assignment]
 
+        # Resolve the owner-scope user_id once at tool-build time. See the
+        # no-filter variant above for the admin-bypass rationale.
+        from agno.knowledge._rag_scope import resolve_rag_user_id as _resolve_rag_user_id
+
+        _rc_user_id = getattr(run_context, "user_id", None) if run_context is not None else None
+        _rc_deps = getattr(run_context, "dependencies", None) if run_context is not None else None
+        _scope_user_id = _resolve_rag_user_id(_rc_user_id, _rc_deps)
+
         def search_knowledge_base(query: str, filters: Optional[List[Any]] = None) -> str:
             """Use this function to search the knowledge base for information about a query.
 
@@ -3365,7 +3376,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = self.search(query=query, filters=search_filters)
+                docs = self.search(query=query, filters=search_filters, user_id=_scope_user_id)
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -3424,7 +3435,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = await self.asearch(query=query, filters=search_filters)
+                docs = await self.asearch(query=query, filters=search_filters, user_id=_scope_user_id)
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")
