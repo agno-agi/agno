@@ -131,6 +131,12 @@ class BaseRunOutputEvent:
             else:
                 _dict["response_audio"] = self.response_audio
 
+        if hasattr(self, "image") and self.image is not None:
+            if isinstance(self.image, Image):
+                _dict["image"] = self.image.to_dict()
+            else:
+                _dict["image"] = self.image
+
         if hasattr(self, "citations") and self.citations is not None:
             if isinstance(self.citations, Citations):
                 _dict["citations"] = self.citations.model_dump(exclude_none=True)
