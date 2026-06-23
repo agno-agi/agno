@@ -950,6 +950,17 @@ class FunctionCall(BaseModel):
         except Exception:
             pass
 
+        # Remove any framework-injected args that conflict with LLM-provided tool arguments.
+        # This prevents "got multiple values for keyword argument" when an MCP tool (or any
+        # tool) has a parameter whose name matches a framework-injected name such as 'agent',
+        # 'team', or 'run_context'.  The LLM-provided value takes priority because the tool
+        # signature expects the user-facing value, not the framework object.
+        # See issue #6760.
+        if self.arguments:
+            for key in list(entrypoint_args.keys()):
+                if key in self.arguments:
+                    del entrypoint_args[key]
+
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
