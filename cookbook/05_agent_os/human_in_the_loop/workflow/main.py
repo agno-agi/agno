@@ -15,7 +15,6 @@ from router_user_selection import workflow as router_user_selection_workflow
 from step_confirmation import workflow as step_confirmation_workflow
 from step_user_input import workflow as step_user_input_workflow
 from step_user_input import workflow_with_executor as step_user_input_executor_workflow
-from workflow_db import db
 
 agent_os = AgentOS(
     id="workflow-hitl-examples",
