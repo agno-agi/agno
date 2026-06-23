@@ -166,6 +166,11 @@ def test_run_content_event_includes_image():
     assert event_dict["image"]["id"] == "img-1"
     assert event_dict["image"]["url"] == "https://example.com/a.png"
 
+    reconstructed = type(event).from_dict(event_dict)
+    assert isinstance(reconstructed.image, Image)
+    assert reconstructed.image.id == "img-1"
+    assert reconstructed.image.url == "https://example.com/a.png"
+
 
 def test_agent_session_state_in_completed_event():
     """Test that RunCompletedEvent includes session_state field."""

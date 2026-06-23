@@ -236,6 +236,10 @@ class BaseRunOutputEvent:
         if response_audio:
             data["response_audio"] = Audio.model_validate(response_audio)
 
+        image = data.pop("image", None)
+        if image:
+            data["image"] = Image.model_validate(image)
+
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
             data["additional_input"] = [Message.model_validate(message) for message in additional_input]
