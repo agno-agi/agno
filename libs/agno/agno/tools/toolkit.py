@@ -248,6 +248,7 @@ class Toolkit:
 
                     bound.__name__ = getattr(func, "__name__", tool_name)
                     bound.__doc__ = getattr(func, "__doc__", None)
+                    bound.__wrapped__ = func  # type: ignore[attr-defined]
                     return bound
             else:
 
@@ -257,6 +258,7 @@ class Toolkit:
 
                     bound.__name__ = getattr(func, "__name__", tool_name)
                     bound.__doc__ = getattr(func, "__doc__", None)
+                    bound.__wrapped__ = func  # type: ignore[attr-defined]
                     return bound
 
             bound_method = make_bound_method(original_func, self)
