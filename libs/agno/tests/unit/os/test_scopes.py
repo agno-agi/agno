@@ -102,6 +102,16 @@ class TestDefaultScopeMappings:
         mappings = get_default_scope_mappings()
         assert mappings["GET /registry"] == ["registry:read"]
 
+    def test_run_lifecycle_endpoints_including_resume_require_run(self):
+        """resume must be gated like continue/cancel; it was previously missing from
+        the map, so the middleware gate fell open and protection depended solely on
+        the route-level dependency."""
+        mappings = get_default_scope_mappings()
+        for family in ("agents", "teams", "workflows"):
+            for action_path in ("continue", "cancel", "resume"):
+                key = f"POST /{family}/*/runs/*/{action_path}"
+                assert mappings[key] == [f"{family}:run"], f"missing/incorrect scope for {key}"
+
     def test_components_endpoints_have_scope_mappings(self):
         mappings = get_default_scope_mappings()
         # Read

@@ -1252,9 +1252,14 @@ def get_team_router(
             # Exclude teams whose IDs are owned by the registry
             exclude_ids = registry.get_team_ids() if registry else None
             db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
-            for db_team in db_teams:
-                team_response = await TeamResponse.from_team(team=db_team, is_component=True)
-                teams.append(team_response)
+            if db_teams:
+                # Apply the same RBAC filtering to DB-loaded teams (mirrors get_agents);
+                # without this, a caller scoped to a single team sees every DB team.
+                if getattr(request.state, "authorization_enabled", False):
+                    db_teams = filter_resources_by_access(request, db_teams, "teams")
+                for db_team in db_teams:
+                    team_response = await TeamResponse.from_team(team=db_team, is_component=True)
+                    teams.append(team_response)
 
         return teams
 
