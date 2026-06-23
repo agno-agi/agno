@@ -123,6 +123,7 @@ you-com = []
 seltz = ["seltz>=0.2.0"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
+crw = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 github = ["PyGithub"]
@@ -255,6 +256,7 @@ tools = [
   "agno[newspaper]",
   "agno[youtube]",
   "agno[firecrawl]",
+  "agno[crw]",
   "agno[tavily]",
   # "agno[crawl4ai]",  # Temporarily disabled - depends on litellm which is compromised on PyPI (March 24, 2026)
   "agno[github]",
