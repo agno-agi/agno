@@ -1084,6 +1084,8 @@ def test_tool_result_model_dump_roundtrip_preserves_metadata():
     payload = tool_result.model_dump()
     restored = ToolResult.model_validate(payload)
     assert restored.metadata == {"trace_id": "abc-123"}
+
+
 # =============================================================================
 # Tool-argument-name collision tests
 # =============================================================================
@@ -1103,6 +1105,7 @@ def _make_session_returning(content_text: str):
     result = MagicMock()
     result.isError = False
     result.content = [TextContent(type="text", text=content_text)]
+    result.meta = None
 
     session = AsyncMock()
     session.send_ping = AsyncMock()
