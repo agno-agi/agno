@@ -205,6 +205,25 @@ def test_error_handling(openweather_tools, mock_openweather_api):
     assert "Connection error" in result_data["error"]
 
 
+def test_make_request_uses_configured_timeout(mock_openweather_api):
+    """Test API requests use the configured timeout."""
+    mock_response = Mock()
+    mock_response.json.return_value = {"ok": True}
+    mock_response.raise_for_status.return_value = None
+    mock_openweather_api.return_value = mock_response
+
+    with patch.dict("os.environ", {"OPENWEATHER_API_KEY": "test_api_key"}):
+        tools = OpenWeatherTools(timeout=12)
+
+    tools._make_request("https://api.openweathermap.org/data/2.5/weather", {"lat": 1, "lon": 2})
+
+    mock_openweather_api.assert_called_once_with(
+        "https://api.openweathermap.org/data/2.5/weather",
+        params={"lat": 1, "lon": 2, "appid": "test_api_key"},
+        timeout=12,
+    )
+
+
 def test_geocode_location_empty_result(openweather_tools, mock_openweather_api):
     """Test geocode location with empty result."""
     mock_response = Mock()

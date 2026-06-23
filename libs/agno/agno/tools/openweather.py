@@ -18,6 +18,7 @@ class OpenWeatherTools(Toolkit):
     Args:
         api_key (Optional[str]): OpenWeatherMap API key. If not provided, will try to get from OPENWEATHER_API_KEY env var.
         units (str): Units of measurement. Options are 'standard', 'metric', and 'imperial'. Default is 'metric'.
+        timeout (int): Request timeout in seconds. Default is 30.
         enable_current_weather (bool): Enable current weather function. Default is True.
         enable_forecast (bool): Enable forecast function. Default is True.
         enable_air_pollution (bool): Enable air pollution function. Default is True.
@@ -29,6 +30,7 @@ class OpenWeatherTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         units: str = "metric",
+        timeout: int = 30,
         enable_current_weather: bool = True,
         enable_forecast: bool = True,
         enable_air_pollution: bool = True,
@@ -43,6 +45,7 @@ class OpenWeatherTools(Toolkit):
             )
 
         self.units = units
+        self.timeout = timeout
         self.base_url = "https://api.openweathermap.org/data/2.5"
         self.geo_url = "https://api.openweathermap.org/geo/1.0"
 
@@ -70,7 +73,7 @@ class OpenWeatherTools(Toolkit):
         """
         try:
             params["appid"] = self.api_key
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=self.timeout)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
