@@ -69,6 +69,7 @@ class SqliteDb(BaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -99,6 +100,7 @@ class SqliteDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            auth_tokens_table (Optional[str]): Name of the table to store OAuth tokens.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -126,6 +128,7 @@ class SqliteDb(BaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -185,6 +188,7 @@ class SqliteDb(BaseDb):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
             id=data.get("id"),
         )
 
@@ -578,6 +582,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
+
+        elif table_type == "auth_tokens":
+            self.auth_tokens_table = self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -4994,3 +5006,84 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # -- Auth Token methods --
+
+    def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        """
+        Get an OAuth token from the database.
+
+        Args:
+            provider: OAuth provider name (e.g., "google")
+            user_id: User identifier, or None for single-user mode
+            service: Service name (e.g., "gmail", "calendar")
+
+        Returns:
+            Token dict (raw), or None if not found.
+        """
+        try:
+            table = self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            # Use empty string for NULL user_id to match unique constraint
+            effective_user_id = user_id or ""
+            with self.Session() as sess:
+                result = sess.execute(
+                    select(table).where(
+                        table.c.provider == provider,
+                        table.c.user_id == effective_user_id,
+                        table.c.service == service,
+                    )
+                ).fetchone()
+                if not result:
+                    return None
+                return dict(result._mapping)
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Insert or update an OAuth token.
+
+        Args:
+            token: Dict with provider, user_id, service, token_data, granted_scopes.
+
+        Returns:
+            The stored token dict.
+
+        Raises:
+            RuntimeError: If table creation fails.
+        """
+        try:
+            table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            data["id"] = str(uuid4())
+            # Use empty string for NULL user_id to satisfy NOT NULL + unique constraint
+            data["user_id"] = data.get("user_id") or ""
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(**data)
+                set_dict: Dict[str, Any] = {"updated_at": stmt.excluded.updated_at}
+                # Only update token_data/granted_scopes if non-empty (empty = preserve existing)
+                if token.get("token_data") != {}:
+                    set_dict["token_data"] = stmt.excluded.token_data
+                if token.get("granted_scopes") not in (None, []):
+                    set_dict["granted_scopes"] = stmt.excluded.granted_scopes
+                if "pkce_verifier" in token:
+                    set_dict["pkce_verifier"] = stmt.excluded.pkce_verifier
+                    set_dict["pkce_state_id"] = stmt.excluded.pkce_state_id
+                    set_dict["pkce_expires_at"] = stmt.excluded.pkce_expires_at
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["provider", "user_id", "service"],
+                    set_=set_dict,
+                )
+                sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_error(f"Error upserting auth token: {e}")
+            raise

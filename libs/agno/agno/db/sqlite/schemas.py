@@ -269,6 +269,23 @@ APPROVAL_TABLE_SCHEMA = {
     "run_status": {"type": String, "nullable": True, "index": True},
 }
 
+AUTH_TOKEN_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "provider": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": False, "index": True},  # Empty string for single-user mode
+    "service": {"type": String, "nullable": False, "index": True},
+    "token_data": {"type": JSON, "nullable": False},
+    "granted_scopes": {"type": JSON, "nullable": True},
+    "pkce_verifier": {"type": String, "nullable": True},
+    "pkce_state_id": {"type": String, "nullable": True},
+    "pkce_expires_at": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "_unique_constraints": [
+        {"name": "uq_auth_token_provider_user_service", "columns": ["provider", "user_id", "service"]}
+    ],
+}
+
 
 def _get_schedule_runs_table_schema(schedules_table_name: str = "agno_schedules") -> dict[str, Any]:
     """Get the schedule runs table schema with a foreign key to the schedules table."""
@@ -333,6 +350,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
+        "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 
