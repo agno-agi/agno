@@ -187,6 +187,11 @@ class Function(BaseModel):
     # Set via the @approval decorator, not directly via @tool().
     approval_type: Optional[str] = None
 
+    # Arbitrary user-defined metadata attached to this tool.
+    # Surfaced on ToolExecution.tool_metadata so event/hook consumers can react to a tool
+    # without maintaining a separate tool_name -> metadata lookup. Should be JSON-serializable.
+    metadata: Optional[Dict[str, Any]] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
@@ -217,6 +222,7 @@ class Function(BaseModel):
                 "requires_confirmation",
                 "external_execution",
                 "approval_type",
+                "metadata",
             },
         )
 
@@ -232,6 +238,7 @@ class Function(BaseModel):
             requires_confirmation=data.get("requires_confirmation", False),
             external_execution=data.get("external_execution", False),
             approval_type=data.get("approval_type"),
+            metadata=data.get("metadata"),
         )
 
     def model_copy(self, *, deep: bool = False) -> "Function":
