@@ -1,14 +1,30 @@
-import base64
-import hashlib
 import json
 import os
 from typing import Any, Dict, Optional
 
 
-def _derive_fernet_key(secret: str) -> bytes:
-    # Fernet requires exactly 32 bytes, base64-encoded
-    raw_key = hashlib.sha256(secret.encode()).digest()
-    return base64.urlsafe_b64encode(raw_key)
+def generate_encryption_key() -> str:
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        raise ImportError("`cryptography` not installed. Install with `pip install cryptography`")
+
+    return Fernet.generate_key().decode()
+
+
+def _validate_fernet_key(secret: str) -> bytes:
+    """Validate that secret is a valid Fernet key. No KDF — key is used directly."""
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        raise ImportError("`cryptography` not installed. Install with `pip install cryptography`")
+
+    try:
+        key = secret.encode("ascii")
+        Fernet(key)  # Validates: 44 chars, base64url, decodes to 32 bytes
+        return key
+    except Exception:
+        raise ValueError("Invalid encryption key. Use generate_encryption_key() to create a valid Fernet key.")
 
 
 def get_encryption_key() -> Optional[str]:
@@ -23,13 +39,13 @@ def encrypt_dict(data: Dict[str, Any], key: Optional[str] = None) -> Dict[str, s
     try:
         from cryptography.fernet import Fernet
     except ImportError:
-        raise ImportError("`cryptography` not installed. Please install using `pip install cryptography`")
+        raise ImportError("`cryptography` not installed. Install with `pip install cryptography`")
 
     secret = key or get_encryption_key()
     if not secret:
         raise ValueError("No encryption key provided. Set AGNO_ENCRYPTION_KEY or pass key=")
 
-    fernet_key = _derive_fernet_key(secret)
+    fernet_key = _validate_fernet_key(secret)
     f = Fernet(fernet_key)
     plaintext = json.dumps(data).encode("utf-8")
     ciphertext = f.encrypt(plaintext)
@@ -43,14 +59,14 @@ def decrypt_dict(data: Dict[str, Any], key: Optional[str] = None) -> Dict[str, A
     try:
         from cryptography.fernet import Fernet, InvalidToken
     except ImportError:
-        raise ImportError("`cryptography` not installed. Please install using `pip install cryptography`")
+        raise ImportError("`cryptography` not installed. Install with `pip install cryptography`")
 
     secret = key or get_encryption_key()
     if not secret:
         raise ValueError("Data is encrypted but no decryption key provided")
 
     try:
-        fernet_key = _derive_fernet_key(secret)
+        fernet_key = _validate_fernet_key(secret)
         f = Fernet(fernet_key)
         ciphertext = data["encrypted"].encode("ascii")
         plaintext = f.decrypt(ciphertext)

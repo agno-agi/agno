@@ -25,7 +25,7 @@ def load_token_from_db(
         log_warning("Database does not support auth token storage")
         return None, None
     except Exception as e:
-        log_debug(f"DB lookup failed: {e}")
+        log_debug(f"Could not load token from DB: {e}")
         return None, None
 
     if not row:
@@ -51,7 +51,11 @@ def load_token_from_db(
             creds._granted_scopes = granted
 
         return row, creds
-    except (ValueError, KeyError, ImportError):
+    except ValueError as e:
+        log_debug(f"Could not decrypt token from DB: {e}")
+        return None, None
+    except (KeyError, ImportError) as e:
+        log_debug(f"Could not parse token from DB: {e}")
         return None, None
 
 
@@ -100,7 +104,7 @@ def save_token_to_db(
             return False
         return True
     except Exception as e:
-        log_debug(f"Failed to save credentials to DB: {e}")
+        log_debug(f"Could not save token to DB: {e}")
         return False
 
 
@@ -116,5 +120,5 @@ def delete_token_from_db(db: Any) -> bool:
         log_warning("Database does not support auth token deletion")
         return False
     except Exception as e:
-        log_debug(f"Failed to delete token from DB: {e}")
+        log_debug(f"Could not delete token from DB: {e}")
         return False

@@ -2,39 +2,81 @@ from unittest.mock import patch
 
 import pytest
 
+# Valid Fernet key for testing (generated via Fernet.generate_key())
+TEST_KEY = "dGVzdC1rZXktZm9yLXVuaXQtdGVzdHMtMzJieXRlcw=="
+TEST_KEY_2 = "YW5vdGhlci10ZXN0LWtleS1mb3ItdGVzdGluZy0zMg=="
+
+
 # ============================================================================
-# _derive_fernet_key TESTS
+# generate_encryption_key TESTS
 # ============================================================================
 
 
-def test_derive_key_returns_bytes():
-    from agno.utils.encryption import _derive_fernet_key
+def test_generate_encryption_key_returns_string():
+    from agno.utils.encryption import generate_encryption_key
 
-    result = _derive_fernet_key("test-secret")
-    assert isinstance(result, bytes)
+    result = generate_encryption_key()
+    assert isinstance(result, str)
 
 
-def test_derive_key_returns_44_char_base64():
-    from agno.utils.encryption import _derive_fernet_key
+def test_generate_encryption_key_returns_44_chars():
+    from agno.utils.encryption import generate_encryption_key
 
-    result = _derive_fernet_key("test-secret")
+    result = generate_encryption_key()
     assert len(result) == 44
 
 
-def test_derive_key_deterministic():
-    from agno.utils.encryption import _derive_fernet_key
+def test_generate_encryption_key_is_valid_fernet_key():
+    from cryptography.fernet import Fernet
 
-    key1 = _derive_fernet_key("same-secret")
-    key2 = _derive_fernet_key("same-secret")
-    assert key1 == key2
+    from agno.utils.encryption import generate_encryption_key
+
+    key = generate_encryption_key()
+    # Should not raise
+    Fernet(key.encode())
 
 
-def test_derive_key_different_secrets():
-    from agno.utils.encryption import _derive_fernet_key
+def test_generate_encryption_key_unique():
+    from agno.utils.encryption import generate_encryption_key
 
-    key1 = _derive_fernet_key("secret-one")
-    key2 = _derive_fernet_key("secret-two")
+    key1 = generate_encryption_key()
+    key2 = generate_encryption_key()
     assert key1 != key2
+
+
+# ============================================================================
+# _validate_fernet_key TESTS
+# ============================================================================
+
+
+def test_validate_fernet_key_accepts_valid_key():
+    from agno.utils.encryption import _validate_fernet_key, generate_encryption_key
+
+    key = generate_encryption_key()
+    result = _validate_fernet_key(key)
+    assert isinstance(result, bytes)
+    assert len(result) == 44
+
+
+def test_validate_fernet_key_rejects_short_string():
+    from agno.utils.encryption import _validate_fernet_key
+
+    with pytest.raises(ValueError, match="Invalid encryption key"):
+        _validate_fernet_key("too-short")
+
+
+def test_validate_fernet_key_rejects_password():
+    from agno.utils.encryption import _validate_fernet_key
+
+    with pytest.raises(ValueError, match="Invalid encryption key"):
+        _validate_fernet_key("my-secret-password-123")
+
+
+def test_validate_fernet_key_rejects_wrong_length():
+    from agno.utils.encryption import _validate_fernet_key
+
+    with pytest.raises(ValueError, match="Invalid encryption key"):
+        _validate_fernet_key("x" * 43)  # 43 chars instead of 44
 
 
 # ============================================================================
@@ -45,8 +87,8 @@ def test_derive_key_different_secrets():
 def test_get_encryption_key_from_env(monkeypatch):
     from agno.utils.encryption import get_encryption_key
 
-    monkeypatch.setenv("AGNO_ENCRYPTION_KEY", "my-secret")
-    assert get_encryption_key() == "my-secret"
+    monkeypatch.setenv("AGNO_ENCRYPTION_KEY", TEST_KEY)
+    assert get_encryption_key() == TEST_KEY
 
 
 def test_get_encryption_key_returns_none(monkeypatch):
@@ -102,10 +144,11 @@ def test_is_encrypted_false_for_non_dict():
 
 
 def test_encrypt_dict_returns_encrypted_format():
-    from agno.utils.encryption import encrypt_dict
+    from agno.utils.encryption import encrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     data = {"key": "value"}
-    result = encrypt_dict(data, key="test-secret")
+    result = encrypt_dict(data, key=key)
 
     assert "encrypted" in result
     assert len(result) == 1
@@ -113,19 +156,21 @@ def test_encrypt_dict_returns_encrypted_format():
 
 
 def test_encrypt_dict_ciphertext_not_plaintext():
-    from agno.utils.encryption import encrypt_dict
+    from agno.utils.encryption import encrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     data = {"sensitive": "password123"}
-    result = encrypt_dict(data, key="test-secret")
+    result = encrypt_dict(data, key=key)
 
     assert "password123" not in result["encrypted"]
     assert "sensitive" not in result["encrypted"]
 
 
 def test_encrypt_dict_uses_env_key(monkeypatch):
-    from agno.utils.encryption import encrypt_dict
+    from agno.utils.encryption import encrypt_dict, generate_encryption_key
 
-    monkeypatch.setenv("AGNO_ENCRYPTION_KEY", "env-secret")
+    key = generate_encryption_key()
+    monkeypatch.setenv("AGNO_ENCRYPTION_KEY", key)
     data = {"key": "value"}
     result = encrypt_dict(data)
 
@@ -141,12 +186,11 @@ def test_encrypt_dict_raises_without_key(monkeypatch):
         encrypt_dict({"key": "value"})
 
 
-def test_encrypt_dict_raises_without_cryptography():
+def test_encrypt_dict_raises_with_invalid_key():
     from agno.utils.encryption import encrypt_dict
 
-    with patch.dict("sys.modules", {"cryptography": None, "cryptography.fernet": None}):
-        with pytest.raises(ImportError, match="cryptography"):
-            encrypt_dict({"key": "value"}, key="secret")
+    with pytest.raises(ValueError, match="Invalid encryption key"):
+        encrypt_dict({"key": "value"}, key="weak-password")
 
 
 # ============================================================================
@@ -155,47 +199,53 @@ def test_encrypt_dict_raises_without_cryptography():
 
 
 def test_decrypt_dict_round_trip():
-    from agno.utils.encryption import decrypt_dict, encrypt_dict
+    from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     original = {"token": "access123", "nested": {"key": "value"}}
-    encrypted = encrypt_dict(original, key="test-secret")
-    decrypted = decrypt_dict(encrypted, key="test-secret")
+    encrypted = encrypt_dict(original, key=key)
+    decrypted = decrypt_dict(encrypted, key=key)
 
     assert decrypted == original
 
 
 def test_decrypt_dict_passthrough_unencrypted():
-    from agno.utils.encryption import decrypt_dict
+    from agno.utils.encryption import decrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     data = {"plain": "text", "not": "encrypted"}
-    result = decrypt_dict(data, key="any-key")
+    result = decrypt_dict(data, key=key)
 
     assert result == data
 
 
 def test_decrypt_dict_wrong_key_raises():
-    from agno.utils.encryption import decrypt_dict, encrypt_dict
+    from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key
 
-    encrypted = encrypt_dict({"key": "value"}, key="correct-key")
+    key1 = generate_encryption_key()
+    key2 = generate_encryption_key()
+    encrypted = encrypt_dict({"key": "value"}, key=key1)
 
     with pytest.raises(ValueError, match="wrong key"):
-        decrypt_dict(encrypted, key="wrong-key")
+        decrypt_dict(encrypted, key=key2)
 
 
 def test_decrypt_dict_corrupted_data_raises():
-    from agno.utils.encryption import decrypt_dict
+    from agno.utils.encryption import decrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     corrupted = {"encrypted": "not-valid-base64!!!"}
 
     with pytest.raises((ValueError, Exception)):
-        decrypt_dict(corrupted, key="test-secret")
+        decrypt_dict(corrupted, key=key)
 
 
 def test_decrypt_dict_uses_env_key(monkeypatch):
-    from agno.utils.encryption import decrypt_dict, encrypt_dict
+    from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key
 
-    monkeypatch.setenv("AGNO_ENCRYPTION_KEY", "env-secret")
-    encrypted = encrypt_dict({"key": "value"}, key="env-secret")
+    key = generate_encryption_key()
+    monkeypatch.setenv("AGNO_ENCRYPTION_KEY", key)
+    encrypted = encrypt_dict({"key": "value"}, key=key)
     decrypted = decrypt_dict(encrypted)
 
     assert decrypted == {"key": "value"}
@@ -217,18 +267,20 @@ def test_decrypt_dict_raises_without_key(monkeypatch):
 
 
 def test_round_trip_empty_dict():
-    from agno.utils.encryption import decrypt_dict, encrypt_dict
+    from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     original = {}
-    encrypted = encrypt_dict(original, key="secret")
-    decrypted = decrypt_dict(encrypted, key="secret")
+    encrypted = encrypt_dict(original, key=key)
+    decrypted = decrypt_dict(encrypted, key=key)
 
     assert decrypted == original
 
 
 def test_round_trip_complex_nested():
-    from agno.utils.encryption import decrypt_dict, encrypt_dict
+    from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     original = {
         "token": "access_token",
         "refresh_token": "refresh_token",
@@ -239,27 +291,29 @@ def test_round_trip_complex_nested():
             "client_secret": "secret",
         },
     }
-    encrypted = encrypt_dict(original, key="secret")
-    decrypted = decrypt_dict(encrypted, key="secret")
+    encrypted = encrypt_dict(original, key=key)
+    decrypted = decrypt_dict(encrypted, key=key)
 
     assert decrypted == original
 
 
 def test_round_trip_unicode():
-    from agno.utils.encryption import decrypt_dict, encrypt_dict
+    from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     original = {"message": "Hello, 世界! \U0001f44b"}
-    encrypted = encrypt_dict(original, key="secret")
-    decrypted = decrypt_dict(encrypted, key="secret")
+    encrypted = encrypt_dict(original, key=key)
+    decrypted = decrypt_dict(encrypted, key=key)
 
     assert decrypted == original
 
 
 def test_round_trip_large_data():
-    from agno.utils.encryption import decrypt_dict, encrypt_dict
+    from agno.utils.encryption import decrypt_dict, encrypt_dict, generate_encryption_key
 
+    key = generate_encryption_key()
     original = {"data": "x" * 10000}
-    encrypted = encrypt_dict(original, key="secret")
-    decrypted = decrypt_dict(encrypted, key="secret")
+    encrypted = encrypt_dict(original, key=key)
+    decrypted = decrypt_dict(encrypted, key=key)
 
     assert decrypted == original
