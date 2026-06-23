@@ -1,5 +1,3 @@
-from unittest.mock import patch
-
 import pytest
 
 # Valid Fernet key for testing (generated via Fernet.generate_key())
