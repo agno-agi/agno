@@ -1,5 +1,6 @@
 from typing import Optional
 
+from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 
 
@@ -69,3 +70,31 @@ def test_parse_tool_calls_multiple_tools_independent():
     assert result[0]["function"]["name"] == "tool_a"
     assert result[1]["function"]["name"] == "tool_b"
     assert result[0] is not result[1]
+
+
+def test_parse_tool_calls_normalizes_empty_arguments():
+    """Ensure zero-argument tool calls still produce valid JSON arguments."""
+    deltas = [
+        _FakeChoiceDeltaToolCall(index=0, tool_id="call_1", tool_type="function", func_name="schema_inspect"),
+    ]
+    result = OpenAIChat.parse_tool_calls(deltas)
+
+    assert result[0]["function"]["name"] == "schema_inspect"
+    assert result[0]["function"]["arguments"] == "{}"
+
+
+def test_format_message_normalizes_empty_tool_call_arguments_without_mutating_message():
+    """Ensure OpenAI-compatible history never sends empty tool call argument strings."""
+    tool_calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "schema_inspect", "arguments": ""},
+        }
+    ]
+    message = Message(role="assistant", content="", tool_calls=tool_calls)
+
+    formatted_message = OpenAIChat(api_key="test")._format_message(message)
+
+    assert formatted_message["tool_calls"][0]["function"]["arguments"] == "{}"
+    assert message.tool_calls == tool_calls
