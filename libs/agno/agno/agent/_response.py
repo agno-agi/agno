@@ -1442,6 +1442,20 @@ def handle_model_response_chunk(
                     model_response.reasoning_content += model_response_event.redacted_reasoning_content
                 run_response.reasoning_content = model_response.reasoning_content
 
+            reasoning_content_delta = (model_response_event.reasoning_content or "") + (
+                model_response_event.redacted_reasoning_content or ""
+            )
+            if stream_events and reasoning_content_delta:
+                yield handle_event(  # type: ignore
+                    create_reasoning_content_delta_event(
+                        from_run_response=run_response,
+                        reasoning_content=reasoning_content_delta,
+                    ),
+                    run_response,
+                    events_to_skip=agent.events_to_skip,  # type: ignore
+                    store_events=agent.store_events,
+                )
+
             # Handle provider data (one chunk)
             if model_response_event.provider_data is not None:
                 run_response.model_provider_data = model_response_event.provider_data
@@ -1464,8 +1478,7 @@ def handle_model_response_chunk(
                 )
             elif (
                 model_response_event.content is not None
-                or model_response_event.reasoning_content is not None
-                or model_response_event.redacted_reasoning_content is not None
+                or (not stream_events and reasoning_content_delta)
                 or model_response_event.citations is not None
                 or model_response_event.provider_data is not None
             ):
@@ -1473,8 +1486,10 @@ def handle_model_response_chunk(
                     create_run_output_content_event(
                         from_run_response=run_response,
                         content=model_response_event.content,
-                        reasoning_content=model_response_event.reasoning_content,
-                        redacted_reasoning_content=model_response_event.redacted_reasoning_content,
+                        reasoning_content=model_response_event.reasoning_content if not stream_events else None,
+                        redacted_reasoning_content=model_response_event.redacted_reasoning_content
+                        if not stream_events
+                        else None,
                         citations=model_response_event.citations,
                         model_provider_data=model_response_event.provider_data,
                     ),
