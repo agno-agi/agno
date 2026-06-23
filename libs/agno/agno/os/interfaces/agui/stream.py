@@ -3,7 +3,7 @@ from typing import Any, AsyncIterator, Dict, Optional, Union
 
 from ag_ui.core import BaseEvent
 
-from agno.os.interfaces.agui.handlers import is_completion_event, process_completion, process_event
+from agno.os.interfaces.agui.events import is_completion_event, process_completion, process_event
 from agno.os.interfaces.agui.state import StreamState
 from agno.run.agent import RunCompletedEvent, RunOutputEvent
 from agno.run.team import TeamRunOutputEvent

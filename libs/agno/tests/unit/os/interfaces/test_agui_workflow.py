@@ -8,7 +8,7 @@ agent/team path (a marker + clean finish, never an error).
 Tests feed REAL agno event classes through the in-process
 `async_stream_agno_response_as_agui_events` entrypoint (the harness already used
 in this file) and assert the EXACT ordered AG-UI events. The structural-event
-coverage is driven off the real `STRUCTURAL_EVENT_VALUES` / event registry so a
+coverage is driven off the real `_WORKFLOW_STRUCTURAL_VALUES` / event registry so a
 new WorkflowRunEvent auto-joins and coverage cannot silently drift.
 """
 
@@ -24,10 +24,15 @@ from ag_ui.core import CustomEvent, EventType, RunStartedEvent
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 from agno.os.interfaces.agui.agui import AGUI
-from agno.os.interfaces.agui.handlers import HANDLERS, on_custom_event, on_workflow_cancelled
+from agno.os.interfaces.agui.events import (
+    _WORKFLOW_STRUCTURAL_VALUES,
+    HANDLERS,
+    _final_leaf_streamed,
+    on_custom_event,
+    on_workflow_cancelled,
+)
 from agno.os.interfaces.agui.router import run_entity
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
-from agno.os.interfaces.agui.workflow_handlers import STRUCTURAL_EVENT_VALUES, _final_leaf_streamed
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
     ReasoningCompletedEvent,
@@ -272,11 +277,11 @@ def test_structural_split_and_handler_coverage():
     # cancel flag, then delegates to on_custom_event); all others go straight to
     # on_custom_event. Driven off the enum so a new event auto-joins.
     terminals = {WorkflowRunEvent.workflow_completed.value, WorkflowRunEvent.workflow_error.value}
-    assert STRUCTURAL_EVENT_VALUES == {e.value for e in WorkflowRunEvent} - terminals
+    assert _WORKFLOW_STRUCTURAL_VALUES == {e.value for e in WorkflowRunEvent} - terminals
     cancelled = WorkflowRunEvent.workflow_cancelled.value
     assert all(
         HANDLERS.get(value) is (on_workflow_cancelled if value == cancelled else on_custom_event)
-        for value in STRUCTURAL_EVENT_VALUES
+        for value in _WORKFLOW_STRUCTURAL_VALUES
     )
 
 
@@ -286,13 +291,13 @@ def test_only_condition_paused_lacks_an_event_class():
     # from the registry and the Union, so it is never emitted). The handler still
     # covers it defensively (asserted above). If another value loses its class —
     # or condition_paused gains one — this fails and we revisit.
-    missing = STRUCTURAL_EVENT_VALUES - set(WORKFLOW_RUN_EVENT_TYPE_REGISTRY)
+    missing = _WORKFLOW_STRUCTURAL_VALUES - set(WORKFLOW_RUN_EVENT_TYPE_REGISTRY)
     assert missing == {WorkflowRunEvent.condition_paused.value}
 
 
 # The 28 structural values that ship an event class (all except condition_paused),
 # tested end-to-end with real instances below.
-_STRUCTURAL_WITH_CLASS = sorted(STRUCTURAL_EVENT_VALUES & set(WORKFLOW_RUN_EVENT_TYPE_REGISTRY))
+_STRUCTURAL_WITH_CLASS = sorted(_WORKFLOW_STRUCTURAL_VALUES & set(WORKFLOW_RUN_EVENT_TYPE_REGISTRY))
 
 
 @pytest.mark.parametrize("event_value", _STRUCTURAL_WITH_CLASS)
