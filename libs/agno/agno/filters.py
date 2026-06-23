@@ -389,6 +389,96 @@ class NOT(FilterExpr):
         return {"op": "NOT", "condition": self.expression.to_dict()}
 
 
+def get_filter_value(data: dict, key: str) -> Any:
+    if key in data:
+        return data[key]
+
+    current: Any = data
+    for part in key.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return current
+
+
+def matches_filter_expr(data: dict, expression: FilterExpr) -> bool:
+    if isinstance(expression, EQ):
+        return get_filter_value(data, expression.key) == expression.value
+
+    if isinstance(expression, IN):
+        return get_filter_value(data, expression.key) in expression.values
+
+    if isinstance(expression, GT):
+        try:
+            return get_filter_value(data, expression.key) > expression.value
+        except TypeError:
+            return False
+
+    if isinstance(expression, LT):
+        try:
+            return get_filter_value(data, expression.key) < expression.value
+        except TypeError:
+            return False
+
+    if isinstance(expression, NEQ):
+        value = get_filter_value(data, expression.key)
+        if value is None and expression.key not in data:
+            # Check nested path too
+            parts = expression.key.split(".")
+            current = data
+            key_exists = True
+            for part in parts:
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    key_exists = False
+                    break
+            if not key_exists:
+                return False
+        return value != expression.value
+
+    if isinstance(expression, GTE):
+        try:
+            return get_filter_value(data, expression.key) >= expression.value
+        except TypeError:
+            return False
+
+    if isinstance(expression, LTE):
+        try:
+            return get_filter_value(data, expression.key) <= expression.value
+        except TypeError:
+            return False
+
+    if isinstance(expression, CONTAINS):
+        value = get_filter_value(data, expression.key)
+        if isinstance(value, str):
+            return expression.value.lower() in value.lower()
+        if isinstance(value, (list, tuple, set)):
+            if isinstance(expression.value, str):
+                search_lower = expression.value.lower()
+                return any(
+                    (isinstance(v, str) and v.lower() == search_lower) or v == expression.value for v in value
+                )
+            return expression.value in value
+        return False
+
+    if isinstance(expression, STARTSWITH):
+        value = get_filter_value(data, expression.key)
+        return isinstance(value, str) and value.lower().startswith(expression.value.lower())
+
+    if isinstance(expression, AND):
+        return all(matches_filter_expr(data, expr) for expr in expression.expressions)
+
+    if isinstance(expression, OR):
+        return any(matches_filter_expr(data, expr) for expr in expression.expressions)
+
+    if isinstance(expression, NOT):
+        return not matches_filter_expr(data, expression.expression)
+
+    raise ValueError(f"Unsupported filter expression type: {type(expression).__name__}")
+
+
 # ============================================================
 # Deserialization
 # ============================================================
@@ -431,7 +521,7 @@ def from_dict(filter_dict: dict, _depth: int = 0) -> FilterExpr:
         >>> filter_expr = from_dict(filter_dict)
     """
     # Check recursion depth limit
-    if _depth > MAX_FILTER_DEPTH:
+    if _depth >= MAX_FILTER_DEPTH:
         raise ValueError(f"Filter expression exceeds maximum nesting depth of {MAX_FILTER_DEPTH}")
 
     if not isinstance(filter_dict, dict) or "op" not in filter_dict:

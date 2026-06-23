@@ -98,6 +98,10 @@ mistral = ["mistralai"]
 ollama = ["ollama"]
 openai = ["openai"]
 portkey = ["portkey-ai"]
+databricks-model = ["databricks-sdk"]
+databricks-tools = ["databricks-sdk", "databricks-sql-connector"]
+databricks-vectordb = ["databricks-vectorsearch"]
+databricks = ["databricks-sdk", "databricks-sql-connector", "databricks-vectorsearch"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
@@ -239,7 +243,8 @@ models = [
   # "agno[mistral]",  # Temporarily disabled - mistralai quarantined on PyPI (May 12, 2026)
   "agno[ollama]",
   "agno[openai]",
-  "agno[portkey]"
+  "agno[portkey]",
+  "agno[databricks-model]"
 ]
 
 # All tools
@@ -290,6 +295,7 @@ tools = [
   "agno[reportlab]",
   "agno[trafilatura]",
   "agno[neo4j]",
+  "agno[databricks-tools]",
 ]
 
 # All storage
@@ -322,6 +328,7 @@ vectordbs = [
   "agno[upstash]",
   "agno[pylance]",
   "agno[redis]",
+  "agno[databricks-vectordb]",
 ]
 
 # All knowledge

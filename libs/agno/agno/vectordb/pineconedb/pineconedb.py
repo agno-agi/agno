@@ -158,7 +158,7 @@ class PineconeDb(VectorDb):
                 additional_headers=self.additional_headers,
                 pool_threads=self.pool_threads,
                 index_api=self.index_api,
-                **self.kwargs,
+                **(self.kwargs or {}),
             )
         return self._client
 

@@ -427,8 +427,9 @@ class GoogleDriveTools(Toolkit):
                 run_kwargs["login_hint"] = self.login_hint
             self.creds = flow.run_local_server(**run_kwargs)
 
-        if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())
+        # hasattr guard: some credential types (e.g. service accounts) lack to_json()
+        if self.creds and self.creds.valid and hasattr(self.creds, "to_json"):
+            token_file.write_text(cast(Any, self.creds).to_json())
 
     def _build_service(self):
         creds_to_use = self.creds
