@@ -8,6 +8,7 @@ Examples for `rbac/symmetric` in AgentOS.
 - `basic.py` — Basic RBAC Example with AgentOS.
 - `custom_scope_mappings.py` — Custom Scope Mappings Example.
 - `user_isolation.py` — Adds opt-in per-user data isolation on top of `basic.py`. Non-admins see only their own data; `agent_os:admin` (or custom `admin_scope`) bypasses isolation.
+- `knowledge_admin_bypass.py` — Per-user RAG isolation with admin bypass: members see only their chunks + shared; admins see everyone's chunks + shared while session attribution stays with the admin's `sub`.
 - `with_cookie.py` — Basic RBAC Example with AgentOS.
 
 ## Prerequisites

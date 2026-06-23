@@ -33,6 +33,7 @@ from agno.os.middleware.user_scope import (
     WORKFLOW_ID_REQUIRED_RECONNECT,
     assert_session_matches_component,
     get_scoped_user_id,
+    is_admin_request,
     run_matches_component,
     verify_run_in_session,
     verify_run_in_session_via_db,
@@ -1204,6 +1205,14 @@ def get_workflow_router(
             if "dependencies" in kwargs:
                 log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
             kwargs["dependencies"] = dependencies
+        # Admin-bypass for per-user RAG isolation: see
+        # agno/os/routers/agents/router.py::create_agent_run for rationale.
+        if getattr(request.state, "user_isolation_enabled", False) and is_admin_request(request):
+            from agno.knowledge._rag_scope import RAG_SCOPE_ALL, RAG_SCOPE_OVERRIDE_KEY
+
+            deps = kwargs.get("dependencies") or {}
+            deps.setdefault(RAG_SCOPE_OVERRIDE_KEY, RAG_SCOPE_ALL)
+            kwargs["dependencies"] = deps
         if hasattr(request.state, "metadata") and request.state.metadata is not None:
             metadata = request.state.metadata
             if "metadata" in kwargs:

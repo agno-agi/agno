@@ -75,6 +75,22 @@ def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bo
     return (admin_scope or AgentOSScope.ADMIN.value) in scopes
 
 
+def is_admin_request(request: Request) -> bool:
+    """Return True iff the caller is authenticated and carries the admin scope.
+
+    Reads ``request.state.scopes`` (set by JWTMiddleware) and the configured
+    ``admin_scope``. Returns False for unauthenticated callers, the internal
+    service identity, and non-admin users. Independent of
+    ``user_isolation_enabled`` — callers that care about isolation should
+    check that flag themselves; this helper answers only "is the caller
+    holding the admin scope".
+    """
+    scopes: List[str] = getattr(request.state, "scopes", []) or []
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    return _has_admin_scope(scopes, admin_scope=admin_scope)
+
+
 def get_scoped_user_id(request: Request) -> Optional[str]:
     """Get the user_id for data scoping from the request, or None if unscoped.
 
