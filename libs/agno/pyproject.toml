@@ -597,6 +597,7 @@ module = [
   "surrealdb.*",
   "trafilatura.*",
   "xlrd.*",
-  "celpy.*"
+  "celpy.*",
+  "wolframalpha.*"
 ]
 ignore_missing_imports = true
