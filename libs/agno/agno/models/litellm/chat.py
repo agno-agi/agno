@@ -346,6 +346,8 @@ class LiteLLM(Model):
         """Parse the provider response."""
         model_response = ModelResponse()
 
+        self._add_finish_reason(model_response, response)
+
         response_message = response.choices[0].message
 
         if response_message.content is not None:
@@ -373,6 +375,8 @@ class LiteLLM(Model):
     def _parse_provider_response_delta(self, response_delta: Any) -> ModelResponse:
         """Parse the provider response delta for streaming responses."""
         model_response = ModelResponse()
+
+        self._add_finish_reason(model_response, response_delta)
 
         if hasattr(response_delta, "choices") and len(response_delta.choices) > 0:
             choice_delta = response_delta.choices[0].delta
@@ -415,6 +419,19 @@ class LiteLLM(Model):
             model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
+
+    @staticmethod
+    def _add_finish_reason(model_response: ModelResponse, response: Any) -> None:
+        if not hasattr(response, "choices") or len(response.choices) == 0:
+            return
+
+        finish_reason = getattr(response.choices[0], "finish_reason", None)
+        if finish_reason is None:
+            return
+
+        if model_response.provider_data is None:
+            model_response.provider_data = {}
+        model_response.provider_data["finish_reason"] = finish_reason
 
     @staticmethod
     def parse_tool_calls(tool_calls_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

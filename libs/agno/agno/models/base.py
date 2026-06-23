@@ -1901,6 +1901,7 @@ class Model(ABC):
                     existing.extend(value)
                 else:
                     stream_data.response_provider_data[key] = value
+            should_yield = True
 
         # Update stream_data tool calls
         if model_response_delta.tool_calls is not None:
