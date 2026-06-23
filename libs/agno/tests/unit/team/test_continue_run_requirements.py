@@ -819,7 +819,159 @@ class TestPrepareMemberHitlContinuation:
 
 
 # ===========================================================================
-# 14. Approval resolution fallback in continue_run_dispatch
+# 14. Direct response parity for member HITL resume
+# ===========================================================================
+
+
+class TestDirectMemberHITLContinuation:
+    def _make_run_messages(self, tool_call_ids):
+        msgs = []
+        for tool_call_id in tool_call_ids:
+            msg = MagicMock()
+            msg.role = "tool"
+            msg.tool_call_id = tool_call_id
+            msg.content = "requires human input"
+            msgs.append(msg)
+        run_messages = MagicMock()
+        run_messages.messages = msgs
+        return run_messages
+
+    def test_sets_content_from_resolved_delegate_result_for_respond_directly_team(self):
+        from agno.team._run import _set_direct_member_hitl_continuation_content
+
+        team = MagicMock(respond_directly=True)
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="Member results after human-in-the-loop resolution:\n[Agent]: Done",
+        )
+        run_response = TeamRunOutput(run_id="run-1", tools=[tool])
+
+        assert _set_direct_member_hitl_continuation_content(team, run_response, ["[Agent]: Done"]) is True
+        assert run_response.content == tool.result
+
+    def test_non_direct_team_keeps_model_continuation(self):
+        from agno.team._run import _set_direct_member_hitl_continuation_content
+
+        team = MagicMock(respond_directly=False)
+        run_response = TeamRunOutput(run_id="run-1", content=None)
+
+        assert _set_direct_member_hitl_continuation_content(team, run_response, ["[Agent]: Done"]) is False
+        assert run_response.content is None
+
+    def test_continue_run_skip_model_response_keeps_member_result(self):
+        from agno.run import RunContext
+        from agno.team._run import _continue_run
+
+        team = MagicMock()
+        team.retries = 0
+        team.events_to_skip = []
+        team.store_events = False
+        team.model = MagicMock()
+        team.post_hooks = None
+        team.session_summary_manager = None
+
+        session = MagicMock()
+        session.session_id = "session-1"
+        run_response = TeamRunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            content="Member results after human-in-the-loop resolution:\n[Agent]: Done",
+            requirements=[],
+        )
+        run_messages = MagicMock(messages=[])
+        run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+
+        with (
+            patch("agno.team._run.register_run"),
+            patch("agno.team._run.cleanup_run"),
+            patch("agno.team._run.raise_if_cancelled"),
+            patch("agno.team._run._cleanup_and_store"),
+            patch("agno.team._init._disconnect_connectable_tools"),
+            patch("agno.team._telemetry.log_team_telemetry"),
+            patch("agno.team._run.call_model_with_fallback") as mock_call_model,
+        ):
+            result = _continue_run(
+                team,
+                run_response=run_response,
+                run_messages=run_messages,
+                run_context=run_context,
+                tools=[],
+                session=session,
+                skip_model_response=True,
+            )
+
+        mock_call_model.assert_not_called()
+        assert result.status == RunStatus.completed
+        assert result.content == "Member results after human-in-the-loop resolution:\n[Agent]: Done"
+
+    def test_continue_run_dispatch_passes_skip_for_respond_directly_member_hitl(self):
+        from agno.team._run import continue_run_dispatch
+
+        team = MagicMock()
+        team.session_id = None
+        team.add_history_to_context = False
+        team.parser_model = None
+        team.respond_directly = True
+        team.initialize_team = MagicMock()
+        team.db = MagicMock()
+
+        req = _make_requirement(requires_confirmation=True)
+        req.member_agent_id = "member-1"
+        req.member_run_id = "member-run-1"
+        delegate_tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="delegate-1",
+            result="Member 'Agent' requires human input before continuing.",
+        )
+        run_response = TeamRunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            requirements=[req],
+            tools=[delegate_tool],
+            messages=[],
+        )
+
+        opts = SimpleNamespace(
+            stream=False,
+            stream_events=False,
+            yield_run_output=False,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+        )
+        team_session = MagicMock()
+        team_session.runs = [run_response]
+        sentinel = object()
+
+        with (
+            patch("agno.team._init._has_async_db", return_value=False),
+            patch("agno.team._init._initialize_session", return_value=("session-1", None)),
+            patch("agno.team._storage._read_or_create_session", return_value=team_session),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._storage._load_session_state", return_value={}),
+            patch("agno.team._run_options.resolve_run_options", return_value=opts),
+            patch("agno.run.approval.check_and_apply_approval_resolution"),
+            patch("agno.team._run._route_requirements_to_members", return_value=["[Agent]: Done"]),
+            patch("agno.team._response.get_response_format", return_value=None),
+            patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+            patch("agno.team._run._get_continue_run_messages", return_value=self._make_run_messages(["delegate-1"])),
+            patch("agno.team._run._continue_run", return_value=sentinel) as mock_continue,
+        ):
+            result = continue_run_dispatch(
+                team,
+                run_response=run_response,
+                requirements=[req],
+                stream=False,
+            )
+
+        assert result is sentinel
+        assert mock_continue.call_args.kwargs["skip_model_response"] is True
+        assert "Done" in run_response.content
+
+
+# ===========================================================================
+# 15. Approval resolution fallback in continue_run_dispatch
 # ===========================================================================
 
 
