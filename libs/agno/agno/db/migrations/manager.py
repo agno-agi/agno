@@ -25,7 +25,7 @@ class MigrationManager:
     def latest_schema_version(self) -> Version:
         return self.available_versions[-1][1]
 
-    async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False):
+    async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False, custom_tables: Optional[list[tuple[str,str]]] = None):
         """Handle executing an up migration.
 
         Args:
@@ -61,6 +61,9 @@ class MigrationManager:
             tables = [(table_type, getattr(self.db, _table_type_to_attr[table_type]))]
         else:
             tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
+
+        if custom_tables:
+            tables = custom_tables
 
         # Handle migrations for each table separately (extend in future if needed):
         for table_type, table_name in tables:
