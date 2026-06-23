@@ -637,6 +637,8 @@ TeamRunOutputEvent = Union[
     RunContinuedEvent,
     PreHookStartedEvent,
     PreHookCompletedEvent,
+    PostHookStartedEvent,
+    PostHookCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningContentDeltaEvent,
