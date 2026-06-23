@@ -21,29 +21,29 @@ print_heading "Development setup..."
 
 print_heading "Removing virtual env"
 print_info "rm -rf ${VENV_DIR}"
-rm -rf ${VENV_DIR}
+rm -rf "${VENV_DIR}"
 
 print_heading "Creating virtual env"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv venv --python 3.12"
-VIRTUAL_ENV=${VENV_DIR} uv venv --python 3.12
+VIRTUAL_ENV="${VENV_DIR}" uv venv --python 3.12
 
 print_heading "Installing agno"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_DIR}/requirements.txt
+VIRTUAL_ENV="${VENV_DIR}" uv pip install -r "${AGNO_DIR}/requirements.txt"
 
 print_heading "Installing agno in editable mode with dev dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e ${AGNO_DIR}[dev]
+VIRTUAL_ENV="${VENV_DIR}" uv pip install -U -e "${AGNO_DIR}[dev]"
 #TODO: Improve the dev setup to handle conflicts which results in missing dependencies
 
 print_heading "Installing agno-infra"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt
+VIRTUAL_ENV="${VENV_DIR}" uv pip install -r "${AGNO_INFRA_DIR}/requirements.txt"
 
 print_heading "Installing agno-infra in editable mode with dev dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_INFRA_DIR}[dev]
+VIRTUAL_ENV="${VENV_DIR}" uv pip install -e "${AGNO_INFRA_DIR}[dev]"
 
 print_heading "uv pip list"
-VIRTUAL_ENV=${VENV_DIR} uv pip list
+VIRTUAL_ENV="${VENV_DIR}" uv pip list
 
 print_heading "Development setup complete"
 print_heading "Activate venv using: source .venv/bin/activate"
