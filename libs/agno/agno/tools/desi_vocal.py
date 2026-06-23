@@ -44,7 +44,7 @@ class DesiVocalTools(Toolkit):
         """
         try:
             url = "https://prod-api2.desivocal.com/dv/api/v0/tts_api/voices"
-            response = requests.get(url)
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
 
             voices_data = response.json()
