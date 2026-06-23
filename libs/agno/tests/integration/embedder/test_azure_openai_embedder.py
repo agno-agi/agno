@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from agno.knowledge.embedder.azure_openai import AzureOpenAIEmbedder
@@ -8,6 +10,10 @@ def embedder():
     return AzureOpenAIEmbedder()
 
 
+@pytest.mark.skipif(
+    not os.environ.get("AZURE_OPENAI_API_KEY") and not os.environ.get("AZURE_OPENAI_AD_TOKEN"),
+    reason="Azure OpenAI credentials not set",
+)
 def test_get_embedding(embedder):
     """Test sync embedding returns correct dimensions"""
     embeddings = embedder.get_embedding("The quick brown fox jumps over the lazy dog.")
@@ -16,6 +22,10 @@ def test_get_embedding(embedder):
     assert len(embeddings) == embedder.dimensions
 
 
+@pytest.mark.skipif(
+    not os.environ.get("AZURE_OPENAI_API_KEY") and not os.environ.get("AZURE_OPENAI_AD_TOKEN"),
+    reason="Azure OpenAI credentials not set",
+)
 @pytest.mark.asyncio()
 async def test_async_get_embedding(embedder):
     """Test async embedding returns correct dimensions"""

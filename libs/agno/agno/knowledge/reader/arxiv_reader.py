@@ -34,14 +34,24 @@ class ArxivReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance,
         **kwargs,
     ) -> None:
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
         # ArxivReader-specific attributes
         self.sort_by = sort_by
+        self._client: Optional[arxiv.Client] = None
+
+    def get_client(self) -> arxiv.Client:
+        """Return a cached arxiv.Client, creating it on first use."""
+        if self._client is None:
+            self._client = arxiv.Client()
+        return self._client
 
     def read(self, query: str) -> List[Document]:
         """
@@ -56,7 +66,7 @@ class ArxivReader(Reader):
         documents = []
         search = arxiv.Search(query=query, max_results=self.max_results, sort_by=self.sort_by)
 
-        for result in search.results():
+        for result in self.get_client().results(search):
             links = ", ".join([x.href for x in result.links])
 
             documents.append(

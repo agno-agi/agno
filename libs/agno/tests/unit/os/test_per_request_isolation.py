@@ -520,6 +520,62 @@ class TestWorkflowDeepCopyBasicSteps:
         assert copy.steps[0] is not basic_team
         assert copy.steps[0].id == basic_team.id
 
+    def test_workflow_with_workflow_as_step(self):
+        """Test deep copying a workflow where a Step uses workflow= to nest another workflow."""
+        inner_agent = Agent(name="inner-agent", id="inner-agent-id")
+        inner_workflow = Workflow(
+            name="inner-workflow",
+            id="inner-workflow-id",
+            steps=[Step(name="inner-step", agent=inner_agent)],
+        )
+
+        outer_workflow = Workflow(
+            name="outer-workflow",
+            id="outer-workflow-id",
+            steps=[
+                Step(name="nested-workflow-step", workflow=inner_workflow),
+                Step(name="final-step", agent=Agent(name="outer-agent", id="outer-agent-id")),
+            ],
+        )
+
+        copy = outer_workflow.deep_copy()
+
+        assert copy is not outer_workflow
+        assert copy.id == outer_workflow.id
+        assert len(copy.steps) == 2
+        # The nested workflow step should have its workflow copied
+        nested_step = copy.steps[0]
+        assert nested_step.workflow is not None
+        assert nested_step.workflow is not inner_workflow
+        assert nested_step.workflow.name == "inner-workflow"
+        assert nested_step.workflow.id == "inner-workflow-id"
+        # Inner agent should also be copied
+        assert nested_step.workflow.steps[0].agent is not inner_agent
+        assert nested_step.workflow.steps[0].agent.id == inner_agent.id
+
+    def test_workflow_with_direct_workflow_step(self):
+        """Test deep copying when a workflow is directly in steps list (auto-wrap shorthand)."""
+        inner_agent = Agent(name="direct-inner-agent", id="direct-inner-agent-id")
+        inner_workflow = Workflow(
+            name="direct-inner-workflow",
+            id="direct-inner-workflow-id",
+            steps=[Step(name="inner-step", agent=inner_agent)],
+        )
+
+        outer_workflow = Workflow(
+            name="outer-workflow",
+            id="outer-workflow-id",
+            steps=[inner_workflow],
+        )
+
+        copy = outer_workflow.deep_copy()
+
+        assert copy is not outer_workflow
+        # Direct workflow should be copied
+        assert copy.steps[0] is not inner_workflow
+        assert copy.steps[0].name == inner_workflow.name
+        assert copy.steps[0].id == inner_workflow.id
+
 
 # ============================================================================
 # Workflow Deep Copy - Step Container Types
@@ -623,6 +679,99 @@ class TestWorkflowDeepCopyContainerSteps:
         # Agent inside condition should be copied
         assert condition_copy.steps[0].agent is not basic_agent
         assert condition_copy.steps[0].agent.id == basic_agent.id
+
+    def test_workflow_with_condition_else_steps(self, basic_agent):
+        """Test deep copying a workflow with Condition that has else_steps."""
+        else_agent = Agent(name="else-agent", id="else-agent-id")
+
+        def evaluator(step_input):
+            return False
+
+        workflow = Workflow(
+            name="condition-else-workflow",
+            id="workflow-id",
+            steps=[
+                Condition(
+                    name="condition-with-else",
+                    description="Conditional with else branch",
+                    evaluator=evaluator,
+                    steps=[Step(name="if-step", agent=basic_agent)],
+                    else_steps=[Step(name="else-step", agent=else_agent)],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        condition_copy = copy.steps[0]
+        assert isinstance(condition_copy, Condition)
+        assert condition_copy.name == "condition-with-else"
+        assert condition_copy.evaluator is evaluator
+        # else_steps must be preserved
+        assert condition_copy.else_steps is not None
+        assert len(condition_copy.else_steps) == 1
+        assert condition_copy.else_steps[0].name == "else-step"
+        # Agents inside else_steps should be deep copied
+        assert condition_copy.else_steps[0].agent is not else_agent
+        assert condition_copy.else_steps[0].agent.id == else_agent.id
+        # if-branch agents should also be deep copied
+        assert condition_copy.steps[0].agent is not basic_agent
+        assert condition_copy.steps[0].agent.id == basic_agent.id
+
+    def test_workflow_with_condition_no_else_steps(self, basic_agent):
+        """Test deep copying a Condition with else_steps=None preserves None."""
+
+        def evaluator(step_input):
+            return True
+
+        workflow = Workflow(
+            name="condition-no-else-workflow",
+            id="workflow-id",
+            steps=[
+                Condition(
+                    name="condition-no-else",
+                    evaluator=evaluator,
+                    steps=[Step(name="if-step", agent=basic_agent)],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        condition_copy = copy.steps[0]
+        assert isinstance(condition_copy, Condition)
+        assert condition_copy.else_steps is None
+
+    def test_workflow_with_condition_multiple_else_steps(self):
+        """Test deep copying a Condition with multiple else_steps."""
+        agent1 = Agent(name="else-agent-1", id="else-agent-1-id")
+        agent2 = Agent(name="else-agent-2", id="else-agent-2-id")
+        if_agent = Agent(name="if-agent", id="if-agent-id")
+
+        workflow = Workflow(
+            name="multi-else-workflow",
+            id="workflow-id",
+            steps=[
+                Condition(
+                    name="multi-else-condition",
+                    evaluator=False,
+                    steps=[Step(name="if-step", agent=if_agent)],
+                    else_steps=[
+                        Step(name="else-step-1", agent=agent1),
+                        Step(name="else-step-2", agent=agent2),
+                    ],
+                )
+            ],
+        )
+
+        copy = workflow.deep_copy()
+
+        condition_copy = copy.steps[0]
+        assert len(condition_copy.else_steps) == 2
+        assert condition_copy.else_steps[0].name == "else-step-1"
+        assert condition_copy.else_steps[1].name == "else-step-2"
+        assert condition_copy.else_steps[0].agent is not agent1
+        assert condition_copy.else_steps[1].agent is not agent2
 
     def test_workflow_with_router_steps(self):
         """Test deep copying a workflow with Router steps."""

@@ -140,12 +140,12 @@ class PostgresTools(Toolkit):
                 return f"{header}\n" + "\n".join(data_rows)
 
         except psycopg.Error as e:
-            log_error(f"Database error: {e}")
+            log_error(f"Database error: {str(e)}")
             if self._connection and not self._connection.closed:
                 self._connection.rollback()
             return f"Error executing query: {e}"
         except Exception as e:
-            log_error(f"An unexpected error occurred: {e}")
+            log_error(f"An unexpected error occurred: {str(e)}")
             return f"An unexpected error occurred: {e}"
 
     def show_tables(self) -> str:

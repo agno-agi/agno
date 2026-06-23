@@ -605,3 +605,133 @@ def test_search_with_reranker(milvus_db, mock_milvus_client):
         # Verify results are reranked (reversed)
         assert results[0].name == "doc_b"
         assert results[1].name == "doc_a"
+
+
+def test_hybrid_schema_text_field_max_length(mock_embedder):
+    """`text` VARCHAR field must be 65535"""
+    from agno.vectordb.search import SearchType
+
+    db = Milvus(embedder=mock_embedder, collection="test_collection", search_type=SearchType.hybrid)
+    schema = db._create_hybrid_schema()
+
+    text_field = next(f for f in schema.fields if f.name == "text")
+    assert text_field.params["max_length"] == 65535
+
+
+def test_non_hybrid_insert_serializes_meta_data_and_usage_as_json(milvus_db, mock_milvus_client):
+    """non-hybrid insert must json.dumps meta_data and usage."""
+
+    import json
+
+    doc = Document(content="Some content", meta_data={"cuisine": "Thai"}, name="doc1")
+    with patch.object(milvus_db.embedder, "get_embedding", return_value=[0.1] * 1024):
+        milvus_db.insert(documents=[doc], content_hash="hash1")
+
+    _, kwargs = mock_milvus_client.insert.call_args
+    data = kwargs["data"]
+    assert isinstance(data["meta_data"], str), "meta_data must be a JSON string, not a dict"
+    assert isinstance(data["usage"], str), "usage must be a JSON string, not a dict"
+    assert json.loads(data["meta_data"]) == {"cuisine": "Thai"}
+    # mock_embedder fixture sets usage to {"prompt_tokens": 10, "total_tokens": 10}
+    assert json.loads(data["usage"]) == {"prompt_tokens": 10, "total_tokens": 10}
+
+
+def test_non_hybrid_upsert_serializes_meta_data_and_usage_as_json(milvus_db, mock_milvus_client):
+    """non-hybrid upsert must json.dumps meta_data and usage."""
+    import json
+
+    doc = Document(
+        content="Some content",
+        meta_data={"k": "v"},
+        usage={"prompt_tokens": 1, "total_tokens": 1},
+        name="doc1",
+    )
+    with patch.object(milvus_db.embedder, "get_embedding", return_value=[0.1] * 1024):
+        milvus_db.upsert(documents=[doc], content_hash="hash1")
+
+    _, kwargs = mock_milvus_client.upsert.call_args
+    data = kwargs["data"]
+    assert isinstance(data["meta_data"], str)
+    assert isinstance(data["usage"], str)
+    assert json.loads(data["meta_data"]) == {"k": "v"}
+
+
+def test_update_metadata_sends_full_row_and_preserves_fields(milvus_db, mock_milvus_client):
+    """update_metadata must send the full row must JSON-encode
+    meta_data/filters while preserving all other fields.
+
+    Milvus only supports partial-field upsert from 2.6.2+, so the safe path
+    on older versions is to read the entire row and upsert it back.
+    """
+    import json
+
+    existing_row = {
+        "id": "doc_id_1",
+        "name": "doc1",
+        "content": "the content",
+        "content_id": "content_xyz",
+        "content_hash": "hash1",
+        "text": "the content",
+        "meta_data": json.dumps({"cuisine": "Thai"}),
+        "filters": json.dumps({"cuisine": "Thai"}),
+        "usage": json.dumps({"prompt_tokens": 5, "total_tokens": 5}),
+        "vector": [0.1] * 1024,
+    }
+    mock_milvus_client.query.return_value = [existing_row]
+
+    milvus_db.update_metadata(content_id="content_xyz", metadata={"type": "soup"})
+
+    mock_milvus_client.upsert.assert_called_once()
+    _, kwargs = mock_milvus_client.upsert.call_args
+    sent = kwargs["data"][0]
+
+    # meta_data / filters merged and JSON-encoded
+    assert isinstance(sent["meta_data"], str)
+    assert isinstance(sent["filters"], str)
+    assert json.loads(sent["meta_data"]) == {"cuisine": "Thai", "type": "soup"}
+    assert json.loads(sent["filters"]) == {"cuisine": "Thai", "type": "soup"}
+
+    # Every other field round-trips untouched
+    for field in ("id", "name", "content", "content_id", "content_hash", "text", "usage", "vector"):
+        assert sent[field] == existing_row[field], f"{field} was not preserved"
+
+
+def test_update_metadata_handles_dict_shaped_existing_meta_data(milvus_db, mock_milvus_client):
+    """update_metadata must tolerate older rows where meta_data was stored as
+    a raw dict."""
+    import json
+
+    existing_row = {
+        "id": "doc_id_1",
+        "content_id": "content_xyz",
+        "meta_data": {"cuisine": "Thai"},  # legacy: stored as dict, not string
+        "filters": {"cuisine": "Thai"},
+        "usage": "{}",
+    }
+    mock_milvus_client.query.return_value = [existing_row]
+
+    milvus_db.update_metadata(content_id="content_xyz", metadata={"type": "soup"})
+
+    _, kwargs = mock_milvus_client.upsert.call_args
+    sent = kwargs["data"][0]
+    assert json.loads(sent["meta_data"]) == {"cuisine": "Thai", "type": "soup"}
+    assert json.loads(sent["filters"]) == {"cuisine": "Thai", "type": "soup"}
+
+
+def test_update_metadata_noop_when_content_id_missing(milvus_db, mock_milvus_client):
+    """No matching rows -> no upsert call."""
+    mock_milvus_client.query.return_value = []
+
+    milvus_db.update_metadata(content_id="missing", metadata={"x": "y"})
+
+    mock_milvus_client.upsert.assert_not_called()
+
+
+def test_decode_json_field_helper():
+    """The _decode_json_field helper round-trips strings, accepts dicts, and
+    falls back to the default on garbage."""
+    assert Milvus._decode_json_field('{"a": 1}', default={}) == {"a": 1}
+    assert Milvus._decode_json_field({"a": 1}, default={}) == {"a": 1}
+    assert Milvus._decode_json_field(None, default={}) == {}
+    assert Milvus._decode_json_field("", default={}) == {}
+    assert Milvus._decode_json_field("not json", default={"fallback": True}) == {"fallback": True}

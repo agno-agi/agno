@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     import mlx_whisper
@@ -125,7 +125,7 @@ class MLXTranscribeTools(Toolkit):
             return transcription.get("text", "")
         except Exception as e:
             _e = f"Failed to transcribe audio file {e}"
-            logger.error(_e)
+            log_error(_e)
             return _e
 
     def read_files(self) -> str:
@@ -138,5 +138,5 @@ class MLXTranscribeTools(Toolkit):
             log_info(f"Reading files in : {self.base_dir}")
             return json.dumps([str(file_name) for file_name in self.base_dir.iterdir()], indent=4)
         except Exception as e:
-            logger.error(f"Error reading files: {e}")
+            logger.exception("Error reading files")
             return f"Error reading files: {e}"

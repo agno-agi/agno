@@ -51,7 +51,7 @@ class ClickUpTools(Toolkit):
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error making request to {url}: {e}")
+            logger.exception(f"Error making request to {url}")
             return {"error": str(e)}
 
     def _find_by_name(self, items: List[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]]:

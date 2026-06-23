@@ -128,7 +128,7 @@ class Message(BaseModel):
             if len(self.content) > 0 and isinstance(self.content[0], dict) and "text" in self.content[0]:
                 return self.content[0].get("text", "")
             else:
-                return json.dumps(self.content)
+                return json.dumps(self.content, ensure_ascii=False)
         return ""
 
     def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:
@@ -378,7 +378,7 @@ class Message(BaseModel):
                 if isinstance(self.content, str) or isinstance(self.content, list):
                     _logger(self.content)
                 elif isinstance(self.content, dict):
-                    _logger(json.dumps(self.content, indent=2))
+                    _logger(json.dumps(self.content, indent=2, ensure_ascii=False))
         if self.tool_calls:
             tool_calls_list = ["Tool Calls:"]
             for tool_call in self.tool_calls:

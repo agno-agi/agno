@@ -172,3 +172,23 @@ def test_docx_reader_metadata(mock_docx):
         assert len(documents) == 1
         assert documents[0].name == "test_doc"
         assert documents[0].content == "First paragraph\n\nSecond paragraph"
+
+
+def test_docx_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = DocxReader(chunk_size=350)
+    assert reader.chunk_size == 350
+    assert reader.chunking_strategy.chunk_size == 350
+    assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+def test_docx_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.document import DocumentChunking
+
+    reader = DocxReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, DocumentChunking)

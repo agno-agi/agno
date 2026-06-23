@@ -136,7 +136,7 @@ class CompressionManager:
 
             return response.content
         except Exception as e:
-            log_error(f"Error compressing tool result: {e}")
+            log_error(f"Error compressing tool result: {str(e)}")
             return tool_content
 
     def compress(
@@ -241,7 +241,7 @@ class CompressionManager:
 
             return response.content
         except Exception as e:
-            log_error(f"Error compressing tool result: {e}")
+            log_error(f"Error compressing tool result: {str(e)}")
             return tool_content
 
     async def acompress(

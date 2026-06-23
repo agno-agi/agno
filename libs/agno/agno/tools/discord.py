@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 
 class DiscordTools(Toolkit):
@@ -24,7 +24,7 @@ class DiscordTools(Toolkit):
     ):
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
         if not self.bot_token:
-            logger.error("Discord bot token is required")
+            log_error("Discord bot token is required")
             raise ValueError("Discord bot token is required")
 
         self.base_url = "https://discord.com/api/v10"
@@ -70,7 +70,7 @@ class DiscordTools(Toolkit):
             self._make_request("POST", f"/channels/{channel_id}/messages", data)
             return f"Message sent successfully to channel {channel_id}"
         except Exception as e:
-            logger.error(f"Error sending message: {e}")
+            logger.exception("Error sending message")
             return f"Error sending message: {str(e)}"
 
     def get_channel_info(self, channel_id: str) -> str:
@@ -87,7 +87,7 @@ class DiscordTools(Toolkit):
             response = self._make_request("GET", f"/channels/{channel_id}")
             return json.dumps(response, indent=2)
         except Exception as e:
-            logger.error(f"Error getting channel info: {e}")
+            logger.exception("Error getting channel info")
             return f"Error getting channel info: {str(e)}"
 
     def list_channels(self, guild_id: str) -> str:
@@ -104,7 +104,7 @@ class DiscordTools(Toolkit):
             response = self._make_request("GET", f"/guilds/{guild_id}/channels")
             return json.dumps(response, indent=2)
         except Exception as e:
-            logger.error(f"Error listing channels: {e}")
+            logger.exception("Error listing channels")
             return f"Error listing channels: {str(e)}"
 
     def get_channel_messages(self, channel_id: str, limit: int = 100) -> str:
@@ -122,7 +122,7 @@ class DiscordTools(Toolkit):
             response = self._make_request("GET", f"/channels/{channel_id}/messages?limit={limit}")
             return json.dumps(response, indent=2)
         except Exception as e:
-            logger.error(f"Error getting messages: {e}")
+            logger.exception("Error getting messages")
             return f"Error getting messages: {str(e)}"
 
     def delete_message(self, channel_id: str, message_id: str) -> str:
@@ -140,7 +140,7 @@ class DiscordTools(Toolkit):
             self._make_request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
             return f"Message {message_id} deleted successfully from channel {channel_id}"
         except Exception as e:
-            logger.error(f"Error deleting message: {e}")
+            logger.exception("Error deleting message")
             return f"Error deleting message: {str(e)}"
 
     @staticmethod

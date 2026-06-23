@@ -57,6 +57,11 @@ def format_messages(messages: List[Message], compress_tool_results: bool = False
     Returns:
         List[Dict[str, Any]]: The formatted messages.
     """
+    from agno.utils.message import normalize_tool_messages
+
+    # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+    messages = normalize_tool_messages(messages)
+
     formatted_messages = []
     for message in messages:
         # Use compressed content for tool messages if compression is active

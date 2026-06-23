@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     from tavily import TavilyClient
@@ -53,7 +53,7 @@ class TavilyTools(Toolkit):
         """
         self.api_key = api_key or getenv("TAVILY_API_KEY")
         if not self.api_key:
-            logger.error("TAVILY_API_KEY not provided")
+            log_error("TAVILY_API_KEY not provided")
         self.api_base_url = api_base_url or getenv("TAVILY_API_BASE_URL")
 
         self.client: TavilyClient = TavilyClient(api_key=self.api_key, api_base_url=self.api_base_url)
@@ -196,7 +196,7 @@ class TavilyTools(Toolkit):
                 return json.dumps(results, indent=2)
 
         except Exception as e:
-            logger.error(f"Error extracting content from URLs: {e}")
+            logger.exception("Error extracting content from URLs")
             return f"Error extracting content: {str(e)}"
 
     def _format_extract_markdown(self, results: List[Dict[str, Any]]) -> str:

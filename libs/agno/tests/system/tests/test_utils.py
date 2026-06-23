@@ -15,6 +15,7 @@ JWT_ALGORITHM = "HS256"
 
 # Test timeout settings
 REQUEST_TIMEOUT = 60.0  # seconds
+STREAMING_TIMEOUT = 120.0  # seconds - streaming requests need longer timeout
 
 # Expected agents, teams, and workflows
 EXPECTED_LOCAL_AGENTS = ["gateway-agent"]

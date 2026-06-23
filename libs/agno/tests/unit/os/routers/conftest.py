@@ -109,6 +109,24 @@ def make_async_client_mock(stream_mock=None):
     client.assistant_threads_setTitle = AsyncMock()
     client.assistant_threads_setSuggestedPrompts = AsyncMock()
     client.chat_stream = AsyncMock(return_value=stream_mock or make_stream_mock())
+    client.chat_postMessage = AsyncMock()
+    # Used by resolve_slack_user() and bot_name_resolver.resolve()
+    client.users_info = AsyncMock(
+        return_value={
+            "ok": True,
+            "user": {
+                "id": "U123",
+                "name": "testuser",
+                "profile": {
+                    "email": "test@example.com",
+                    "display_name": "Test User",
+                    "real_name": "Test User",
+                },
+            },
+        }
+    )
+    # Used by resolve_channel_name()
+    client.conversations_info = AsyncMock(return_value={"ok": True, "channel": {"name": "general"}})
     return client
 
 

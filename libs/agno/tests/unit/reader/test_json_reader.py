@@ -265,3 +265,23 @@ async def test_async_large_json():
 
     assert len(documents) == 1000
     assert all(doc.name == "large" for doc in documents)
+
+
+def test_json_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    reader = JSONReader(chunk_size=250)
+    assert reader.chunk_size == 250
+    assert reader.chunking_strategy.chunk_size == 250
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_json_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    reader = JSONReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)

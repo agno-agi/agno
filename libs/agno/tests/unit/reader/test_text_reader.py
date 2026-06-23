@@ -337,3 +337,25 @@ async def test_async_parallel_chunking():
     finally:
         # Restore original processor
         reader._async_chunk_document = original_processor
+
+
+def test_text_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+    from agno.knowledge.reader.text_reader import TextReader
+
+    reader = TextReader(chunk_size=400)
+    assert reader.chunk_size == 400
+    assert reader.chunking_strategy.chunk_size == 400
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_text_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+    from agno.knowledge.reader.text_reader import TextReader
+
+    reader = TextReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)

@@ -1,0 +1,2 @@
+This is the agno-haiku-bot, defined from a local agent directory and loaded
+into an Antigravity sandbox via AntigravityAgent.from_agent_directory().

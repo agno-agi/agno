@@ -667,3 +667,101 @@ def test_default_allowed_commands():
         assert "python" in tools.allowed_commands
         assert "git" in tools.allowed_commands
         assert "pytest" in tools.allowed_commands
+
+
+# --- instruction generation tests ---
+
+
+def test_instructions_read_only():
+    """Test that read-only config only describes enabled tools."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(
+            base_dir=tmp_dir,
+            enable_read_file=True,
+            enable_edit_file=False,
+            enable_write_file=False,
+            enable_run_shell=False,
+        )
+        instructions = tools.instructions
+        assert "read_file" in instructions
+        assert "**edit_file**" not in instructions
+        assert "**write_file**" not in instructions
+        assert "**run_shell**" not in instructions
+        assert "**grep**" not in instructions
+
+
+def test_instructions_all_tools():
+    """Test that all=True includes instructions for all 7 tools."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=tmp_dir, all=True)
+        instructions = tools.instructions
+        for name in ("read_file", "edit_file", "write_file", "run_shell", "grep", "find", "ls"):
+            assert f"**{name}**" in instructions
+
+
+def test_instructions_custom_bypass():
+    """Test that custom instructions bypass dynamic generation."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=tmp_dir, instructions="Use the tools wisely.")
+        assert tools.instructions == "Use the tools wisely."
+
+
+def test_instructions_default_no_exploration():
+    """Test that default config does not mention grep/find/ls."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(base_dir=tmp_dir)
+        instructions = tools.instructions
+        assert "**read_file**" in instructions
+        assert "**edit_file**" in instructions
+        assert "**write_file**" in instructions
+        assert "**run_shell**" in instructions
+        assert "**grep**" not in instructions
+        assert "**find**" not in instructions
+        assert "**ls**" not in instructions
+
+
+def test_instructions_best_practices_conditional():
+    """Test that best practices adapt to enabled tools."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # read-only: no "Read before editing" since edit_file is disabled
+        tools = CodingTools(
+            base_dir=tmp_dir,
+            enable_read_file=True,
+            enable_edit_file=False,
+            enable_write_file=False,
+            enable_run_shell=False,
+        )
+        assert "Read before editing" not in tools.instructions
+        assert "Run tests" not in tools.instructions
+
+        # With edit_file and run_shell
+        tools2 = CodingTools(
+            base_dir=tmp_dir,
+            enable_read_file=True,
+            enable_edit_file=True,
+            enable_write_file=False,
+            enable_run_shell=True,
+        )
+        assert "Read before editing" in tools2.instructions
+        assert "Run tests" in tools2.instructions
+
+
+def test_instructions_preamble_lists_enabled_tools():
+    """Test that the preamble tool list matches enabled tools."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tools = CodingTools(
+            base_dir=tmp_dir,
+            enable_read_file=True,
+            enable_edit_file=False,
+            enable_write_file=False,
+            enable_run_shell=False,
+            enable_grep=True,
+        )
+        instructions = tools.instructions
+        # First line should list only enabled tools
+        first_line = instructions.split("\n")[0]
+        assert "read_file" in first_line
+        assert "grep" in first_line
+        assert "edit_file" not in first_line
+        assert "write_file" not in first_line
+        assert "run_shell" not in first_line

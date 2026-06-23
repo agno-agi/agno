@@ -101,7 +101,7 @@ model = OpenAIResponses(id="gpt-5.2")
 
 # Google
 from agno.models.google import Gemini
-model = Gemini(id="gemini-3-flash-preview")
+model = Gemini(id="gemini-3.5-flash")
 
 # Anthropic
 from agno.models.anthropic import Claude

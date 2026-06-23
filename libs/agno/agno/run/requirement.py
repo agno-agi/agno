@@ -1,9 +1,13 @@
+"""Requirement to complete a paused run (used in HITL flows)"""
+
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from agno.models.response import ToolExecution, UserFeedbackQuestion, UserInputField
+
+PauseType = Literal["confirmation", "user_input", "user_feedback", "external_execution"]
 
 
 @dataclass
@@ -174,6 +178,20 @@ class RunRequirement:
             and not self.needs_user_feedback
             and not self.needs_external_execution
         )
+
+    @property
+    def pause_type(self) -> PauseType:
+        # Priority order: feedback > external > input > confirmation (most specific wins)
+        tool = self.tool_execution
+        if tool is None:
+            return "confirmation"
+        if getattr(tool, "user_feedback_schema", None):
+            return "user_feedback"
+        if getattr(tool, "external_execution_required", False):
+            return "external_execution"
+        if getattr(tool, "requires_user_input", False):
+            return "user_input"
+        return "confirmation"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to JSON-serializable dictionary for storage."""

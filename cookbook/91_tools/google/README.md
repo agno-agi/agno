@@ -1,6 +1,6 @@
 # Google Tools Cookbooks
 
-Agents for Gmail and Google Calendar using OAuth or service account authentication.
+Agents for Gmail, Google Calendar, Google Drive, and Google Slides using OAuth or service account authentication.
 
 ## Quick Start
 
@@ -19,6 +19,20 @@ agent = Agent(
 agent.print_response("What meetings do I have tomorrow?", stream=True)
 ```
 
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.google.slides import GoogleSlidesTools
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[GoogleSlidesTools()],
+    markdown=True,
+)
+
+agent.print_response("Create a presentation titled 'Q3 Review'", stream=True)
+```
+
 ## Setup
 
 ### 1. Google Cloud Project
@@ -35,6 +49,8 @@ Go to **APIs & Services > Enable APIs and Services** and enable:
 |---------|--------------|
 | `GoogleCalendarTools` | Google Calendar API |
 | `GmailTools` | Gmail API |
+| `GoogleDriveTools` | Google Drive API |
+| `GoogleSlidesTools` | Google Slides API + Google Drive API |
 
 ### 3. Create OAuth Credentials
 
@@ -72,7 +88,7 @@ For server/bot deployments with no browser:
 
 ```bash
 export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account-key.json
-export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional for Calendar
+export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional for Calendar/Slides
 ```
 
 ## Cookbooks
@@ -95,6 +111,24 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 | `calendar_event_creator.py` | Event creation with attendees, Google Meet, and timezone handling |
 | `calendar_daily_briefing.py` | Structured daily briefing with conflict detection and prep notes |
 | `calendar_meeting_scheduler.py` | Multi-person scheduling with availability checking |
+
+### Drive
+
+| File | Description |
+|------|-------------|
+| `drive_tools.py` | Read-only and full-access agents: search, read, upload, and download files |
+| `drive_file_search.py` | Search files with structured output schema and pagination |
+| `drive_document_reader.py` | Read and summarize Google Docs, Sheets, and Slides as text |
+| `drive_folder_organizer.py` | Browse folder structure, upload local files, and download from Drive |
+
+### Slides
+
+| File | Description |
+|------|-------------|
+| `slide_tools.py` | Core examples: create presentation, add slides, read content, list, delete |
+| `slides_presentation_builder.py` | Multi-slide deck builder with tables, layouts, and text annotations |
+| `slides_content_reader.py` | Read and summarize existing presentations with structured output |
+| `slides_media_slides.py` | Background images, YouTube embeds, and Drive video integration |
 
 ### Combined
 

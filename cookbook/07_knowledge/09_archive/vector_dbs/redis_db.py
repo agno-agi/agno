@@ -5,7 +5,7 @@ Redis Vector DB
 Demonstrates Redis-backed knowledge with sync and async flows.
 
 To get started, either set `REDIS_URL`, or start local Redis with:
-`./cookbook/scripts/run_redis.sh`
+`docker run --name my-redis -p 6379:6379 -d redis`
 """
 
 import asyncio

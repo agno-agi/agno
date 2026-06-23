@@ -24,6 +24,12 @@ basic_agent = Agent(
     num_history_runs=3,
     add_datetime_to_context=True,
     markdown=True,
+    instructions=[
+        "You are chatting on WhatsApp. Keep responses conversational and natural.",
+        "Structure your responses as separate short paragraphs separated by double newlines.",
+        "Each paragraph should be a distinct thought or message, like a human would send on WhatsApp.",
+        "Keep each paragraph to 1-3 sentences max.",
+    ],
 )
 
 
@@ -40,10 +46,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
-
-    """
     agent_os.serve(app="basic:app", reload=True)

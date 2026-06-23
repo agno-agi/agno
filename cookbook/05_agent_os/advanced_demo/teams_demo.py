@@ -39,7 +39,7 @@ file_agent = Agent(
 
 video_agent = Agent(
     name="Video Understanding Agent",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     id="video-understanding-agent",
     role="Answer questions about video files",
     db=db,

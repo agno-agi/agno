@@ -415,7 +415,7 @@ def test_team_provider_metrics_openai():
     response = team.run("Hello")
 
     model_metric = response.metrics.details["model"][0]
-    assert model_metric.provider == "OpenAI"
+    assert model_metric.provider == "OpenAI Chat"
     assert model_metric.id == "gpt-4o-mini"
     assert model_metric.input_tokens > 0
     assert model_metric.total_tokens > 0

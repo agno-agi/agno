@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     import requests
@@ -107,16 +107,16 @@ class CustomApiTools(Toolkit):
             }
 
             if not response.ok:
-                logger.error(f"Request failed with status {response.status_code}: {response.text}")
+                log_error(f"Request failed with status {response.status_code}: {response.text}")
                 result["error"] = "Request failed"
 
             return json.dumps(result, indent=2)
 
         except requests.exceptions.RequestException as e:
             error_message = f"Request failed: {str(e)}"
-            logger.error(error_message)
+            log_error(error_message)
             return json.dumps({"error": error_message}, indent=2)
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
-            logger.error(error_message)
+            log_error(error_message)
             return json.dumps({"error": error_message}, indent=2)

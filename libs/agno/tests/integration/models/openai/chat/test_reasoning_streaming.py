@@ -5,8 +5,6 @@ for OpenAI o-series models when used as a reasoning_model.
 
 Note: OpenAI o-series models (o1, o3, o4) perform internal reasoning but do not
 expose the reasoning content via the API. The reasoning happens internally.
-For OpenAI Responses API with reasoning_summary, the summary is provided
-as a complete block, not streamed incrementally.
 
 These tests verify the streaming reasoning feature where reasoning content
 is delivered incrementally via RunEvent.reasoning_content_delta events.
