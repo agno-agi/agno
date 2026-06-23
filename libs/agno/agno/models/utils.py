@@ -137,7 +137,7 @@ def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[st
     return provider_key
 
 
-def _get_model_class(model_id: str, model_provider: str) -> Model:
+def _get_model_class(model_id: str, model_provider: str, params: Optional[Dict[str, Any]] = None) -> Model:
     entry = MODEL_PROVIDER_CLASSES.get(model_provider)
     if entry is None:
         # Allow alias forms (e.g. "azure", "inceptionlabs") to resolve too.
@@ -149,7 +149,14 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
     module_path, class_name = entry
     module = importlib.import_module(module_path)
     model_class = getattr(module, class_name)
-    return model_class(id=model_id)
+
+    kwargs: Dict[str, Any] = {"id": model_id}
+    if params:
+        # Only pass connection params the class declares as serializable, so a serialized config
+        # can't inject arbitrary constructor kwargs (and credentials are never round-tripped).
+        allowed = set(getattr(model_class, "_serializable_params", ()))
+        kwargs.update({key: value for key, value in params.items() if key in allowed})
+    return model_class(**kwargs)
 
 
 def _parse_model_string(model_string: str) -> Model:
@@ -204,7 +211,10 @@ def get_model_from_dict(model_data: Dict[str, Any]) -> Optional[Model]:
         raise ValueError(f"Model data is missing an 'id': {model_data}")
 
     provider_key = _resolve_provider_key(model_data.get("provider"), model_data.get("name"))
-    return _get_model_class(model_id, provider_key)
+    # Forward any serialized connection params (base_url, azure_endpoint, ...) so the rebuilt
+    # model keeps them. _get_model_class filters to the class's declared serializable params.
+    params = {key: value for key, value in model_data.items() if key not in {"id", "name", "provider"}}
+    return _get_model_class(model_id, provider_key, params=params)
 
 
 def resolve_model(model_data: Any, registry: Optional["Registry"] = None) -> Any:
@@ -220,10 +230,14 @@ def resolve_model(model_data: Any, registry: Optional["Registry"] = None) -> Any
     """
     if isinstance(model_data, dict) and "id" in model_data:
         if registry is not None:
+            # Pass serialized connection params so the registry can disambiguate models that share
+            # an id but differ by endpoint (e.g. two Azure deployments of the same model).
+            params = {key: value for key, value in model_data.items() if key not in {"id", "name", "provider"}}
             registered_model = registry.get_model(
                 model_data["id"],
                 provider=model_data.get("provider"),
                 name=model_data.get("name"),
+                params=params or None,
             )
             if registered_model is not None:
                 return registered_model

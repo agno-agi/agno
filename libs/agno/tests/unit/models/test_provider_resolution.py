@@ -47,6 +47,64 @@ def test_to_dict_round_trip_preserves_class(key):
     assert rebuilt.id == "test-id"
 
 
+def test_to_dict_serializes_non_secret_connection_params_not_credentials():
+    """to_dict round-trips declared connection params (azure_endpoint, ...) but never credentials."""
+    from agno.models.azure import AzureOpenAI
+
+    model = AzureOpenAI(
+        id="gpt-4.1-mini",
+        api_key="super-secret",
+        api_version="2024-12-01-preview",
+        azure_endpoint="https://example.cognitiveservices.azure.com",
+        azure_deployment="my-deployment",
+    )
+    data = model.to_dict()
+
+    assert data["azure_endpoint"] == "https://example.cognitiveservices.azure.com"
+    assert data["api_version"] == "2024-12-01-preview"
+    assert data["azure_deployment"] == "my-deployment"
+    # Credentials must never be persisted.
+    assert "api_key" not in data
+    assert "azure_ad_token" not in data
+
+
+def test_get_model_from_dict_recovers_connection_params():
+    """Rebuilding from a dict restores the non-secret connection params (self-healing fallback)."""
+    from agno.models.azure import AzureOpenAI
+
+    rebuilt = get_model_from_dict(
+        {
+            "id": "gpt-4.1-mini",
+            "name": "AzureOpenAI",
+            "provider": "Azure",
+            "azure_endpoint": "https://example.cognitiveservices.azure.com",
+            "api_version": "2024-12-01-preview",
+        }
+    )
+    assert isinstance(rebuilt, AzureOpenAI)
+    assert rebuilt.azure_endpoint == "https://example.cognitiveservices.azure.com"
+    assert rebuilt.api_version == "2024-12-01-preview"
+
+
+def test_get_model_from_dict_ignores_undeclared_params():
+    """Only fields a class declares serializable are passed to its constructor."""
+    from agno.models.openai import OpenAIResponses
+
+    # base_url is declared; a stray non-serializable field must be dropped, not injected.
+    rebuilt = get_model_from_dict(
+        {
+            "id": "gpt-5.5",
+            "name": "OpenAIResponses",
+            "provider": "OpenAI",
+            "base_url": "https://proxy.example.com/v1",
+            "api_key": "should-be-ignored",
+        }
+    )
+    assert isinstance(rebuilt, OpenAIResponses)
+    assert str(rebuilt.base_url) == "https://proxy.example.com/v1"
+    assert rebuilt.api_key != "should-be-ignored"
+
+
 @pytest.mark.parametrize("key", ALL_PROVIDER_KEYS)
 def test_canonical_provider_display_matches_class(key):
     """Drift guard: the provider-display override table matches what each class actually reports.
@@ -181,12 +239,14 @@ class _FakeRegistry:
     def __init__(self, model):
         self._model = model
 
-    def get_model(self, model_id, provider=None, name=None):
-        if getattr(self._model, "id", None) != model_id:
+    def get_model(self, model_id, provider=None, name=None, params=None):
+        if self._model is None or getattr(self._model, "id", None) != model_id:
             return None
         if provider is not None and getattr(self._model, "provider", None) != provider:
             return None
         if name is not None and getattr(self._model, "name", None) != name:
+            return None
+        if params and any(getattr(self._model, key, None) != value for key, value in params.items()):
             return None
         return self._model
 

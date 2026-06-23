@@ -1,7 +1,7 @@
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -39,6 +39,9 @@ class OpenAIResponses(Model):
     name: str = "OpenAIResponses"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
+
+    # Non-secret connection param to round-trip through to_dict/get_model_from_dict.
+    _serializable_params: ClassVar[Tuple[str, ...]] = ("base_url",)
 
     # Request parameters
     include: Optional[List[str]] = None

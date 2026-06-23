@@ -486,9 +486,8 @@ class TestRegistryIntegration:
     def test_registry_preserves_model_connection_params(self):
         """Reconstructing an agent reuses the registered model instance, keeping connection params.
 
-        Regression: a serialized model dict only round-trips id/name/provider, so rebuilding from it
-        drops azure_endpoint/base_url and credentials. The registry holds the live instance, so
-        from_dict should prefer it. See Model.to_dict / Registry.get_model.
+        The registry holds the live, fully-configured instance (with credentials and client state),
+        so from_dict should prefer it over a rebuild. See Registry.get_model.
         """
         from agno.agent.agent import Agent
         from agno.models.azure import AzureOpenAI
@@ -500,13 +499,14 @@ class TestRegistryIntegration:
         )
         registry = Registry(models=[model])
 
-        # The stored config only carries the serialized model dict (id/name/provider).
         config = {
             "id": "test-agent",
             "name": "Test Agent",
             "model": model.to_dict(),
         }
-        assert "azure_endpoint" not in config["model"]  # confirm the gap the fix bridges
+        # Non-secret connection params now round-trip through to_dict ...
+        assert config["model"]["azure_endpoint"] == "https://example.cognitiveservices.azure.com"
+        assert "api_key" not in config["model"]  # ... but credentials never do.
 
         agent = Agent.from_dict(config, registry=registry)
 
@@ -515,23 +515,33 @@ class TestRegistryIntegration:
         assert agent.model.azure_endpoint == "https://example.cognitiveservices.azure.com"
         assert agent.model.api_version == "2024-12-01-preview"
 
-    def test_from_dict_without_registry_rebuilds_bare_model(self):
-        """Without a registry, the model is still rebuilt from its dict (unchanged fallback)."""
+    def test_from_dict_without_registry_recovers_connection_params(self):
+        """Without a registry, the model is rebuilt from its dict and now recovers non-secret params.
+
+        This is the self-healing fallback: even an agent that was never registered keeps its endpoint
+        because to_dict serializes it. Only credentials must come from env/registry.
+        """
         from agno.agent.agent import Agent
         from agno.models.azure import AzureOpenAI
 
         config = {
             "id": "test-agent",
             "name": "Test Agent",
-            "model": {"id": "gpt-4.1-mini", "name": "AzureOpenAI", "provider": "Azure"},
+            "model": {
+                "id": "gpt-4.1-mini",
+                "name": "AzureOpenAI",
+                "provider": "Azure",
+                "azure_endpoint": "https://example.cognitiveservices.azure.com",
+                "api_version": "2024-12-01-preview",
+            },
         }
 
         agent = Agent.from_dict(config)
 
         assert isinstance(agent.model, AzureOpenAI)
         assert agent.model.id == "gpt-4.1-mini"
-        # No registered instance to source connection params from.
-        assert agent.model.azure_endpoint is None
+        assert agent.model.azure_endpoint == "https://example.cognitiveservices.azure.com"
+        assert agent.model.api_version == "2024-12-01-preview"
 
     def test_registry_schema_with_agent(self):
         """Test registry schema lookup with agent config."""
@@ -747,6 +757,44 @@ class TestGetModel:
         reg = Registry(models=[self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")])
 
         assert reg.get_model("") is None
+
+    def test_get_model_disambiguates_by_connection_params(self):
+        """Two deployments of the same model at different endpoints resolve by connection params."""
+        pytest.importorskip("openai")
+        os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+        from agno.models.azure import AzureOpenAI
+
+        endpoint_a = "https://a.cognitiveservices.azure.com"
+        endpoint_b = "https://b.cognitiveservices.azure.com"
+        model_a = AzureOpenAI(id="gpt-4.1-mini", azure_endpoint=endpoint_a)
+        model_b = AzureOpenAI(id="gpt-4.1-mini", azure_endpoint=endpoint_b)
+        reg = Registry(models=[model_a, model_b])
+
+        resolved = reg.get_model(
+            "gpt-4.1-mini", provider="Azure", name="AzureOpenAI", params={"azure_endpoint": endpoint_b}
+        )
+        assert resolved is model_b
+
+    def test_get_model_declines_ambiguous_match(self, monkeypatch):
+        """When candidates can't be told apart, decline (return None) rather than guess an endpoint."""
+        pytest.importorskip("openai")
+        os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+        import agno.registry.registry as registry_module
+        from agno.models.azure import AzureOpenAI
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        reg = Registry(
+            models=[
+                AzureOpenAI(id="gpt-4.1-mini", azure_endpoint="https://a.cognitiveservices.azure.com"),
+                AzureOpenAI(id="gpt-4.1-mini", azure_endpoint="https://b.cognitiveservices.azure.com"),
+            ]
+        )
+
+        # No connection params to disambiguate the two registered deployments.
+        assert reg.get_model("gpt-4.1-mini", provider="Azure", name="AzureOpenAI") is None
+        assert warnings and "gpt-4.1-mini" in warnings[0]
 
 
 # =============================================================================
@@ -1142,6 +1190,36 @@ class TestAddModel:
         reg = Registry()
         reg.add_model(OpenAIResponses(id="gpt-5.4"))
         reg.add_model(OpenAIResponses(id="gpt-5.4"))  # genuine duplicate
+        assert len(reg.models) == 1
+
+    def test_keeps_same_class_id_different_endpoint(self):
+        """Same class and id but different endpoints are kept distinct, not collapsed.
+
+        Otherwise a second Azure deployment of the same model would be silently dropped and requests
+        routed to the first one's endpoint. See _model_identity.
+        """
+        pytest.importorskip("openai")
+        os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+        from agno.models.azure import AzureOpenAI
+
+        reg = Registry()
+        reg.add_model(AzureOpenAI(id="gpt-4.1-mini", azure_endpoint="https://a.cognitiveservices.azure.com"))
+        reg.add_model(AzureOpenAI(id="gpt-4.1-mini", azure_endpoint="https://b.cognitiveservices.azure.com"))
+        assert len(reg.models) == 2
+        assert {m.azure_endpoint for m in reg.models} == {
+            "https://a.cognitiveservices.azure.com",
+            "https://b.cognitiveservices.azure.com",
+        }
+
+    def test_dedupes_same_class_id_and_endpoint(self):
+        """Same class, id and endpoint collapse as before -- they are interchangeable."""
+        pytest.importorskip("openai")
+        os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+        from agno.models.azure import AzureOpenAI
+
+        reg = Registry()
+        reg.add_model(AzureOpenAI(id="gpt-4.1-mini", azure_endpoint="https://a.cognitiveservices.azure.com"))
+        reg.add_model(AzureOpenAI(id="gpt-4.1-mini", azure_endpoint="https://a.cognitiveservices.azure.com"))
         assert len(reg.models) == 1
 
     def test_logs_debug_when_dropping_matching_model(self, monkeypatch):

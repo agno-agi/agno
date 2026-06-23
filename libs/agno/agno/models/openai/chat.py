@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
+from typing import Any, ClassVar, Dict, Iterator, List, Literal, Optional, Tuple, Type, Union
 from uuid import uuid4
 
 import httpx
@@ -42,6 +42,10 @@ class OpenAIChat(Model):
     name: str = "OpenAIChat"
     provider: str = "OpenAI"
     supports_native_structured_outputs: bool = True
+
+    # Non-secret connection param to round-trip; inherited by all OpenAI-compatible subclasses
+    # (OpenAILike and its providers). Subclasses needing more (e.g. Azure) extend this.
+    _serializable_params: ClassVar[Tuple[str, ...]] = ("base_url",)
     # If True, only collect metrics on the final streaming chunk (for providers with cumulative token counts)
     collect_metrics_on_completion: bool = False
 

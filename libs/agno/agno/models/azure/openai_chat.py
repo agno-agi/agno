@@ -1,7 +1,7 @@
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional, Tuple
 
 import httpx
 
@@ -43,6 +43,10 @@ class AzureOpenAI(OpenAILike):
     provider: str = "Azure"
 
     supports_native_structured_outputs: bool = True
+
+    # Non-secret connection params to round-trip. Credentials (api_key, azure_ad_token) are
+    # intentionally excluded -- they must come from the env or a registered model instance.
+    _serializable_params: ClassVar[Tuple[str, ...]] = ("base_url", "api_version", "azure_endpoint", "azure_deployment")
 
     api_key: Optional[str] = None
     api_version: Optional[str] = "2024-10-21"
