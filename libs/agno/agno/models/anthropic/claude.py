@@ -1031,26 +1031,29 @@ class Claude(Model):
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
                     server_blocks.append(block.model_dump())
 
-        # Extract tool calls from the response
-        if response.stop_reason == "tool_use":
-            for block in response.content:
-                if block.type == "tool_use":
-                    tool_name = block.name
-                    tool_input = block.input
+        # Extract tool calls from the response. A complete tool_use block can be
+        # returned with a stop_reason other than "tool_use" (e.g. "max_tokens" or
+        # "pause_turn"); gating extraction on stop_reason silently dropped those
+        # tool calls so the requested tool never ran. Extract purely on block
+        # type, mirroring the streaming path (_parse_provider_response_delta).
+        for block in response.content:
+            if block.type == "tool_use":
+                tool_name = block.name
+                tool_input = block.input
 
-                    function_def = {"name": tool_name}
-                    if tool_input:
-                        function_def["arguments"] = json.dumps(tool_input)
+                function_def = {"name": tool_name}
+                if tool_input:
+                    function_def["arguments"] = json.dumps(tool_input)
 
-                    model_response.extra = model_response.extra or {}
+                model_response.extra = model_response.extra or {}
 
-                    model_response.tool_calls.append(
-                        {
-                            "id": block.id,
-                            "type": "function",
-                            "function": function_def,
-                        }
-                    )
+                model_response.tool_calls.append(
+                    {
+                        "id": block.id,
+                        "type": "function",
+                        "function": function_def,
+                    }
+                )
 
         # Add usage metrics
         if response.usage is not None:
