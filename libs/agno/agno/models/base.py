@@ -11,6 +11,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -655,6 +657,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -667,6 +670,12 @@ class Model(ABC):
             tool_call_limit: Tool call limit
             run_response: Run response to use
             send_media_to_model: Whether to send media to the model
+            after_tool_results: Optional callback invoked once per tool batch, after tool result
+                messages are appended to ``messages`` and before the next model call (or break).
+                Receives the current ``ModelResponse`` (with accumulated ``tool_executions``)
+                as its single argument. Used by Agent-level checkpointing
+                (``checkpoint="tool-batch"``) to persist mid-run state. Exceptions are caught and
+                logged — a failed callback must not kill the run.
         """
         # Check cache if enabled
         if self.cache_response:
@@ -827,6 +836,15 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
+                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
+                # appended to messages; fire the hook before deciding whether to loop or break.
+                # Failure to checkpoint must not kill a working run — log and continue.
+                if after_tool_results is not None:
+                    try:
+                        after_tool_results(model_response)
+                    except Exception as e:
+                        log_error(f"after_tool_results callback failed: {e}")
+
                 # If we have any tool calls that require confirmation, break the loop
                 if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
                     break
@@ -870,9 +888,16 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
+
+        ``after_tool_results``: optional async callback invoked once per tool batch, after tool
+        result messages are appended to ``messages`` and before the next model call (or break).
+        Receives the current ``ModelResponse`` (with accumulated ``tool_executions``) as its
+        single argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist
+        mid-run state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
 
         # Check cache if enabled
@@ -1031,6 +1056,15 @@ class Model(ABC):
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
+
+                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
+                # appended to messages; fire the hook before deciding whether to loop or break.
+                # Failure to checkpoint must not kill a working run — log and continue.
+                if after_tool_results is not None:
+                    try:
+                        await after_tool_results(model_response)
+                    except Exception as e:
+                        log_error(f"after_tool_results callback failed: {e}")
 
                 # If we have any tool calls that require confirmation, break the loop
                 if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
@@ -1336,9 +1370,16 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
+
+        ``after_tool_results``: optional callback invoked once per tool batch, after tool result
+        messages are appended to ``messages`` and before the next model call (or break). Receives
+        the current ``ModelResponse`` (with accumulated ``tool_executions``) as its single
+        argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist mid-run
+        state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
@@ -1522,6 +1563,15 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
+                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
+                # appended to messages; fire the hook before deciding whether to loop or break.
+                # Failure to checkpoint must not kill a working run — log and continue.
+                if after_tool_results is not None:
+                    try:
+                        after_tool_results(model_response)
+                    except Exception as e:
+                        log_error(f"after_tool_results callback failed: {e}")
+
                 # If we have any tool calls that require confirmation, break the loop
                 if any(fc.function.requires_confirmation for fc in function_calls_to_run):
                     break
@@ -1599,9 +1649,16 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
+
+        ``after_tool_results``: optional async callback invoked once per tool batch, after tool
+        result messages are appended to ``messages`` and before the next model call (or break).
+        Receives the current ``ModelResponse`` (with accumulated ``tool_executions``) as its
+        single argument. Used by Agent-level checkpointing (``checkpoint="tool-batch"``) to persist
+        mid-run state. Exceptions are caught and logged — a failed callback must not kill the run.
         """
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
@@ -1784,6 +1841,15 @@ class Model(ABC):
                 # Check if we should stop after tool calls
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
+
+                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
+                # appended to messages; fire the hook before deciding whether to loop or break.
+                # Failure to checkpoint must not kill a working run — log and continue.
+                if after_tool_results is not None:
+                    try:
+                        await after_tool_results(model_response)
+                    except Exception as e:
+                        log_error(f"after_tool_results callback failed: {e}")
 
                 # If we have any tool calls that require confirmation, break the loop
                 if any(fc.function.requires_confirmation for fc in function_calls_to_run):
