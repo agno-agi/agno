@@ -1,8 +1,12 @@
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from agno.cloud.aws.s3.bucket import S3Bucket
-from agno.cloud.aws.s3.object import S3Object
+try:
+    from agno.cloud.aws.s3.bucket import S3Bucket
+    from agno.cloud.aws.s3.object import S3Object
+except ImportError:
+    S3Bucket = None  # type: ignore[assignment,misc]
+    S3Object = None  # type: ignore[assignment,misc]
 
 
 @dataclass
