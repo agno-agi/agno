@@ -2,7 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
-from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -11,7 +11,7 @@ from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
@@ -67,6 +67,69 @@ except ImportError as e:
     raise ImportError(
         "`anthropic` not installed or missing beta components. Please install with `pip install anthropic`"
     ) from e
+
+
+# Anthropic exposes server-executed tools as a `server_tool_use` block
+# (id, name in {web_search, code_execution, bash_code_execution, web_fetch,
+# text_editor_code_execution, tool_search_*}) paired by `tool_use_id` with a
+# matching `*_tool_result` block. The pair forms one already-executed
+# ToolExecution we can surface to `run_response.tools`, identical to the
+# pattern used by GeminiInteractions on the agent path.
+_CLAUDE_SERVER_RESULT_TYPES: Tuple[str, ...] = (
+    "web_search_tool_result",
+    "code_execution_tool_result",
+    "bash_code_execution_tool_result",
+    "web_fetch_tool_result",
+    "text_editor_code_execution_tool_result",
+    "tool_search_tool_result",
+)
+
+
+def _flatten_claude_server_tool_result(result_block: Any) -> Tuple[Optional[str], bool]:
+    """Flatten an Anthropic `*_tool_result` block's payload to (text, is_error).
+
+    Each result family carries a `content` field whose shape varies:
+      - WebSearchToolResult content: `WebSearchToolResultError | List[WebSearchResultBlock]`
+      - CodeExecution / BashCodeExecution content: error | result block with stdout/stderr/return_code
+      - WebFetch / TextEditor / ToolSearch: typed Content unions
+
+    Common signal: error variants have a `type` ending in `_error` and carry an
+    `error_code`. Everything else gets JSON-serialized via `model_dump`.
+    """
+    content = getattr(result_block, "content", None)
+    if content is None:
+        return None, False
+
+    def _is_error(item: Any) -> bool:
+        item_type = getattr(item, "type", None)
+        if isinstance(item_type, str) and item_type.endswith("_error"):
+            return True
+        return getattr(item, "error_code", None) is not None
+
+    def _serialize(item: Any) -> str:
+        if isinstance(item, str):
+            return item
+        if hasattr(item, "model_dump"):
+            try:
+                return json.dumps(item.model_dump(exclude_none=True))
+            except (TypeError, ValueError):
+                return str(item)
+        try:
+            return json.dumps(item)
+        except (TypeError, ValueError):
+            return str(item)
+
+    # List shape (e.g. WebSearchResultBlock[]): join serialized entries.
+    if isinstance(content, list):
+        if not content:
+            return None, False
+        is_error = any(_is_error(item) for item in content)
+        parts = [_serialize(item) for item in content]
+        return "\n".join(parts), is_error
+
+    # Single block: detect error variant, otherwise dump.
+    is_error = _is_error(content)
+    return _serialize(content), is_error
 
 
 class SystemPromptBlock(BaseModel):
@@ -969,6 +1032,15 @@ class Claude(Model):
         model_response.role = response.role or "assistant"
 
         if response.content:
+            # Pre-index server tool result blocks by tool_use_id so each
+            # matching server_tool_use can be paired in one forward pass.
+            server_results_by_id: Dict[str, Any] = {}
+            for block in response.content:
+                if block.type in _CLAUDE_SERVER_RESULT_TYPES:
+                    tool_use_id = getattr(block, "tool_use_id", None)
+                    if tool_use_id:
+                        server_results_by_id[tool_use_id] = block
+
             for block in response.content:
                 if block.type == "text":
                     text_content = block.text
@@ -1023,6 +1095,34 @@ class Claude(Model):
                     model_response.provider_data["signature"] = block.signature
                 elif block.type in ("redacted_thinking", "redacted_reasoning_content"):
                     model_response.redacted_reasoning_content = getattr(block, "data", None)
+                elif block.type == "server_tool_use":
+                    # Pair with the matching *_tool_result block (linked by
+                    # tool_use_id) and surface as a ToolExecution so the
+                    # AgentOS UI / run_response.tools shows the same tool
+                    # card it shows for client-executed tools. Mirrors the
+                    # pattern used by GeminiInteractions on the agent path.
+                    result_block = server_results_by_id.get(block.id)
+                    result_text: Optional[str] = None
+                    is_error: bool = False
+                    if result_block is not None:
+                        result_text, is_error = _flatten_claude_server_tool_result(result_block)
+                    tool_args = block.input if isinstance(block.input, dict) else None
+                    if model_response.tool_executions is None:
+                        model_response.tool_executions = []
+                    model_response.tool_executions.append(
+                        ToolExecution(
+                            tool_call_id=block.id,
+                            tool_name=block.name,
+                            tool_args=tool_args,
+                            result=result_text,
+                            tool_call_error=is_error if result_block is not None else None,
+                        )
+                    )
+                    # Preserve raw block for history reconstruction.
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
+                    server_blocks.append(block.model_dump())
                 elif block.type not in ("tool_use",):
                     # Preserve all non-text/thinking blocks for conversation history reconstruction.
                     # thinking / redacted variants handled above; tool_use extracted via stop_reason below.
@@ -1169,10 +1269,45 @@ class Claude(Model):
 
             server_tool_blocks: List[Dict[str, Any]] = []
 
+            # Pre-index result blocks by tool_use_id so each server_tool_use
+            # can be paired with its result in one pass below.
+            server_results_by_id: Dict[str, Any] = {}
+            for block in response.message.content:  # type: ignore
+                if block.type in _CLAUDE_SERVER_RESULT_TYPES:
+                    tool_use_id = getattr(block, "tool_use_id", None)
+                    if tool_use_id:
+                        server_results_by_id[tool_use_id] = block
+
             for block in response.message.content:  # type: ignore
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
                     accumulated_text += block.text  # type: ignore
+                elif block.type == "server_tool_use":
+                    # Pair with the matching *_tool_result block and surface
+                    # as a ToolExecution (matches the non-streaming path).
+                    # Tagging the event tells the streaming consumer in
+                    # agent/_response.py to route tool_executions onto
+                    # run_response.tools and emit the tool_call_completed
+                    # UI event.
+                    result_block = server_results_by_id.get(block.id)  # type: ignore
+                    result_text: Optional[str] = None
+                    is_error: bool = False
+                    if result_block is not None:
+                        result_text, is_error = _flatten_claude_server_tool_result(result_block)
+                    tool_args = block.input if isinstance(block.input, dict) else None  # type: ignore
+                    if model_response.tool_executions is None:
+                        model_response.tool_executions = []
+                    model_response.tool_executions.append(
+                        ToolExecution(
+                            tool_call_id=block.id,  # type: ignore
+                            tool_name=block.name,  # type: ignore
+                            tool_args=tool_args,
+                            result=result_text,
+                            tool_call_error=is_error if result_block is not None else None,
+                        )
+                    )
+                    model_response.event = ModelResponseEvent.tool_call_completed.value
+                    server_tool_blocks.append(block.model_dump())
                 elif block.type not in (
                     "thinking",
                     "redacted_thinking",
