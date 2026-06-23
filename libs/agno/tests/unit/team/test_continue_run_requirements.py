@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from agno.models.response import ToolExecution
 from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
-from agno.run.team import TeamRunOutput
+from agno.run.team import TeamRunEvent, TeamRunOutput
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -824,6 +824,423 @@ class TestPrepareMemberHitlContinuation:
 
 
 class TestContinueRunApprovalResolution:
+    def _route_member_resume_case(self):
+        team = MagicMock()
+        team.session_id = None
+        team.add_history_to_context = False
+        team.parser_model = None
+        team.respond_directly = True
+        team.initialize_team = MagicMock()
+        team.db = MagicMock()
+        team.retries = 0
+        team.events_to_skip = []
+        team.store_events = False
+        team.model = MagicMock()
+        team.post_hooks = None
+        team.session_summary_manager = None
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="delegate-1",
+            result="Tool requires human input",
+        )
+        requirement = RunRequirement(_make_tool_execution(requires_user_input=True))
+        requirement.member_agent_id = "member-1"
+        requirement.provide_user_input({"decision": "approve"})
+        run_response = TeamRunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            status=RunStatus.paused,
+            requirements=[requirement],
+            tools=[tool],
+        )
+
+        run_messages = MagicMock()
+        run_messages.messages = [
+            MagicMock(role="tool", tool_call_id="delegate-1", content="Tool requires human input"),
+        ]
+        team_session = MagicMock()
+        team_session.session_id = "session-1"
+        team_session.runs = [run_response]
+
+        return team, run_response, tool, run_messages, team_session
+
+    def test_route_member_hitl_resume_completes_without_team_model_call(self):
+        from agno.team._run import continue_run_dispatch
+
+        team, run_response, tool, run_messages, team_session = self._route_member_resume_case()
+        team.post_hooks = [MagicMock()]
+        team.session_summary_manager = MagicMock()
+        opts = SimpleNamespace(
+            stream=False,
+            stream_events=False,
+            yield_run_output=False,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+        )
+
+        with (
+            patch("agno.team._init._has_async_db", return_value=False),
+            patch("agno.team._init._initialize_session", return_value=("session-1", None)),
+            patch("agno.team._storage._read_or_create_session", return_value=team_session),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._storage._load_session_state", return_value={}),
+            patch("agno.team._run_options.resolve_run_options", return_value=opts),
+            patch("agno.team._response.get_response_format", return_value=None),
+            patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+            patch("agno.team._run._get_continue_run_messages", return_value=run_messages),
+            patch("agno.team._run._route_requirements_to_members", return_value=["[Member]: Done"]),
+            patch("agno.team._hooks._execute_post_hooks", return_value=iter(())) as mock_post_hooks,
+            patch("agno.team._telemetry.log_team_telemetry") as mock_telemetry,
+            patch("agno.team._run._cleanup_and_store") as mock_cleanup,
+            patch(
+                "agno.team._run.call_model_with_fallback", side_effect=AssertionError("team model called")
+            ) as mock_model,
+        ):
+            result = continue_run_dispatch(
+                team,
+                run_id="run-1",
+                session_id="session-1",
+                stream=False,
+            )
+
+        assert result is run_response
+        assert result.status == RunStatus.completed
+        assert result.content == "Done"
+        assert "requires human input" not in result.content.lower()
+        assert tool.result == result.content
+        assert run_messages.messages[0].content == result.content
+        mock_post_hooks.assert_called_once()
+        team_session.upsert_run.assert_called_once_with(run_response=run_response)
+        team.session_summary_manager.create_session_summary.assert_called_once()
+        mock_telemetry.assert_called_once_with(team, session_id="session-1", run_id="run-1")
+        mock_cleanup.assert_called_once()
+        mock_model.assert_not_called()
+
+    def test_route_member_hitl_resume_stream_completes_without_team_model_call(self):
+        from agno.team._run import continue_run_dispatch
+
+        team, run_response, tool, run_messages, team_session = self._route_member_resume_case()
+        opts = SimpleNamespace(
+            stream=True,
+            stream_events=False,
+            yield_run_output=True,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+        )
+
+        def _member_stream(*args, **kwargs):
+            kwargs["member_results"].append("[Member]: Done")
+            return iter(())
+
+        with (
+            patch("agno.team._init._has_async_db", return_value=False),
+            patch("agno.team._init._initialize_session", return_value=("session-1", None)),
+            patch("agno.team._storage._read_or_create_session", return_value=team_session),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._storage._load_session_state", return_value={}),
+            patch("agno.team._run_options.resolve_run_options", return_value=opts),
+            patch("agno.team._response.get_response_format", return_value=None),
+            patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+            patch("agno.team._run._get_continue_run_messages", return_value=run_messages),
+            patch("agno.team._run._route_requirements_to_members_stream", side_effect=_member_stream),
+            patch("agno.team._run._cleanup_and_store") as mock_cleanup,
+            patch(
+                "agno.team._response._handle_model_response_stream", side_effect=AssertionError("team model called")
+            ) as mock_model_stream,
+        ):
+            result = continue_run_dispatch(
+                team,
+                run_id="run-1",
+                session_id="session-1",
+                stream=True,
+                yield_run_output=True,
+            )
+            events = list(result)
+
+        assert events == [run_response]
+        assert run_response.status == RunStatus.completed
+        assert run_response.content == "Done"
+        assert tool.result == run_response.content
+        assert run_messages.messages[0].content == run_response.content
+        mock_cleanup.assert_called_once()
+        mock_model_stream.assert_not_called()
+
+    def test_route_member_hitl_resume_stream_emits_lifecycle_events(self):
+        from agno.team._run import continue_run_dispatch
+
+        team, run_response, tool, run_messages, team_session = self._route_member_resume_case()
+        team.store_events = True
+        opts = SimpleNamespace(
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+        )
+
+        def _member_stream(*args, **kwargs):
+            kwargs["member_results"].append("[Member]: Done")
+            return iter(())
+
+        with (
+            patch("agno.team._init._has_async_db", return_value=False),
+            patch("agno.team._init._initialize_session", return_value=("session-1", None)),
+            patch("agno.team._storage._read_or_create_session", return_value=team_session),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._storage._load_session_state", return_value={}),
+            patch("agno.team._run_options.resolve_run_options", return_value=opts),
+            patch("agno.team._response.get_response_format", return_value=None),
+            patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+            patch("agno.team._run._get_continue_run_messages", return_value=run_messages),
+            patch("agno.team._run._route_requirements_to_members_stream", side_effect=_member_stream),
+            patch("agno.team._run._cleanup_and_store") as mock_cleanup,
+            patch(
+                "agno.team._response._handle_model_response_stream",
+                side_effect=AssertionError("team model called"),
+            ) as mock_model_stream,
+        ):
+            result = continue_run_dispatch(
+                team,
+                run_id="run-1",
+                session_id="session-1",
+                stream=True,
+                stream_events=True,
+                yield_run_output=True,
+            )
+            events = list(result)
+
+        event_names = [getattr(event, "event", None) for event in events]
+        assert event_names[:3] == [
+            TeamRunEvent.run_continued.value,
+            TeamRunEvent.run_content_completed.value,
+            TeamRunEvent.run_completed.value,
+        ]
+        assert events[-1] is run_response
+        assert [event.event for event in run_response.events] == event_names[:3]
+        assert run_response.status == RunStatus.completed
+        assert run_response.content == "Done"
+        assert tool.result == run_response.content
+        assert run_messages.messages[0].content == run_response.content
+        mock_cleanup.assert_called_once()
+        mock_model_stream.assert_not_called()
+
+    def test_route_member_hitl_resume_uses_resolved_delegate_result(self):
+        from agno.team._run import continue_run_dispatch
+
+        team, run_response, tool, run_messages, team_session = self._route_member_resume_case()
+        stale_tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="delegate-old",
+            result="Old result",
+        )
+        run_response.tools = [tool, stale_tool]
+        run_messages.messages.append(MagicMock(role="tool", tool_call_id="delegate-old", content="Old result"))
+        opts = SimpleNamespace(
+            stream=False,
+            stream_events=False,
+            yield_run_output=False,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+        )
+
+        with (
+            patch("agno.team._init._has_async_db", return_value=False),
+            patch("agno.team._init._initialize_session", return_value=("session-1", None)),
+            patch("agno.team._storage._read_or_create_session", return_value=team_session),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._storage._load_session_state", return_value={}),
+            patch("agno.team._run_options.resolve_run_options", return_value=opts),
+            patch("agno.team._response.get_response_format", return_value=None),
+            patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+            patch("agno.team._run._get_continue_run_messages", return_value=run_messages),
+            patch("agno.team._run._route_requirements_to_members", return_value=["[Member]: Fresh result"]),
+            patch("agno.team._run._cleanup_and_store"),
+            patch(
+                "agno.team._run.call_model_with_fallback", side_effect=AssertionError("team model called")
+            ) as mock_model,
+        ):
+            result = continue_run_dispatch(
+                team,
+                run_id="run-1",
+                session_id="session-1",
+                stream=False,
+            )
+
+        assert result.content == "Fresh result"
+        assert tool.result == "Fresh result"
+        assert run_messages.messages[0].content == "Fresh result"
+        assert stale_tool.result == "Old result"
+        assert run_messages.messages[1].content == "Old result"
+        mock_model.assert_not_called()
+
+    def test_route_member_hitl_resume_async_completes_without_team_model_call(self):
+        from agno.team._run import _acontinue_run
+
+        team, run_response, tool, run_messages, team_session = self._route_member_resume_case()
+        run_context = MagicMock()
+        run_context.session_state = {}
+
+        async def _exercise():
+            with (
+                patch("agno.team._run._asetup_session", new=AsyncMock(return_value=team_session)),
+                patch("agno.team._run.aregister_run", new=AsyncMock()),
+                patch("agno.team._run.acleanup_run", new=AsyncMock()),
+                patch("agno.team._init._disconnect_connectable_tools"),
+                patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._aget_learning_tools", new=AsyncMock(return_value=[])),
+                patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+                patch("agno.team._run._get_continue_run_messages", return_value=run_messages),
+                patch("agno.team._run._aroute_requirements_to_members", new=AsyncMock(return_value=["[Member]: Done"])),
+                patch(
+                    "agno.run.approval.acheck_and_apply_approval_resolution",
+                    new=AsyncMock(side_effect=RuntimeError),
+                ),
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()) as mock_cleanup,
+                patch("agno.team._run._ahandle_model_response_for_continue", new=AsyncMock()) as mock_handle,
+            ):
+                result = await _acontinue_run(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_id="run-1",
+                    requirements=None,
+                )
+
+            assert result is run_response
+            assert result.status == RunStatus.completed
+            assert result.content == "Done"
+            assert tool.result == result.content
+            assert run_messages.messages[0].content == result.content
+            mock_cleanup.assert_awaited_once()
+            mock_handle.assert_not_awaited()
+
+        asyncio.run(_exercise())
+
+    def test_route_member_hitl_resume_async_stream_completes_without_team_model_call(self):
+        from agno.team._run import _acontinue_run_stream
+
+        team, run_response, tool, run_messages, team_session = self._route_member_resume_case()
+        run_context = MagicMock()
+        run_context.session_state = {}
+
+        async def _member_stream(*args, **kwargs):
+            kwargs["member_results"].append("[Member]: Done")
+            if False:
+                yield None
+
+        async def _exercise():
+            with (
+                patch("agno.team._run._asetup_session", new=AsyncMock(return_value=team_session)),
+                patch("agno.team._run.aregister_run", new=AsyncMock()),
+                patch("agno.team._run.acleanup_run", new=AsyncMock()),
+                patch("agno.team._init._disconnect_connectable_tools"),
+                patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._aget_learning_tools", new=AsyncMock(return_value=[])),
+                patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+                patch("agno.team._run._get_continue_run_messages", return_value=run_messages),
+                patch("agno.team._run._aroute_requirements_to_members_stream", side_effect=_member_stream),
+                patch(
+                    "agno.run.approval.acheck_and_apply_approval_resolution",
+                    new=AsyncMock(side_effect=RuntimeError),
+                ),
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()) as mock_cleanup,
+                patch(
+                    "agno.team._response._ahandle_model_response_stream",
+                    side_effect=AssertionError("team model called"),
+                ) as mock_stream,
+            ):
+                events = []
+                async for event in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_id="run-1",
+                    requirements=None,
+                    yield_run_output=True,
+                ):
+                    events.append(event)
+
+            assert events == [run_response]
+            assert run_response.status == RunStatus.completed
+            assert run_response.content == "Done"
+            assert tool.result == run_response.content
+            assert run_messages.messages[0].content == run_response.content
+            mock_cleanup.assert_awaited_once()
+            mock_stream.assert_not_called()
+
+        asyncio.run(_exercise())
+
+    def test_route_member_hitl_resume_async_stream_emits_lifecycle_events(self):
+        from agno.team._run import _acontinue_run_stream
+
+        team, run_response, tool, run_messages, team_session = self._route_member_resume_case()
+        team.store_events = True
+        run_context = MagicMock()
+        run_context.session_state = {}
+
+        async def _member_stream(*args, **kwargs):
+            kwargs["member_results"].append("[Member]: Done")
+            if False:
+                yield None
+
+        async def _exercise():
+            with (
+                patch("agno.team._run._asetup_session", new=AsyncMock(return_value=team_session)),
+                patch("agno.team._run.aregister_run", new=AsyncMock()),
+                patch("agno.team._run.acleanup_run", new=AsyncMock()),
+                patch("agno.team._init._disconnect_connectable_tools"),
+                patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._aget_learning_tools", new=AsyncMock(return_value=[])),
+                patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+                patch("agno.team._run._get_continue_run_messages", return_value=run_messages),
+                patch("agno.team._run._aroute_requirements_to_members_stream", side_effect=_member_stream),
+                patch(
+                    "agno.run.approval.acheck_and_apply_approval_resolution",
+                    new=AsyncMock(side_effect=RuntimeError),
+                ),
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()) as mock_cleanup,
+                patch(
+                    "agno.team._response._ahandle_model_response_stream",
+                    side_effect=AssertionError("team model called"),
+                ) as mock_stream,
+            ):
+                events = []
+                async for event in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_id="run-1",
+                    requirements=None,
+                    stream_events=True,
+                    yield_run_output=True,
+                ):
+                    events.append(event)
+
+            event_names = [getattr(event, "event", None) for event in events]
+            assert event_names[:3] == [
+                TeamRunEvent.run_continued.value,
+                TeamRunEvent.run_content_completed.value,
+                TeamRunEvent.run_completed.value,
+            ]
+            assert events[-1] is run_response
+            assert [event.event for event in run_response.events] == event_names[:3]
+            assert run_response.status == RunStatus.completed
+            assert run_response.content == "Done"
+            assert tool.result == run_response.content
+            assert run_messages.messages[0].content == run_response.content
+            mock_cleanup.assert_awaited_once()
+            mock_stream.assert_not_called()
+
+        asyncio.run(_exercise())
+
     def test_continue_run_dispatch_uses_resolved_admin_approval_without_requirements(self):
         from agno.team._run import continue_run_dispatch
 
