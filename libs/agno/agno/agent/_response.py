@@ -65,6 +65,7 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
+from agno.utils.structured_output import finalize_streamed_structured_output
 
 ###########################################################################
 # Reasoning
@@ -1059,10 +1060,9 @@ def handle_model_response_stream(
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
 
+    # Keep model-level streaming enabled even when parse_response=True so that
+    # long-running responses still emit incremental output.
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
@@ -1148,11 +1148,32 @@ def handle_model_response_stream(
             model_response=model_response,
             model_response_event=model_response_event,
             reasoning_state=reasoning_state,
-            parse_structured_output=should_parse_structured_output,
+            parse_structured_output=False,
             stream_events=stream_events,
             session_state=session_state,
             run_context=run_context,
         )
+
+    yield from finalize_streamed_structured_output(
+        content_getter=lambda: model_response.content,
+        output_schema=output_schema,
+        should_parse_structured_output=should_parse_structured_output,
+        convert_fn=lambda: convert_response_to_structured_format(agent, model_response, run_context=run_context),
+        set_content_fn=lambda content: setattr(run_response, "content", content),
+        set_content_type_fn=lambda ct: setattr(run_response, "content_type", ct),
+        stream_events=stream_events,
+        build_event_fn=lambda content, ct: create_run_output_content_event(
+            from_run_response=run_response,
+            content=content,
+            content_type=ct,
+        ),
+        emit_fn=lambda payload: handle_event(  # type: ignore
+            payload,
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        ),
+    )
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
@@ -1210,10 +1231,9 @@ async def ahandle_model_response_stream(
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
 
+    # Keep model-level streaming enabled even when parse_response=True so that
+    # long-running responses still emit incremental output.
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
@@ -1301,12 +1321,34 @@ async def ahandle_model_response_stream(
             model_response=model_response,
             model_response_event=model_response_event,
             reasoning_state=reasoning_state,
-            parse_structured_output=should_parse_structured_output,
+            parse_structured_output=False,
             stream_events=stream_events,
             session_state=session_state,
             run_context=run_context,
         ):
             yield event
+
+    for event in finalize_streamed_structured_output(
+        content_getter=lambda: model_response.content,
+        output_schema=output_schema,
+        should_parse_structured_output=should_parse_structured_output,
+        convert_fn=lambda: convert_response_to_structured_format(agent, model_response, run_context=run_context),
+        set_content_fn=lambda content: setattr(run_response, "content", content),
+        set_content_type_fn=lambda ct: setattr(run_response, "content_type", ct),
+        stream_events=stream_events,
+        build_event_fn=lambda content, ct: create_run_output_content_event(
+            from_run_response=run_response,
+            content=content,
+            content_type=ct,
+        ),
+        emit_fn=lambda payload: handle_event(  # type: ignore
+            payload,
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        ),
+    ):
+        yield event
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput

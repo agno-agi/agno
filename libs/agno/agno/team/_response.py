@@ -66,6 +66,7 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
+from agno.utils.structured_output import finalize_streamed_structured_output
 
 if TYPE_CHECKING:
     from agno.reasoning.manager import ReasoningEvent
@@ -1011,10 +1012,9 @@ def _handle_model_response_stream(
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and team.parse_response and team.parser_model is None
 
+    # Keep model-level streaming enabled even when parse_response=True so that
+    # long-running responses still emit incremental output.
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     full_model_response = ModelResponse()
     for model_response_event in call_model_stream_with_fallback(
@@ -1102,10 +1102,30 @@ def _handle_model_response_stream(
             model_response_event=model_response_event,
             reasoning_state=reasoning_state,
             stream_events=stream_events,
-            parse_structured_output=should_parse_structured_output,
+            parse_structured_output=False,
             session_state=session_state,
             run_context=run_context,
         )
+
+    yield from finalize_streamed_structured_output(
+        content_getter=lambda: full_model_response.content,
+        output_schema=output_schema,
+        should_parse_structured_output=should_parse_structured_output,
+        convert_fn=lambda: _convert_response_to_structured_format(team, full_model_response, run_context=run_context),
+        set_content_type_fn=lambda ct: setattr(run_response, "content_type", ct),
+        stream_events=stream_events,
+        build_event_fn=lambda content, ct: create_team_run_output_content_event(
+            from_run_response=run_response,
+            content=content,
+            content_type=ct,
+        ),
+        emit_fn=lambda payload: handle_event(  # type: ignore
+            payload,
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        ),
+    )
 
     # 3. Update TeamRunOutput
     if full_model_response.content is not None:
@@ -1165,10 +1185,9 @@ async def _ahandle_model_response_stream(
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and team.parse_response and team.parser_model is None
 
+    # Keep model-level streaming enabled even when parse_response=True so that
+    # long-running responses still emit incremental output.
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     full_model_response = ModelResponse()
     model_stream = acall_model_stream_with_fallback(
@@ -1257,11 +1276,32 @@ async def _ahandle_model_response_stream(
             model_response_event=model_response_event,
             reasoning_state=reasoning_state,
             stream_events=stream_events,
-            parse_structured_output=should_parse_structured_output,
+            parse_structured_output=False,
             session_state=session_state,
             run_context=run_context,
         ):
             yield event
+
+    for event in finalize_streamed_structured_output(
+        content_getter=lambda: full_model_response.content,
+        output_schema=output_schema,
+        should_parse_structured_output=should_parse_structured_output,
+        convert_fn=lambda: _convert_response_to_structured_format(team, full_model_response, run_context=run_context),
+        set_content_type_fn=lambda ct: setattr(run_response, "content_type", ct),
+        stream_events=stream_events,
+        build_event_fn=lambda content, ct: create_team_run_output_content_event(
+            from_run_response=run_response,
+            content=content,
+            content_type=ct,
+        ),
+        emit_fn=lambda payload: handle_event(  # type: ignore
+            payload,
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        ),
+    ):
+        yield event
 
     # Update TeamRunOutput
     if full_model_response.content is not None:
