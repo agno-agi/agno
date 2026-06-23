@@ -3,9 +3,10 @@ from typing import Any, Optional
 
 import pytest
 
-from agno.agent import _init, _messages, _response, _run, _session, _storage, _tools
+from agno.agent import _init, _messages, _response, _run, _session, _storage, _telemetry, _tools
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
+from agno.models.response import ModelResponse
 from agno.run import RunContext
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
@@ -647,6 +648,43 @@ def test_continue_run_dispatch_respects_run_context_precedence(monkeypatch: pyte
     assert empty_context.metadata == {"agent_meta": "default"}
 
 
+def test_continue_run_dispatch_rebinds_agent_session_state_to_loaded_run_context(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(name="stateful-continue-agent", session_state={"from_agent": "initial"})
+    session = AgentSession(
+        session_id="session-1",
+        runs=[],
+        session_data={"session_state": {"from_db": "loaded"}},
+    )
+    run_response = RunOutput(run_id="run-1", session_id="session-1", content="ok", messages=[])
+
+    monkeypatch.setattr(_init, "has_async_db", lambda agent: False)
+    monkeypatch.setattr(agent, "initialize_agent", lambda debug_mode=None: None)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(_storage, "read_or_create_session", lambda agent, session_id=None, user_id=None: session)
+    monkeypatch.setattr(_response, "get_response_format", lambda agent, run_context=None: None)
+
+    def fake_continue_run(
+        agent: Agent,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: RunContext,
+        session: AgentSession,
+        tools,
+        **kwargs: Any,
+    ) -> RunOutput:
+        agent.session_state["from_agent_tool"] = "persisted"
+        session.session_data["session_state"] = run_context.session_state
+        return run_response
+
+    monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+    _run.continue_run_dispatch(agent=agent, run_response=run_response, stream=False)
+
+    assert agent.session_state is session.session_data["session_state"]
+    assert session.session_data["session_state"]["from_db"] == "loaded"
+    assert session.session_data["session_state"]["from_agent_tool"] == "persisted"
+
+
 @pytest.mark.asyncio
 async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
     agent = _make_precedence_test_agent()
@@ -727,6 +765,68 @@ async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatc
     assert empty_context.dependencies == {"agent_dep": "default"}
     assert empty_context.knowledge_filters == {"agent_filter": "default"}
     assert empty_context.metadata == {"agent_meta": "default"}
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_rebinds_agent_session_state_to_loaded_run_context(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(name="stateful-continue-agent", session_state={"from_agent": "initial"})
+    session = AgentSession(
+        session_id="session-1",
+        runs=[],
+        session_data={"session_state": {"from_db": "loaded"}},
+    )
+    run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+    run_response = RunOutput(run_id="run-1", session_id="session-1", content="ok", messages=[])
+
+    async def fake_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+        return session
+
+    async def fake_acleanup_and_store(agent, run_response, session, run_context=None, user_id=None):
+        assert run_context is not None
+        # Simulate an agent-scoped tool mutating Agent.session_state during continue-run.
+        agent.session_state["from_agent_tool"] = "persisted"
+        session.session_data["session_state"] = run_context.session_state
+
+    async def fake_disconnect_mcp_tools(agent):
+        return None
+
+    async def fake_acall_model_with_fallback(*args: Any, **kwargs: Any):
+        return ModelResponse(content="ok")
+
+    async def noop_async(*args: Any, **kwargs: Any):
+        return None
+
+    monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(agent, "aget_tools", noop_async)
+    monkeypatch.setattr(_tools, "determine_tools_for_model", lambda agent, **kwargs: [])
+    monkeypatch.setattr(
+        _messages, "get_continue_run_messages", lambda agent, input=None, **kwargs: RunMessages(messages=[])
+    )
+    monkeypatch.setattr(_tools, "ahandle_tool_call_updates", noop_async)
+    monkeypatch.setattr(_run, "acall_model_with_fallback", fake_acall_model_with_fallback)
+    monkeypatch.setattr(_response, "agenerate_response_with_output_model", noop_async)
+    monkeypatch.setattr(_response, "aparse_response_with_parser_model", noop_async)
+    monkeypatch.setattr(_response, "convert_response_to_structured_format", lambda *args, **kwargs: None)
+    monkeypatch.setattr(_response, "update_run_response", lambda *args, **kwargs: kwargs["run_response"])
+    monkeypatch.setattr(_run, "store_media_util", lambda run_response, model_response: None)
+    monkeypatch.setattr(_response, "agenerate_followups", noop_async)
+    monkeypatch.setattr(_telemetry, "alog_agent_telemetry", noop_async)
+    monkeypatch.setattr(_run, "acleanup_and_store", fake_acleanup_and_store)
+    monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
+    monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
+
+    await _run._acontinue_run(
+        agent=agent,
+        session_id="session-1",
+        run_context=run_context,
+        run_response=run_response,
+    )
+
+    assert agent.session_state is run_context.session_state
+    assert session.session_data["session_state"] is run_context.session_state
+    assert session.session_data["session_state"]["from_db"] == "loaded"
+    assert session.session_data["session_state"]["from_agent_tool"] == "persisted"
 
 
 def test_all_pause_handlers_accept_run_context():

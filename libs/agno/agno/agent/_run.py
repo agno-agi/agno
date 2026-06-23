@@ -3045,6 +3045,7 @@ def continue_run_dispatch(
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
     )
+    _bind_agent_session_state(agent, run_context)
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -4094,6 +4095,7 @@ async def _acontinue_run(
                     session_id=session_id,
                     run_id=run_context.run_id,
                 )
+                _bind_agent_session_state(agent, run_context)
 
                 # 4. Prepare run response
                 if run_response is not None:
@@ -4490,6 +4492,7 @@ async def _acontinue_run_stream(
                     session_id=session_id,
                     run_id=run_context.run_id,
                 )
+                _bind_agent_session_state(agent, run_context)
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -5088,6 +5091,12 @@ def _build_cancel_terminal_events(
         ),
     )
     return cancelled_event, completed_event
+
+
+def _bind_agent_session_state(agent: Agent, run_context: RunContext) -> None:
+    """Keep Agent.session_state aligned with the active run context state."""
+    if run_context.session_state is not None:
+        agent.session_state = run_context.session_state
 
 
 def cleanup_and_store(
