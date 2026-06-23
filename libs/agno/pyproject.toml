@@ -183,6 +183,7 @@ clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
 upstash = ["upstash-vector"]
+topk = ["topk_sdk>=0.10.0"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -574,6 +575,7 @@ module = [
   "tweepy.*",
   "twilio.*",
   "tzlocal.*",
+  "topk_sdk.*",
   "upstash_vector.*",
   "urllib3.*",
   "uvicorn.*",
