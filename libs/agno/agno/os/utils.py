@@ -1,6 +1,6 @@
 import json
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
+from datetime import datetime, timezone, timedelta
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -52,7 +52,7 @@ def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Option
         except (ValueError, TypeError):
             return None
 
-    return datetime.fromtimestamp(value, tz=timezone.utc)
+    return datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=value)
 
 
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
@@ -642,6 +642,9 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     filename extension. Returns None if the file type is not supported.
     """
     content_type = file.content_type
+    if content_type is not None:
+        content_type = content_type.strip().lower()
+
     if content_type in IMAGE_MIME_TYPES:
         return "image"
     if content_type in AUDIO_MIME_TYPES:
@@ -747,6 +750,33 @@ def extract_format(file: UploadFile) -> Optional[str]:
         return file.content_type.strip().split("/")[-1]
 
     return None
+
+
+def process_uploaded_files(
+    files: List[UploadFile],
+) -> Tuple[List[Image], List[Audio], List[Video], List[FileMedia]]:
+    """Standardized method to process and validate upload files in a single place."""
+    images: List[Image] = []
+    audios: List[Audio] = []
+    videos: List[Video] = []
+    documents: List[FileMedia] = []
+
+    for file in files:
+        file_category = classify_upload_file(file)
+        if file_category == "image":
+            images.append(process_image(file))
+        elif file_category == "audio":
+            audios.append(process_audio(file))
+        elif file_category == "video":
+            videos.append(process_video(file))
+        elif file_category == "document":
+            doc = process_document(file)
+            if doc is not None:
+                documents.append(doc)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.filename}")
+
+    return images, audios, videos, documents
 
 
 def build_request_context(

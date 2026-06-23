@@ -60,6 +60,7 @@ from agno.os.utils import (
     process_image,
     process_video,
     resolve_agent,
+    process_uploaded_files,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
@@ -659,42 +660,7 @@ def get_agent_router(
         input_files: List[FileMedia] = []
 
         if files:
-            for file in files:
-                file_category = classify_upload_file(file)
-                if file_category == "image":
-                    try:
-                        base64_image = process_image(file)
-                        base64_images.append(base64_image)
-                    except Exception as e:
-                        log_error(f"Error processing image {file.filename}: {str(e)}")
-                        continue
-                elif file_category == "audio":
-                    try:
-                        audio = process_audio(file)
-                        base64_audios.append(audio)
-                    except Exception as e:
-                        log_error(
-                            f"Error processing audio {file.filename} with content type {file.content_type}: {str(e)}"
-                        )
-                        continue
-                elif file_category == "video":
-                    try:
-                        base64_video = process_video(file)
-                        base64_videos.append(base64_video)
-                    except Exception as e:
-                        log_error(f"Error processing video {file.filename}: {str(e)}")
-                        continue
-                elif file_category == "document":
-                    # Process document files
-                    try:
-                        input_file = process_document(file)
-                        if input_file is not None:
-                            input_files.append(input_file)
-                    except Exception as e:
-                        log_error(f"Error processing file {file.filename}: {str(e)}")
-                        continue
-                else:
-                    raise HTTPException(status_code=400, detail="Unsupported file type")
+            base64_images, base64_audios, base64_videos, input_files = process_uploaded_files(files)
 
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
