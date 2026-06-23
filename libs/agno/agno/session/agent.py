@@ -59,7 +59,7 @@ class AgentSession:
 
         runs = data.get("runs")
         serialized_runs: List[Union[RunOutput, TeamRunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
+        if runs and isinstance(runs[0], dict):
             for run in runs:
                 if "agent_id" in run:
                     serialized_runs.append(RunOutput.from_dict(run))
@@ -155,7 +155,7 @@ class AgentSession:
             return []
 
         if skip_statuses is None:
-            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
+            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error, RunStatus.regenerated]
 
         runs = self.runs
 

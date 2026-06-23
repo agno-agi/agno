@@ -5,9 +5,24 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("google.genai")
+
 from agno.media import Audio, File, Image, Video
 from agno.models.google.gemini_interactions import GeminiInteractions
 from agno.models.message import Message
+
+
+def _interactions_content_type(name: str):
+    """Resolve a name-stable interactions content/argument type across google-genai
+    layouts: >=2.9.0 exposes these at the top level of `interactions`, while earlier
+    versions nest them under the `step_delta` submodule."""
+    from google.genai import interactions
+
+    if hasattr(interactions, name):
+        return getattr(interactions, name)
+    from google.genai.interactions import step_delta
+
+    return getattr(step_delta, name)
 
 
 class TestGetClient:
@@ -995,7 +1010,7 @@ class TestParseInteractionResponse:
         """Code execution call + result pair into a ToolExecution named
         'code_execution' with code/language args and stdout result."""
         # Build the Arguments via the real type so model_dump works.
-        from google.genai._interactions.types.code_execution_call_step import Arguments as CEArgs
+        CEArgs = _interactions_content_type("CodeExecutionCallArguments")
 
         from agno.models.google.gemini_interactions import (
             CodeExecutionCallStep,
@@ -1034,8 +1049,8 @@ class TestParseInteractionResponse:
     def test_agent_path_records_url_context(self):
         """URL context call + result pair into a ToolExecution with the
         per-URL status JSON-serialized into the result string."""
-        from google.genai._interactions.types.url_context_call_step import Arguments as UCArgs
-        from google.genai._interactions.types.url_context_result_step import Result as UCResult
+        UCArgs = _interactions_content_type("URLContextCallArguments")
+        UCResult = _interactions_content_type("URLContextResult")
 
         from agno.models.google.gemini_interactions import URLContextCallStep, URLContextResultStep
 
@@ -1660,7 +1675,7 @@ class TestInvokeStream:
         API can deliver an empty Arguments at StepStart and stream the JSON
         via DeltaArgumentsDelta - we'd lose the queries and log
         'google_search()' with no args."""
-        from google.genai._interactions.types.google_search_call_step import Arguments as GSArgs
+        GSArgs = _interactions_content_type("GoogleSearchCallArguments")
 
         from agno.models.google.gemini_interactions import (
             DeltaArgumentsDelta,
@@ -1742,16 +1757,16 @@ class TestInvokeStream:
         DeltaGoogleSearchCall (NOT DeltaArgumentsDelta). Result content
         likewise arrives on DeltaGoogleSearchResult after the result step's
         StepStart, not on the step itself."""
-        from google.genai.interactions import step_delta
-
         from agno.models.google.gemini_interactions import (
+            DeltaGoogleSearchCall,
+            DeltaGoogleSearchResult,
             GoogleSearchCallStep,
             GoogleSearchResultStep,
             interaction_types,
         )
 
-        GoogleSearchCallArguments = step_delta.GoogleSearchCallArguments
-        GoogleSearchResult = step_delta.GoogleSearchResult
+        GoogleSearchCallArguments = _interactions_content_type("GoogleSearchCallArguments")
+        GoogleSearchResult = _interactions_content_type("GoogleSearchResult")
 
         model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
         mock_client = MagicMock()
@@ -1771,8 +1786,8 @@ class TestInvokeStream:
         call_start.index = 0
 
         # Typed call delta with the actual queries.
-        typed_call_delta = MagicMock(spec=step_delta.DeltaGoogleSearchCall)
-        typed_call_delta.__class__ = step_delta.DeltaGoogleSearchCall
+        typed_call_delta = MagicMock(spec=DeltaGoogleSearchCall)
+        typed_call_delta.__class__ = DeltaGoogleSearchCall
         typed_call_delta.arguments = GoogleSearchCallArguments(queries=["Agno", "Agno library"])
         typed_call_delta.signature = None
 
@@ -1798,8 +1813,8 @@ class TestInvokeStream:
         result_start.step = result_step
         result_start.index = 1
 
-        result_delta = MagicMock(spec=step_delta.DeltaGoogleSearchResult)
-        result_delta.__class__ = step_delta.DeltaGoogleSearchResult
+        result_delta = MagicMock(spec=DeltaGoogleSearchResult)
+        result_delta.__class__ = DeltaGoogleSearchResult
         result_delta.result = [GoogleSearchResult(search_suggestions="suggestion-html-blob")]
         result_delta.is_error = None
         result_delta.signature = None
@@ -1833,10 +1848,9 @@ class TestInvokeStream:
         result=None at StepStart; the actual TextContent payload arrives on
         a DeltaFunctionResult before StepStop. The result text must end up
         on ToolExecution.result, not silently dropped."""
-        from google.genai.interactions import step_delta
-
         from agno.models.google.gemini_interactions import (
             DeltaArgumentsDelta,
+            DeltaFunctionResult,
             FunctionCallStep,
             FunctionResultStep,
             TextContent,
@@ -1886,8 +1900,8 @@ class TestInvokeStream:
         text_item = MagicMock(spec=TextContent)
         text_item.text = '{"files":["main.py","README.md"]}'
         text_item.__class__ = TextContent
-        result_delta = MagicMock(spec=step_delta.DeltaFunctionResult)
-        result_delta.__class__ = step_delta.DeltaFunctionResult
+        result_delta = MagicMock(spec=DeltaFunctionResult)
+        result_delta.__class__ = DeltaFunctionResult
         result_delta.result = [text_item]
         result_delta.is_error = None
         result_delta.name = "list_files"
@@ -1918,15 +1932,15 @@ class TestInvokeStream:
         on DeltaCodeExecutionCall, and the stdout streams on
         DeltaCodeExecutionResult. Both surfaces must end up on the
         ToolExecution."""
-        from google.genai.interactions import step_delta
-
         from agno.models.google.gemini_interactions import (
             CodeExecutionCallStep,
             CodeExecutionResultStep,
+            DeltaCodeExecutionCall,
+            DeltaCodeExecutionResult,
             interaction_types,
         )
 
-        CodeExecutionCallArguments = step_delta.CodeExecutionCallArguments
+        CodeExecutionCallArguments = _interactions_content_type("CodeExecutionCallArguments")
 
         model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
         mock_client = MagicMock()
@@ -1942,8 +1956,8 @@ class TestInvokeStream:
         call_start.step = call_step
         call_start.index = 0
 
-        typed_call_delta = MagicMock(spec=step_delta.DeltaCodeExecutionCall)
-        typed_call_delta.__class__ = step_delta.DeltaCodeExecutionCall
+        typed_call_delta = MagicMock(spec=DeltaCodeExecutionCall)
+        typed_call_delta.__class__ = DeltaCodeExecutionCall
         typed_call_delta.arguments = CodeExecutionCallArguments(code="env", language=None)
         typed_call_delta.signature = None
         call_delta_event = MagicMock(spec=interaction_types.StepDelta)
@@ -1966,8 +1980,8 @@ class TestInvokeStream:
         result_start.step = result_step
         result_start.index = 1
 
-        result_delta = MagicMock(spec=step_delta.DeltaCodeExecutionResult)
-        result_delta.__class__ = step_delta.DeltaCodeExecutionResult
+        result_delta = MagicMock(spec=DeltaCodeExecutionResult)
+        result_delta.__class__ = DeltaCodeExecutionResult
         result_delta.result = "PYTHONUNBUFFERED=1\nHOME=/root\n"
         result_delta.is_error = None
         result_delta.signature = None

@@ -3,7 +3,7 @@
 [MiniMax](https://www.minimax.io/) exposes its text models through an
 [OpenAI-compatible API](https://platform.minimax.io/docs/api-reference/text-openai-api),
 so you can drive them through Agno the same way you'd drive any OpenAI-compatible
-provider. The Agno `MiniMax` class defaults to `MiniMax-M2.7` and points at the
+provider. The Agno `MiniMax` class defaults to `MiniMax-M3` and points at the
 international endpoint `https://api.minimax.io/v1`.
 
 ### 1. Create and activate a virtual environment
@@ -32,17 +32,15 @@ python cookbook/90_models/minimax/basic.py
 
 ### Available models
 
-The OpenAI-compatible endpoint exposes the M2 family — see the
+The OpenAI-compatible endpoint exposes the current MiniMax family — see the
 [models intro](https://platform.minimax.io/docs/guides/models-intro) for the
 current catalog. As of writing:
 
 | Model id | Notes |
 | --- | --- |
-| `MiniMax-M2.7` | Flagship MoE (230B total / 10B active), 205k context |
+| `MiniMax-M3` | Latest flagship, 512K context, 128K max output, image input (default) |
+| `MiniMax-M2.7` | Previous flagship MoE (230B total / 10B active), 205k context |
 | `MiniMax-M2.7-highspeed` | Same weights as M2.7, ~1.6–1.7× throughput |
-| `MiniMax-M2.5` | Previous flagship |
-| `MiniMax-M2.5-highspeed` | Higher-throughput variant of M2.5 |
-| `MiniMax-M2.1`, `MiniMax-M2.1-highspeed`, `MiniMax-M2` | Earlier releases |
 
 Pass any of these as `MiniMax(id="...")`:
 
@@ -67,7 +65,7 @@ False`. Use `use_json_mode=True` on the agent for Pydantic-shaped output:
 
 ```python
 agent = Agent(
-    model=MiniMax(id="MiniMax-M2.7"),
+    model=MiniMax(id="MiniMax-M3"),
     output_schema=MovieScript,
     use_json_mode=True,
 )
@@ -81,5 +79,5 @@ If you need to hit a different host (private deployment, regional endpoint,
 etc.), pass `base_url`:
 
 ```python
-MiniMax(id="MiniMax-M2.7", base_url="https://your-host.example.com/v1")
+MiniMax(id="MiniMax-M3", base_url="https://your-host.example.com/v1")
 ```

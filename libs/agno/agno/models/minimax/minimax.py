@@ -16,14 +16,14 @@ class MiniMax(OpenAILike):
     For more information, see: https://platform.minimax.io/docs/api-reference/text-openai-api
 
     Attributes:
-        id (str): The model id. Defaults to "MiniMax-M2.7".
+        id (str): The model id. Defaults to "MiniMax-M3".
         name (str): The model name. Defaults to "MiniMax".
         provider (str): The provider name. Defaults to "MiniMax".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.minimax.io/v1".
     """
 
-    id: str = "MiniMax-M2.7"
+    id: str = "MiniMax-M3"
     name: str = "MiniMax"
     provider: str = "MiniMax"
 
@@ -62,11 +62,12 @@ class MiniMax(OpenAILike):
             client_params.update(self.client_params)
         return client_params
 
-    # MiniMax-M2.x streams thinking via BOTH the structured ``reasoning_content``
-    # field (auto-handled by ``OpenAIChat._parse_provider_response_delta``) AND
-    # inline ``<think>...</think>`` tags in the content stream. The structured
-    # field already drives the Thinking panel; the inline tags would otherwise
-    # leak into the Response panel. Strip them here, statefully (tags can split
+    # MiniMax-M2.x and MiniMax-M3 stream thinking via BOTH the structured
+    # ``reasoning_content`` field (auto-handled by
+    # ``OpenAIChat._parse_provider_response_delta``) AND inline
+    # ``<think>...</think>`` tags in the content stream. The structured field
+    # already drives the Thinking panel; the inline tags would otherwise leak
+    # into the Response panel. Strip them here, statefully (tags can split
     # across chunks).
     def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:  # type: ignore[override]
         state: Dict[str, Any] = {"in_think": False, "pending": ""}

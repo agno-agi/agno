@@ -29,7 +29,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # AGENTIC mode: Agent gets entity tools and decides when to use them.
 # You'll see tool calls like "create_entity", "add_fact" in responses.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions=(
         "You're a sales assistant tracking companies and contacts. "
