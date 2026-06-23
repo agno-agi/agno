@@ -310,6 +310,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
+            if self.session_table is not None:
+                return self.session_table
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
                 table_type="sessions",
@@ -318,6 +320,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.session_table
 
         if table_type == "memories":
+            if self.memory_table is not None:
+                return self.memory_table
             self.memory_table = await self._get_or_create_table(
                 table_name=self.memory_table_name,
                 table_type="memories",
@@ -326,6 +330,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.memory_table
 
         if table_type == "metrics":
+            if self.metrics_table is not None:
+                return self.metrics_table
             self.metrics_table = await self._get_or_create_table(
                 table_name=self.metrics_table_name,
                 table_type="metrics",
@@ -334,6 +340,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.metrics_table
 
         if table_type == "evals":
+            if self.eval_table is not None:
+                return self.eval_table
             self.eval_table = await self._get_or_create_table(
                 table_name=self.eval_table_name,
                 table_type="evals",
@@ -342,6 +350,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.eval_table
 
         if table_type == "knowledge":
+            if self.knowledge_table is not None:
+                return self.knowledge_table
             self.knowledge_table = await self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge",
@@ -350,6 +360,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.knowledge_table
 
         if table_type == "culture":
+            if self.culture_table is not None:
+                return self.culture_table
             self.culture_table = await self._get_or_create_table(
                 table_name=self.culture_table_name,
                 table_type="culture",
@@ -358,6 +370,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.culture_table
 
         if table_type == "versions":
+            if self.versions_table is not None:
+                return self.versions_table
             self.versions_table = await self._get_or_create_table(
                 table_name=self.versions_table_name,
                 table_type="versions",
@@ -366,6 +380,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.versions_table
 
         if table_type == "traces":
+            if self.traces_table is not None:
+                return self.traces_table
             self.traces_table = await self._get_or_create_table(
                 table_name=self.trace_table_name,
                 table_type="traces",
@@ -374,6 +390,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.traces_table
 
         if table_type == "spans":
+            if self.spans_table is not None:
+                return self.spans_table
             # Ensure traces table exists first (spans has FK to traces)
             if create_table_if_not_found:
                 await self._get_table(table_type="traces", create_table_if_not_found=True)
@@ -385,6 +403,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.spans_table
 
         if table_type == "learnings":
+            if self.learnings_table is not None:
+                return self.learnings_table
             self.learnings_table = await self._get_or_create_table(
                 table_name=self.learnings_table_name,
                 table_type="learnings",
@@ -393,6 +413,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.learnings_table
 
         if table_type == "schedules":
+            if self.schedules_table is not None:
+                return self.schedules_table
             self.schedules_table = await self._get_or_create_table(
                 table_name=self.schedules_table_name,
                 table_type="schedules",
@@ -401,6 +423,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.schedules_table
 
         if table_type == "schedule_runs":
+            if self.schedule_runs_table is not None:
+                return self.schedule_runs_table
             self.schedule_runs_table = await self._get_or_create_table(
                 table_name=self.schedule_runs_table_name,
                 table_type="schedule_runs",
@@ -409,6 +433,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             return self.schedule_runs_table
 
         if table_type == "approvals":
+            if self.approvals_table is not None:
+                return self.approvals_table
             self.approvals_table = await self._get_or_create_table(
                 table_name=self.approvals_table_name,
                 table_type="approvals",
