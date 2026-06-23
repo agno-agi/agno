@@ -122,6 +122,17 @@ class MySQLDb(BaseDb):
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
+        # Initialize table attributes for type checking
+        self.session_table: Optional[Table] = None
+        self.memory_table: Optional[Table] = None
+        self.metrics_table: Optional[Table] = None
+        self.eval_table: Optional[Table] = None
+        self.knowledge_table: Optional[Table] = None
+        self.culture_table: Optional[Table] = None
+        self.versions_table: Optional[Table] = None
+        self.traces_table: Optional[Table] = None
+        self.spans_table: Optional[Table] = None
+
     def close(self) -> None:
         """Close database connections and dispose of the connection pool.
 
@@ -274,6 +285,8 @@ class MySQLDb(BaseDb):
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
+            if self.session_table is not None:
+                return self.session_table
             self.session_table = self._get_or_create_table(
                 table_name=self.session_table_name,
                 table_type="sessions",
@@ -282,6 +295,8 @@ class MySQLDb(BaseDb):
             return self.session_table
 
         if table_type == "memories":
+            if self.memory_table is not None:
+                return self.memory_table
             self.memory_table = self._get_or_create_table(
                 table_name=self.memory_table_name,
                 table_type="memories",
@@ -290,6 +305,8 @@ class MySQLDb(BaseDb):
             return self.memory_table
 
         if table_type == "metrics":
+            if self.metrics_table is not None:
+                return self.metrics_table
             self.metrics_table = self._get_or_create_table(
                 table_name=self.metrics_table_name,
                 table_type="metrics",
@@ -298,6 +315,8 @@ class MySQLDb(BaseDb):
             return self.metrics_table
 
         if table_type == "evals":
+            if self.eval_table is not None:
+                return self.eval_table
             self.eval_table = self._get_or_create_table(
                 table_name=self.eval_table_name,
                 table_type="evals",
@@ -306,6 +325,8 @@ class MySQLDb(BaseDb):
             return self.eval_table
 
         if table_type == "knowledge":
+            if self.knowledge_table is not None:
+                return self.knowledge_table
             self.knowledge_table = self._get_or_create_table(
                 table_name=self.knowledge_table_name,
                 table_type="knowledge",
@@ -314,6 +335,8 @@ class MySQLDb(BaseDb):
             return self.knowledge_table
 
         if table_type == "culture":
+            if self.culture_table is not None:
+                return self.culture_table
             self.culture_table = self._get_or_create_table(
                 table_name=self.culture_table_name,
                 table_type="culture",
@@ -322,6 +345,8 @@ class MySQLDb(BaseDb):
             return self.culture_table
 
         if table_type == "versions":
+            if self.versions_table is not None:
+                return self.versions_table
             self.versions_table = self._get_or_create_table(
                 table_name=self.versions_table_name,
                 table_type="versions",
@@ -330,6 +355,8 @@ class MySQLDb(BaseDb):
             return self.versions_table
 
         if table_type == "traces":
+            if self.traces_table is not None:
+                return self.traces_table
             self.traces_table = self._get_or_create_table(
                 table_name=self.trace_table_name,
                 table_type="traces",
@@ -342,6 +369,8 @@ class MySQLDb(BaseDb):
             if create_table_if_not_found:
                 self._get_table(table_type="traces", create_table_if_not_found=True)
 
+            if self.spans_table is not None:
+                return self.spans_table
             self.spans_table = self._get_or_create_table(
                 table_name=self.span_table_name,
                 table_type="spans",
