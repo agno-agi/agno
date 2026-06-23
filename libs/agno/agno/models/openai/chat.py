@@ -1,3 +1,5 @@
+import ast
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
@@ -310,6 +312,60 @@ class OpenAIChat(Model):
         """
         return cls(**data)
 
+    @staticmethod
+    def _normalize_tool_call_arguments(arguments: Any) -> str:
+        """Return a provider-safe JSON string for tool call arguments."""
+        if arguments is None:
+            return "{}"
+
+        if not isinstance(arguments, str):
+            try:
+                return json.dumps(arguments, ensure_ascii=False)
+            except TypeError:
+                return "{}"
+
+        stripped_arguments = arguments.strip()
+        if not stripped_arguments:
+            return "{}"
+
+        try:
+            json.loads(stripped_arguments)
+            return stripped_arguments
+        except Exception:
+            pass
+
+        try:
+            parsed_arguments = ast.literal_eval(arguments)
+            return json.dumps(parsed_arguments, ensure_ascii=False)
+        except Exception:
+            return "{}"
+
+    @staticmethod
+    def _normalize_tool_calls(tool_calls: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        """Ensure OpenAI-compatible tool call arguments are valid JSON strings."""
+        if tool_calls is None:
+            return None
+
+        normalized_tool_calls: List[Dict[str, Any]] = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                normalized_tool_calls.append(tool_call)
+                continue
+
+            normalized_tool_call = tool_call.copy()
+            function = tool_call.get("function")
+
+            if isinstance(function, dict):
+                normalized_function = function.copy()
+                normalized_function["arguments"] = OpenAIChat._normalize_tool_call_arguments(
+                    normalized_function.get("arguments")
+                )
+                normalized_tool_call["function"] = normalized_function
+
+            normalized_tool_calls.append(normalized_tool_call)
+
+        return normalized_tool_calls
+
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
@@ -328,7 +384,7 @@ class OpenAIChat(Model):
             "content": tool_result,
             "name": message.name,
             "tool_call_id": message.tool_call_id,
-            "tool_calls": message.tool_calls,
+            "tool_calls": self._normalize_tool_calls(message.tool_calls),
         }
         message_dict = {k: v for k, v in message_dict.items() if v is not None}
 
@@ -783,7 +839,7 @@ class OpenAIChat(Model):
                     tool_call_entry["id"] = _tool_call_id
                 if _tool_call_type:
                     tool_call_entry["type"] = _tool_call_type
-        return tool_calls
+        return OpenAIChat._normalize_tool_calls(tool_calls) or []
 
     def _should_collect_metrics(self, response: ChatCompletionChunk) -> bool:
         """
