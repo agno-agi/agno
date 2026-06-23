@@ -259,6 +259,8 @@ async def get_db(
             and db.session_table_name == table_name
             or hasattr(db, "memory_table_name")
             and db.memory_table_name == table_name
+            or hasattr(db, "learnings_table_name")
+            and db.learnings_table_name == table_name
             or hasattr(db, "metrics_table_name")
             and db.metrics_table_name == table_name
             or hasattr(db, "eval_table_name")
