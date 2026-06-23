@@ -2342,6 +2342,27 @@ class AsyncMongoDb(AsyncBaseDb):
 
             # Calculate the component level for the new trace
             new_level = self._get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
+            existing_level_expr = {
+                "$switch": {
+                    "branches": [
+                        {
+                            "case": {
+                                "$not": {
+                                    "$or": [
+                                        {"$regexMatch": {"input": {"$ifNull": ["$name", ""]}, "regex": "\\.run"}},
+                                        {"$regexMatch": {"input": {"$ifNull": ["$name", ""]}, "regex": "\\.arun"}},
+                                    ]
+                                }
+                            },
+                            "then": 0,
+                        },
+                        {"case": {"$ne": ["$workflow_id", None]}, "then": 3},
+                        {"case": {"$ne": ["$team_id", None]}, "then": 2},
+                        {"case": {"$ne": ["$agent_id", None]}, "then": 1},
+                    ],
+                    "default": 0,
+                }
+            }
 
             # Use MongoDB aggregation pipeline update for atomic upsert
             # This allows conditional logic within a single atomic operation
@@ -2372,7 +2393,15 @@ class AsyncMongoDb(AsyncBaseDb):
                         # Otherwise a later upsert from a child span (e.g. a post-hook
                         # agent's run with a different session_id) would overwrite
                         # the trace's already-correct context.
-                        "run_id": {"$ifNull": ["$run_id", trace.run_id]},
+                        "run_id": {
+                            "$cond": {
+                                "if": {
+                                    "$and": [{"$ne": [trace.run_id, None]}, {"$gt": [new_level, existing_level_expr]}]
+                                },
+                                "then": trace.run_id,
+                                "else": {"$ifNull": ["$run_id", trace.run_id]},
+                            }
+                        },
                         "session_id": {"$ifNull": ["$session_id", trace.session_id]},
                         "user_id": {"$ifNull": ["$user_id", trace.user_id]},
                         "agent_id": {"$ifNull": ["$agent_id", trace.agent_id]},
