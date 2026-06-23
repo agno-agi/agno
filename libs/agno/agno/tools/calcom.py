@@ -24,6 +24,7 @@ class CalComTools(Toolkit):
         enable_get_upcoming_bookings: bool = True,
         enable_reschedule_booking: bool = True,
         enable_cancel_booking: bool = True,
+        timeout: int = 30,
         all: bool = False,
         **kwargs,
     ):
@@ -33,6 +34,7 @@ class CalComTools(Toolkit):
             api_key: Cal.com API key
             event_type_id: Default event type ID for bookings
             user_timezone: User's timezone in IANA format (e.g., 'Asia/Kolkata')
+            timeout: Request timeout in seconds
         """
 
         # Get credentials from environment if not provided
@@ -49,6 +51,7 @@ class CalComTools(Toolkit):
             log_error("CALCOM_EVENT_TYPE_ID not set. Please set the CALCOM_EVENT_TYPE_ID environment variable.")
 
         self.user_timezone = user_timezone or "America/New_York"
+        self.timeout = timeout
 
         tools: List[Any] = []
         if all or enable_get_available_slots:
@@ -118,7 +121,7 @@ class CalComTools(Toolkit):
                 "eventTypeId": str(self.event_type_id),
             }
 
-            response = requests.get(url, headers=self._get_headers(), params=querystring)  # type: ignore
+            response = requests.get(url, headers=self._get_headers(), params=querystring, timeout=self.timeout)  # type: ignore
             if response.status_code == 200:
                 slots = response.json()["data"]["slots"]
                 available_slots = []
@@ -157,7 +160,7 @@ class CalComTools(Toolkit):
                 "attendee": {"name": name, "email": email, "timeZone": self.user_timezone},
             }
 
-            response = requests.post(url, json=payload, headers=self._get_headers())
+            response = requests.post(url, json=payload, headers=self._get_headers(), timeout=self.timeout)
             if response.status_code == 201:
                 booking_data = response.json()["data"]
                 user_time = self._convert_to_user_timezone(booking_data["start"])
@@ -182,7 +185,7 @@ class CalComTools(Toolkit):
             if email:
                 querystring["attendeeEmail"] = email
 
-            response = requests.get(url, headers=self._get_headers(), params=querystring)
+            response = requests.get(url, headers=self._get_headers(), params=querystring, timeout=self.timeout)
             if response.status_code == 200:
                 bookings = response.json()["data"]
                 if not bookings:
@@ -222,7 +225,7 @@ class CalComTools(Toolkit):
             new_start_time = datetime.fromisoformat(new_start_time).astimezone(pytz.utc).isoformat(timespec="seconds")
             payload = {"start": new_start_time, "reschedulingReason": reason}
 
-            response = requests.post(url, json=payload, headers=self._get_headers())
+            response = requests.post(url, json=payload, headers=self._get_headers(), timeout=self.timeout)
             if response.status_code == 201:
                 booking_data = response.json()["data"]
                 user_time = self._convert_to_user_timezone(booking_data["start"])
@@ -246,7 +249,7 @@ class CalComTools(Toolkit):
             url = f"https://api.cal.com/v2/bookings/{booking_uid}/cancel"
             payload = {"cancellationReason": reason}
 
-            response = requests.post(url, json=payload, headers=self._get_headers())
+            response = requests.post(url, json=payload, headers=self._get_headers(), timeout=self.timeout)
             if response.status_code == 200:
                 return "Booking cancelled successfully."
             return f"Failed to cancel booking: {response.text}"
