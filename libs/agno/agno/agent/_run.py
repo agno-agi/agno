@@ -653,9 +653,11 @@ def _run(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
-                # Handle exceptions during streaming
+                # Update status and log the failure, then re-raise so callers can
+                # handle the exception (e.g. `except InputCheckError as e: ...`).
+                # Previously the exception was silently converted to a RunOutput
+                # with status=error, making it impossible to catch from user code.
                 run_response.status = RunStatus.error
-                # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -670,7 +672,7 @@ def _run(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
             except KeyboardInterrupt:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 try:
@@ -1171,9 +1173,11 @@ def _run_stream(
                     yield run_response
                 break
             except (InputCheckError, OutputCheckError) as e:
-                # Handle exceptions during streaming
+                # Update status, emit the error event for streaming consumers, then
+                # re-raise so callers can catch `InputCheckError`/`OutputCheckError`.
+                # Previously the exception was swallowed (break), making it impossible
+                # to catch from user code.
                 run_response.status = RunStatus.error
-                # Add error event to list of events
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
@@ -1183,7 +1187,6 @@ def _run_stream(
                 )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
-                # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -1198,7 +1201,7 @@ def _run_stream(
                         user_id=user_id,
                     )
                 yield run_error
-                break
+                raise
             except KeyboardInterrupt:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 cancelled_event, completed_event = _build_cancel_terminal_events(
@@ -1791,9 +1794,8 @@ async def _arun(
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
-                # Handle exceptions during streaming
+                # Update status and log, then re-raise so callers can catch it.
                 run_response.status = RunStatus.error
-                # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -1808,7 +1810,7 @@ async def _arun(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 if agent_session is not None:
@@ -2570,9 +2572,8 @@ async def _arun_stream(
                 break
 
             except (InputCheckError, OutputCheckError) as e:
-                # Handle exceptions during async streaming
+                # Update status, emit the error event, then re-raise so callers can catch it.
                 run_response.status = RunStatus.error
-                # Add error event to list of events
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
@@ -2582,13 +2583,11 @@ async def _arun_stream(
                 )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
-                # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                # Cleanup and store the run response and session
                 if agent_session is not None:
                     await acleanup_and_store(
                         agent,
@@ -2598,9 +2597,8 @@ async def _arun_stream(
                         user_id=user_id,
                     )
 
-                # Yield the error event
                 yield run_error
-                break
+                raise
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -3331,9 +3329,8 @@ def _continue_run(
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
-                # Handle exceptions during streaming
+                # Update status and log, then re-raise so callers can catch it.
                 run_response.status = RunStatus.error
-                # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -3343,7 +3340,7 @@ def _continue_run(
                     agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
-                return run_response
+                raise
             except KeyboardInterrupt:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 try:
@@ -3617,9 +3614,8 @@ def _continue_run_stream(
                 break
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
-                # Handle exceptions during streaming
+                # Update status, emit the error event, then re-raise so callers can catch it.
                 run_response.status = RunStatus.error
-                # Add error event to list of events
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
@@ -3629,7 +3625,6 @@ def _continue_run_stream(
                 )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
-                # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -3639,7 +3634,7 @@ def _continue_run_stream(
                     agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
                 yield run_error
-                break
+                raise
             except KeyboardInterrupt:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 cancelled_event, completed_event = _build_cancel_terminal_events(
@@ -4317,9 +4312,8 @@ async def _acontinue_run(
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
-                # Handle exceptions during streaming
+                # Update status and log, then re-raise so callers can catch it.
                 run_response.status = RunStatus.error
-                # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
 
@@ -4334,7 +4328,7 @@ async def _acontinue_run(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
@@ -4819,9 +4813,8 @@ async def _acontinue_run_stream(
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = cast(RunOutput, run_response)
-                # Handle exceptions during async streaming
+                # Update status, emit the error event, then re-raise so callers can catch it.
                 run_response.status = RunStatus.error
-                # Add error event to list of events
                 run_error = create_run_error_event(
                     run_response,
                     error=str(e),
@@ -4831,13 +4824,11 @@ async def _acontinue_run_stream(
                 )
                 run_response.events = add_error_event(error=run_error, events=run_response.events)
 
-                # If the content is None, set it to the error message
                 if run_response.content is None:
                     run_response.content = str(e)
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                # Cleanup and store the run response and session
                 if agent_session is not None:
                     await acleanup_and_store(
                         agent,
@@ -4847,9 +4838,8 @@ async def _acontinue_run_stream(
                         user_id=user_id,
                     )
 
-                # Yield the error event
                 yield run_error
-                break
+                raise
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
