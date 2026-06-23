@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from agno.models.message import Message
+from agno.models.response import ModelResponse
 from agno.reasoning.step import ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent
 
@@ -298,3 +299,60 @@ def test_message_reasoning_content_optional():
     msg = Message(role="assistant", content="Just content")
     # Should not raise, reasoning_content should be None or not set
     assert msg.content == "Just content"
+
+
+def test_model_stream_reasoning_chunk_emits_reasoning_delta_event():
+    from agno.agent import Agent
+    from agno.agent._response import handle_model_response_chunk
+    from agno.run.agent import RunOutput
+    from agno.session import AgentSession
+
+    agent = Agent(id="agent-1", name="Agent 1")
+    session = AgentSession(session_id="session-1")
+    run_response = RunOutput(run_id="run-1", agent_id=agent.id, agent_name=agent.name, session_id=session.session_id)
+    model_response = ModelResponse()
+
+    events = list(
+        handle_model_response_chunk(
+            agent=agent,
+            session=session,
+            run_response=run_response,
+            model_response=model_response,
+            model_response_event=ModelResponse(reasoning_content="thinking"),
+            stream_events=True,
+        )
+    )
+
+    assert [event.event for event in events] == [RunEvent.reasoning_content_delta]
+    assert events[0].reasoning_content == "thinking"  # type: ignore[attr-defined]
+    assert run_response.reasoning_content == "thinking"
+
+
+def test_model_stream_mixed_reasoning_and_content_emits_both_events():
+    from agno.agent import Agent
+    from agno.agent._response import handle_model_response_chunk
+    from agno.run.agent import RunOutput
+    from agno.session import AgentSession
+
+    agent = Agent(id="agent-1", name="Agent 1")
+    session = AgentSession(session_id="session-1")
+    run_response = RunOutput(run_id="run-1", agent_id=agent.id, agent_name=agent.name, session_id=session.session_id)
+    model_response = ModelResponse()
+
+    events = list(
+        handle_model_response_chunk(
+            agent=agent,
+            session=session,
+            run_response=run_response,
+            model_response=model_response,
+            model_response_event=ModelResponse(content="answer", reasoning_content="thinking"),
+            stream_events=True,
+        )
+    )
+
+    assert [event.event for event in events] == [RunEvent.reasoning_content_delta, RunEvent.run_content]
+    assert events[0].reasoning_content == "thinking"  # type: ignore[attr-defined]
+    assert events[1].content == "answer"  # type: ignore[attr-defined]
+    assert events[1].reasoning_content == ""  # type: ignore[attr-defined]
+    assert run_response.content == "answer"
+    assert run_response.reasoning_content == "thinking"
