@@ -63,7 +63,7 @@ class TeamSession:
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
-        if runs is not None and isinstance(runs[0], dict):
+        if runs and isinstance(runs[0], dict):
             for run in runs:
                 if "agent_id" in run:
                     serialized_runs.append(RunOutput.from_dict(run))
@@ -266,7 +266,9 @@ class TeamSession:
         Returns:
             A list of user and assistant Messages belonging to the session.
         """
-        return self.get_messages(skip_roles=["system", "tool"], skip_member_messages=True, last_n_runs=last_n_runs)
+        return self.get_messages(
+            skip_roles=["system", "tool"], skip_member_messages=True, skip_statuses=[], last_n_runs=last_n_runs
+        )
 
     def get_tool_calls(self, num_calls: Optional[int] = None) -> List[Dict[str, Any]]:
         """Returns a list of tool calls from the messages"""

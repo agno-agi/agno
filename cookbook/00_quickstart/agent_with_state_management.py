@@ -111,7 +111,7 @@ You are a Finance Agent that manages a stock watchlist.
 # ---------------------------------------------------------------------------
 agent_with_state_management = Agent(
     name="Agent with State Management",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     tools=[
         add_to_watchlist,

@@ -19,6 +19,34 @@ except ImportError:
     raise ImportError("`google-genai` not installed. Please install it using `pip install google-genai`")
 
 
+def inject_agno_client_header(client_params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Add the `x-goog-api-client: agno/<version>` header to a Gemini client's http_options.
+
+    Google requests partner integrations to identify themselves via this header
+    (https://ai.google.dev/gemini-api/docs/partner-integration#client-id) so they
+    can track usage and apply partner-specific behavior. We use a Google-specific
+    header rather than User-Agent so user-supplied User-Agent values aren't overridden.
+
+    Args:
+        client_params: The kwargs dict that will be passed to `genai.Client(...)`.
+
+    Returns:
+        The same dict, with `http_options.headers["x-goog-api-client"]` set.
+        Existing headers and http_options keys are preserved.
+    """
+    from agno import __version__ as agno_version
+
+    http_options = client_params.get("http_options", {})
+    if isinstance(http_options, dict):
+        headers = http_options.get("headers", {})
+        if isinstance(headers, dict):
+            headers["x-goog-api-client"] = f"agno/{agno_version}"
+            http_options["headers"] = headers
+            client_params["http_options"] = http_options
+    return client_params
+
+
 def prepare_response_schema(pydantic_model: Type[BaseModel]) -> Union[Type[BaseModel], Schema]:
     """
     Prepare a Pydantic model for use as Gemini response schema.

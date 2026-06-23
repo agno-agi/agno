@@ -421,11 +421,24 @@ class File(BaseModel):
 
     @classmethod
     def valid_mime_types(cls) -> List[str]:
+        # NOTE: Keep this in sync with `DOCUMENT_MIME_TYPES` in agno.os.utils. Every MIME type
+        # the upload routers accept must be valid here, otherwise FileMedia construction fails
+        # and the file is silently dropped. Not all of these are accepted by every model
+        # provider (e.g. Anthropic/Gemini reject Office binary formats); those fail at the
+        # model with a provider error rather than being dropped at upload.
         return [
             "application/pdf",
             "application/json",
             "application/x-javascript",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            # Office Open XML (modern Office formats)
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+            # Legacy binary Office formats
+            "application/msword",  # .doc
+            "application/vnd.ms-powerpoint",  # .ppt
+            "application/vnd.ms-excel",  # .xls
+            "application/vnd.ms-outlook",  # .msg
             "text/javascript",
             "application/x-python",
             "text/x-python",
@@ -450,17 +463,24 @@ class File(BaseModel):
     ) -> "File":
         """Create File from base64 encoded content or plain text.
 
-        Handles both base64-encoded binary content and plain text content
-        (which is stored as UTF-8 strings for text/* MIME types).
+        Handles both base64-encoded binary content and plain text content. This mirrors
+        ``File._normalise_content``: ``text/*`` content is persisted as raw UTF-8 strings
+        (never base64), everything else is base64-encoded. The decode therefore keys off
+        ``mime_type`` rather than guessing, so plain text that happens to be valid base64
+        (e.g. "TestData") is not silently corrupted.
         """
         import base64
 
-        try:
-            content_bytes = base64.b64decode(base64_content)
-        except Exception:
-            # If not valid base64, it might be plain text content (text/csv, text/plain, etc.)
-            # which is stored as UTF-8 strings, not base64
+        if mime_type and mime_type.startswith("text/"):
+            # Symmetric with _normalise_content: text/* content is stored as raw UTF-8,
+            # so decoding it as base64 would corrupt it.
             content_bytes = base64_content.encode("utf-8")
+        else:
+            try:
+                content_bytes = base64.b64decode(base64_content)
+            except Exception:
+                # Not valid base64 - fall back to treating it as raw UTF-8 text.
+                content_bytes = base64_content.encode("utf-8")
 
         return cls(
             content=content_bytes,
