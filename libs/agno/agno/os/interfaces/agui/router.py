@@ -21,8 +21,17 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input, validate_state
+from agno.models.response import ToolExecution
+from agno.os.interfaces.agui.input import (
+    agui_tools_to_external_functions,
+    extract_context,
+    extract_media,
+    extract_tool_messages,
+    extract_user_input,
+    validate_state,
+)
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
+from agno.run.requirement import RunRequirement
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
@@ -35,11 +44,6 @@ async def run_entity(
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
-        # AG-UI frontends send full conversation history every request.
-        # Extract only the last user message — entity manages history via session DB.
-        user_input = extract_user_input(run_input.messages or [])
-        images, audio, videos, files = extract_media(run_input.messages or [])
-
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         user_id = run_input.forwarded_props.get("user_id") if run_input.forwarded_props else None
@@ -54,20 +58,62 @@ async def run_entity(
             run_kwargs["dependencies"] = ui_deps
             run_kwargs["add_dependencies_to_context"] = True
 
-        response_stream = entity.arun(  # type: ignore
-            input=user_input,
-            session_id=run_input.thread_id,
-            stream=True,
-            stream_events=True,
-            user_id=user_id,
-            images=images or None,
-            audio=audio or None,
-            videos=videos or None,
-            files=files or None,
-            session_state=session_state,
-            run_id=run_id,
-            **run_kwargs,
-        )
+        # 1. Check for trailing tool messages (resume request from frontend tools)
+        tool_messages = extract_tool_messages(run_input.messages or [])
+
+        # Convert frontend tools for both fresh and resume paths
+        frontend_tools = agui_tools_to_external_functions(run_input.tools)
+
+        if tool_messages:
+            # Resume paused run with tool results
+            if run_input.run_id is None:
+                yield RunErrorEvent(
+                    type=EventType.RUN_ERROR,
+                    message="Cannot resume paused run: run_id not provided in request.",
+                )
+                return
+
+            requirements = [
+                RunRequirement(
+                    tool_execution=ToolExecution(
+                        tool_call_id=msg.tool_call_id,
+                        external_execution_required=True,
+                        result=msg.content or "",
+                    )
+                )
+                for msg in tool_messages
+            ]
+
+            response_stream = entity.acontinue_run(  # type: ignore
+                run_id=run_input.run_id,
+                session_id=run_input.thread_id,
+                stream=True,
+                stream_events=True,
+                user_id=user_id,
+                requirements=requirements,
+                client_tools=frontend_tools or None,
+                **run_kwargs,
+            )
+        else:
+            # 2. Fresh user turn — extract input and run
+            user_input = extract_user_input(run_input.messages or [])
+            images, audio, videos, files = extract_media(run_input.messages or [])
+
+            response_stream = entity.arun(  # type: ignore
+                input=user_input,
+                session_id=run_input.thread_id,
+                stream=True,
+                stream_events=True,
+                user_id=user_id,
+                images=images or None,
+                audio=audio or None,
+                videos=videos or None,
+                files=files or None,
+                session_state=session_state,
+                run_id=run_id,
+                client_tools=frontend_tools or None,
+                **run_kwargs,
+            )
 
         async for event in async_stream_agno_response_as_agui_events(
             response_stream=response_stream,  # type: ignore
