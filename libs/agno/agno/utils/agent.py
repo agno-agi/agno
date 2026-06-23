@@ -64,11 +64,9 @@ async def await_for_open_threads(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
-    if learning_task is not None:
-        try:
-            await learning_task
-        except Exception as e:
-            log_warning(f"Error in learning extraction: {str(e)}")
+    # Learning is fire-and-forget: it runs in a dedicated executor/lock
+    # and does not block the event stream.  We intentionally do NOT await
+    # the learning task here.
 
 
 def wait_for_open_threads(
@@ -89,11 +87,8 @@ def wait_for_open_threads(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
-    if learning_future is not None:
-        try:
-            learning_future.result()
-        except Exception as e:
-            log_warning(f"Error in learning extraction: {str(e)}")
+    # Learning is fire-and-forget: it runs in a dedicated executor and does
+    # not block the event stream.  We intentionally do NOT wait for it here.
 
 
 async def await_for_thread_tasks_stream(
@@ -161,11 +156,8 @@ async def await_for_thread_tasks_stream(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
-    if learning_task is not None:
-        try:
-            await learning_task
-        except Exception as e:
-            log_warning(f"Error in learning extraction: {str(e)}")
+    # Learning is fire-and-forget: runs in a dedicated executor/lock.
+    # We intentionally do NOT await the learning task here.
 
 
 def wait_for_thread_tasks_stream(
@@ -230,11 +222,8 @@ def wait_for_thread_tasks_stream(
         except Exception as e:
             log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
-    if learning_future is not None:
-        try:
-            learning_future.result()
-        except Exception as e:
-            log_warning(f"Error in learning extraction: {str(e)}")
+    # Learning is fire-and-forget: runs in a dedicated executor.
+    # We intentionally do NOT wait for the learning future here.
 
 
 def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:
