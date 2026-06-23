@@ -128,7 +128,7 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
             # Check for cached result
             if os.path.exists(cache_file):
                 try:
-                    with open(cache_file, "r") as f:
+                    with open(cache_file, "r", encoding="utf-8") as f:
                         cache_data = json.load(f)
 
                     timestamp = cache_data.get("timestamp", 0)
@@ -153,7 +153,7 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
             result = func(*args, **kwargs)
 
             try:
-                with open(cache_file, "w") as f:
+                with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump({"timestamp": time.time(), "result": result}, f)
             except Exception as e:
                 log_error(f"Error writing cache: {str(e)}")
