@@ -33,7 +33,6 @@ agent_os = AgentOS(
         step_user_input_executor_workflow,
         dual_level_hitl_workflow,
     ],
-    db=db,
 )
 app = agent_os.get_app()
 
