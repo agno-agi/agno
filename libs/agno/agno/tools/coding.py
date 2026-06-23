@@ -247,6 +247,33 @@ class CodingTools(Toolkit):
 
     # Shell operators that enable command chaining or substitution
     _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
+    _INLINE_CODE_FLAGS_BY_COMMAND = {
+        "bash": {"-c"},
+        "dash": {"-c"},
+        "ksh": {"-c"},
+        "node": {"-e", "--eval", "-p", "--print"},
+        "perl": {"-e", "-E"},
+        "php": {"-r"},
+        "python": {"-c"},
+        "python3": {"-c"},
+        "ruby": {"-e"},
+        "sh": {"-c"},
+        "zsh": {"-c"},
+    }
+
+    @classmethod
+    def _has_inline_code_flag(cls, cmd_base: str, tokens: List[str]) -> bool:
+        inline_flags = cls._INLINE_CODE_FLAGS_BY_COMMAND.get(cmd_base)
+        if inline_flags is None and cmd_base.startswith("python"):
+            inline_flags = cls._INLINE_CODE_FLAGS_BY_COMMAND["python"]
+        if inline_flags is None:
+            return False
+
+        for token in tokens[1:]:
+            flag_name = token.split("=", maxsplit=1)[0]
+            if flag_name in inline_flags:
+                return True
+        return False
 
     def _check_command(self, command: str) -> Optional[str]:
         """Check if a shell command is safe to execute.
@@ -272,11 +299,17 @@ class CodingTools(Toolkit):
             return "Error: Could not parse shell command."
 
         # Validate command against allowlist
+        cmd_base = ""
         if self.allowed_commands is not None and tokens:
             cmd = tokens[0]
             cmd_base = Path(cmd).name  # Handle /usr/bin/python -> python
             if cmd_base not in self.allowed_commands:
                 return f"Error: Command '{cmd_base}' is not in the allowed commands list."
+        elif tokens:
+            cmd_base = Path(tokens[0]).name
+
+        if cmd_base and self._has_inline_code_flag(cmd_base, tokens):
+            return f"Error: Inline code execution via '{cmd_base}' is not allowed in restricted mode."
 
         for i, token in enumerate(tokens):
             # Skip the command itself (already validated by allowlist above)

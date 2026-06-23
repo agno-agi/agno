@@ -597,6 +597,44 @@ def test_run_shell_allows_listed_commands():
         assert "works" in result
 
 
+def test_run_shell_blocks_inline_interpreter_code_in_restricted_mode():
+    """Test that allowlisted interpreters cannot execute opaque inline code."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir)
+
+        result = tools.run_shell("python3 -c \"print('blocked')\"")
+        assert "Error" in result
+        assert "Inline code execution" in result
+
+        (base_dir / "test_script.py").write_text("print('script still works')\n")
+        result = tools.run_shell("python3 test_script.py")
+        assert "Exit code: 0" in result
+        assert "script still works" in result
+
+
+def test_run_shell_blocks_inline_code_flags_for_custom_allowed_interpreters():
+    """Test custom-allowlisted interpreters are also blocked on inline-code flags."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, allowed_commands=["node", "bash"])
+
+        assert "Inline code execution" in tools._check_command('node --eval="console.log(1)"')
+        assert "Inline code execution" in tools._check_command('bash -c "echo blocked"')
+
+        tools = CodingTools(base_dir=base_dir, allowed_commands=["python3.12"])
+        assert "Inline code execution" in tools._check_command("python3.12 -c \"print('blocked')\"")
+
+
+def test_run_shell_unrestricted_allows_inline_interpreter_code():
+    """Test restrict_to_base_dir=False preserves the documented escape hatch."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        tools = CodingTools(base_dir=base_dir, restrict_to_base_dir=False)
+
+        assert tools._check_command("python3 -c \"print('allowed')\"") is None
+
+
 def test_run_shell_custom_allowlist():
     """Test that a custom allowlist overrides the default."""
     with tempfile.TemporaryDirectory() as tmp_dir:
