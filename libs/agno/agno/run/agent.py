@@ -291,6 +291,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
+    stop_reason: Optional[str] = None
 
 
 @dataclass
@@ -659,6 +660,9 @@ class RunOutput:
     events: Optional[List[RunOutputEvent]] = None
 
     status: RunStatus = RunStatus.running
+
+    # Why the model stopped generating (e.g., "end_turn", "max_tokens", "tool_use")
+    stop_reason: Optional[str] = None
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None

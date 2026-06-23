@@ -1127,6 +1127,8 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        if provider_response.stop_reason is not None:
+            model_response.stop_reason = provider_response.stop_reason
         # Providers (e.g. GeminiInteractions on the agent path) can produce
         # already-executed ToolExecution records server-side; carry them
         # through so run_response.tools / AgentOS UI sees the audit.
@@ -1197,6 +1199,8 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        if provider_response.stop_reason is not None:
+            model_response.stop_reason = provider_response.stop_reason
         # Providers (e.g. GeminiInteractions on the agent path) can produce
         # already-executed ToolExecution records server-side; carry them
         # through so run_response.tools / AgentOS UI sees the audit.

@@ -954,6 +954,9 @@ def _update_run_response(
     # Update citations
     if model_response.citations is not None:
         run_response.citations = model_response.citations
+    # Update stop_reason
+    if model_response.stop_reason is not None:
+        run_response.stop_reason = model_response.stop_reason
 
     # Update the run_response tools with the model response tool_executions
     if model_response.tool_executions is not None:
@@ -1118,6 +1121,8 @@ def _handle_model_response_stream(
         run_response.citations = full_model_response.citations
     if full_model_response.provider_data is not None:
         run_response.model_provider_data = full_model_response.provider_data
+    if full_model_response.stop_reason is not None:
+        run_response.stop_reason = full_model_response.stop_reason
 
     # Build a list of messages that should be added to the RunOutput
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -1274,6 +1279,8 @@ async def _ahandle_model_response_stream(
         run_response.citations = full_model_response.citations
     if full_model_response.provider_data is not None:
         run_response.model_provider_data = full_model_response.provider_data
+    if full_model_response.stop_reason is not None:
+        run_response.stop_reason = full_model_response.stop_reason
 
     # Build a list of messages that should be added to the RunOutput
     messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
@@ -1412,6 +1419,10 @@ def _handle_model_response_chunk(
             # Handle provider data (one chunk)
             if model_response_event.provider_data is not None:
                 run_response.model_provider_data = model_response_event.provider_data
+
+            # Handle stop_reason (from final streaming event)
+            if model_response_event.stop_reason is not None:
+                run_response.stop_reason = model_response_event.stop_reason
 
             # Handle citations (one chunk)
             if model_response_event.citations is not None:
