@@ -340,6 +340,10 @@ def read_or_create_session(
                 )
             )
 
+        # Persist new session to DB immediately so it is visible during long-running retries
+        if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+            upsert_session(agent, agent_session)
+
     if agent.cache_session:
         agent._cached_session = agent_session
 
@@ -404,6 +408,10 @@ async def aread_or_create_session(
                     ],
                 )
             )
+
+        # Persist new session to DB immediately so it is visible during long-running retries
+        if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+            await aupsert_session(agent, agent_session)
 
     if agent.cache_session:
         agent._cached_session = agent_session
