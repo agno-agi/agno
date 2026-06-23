@@ -1010,7 +1010,6 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
@@ -1049,7 +1048,6 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
@@ -1088,7 +1086,6 @@ class PostgresDb(BaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
@@ -1184,7 +1181,6 @@ class PostgresDb(BaseDb):
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
                         set_=update_columns,
-                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                     ).returning(table)
 
                     result = sess.execute(stmt, session_records)
@@ -1243,7 +1239,6 @@ class PostgresDb(BaseDb):
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
                         set_=update_columns,
-                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                     ).returning(table)
 
                     result = sess.execute(stmt, session_records)
@@ -1302,7 +1297,6 @@ class PostgresDb(BaseDb):
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
                         set_=update_columns,
-                        where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                     ).returning(table)
 
                     result = sess.execute(stmt, session_records)
