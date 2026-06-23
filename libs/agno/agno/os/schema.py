@@ -501,6 +501,24 @@ class RunSchema(BaseModel):
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    # set when the run was created via /continue (fork /
+    # regenerate / time-travel) or via /sessions/{id}/branch. Client consumes
+    # these to render parent → child relationships in the run timeline.
+    forked_from_run_id: Optional[str] = Field(
+        None, description="If this run was forked from another run, the source run's ID"
+    )
+    forked_from_message_index: Optional[int] = Field(
+        None, description="If this run was forked, the message index at which the source was truncated"
+    )
+    forked_from_session_id: Optional[str] = Field(
+        None, description="If this run was created via session branch, the source session's ID"
+    )
+    regenerated_from: Optional[str] = Field(
+        None, description="If this run was produced via regenerate=true, the source run's ID"
+    )
+    last_checkpoint_at_message_index: Optional[int] = Field(
+        None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -534,6 +552,11 @@ class RunSchema(BaseModel):
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
             created_at=to_utc_datetime(run_dict.get("created_at")),
+            forked_from_run_id=run_dict.get("forked_from_run_id"),
+            forked_from_message_index=run_dict.get("forked_from_message_index"),
+            forked_from_session_id=run_dict.get("forked_from_session_id"),
+            regenerated_from=run_dict.get("regenerated_from"),
+            last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
         )
 
 
@@ -565,6 +588,24 @@ class TeamRunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    # set when the team run was created via /continue (fork /
+    # regenerate / time-travel) or via /sessions/{id}/branch. Client consumes
+    # these to render parent → child relationships in the run timeline.
+    forked_from_run_id: Optional[str] = Field(
+        None, description="If this team run was forked from another run, the source run's ID"
+    )
+    forked_from_message_index: Optional[int] = Field(
+        None, description="If this team run was forked, the message index at which the source was truncated"
+    )
+    forked_from_session_id: Optional[str] = Field(
+        None, description="If this team run was created via session branch, the source session's ID"
+    )
+    regenerated_from: Optional[str] = Field(
+        None, description="If this team run was produced via regenerate=true, the source run's ID"
+    )
+    last_checkpoint_at_message_index: Optional[int] = Field(
+        None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -596,6 +637,11 @@ class TeamRunSchema(BaseModel):
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
+            forked_from_run_id=run_dict.get("forked_from_run_id"),
+            forked_from_message_index=run_dict.get("forked_from_message_index"),
+            forked_from_session_id=run_dict.get("forked_from_session_id"),
+            regenerated_from=run_dict.get("regenerated_from"),
+            last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
         )
 
 

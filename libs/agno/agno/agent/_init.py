@@ -63,6 +63,27 @@ def set_telemetry(agent: Agent) -> None:
         agent.telemetry = telemetry_env.lower() == "true"
 
 
+def set_checkpoint(agent: Agent) -> None:
+    """Resolve the agent's checkpoint setting.
+
+    Constructor default is None so that OS-level inheritance can fill it. If still
+    None at first run, fall back to "runs" (today's terminal-only behavior).
+
+    "tools" is reserved for 3.0 (see ADR-006 in specs/agno/features/checkpointing/decisions.md)
+    and raises NotImplementedError if requested.
+    """
+    if agent.checkpoint is None:
+        agent.checkpoint = "runs"
+    elif agent.checkpoint == "tools":
+        raise NotImplementedError(
+            'checkpoint="tools" is reserved for the 3.0 runs-table split and not available yet. Use "tool-batch" or "runs".'
+        )
+    elif agent.checkpoint not in ("runs", "tool-batch"):
+        raise ValueError(
+            f'Invalid checkpoint level: {agent.checkpoint!r}. Expected one of: "runs", "tool-batch", "tools".'
+        )
+
+
 def set_default_model(agent: Agent) -> None:
     # Use the default Model (OpenAIResponses) if no model is provided
     if agent.model is None:
@@ -242,6 +263,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_debug(agent, debug_mode=debug_mode)
     set_id(agent)
     set_telemetry(agent)
+    set_checkpoint(agent)
     if agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None:
         set_memory_manager(agent)
     if (
