@@ -1187,7 +1187,7 @@ class Agent:
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> Optional[RunOutput]:
         return _cli.agent_print_response(
             self,
             input=input,
@@ -1243,7 +1243,7 @@ class Agent:
         console: Optional[Any] = None,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
-    ) -> None:
+    ) -> Optional[RunOutput]:
         return await _cli.agent_aprint_response(
             self,
             input=input,
@@ -1564,6 +1564,7 @@ class Agent:
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
     ) -> RunOutput: ...
@@ -1583,6 +1584,7 @@ class Agent:
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
     ) -> Iterator[RunOutputEvent]: ...
@@ -1608,6 +1610,7 @@ class Agent:
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         **kwargs,
@@ -1632,6 +1635,7 @@ class Agent:
             knowledge_filters=knowledge_filters,
             dependencies=dependencies,
             metadata=metadata,
+            add_history_to_context=add_history_to_context,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             **kwargs,
@@ -1652,6 +1656,7 @@ class Agent:
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Coroutine[Any, Any, RunOutput]: ...
@@ -1671,6 +1676,7 @@ class Agent:
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
@@ -1696,6 +1702,7 @@ class Agent:
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         background: bool = False,
@@ -1721,6 +1728,7 @@ class Agent:
             knowledge_filters=knowledge_filters,
             dependencies=dependencies,
             metadata=metadata,
+            add_history_to_context=add_history_to_context,
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             background=background,

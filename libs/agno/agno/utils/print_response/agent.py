@@ -49,7 +49,7 @@ def print_response_stream(
     add_session_state_to_context: Optional[bool] = None,
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
-):
+) -> Optional[RunOutput]:
     _response_content: str = ""
     _response_reasoning_content: str = ""
     response_content_batch: Union[str, JSON, Markdown] = ""
@@ -108,7 +108,7 @@ def print_response_stream(
                     if response_panel is not None:
                         panels.append(response_panel)
                         live_log.update(Group(*panels))
-                    return
+                    return None
 
                 if response_event.event == RunEvent.pre_hook_completed:  # type: ignore
                     if response_event.run_input is not None:  # type: ignore
@@ -228,6 +228,8 @@ def print_response_stream(
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
+    return None
+
 
 async def aprint_response_stream(
     agent: "Agent",
@@ -254,7 +256,7 @@ async def aprint_response_stream(
     add_session_state_to_context: Optional[bool] = None,
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
-):
+) -> Optional[RunOutput]:
     _response_content: str = ""
     _response_reasoning_content: str = ""
     reasoning_steps: List[ReasoningStep] = []
@@ -433,6 +435,8 @@ async def aprint_response_stream(
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
+    return None
+
 
 def build_panels_stream(
     response_content: Union[str, JSON, Markdown],
@@ -569,7 +573,7 @@ def print_response(
     add_session_state_to_context: Optional[bool] = None,
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
-):
+) -> Optional[RunOutput]:
     with Live(console=console) as live_log:
         status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
@@ -663,6 +667,8 @@ def print_response(
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
 
+    return run_response
+
 
 async def aprint_response(
     agent: "Agent",
@@ -689,7 +695,7 @@ async def aprint_response(
     add_session_state_to_context: Optional[bool] = None,
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
-):
+) -> Optional[RunOutput]:
     with Live(console=console) as live_log:
         status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_log.update(status)
@@ -782,6 +788,8 @@ async def aprint_response(
         # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_log.update(Group(*panels))
+
+    return run_response
 
 
 def build_panels(
