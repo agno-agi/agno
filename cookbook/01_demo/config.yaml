@@ -1,21 +1,21 @@
 chat:
   quick_prompts:
     local-wiki:
-      - "Add https://docs.agno.com/ to the wiki"
-      - "Attach an image or PDF, then digest and file it"
-      - "What's in the wiki?"
+      - "Read docs.agno.com and file a tight summary under guides/"
+      - "Generate a standalone HTML landing page for a coffee shop, 'Bean There'"
+      - "What's in the wiki? List each page with a one-line summary"
 
     git-wiki:
-      - "Add https://docs.agno.com/ to the wiki"
-      - "Attach an image or PDF, then digest and file it"
-      - "What's in the wiki?"
+      - "Draft a deploy runbook under runbooks/deploy.md and push it"
+      - "Summarize docs.agno.com and commit it under guides/"
+      - "What does the wiki say about deploys? Cite the file"
 
     notion-wiki:
-      - "Add https://docs.agno.com/ to the wiki"
-      - "Attach an image or PDF, then digest and file it"
-      - "What's in the wiki?"
+      - "File a customer-call summary for Acme Corp as a Notion page"
+      - "Capture our Q3 SSO commitment so the team sees it in Notion"
+      - "What's the latest on Acme Corp? Cite the page"
 
     code-search:
-      - "What agents are registered in this AgentOS demo?"
-      - "Where is the Agent class defined?"
-      - "How does the WikiContextProvider work?"
+      - "Which agents are registered in this demo, and where?"
+      - "How does WikiContextProvider become agent tools? Cite the code"
+      - "Where is generate_html_file wired into the wiki agents?"
