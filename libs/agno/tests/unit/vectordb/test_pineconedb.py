@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agno.knowledge.document import Document
-from agno.vectordb.search import SearchType
 from agno.vectordb.pineconedb import PineconeDb
+from agno.vectordb.search import SearchType
 
 # Configuration for tests
 TEST_INDEX_NAME = f"test_index_{uuid.uuid4().hex[:8]}"
