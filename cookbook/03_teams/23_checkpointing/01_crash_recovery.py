@@ -73,7 +73,9 @@ def build_team() -> Team:
 async def _worker() -> None:
     """Runs inside the subprocess. Executes the team run until SIGKILL'd mid-flight."""
     team = build_team()
-    await team.arun(input="Research the topic 'agno checkpointing'.", session_id=SESSION_ID)
+    await team.arun(
+        input="Research the topic 'agno checkpointing'.", session_id=SESSION_ID
+    )
 
 
 async def main() -> None:
@@ -132,7 +134,9 @@ async def main() -> None:
     print(f"  status:                          {crashed_run.status}")
     print(f"  tool batches in DB:              {len(crashed_run.tools or [])}")
     print(f"  message count:                   {len(crashed_run.messages or [])}")
-    print(f"  last_checkpoint_at_message_idx:  {crashed_run.last_checkpoint_at_message_index}")
+    print(
+        f"  last_checkpoint_at_message_idx:  {crashed_run.last_checkpoint_at_message_index}"
+    )
     print()
     print("Status is RUNNING — the team loop never reached terminal cleanup.")
     print("For /continue, RUNNING and ERROR are equivalent: both resume.")
@@ -145,7 +149,9 @@ async def main() -> None:
     print("STEP 3: /continue resumes the team run from the last checkpoint")
     print("=" * 70)
     recovery_team = build_team()
-    resumed = await recovery_team.acontinue_run(run_id=crashed_run.run_id, session_id=SESSION_ID)
+    resumed = await recovery_team.acontinue_run(
+        run_id=crashed_run.run_id, session_id=SESSION_ID
+    )
     print(f"  run_id:              {resumed.run_id}  (same as crashed run)")
     print(f"  status:              {resumed.status}")
     print(f"  total tool batches:  {len(resumed.tools or [])}")

@@ -21,7 +21,6 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.agent import _init, _response, _run, _storage, _tools
 from agno.agent._run import _fork_run, _truncate_run_to_checkpoint
-from agno.utils.message import safe_truncation_index
 from agno.agent.agent import Agent
 from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.models.message import Message
@@ -30,6 +29,7 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
+from agno.utils.message import safe_truncation_index
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror the pattern from test_run_regressions.py)
