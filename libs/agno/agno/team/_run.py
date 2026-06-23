@@ -6621,7 +6621,13 @@ def continue_run_dispatch(
         # Without this, such a run falls through to terminal cleanup with no
         # final turn (content=None). Unresolved requirements are re-paused
         # downstream, so this does not bypass HITL.
-        _did_snapshot_dispatch = True  # route to team-leader model call
+        #
+        # Guard: a PAUSED run with requirements is a real HITL pause (the user
+        # called continue_run(response) after mutating req.confirm() in place).
+        # Don't bypass — fall through to member-routing / team-level resolution
+        # below. The team-leader bypass is only for non-HITL crash recovery.
+        if run_response.status != RunStatus.paused or not run_response.requirements:
+            _did_snapshot_dispatch = True  # route to team-leader model call
     else:
         # No requirements AND no tools — this is a bare resume of a mid-flight
         # run (RUNNING / ERROR / CANCELLED that crashed before any tool batch).
@@ -8005,7 +8011,13 @@ async def _acontinue_run(
                     # the team-leader model regardless of whether an approval was
                     # applied. Without this it falls through to terminal cleanup
                     # with content=None. Unresolved requirements re-pause downstream.
-                    _did_snapshot_dispatch = True  # route to team-leader model call
+                    #
+                    # Guard: a PAUSED run with requirements is a real HITL pause
+                    # (acontinue_run(response) after mutating req.confirm() in
+                    # place). Don't bypass — fall through to member-routing /
+                    # team-level resolution below.
+                    if run_response.status != RunStatus.paused or not run_response.requirements:
+                        _did_snapshot_dispatch = True  # route to team-leader model call
                 else:
                     # Bare resume of a mid-flight run (RUNNING/ERROR/CANCELLED)
                     # — no requirements, no tools. Let the team-leader model
@@ -8436,7 +8448,13 @@ async def _acontinue_run_stream(
                     # the team-leader model regardless of whether an approval was
                     # applied. Without this it falls through to terminal cleanup
                     # with content=None. Unresolved requirements re-pause downstream.
-                    _did_snapshot_dispatch = True  # route to team-leader model call
+                    #
+                    # Guard: a PAUSED run with requirements is a real HITL pause
+                    # (acontinue_run(response) after mutating req.confirm() in
+                    # place). Don't bypass — fall through to member-routing /
+                    # team-level resolution below.
+                    if run_response.status != RunStatus.paused or not run_response.requirements:
+                        _did_snapshot_dispatch = True  # route to team-leader model call
                 else:
                     # Bare resume of a mid-flight run (RUNNING/ERROR/CANCELLED)
                     # — no requirements, no tools. Let the team-leader model
