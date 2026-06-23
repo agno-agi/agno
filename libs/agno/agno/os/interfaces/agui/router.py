@@ -23,8 +23,7 @@ from fastapi.responses import StreamingResponse
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input, validate_state
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
-from agno.team.remote import RemoteTeam
-from agno.team.team import Team
+from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
 
 
