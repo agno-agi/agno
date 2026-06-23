@@ -1323,7 +1323,7 @@ def run_dispatch(
     # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Normalise hook & guardails
+    # Normalise hook & guardrails
     if not agent._hooks_normalised:
         if agent.pre_hooks:
             agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
@@ -2753,10 +2753,10 @@ def arun_dispatch(  # type: ignore
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
 
-    # 2. Validate input against input_schema if provided
+    # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
 
-    # Normalise hooks & guardails
+    # Normalise hooks & guardrails
     if not agent._hooks_normalised:
         if agent.pre_hooks:
             agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
@@ -4983,11 +4983,11 @@ def save_run_response_to_file(
             if not fn_path.parent.exists():
                 fn_path.parent.mkdir(parents=True, exist_ok=True)
             if isinstance(run_response.content, str):
-                fn_path.write_text(run_response.content)
+                fn_path.write_text(run_response.content, encoding="utf-8")
             else:
                 import json
 
-                fn_path.write_text(json.dumps(run_response.content, indent=2))
+                fn_path.write_text(json.dumps(run_response.content, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
             log_warning(f"Failed to save output to file: {str(e)}")
 
