@@ -55,8 +55,11 @@ def test_client(test_agent: Agent):
 
 
 def _collect_route_paths(app) -> list[str]:
-    """Walk app.routes recursively, descending into any nested routers (starlette
-    1.x wraps included routers in `_IncludedRouter` without a top-level `.path`)."""
+    """Walk app.routes recursively, descending into any nested routers.
+
+    starlette 1.x wraps included routers in `_IncludedRouter`, which doesn't have
+    `.path` or `.routes` directly — the wrapped routes live on `.original_router`.
+    """
     paths: list[str] = []
 
     def visit(routes) -> None:
@@ -65,6 +68,8 @@ def _collect_route_paths(app) -> list[str]:
                 paths.append(r.path)
             if hasattr(r, "routes"):
                 visit(r.routes)
+            elif hasattr(r, "original_router"):
+                visit(r.original_router.routes)
 
     visit(app.routes)
     return paths
