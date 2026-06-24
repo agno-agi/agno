@@ -32,11 +32,25 @@ class InMemoryDb(BaseDb):
 
         # Initialize in-memory storage dictionaries
         self._sessions: List[Dict[str, Any]] = []
+        # session_id -> positions in ``_sessions``. A list of positions (rather
+        # than a single one) because a session_id is not guaranteed unique across
+        # components in the worst case. Keeps get/upsert/rename O(matches) instead
+        # of O(total sessions).
+        self._session_index: Dict[str, List[int]] = {}
         self._memories: List[Dict[str, Any]] = []
         self._metrics: List[Dict[str, Any]] = []
         self._eval_runs: List[Dict[str, Any]] = []
         self._knowledge: List[Dict[str, Any]] = []
         self._cultural_knowledge: List[Dict[str, Any]] = []
+
+    def _rebuild_session_index(self) -> None:
+        """Rebuild the session_id -> positions index from ``_sessions``."""
+        index: Dict[str, List[int]] = {}
+        for position, session_data in enumerate(self._sessions):
+            session_id = session_data.get("session_id")
+            if session_id is not None:
+                index.setdefault(session_id, []).append(position)
+        self._session_index = index
 
     def table_exists(self, table_name: str) -> bool:
         """In-memory implementation, always returns True."""
@@ -71,6 +85,7 @@ class InMemoryDb(BaseDb):
                 for s in self._sessions
                 if not (s.get("session_id") == session_id and (user_id is None or s.get("user_id") == user_id))
             ]
+            self._rebuild_session_index()
 
             if len(self._sessions) < original_count:
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
@@ -99,6 +114,7 @@ class InMemoryDb(BaseDb):
                 for s in self._sessions
                 if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
             ]
+            self._rebuild_session_index()
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
@@ -129,17 +145,17 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs while reading the session.
         """
         try:
-            for session_data in self._sessions:
-                if session_data.get("session_id") == session_id:
-                    if user_id is not None and session_data.get("user_id") != user_id:
-                        continue
+            for position in self._session_index.get(session_id, []):
+                session_data = self._sessions[position]
+                if user_id is not None and session_data.get("user_id") != user_id:
+                    continue
 
-                    session_data_copy = deepcopy(session_data)
+                session_data_copy = deepcopy(session_data)
 
-                    if not deserialize:
-                        return session_data_copy
+                if not deserialize:
+                    return session_data_copy
 
-                    return deserialize_session(session_type, session_data_copy)
+                return deserialize_session(session_type, session_data_copy)
 
             return None
 
@@ -252,9 +268,8 @@ class InMemoryDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         try:
-            for i, session in enumerate(self._sessions):
-                if session.get("session_id") != session_id:
-                    continue
+            for i in self._session_index.get(session_id, []):
+                session = self._sessions[i]
                 if session_type is not None and session.get("session_type") != session_type.value:
                     continue
                 if user_id is not None and session.get("user_id") != user_id:
@@ -294,17 +309,18 @@ class InMemoryDb(BaseDb):
             elif isinstance(session, WorkflowSession):
                 session_dict["session_type"] = SessionType.WORKFLOW.value
 
-            # Find existing session to update
+            # Find existing session to update (only scan rows sharing this
+            # session_id via the index, instead of the whole table).
+            session_id = session_dict.get("session_id")
             session_updated = False
-            for i, existing_session in enumerate(self._sessions):
-                if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
-                    existing_session, session
-                ):
+            for i in self._session_index.get(session_id, []):
+                existing_session = self._sessions[i]
+                if self._matches_session_key(existing_session, session):
                     existing_uid = existing_session.get("user_id")
                     if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                         return None
                     session_dict["updated_at"] = int(time.time())
-                    self._sessions[i] = deepcopy(session_dict)
+                    self._sessions[i] = deepcopy(session_dict)  # session_id unchanged -> index stays valid
                     session_updated = True
                     break
 
@@ -312,6 +328,8 @@ class InMemoryDb(BaseDb):
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
                 self._sessions.append(deepcopy(session_dict))
+                if session_id is not None:
+                    self._session_index.setdefault(session_id, []).append(len(self._sessions) - 1)
 
             session_dict_copy = deepcopy(session_dict)
             if not deserialize:
