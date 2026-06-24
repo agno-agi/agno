@@ -18,6 +18,7 @@ class SearchApiTools(Toolkit):
     Args:
         api_key (Optional[str]): SearchAPI key. If not provided, uses SEARCHAPI_API_KEY env var.
         num_results (int): Default number of results to return. Default is 5.
+        timeout (int): Request timeout in seconds. Default is 30.
         enable_search_google (bool): Enable Google web search. Default is True.
         enable_search_news (bool): Enable Google News search. Default is False.
         enable_search_images (bool): Enable Google Images search. Default is False.
@@ -28,6 +29,7 @@ class SearchApiTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         num_results: int = 5,
+        timeout: int = 30,
         enable_search_google: bool = True,
         enable_search_news: bool = False,
         enable_search_images: bool = False,
@@ -40,6 +42,7 @@ class SearchApiTools(Toolkit):
             log_warning("No SearchAPI key provided. Set the SEARCHAPI_API_KEY environment variable.")
 
         self.num_results = num_results
+        self.timeout = timeout
         self.base_url = "https://www.searchapi.io/api/v1/search"
 
         tools: List[Any] = []
@@ -68,19 +71,22 @@ class SearchApiTools(Toolkit):
             if not self.api_key:
                 return {"error": "No SearchAPI key provided. Set the SEARCHAPI_API_KEY environment variable."}
 
-            params["api_key"] = self.api_key
+            request_params = {**params, "api_key": self.api_key}
 
             log_debug(f"Requesting SearchAPI engine={params.get('engine')} q={params.get('q')}")
-            response = requests.get(self.base_url, params=params, timeout=30)
+            response = requests.get(self.base_url, params=request_params, timeout=self.timeout)
             response.raise_for_status()
 
-            return response.json()
+            return response.json()  # type: ignore[no-any-return]
         except requests.exceptions.HTTPError as e:
             log_error(f"SearchAPI HTTP error: {e}")
             return {"error": f"HTTP error: {e}"}
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             log_error(f"SearchAPI request error: {e}")
             return {"error": str(e)}
+        except ValueError as e:
+            log_error(f"SearchAPI JSON decode error: {e}")
+            return {"error": f"Invalid JSON response: {e}"}
 
     def search_google(
         self,
@@ -270,8 +276,7 @@ class SearchApiTools(Toolkit):
 
         params: Dict[str, Any] = {
             "engine": "youtube",
-            "search_query": query,
-            "num": num_results or self.num_results,
+            "q": query,
         }
 
         data = self._make_request(params)
@@ -295,7 +300,7 @@ class SearchApiTools(Toolkit):
                     if isinstance(r.get("thumbnail"), dict)
                     else r.get("thumbnail"),
                 }
-                for r in data.get("video_results", [])
+                for r in data.get("videos", [])
             ]
         }
 
