@@ -237,7 +237,7 @@ class Team:
     # If True, store media in run output
     store_media: bool = True
     # If set, media content is uploaded to this storage backend before DB persistence.
-    # Only references (URLs) are stored in the database. Requires store_media=True.
+    # Only references (URLs) are stored in the database, not raw bytes (independent of store_media).
     media_storage: Optional[Any] = None  # MediaStorage or AsyncMediaStorage
     # If True, store tool results in run output
     store_tool_messages: bool = True
@@ -1268,8 +1268,14 @@ class Team:
     def scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
         return _run.scrub_run_output_for_storage(self, run_response=run_response)
 
-    def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
-        return _run._scrub_member_responses(self, member_responses=member_responses)
+    def _scrub_member_responses(
+        self,
+        member_responses: List[Union[TeamRunOutput, RunOutput]],
+        keep_media_references: Optional[bool] = None,
+    ) -> None:
+        return _run._scrub_member_responses(
+            self, member_responses=member_responses, keep_media_references=keep_media_references
+        )
 
     def cli_app(
         self,

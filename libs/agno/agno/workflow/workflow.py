@@ -472,6 +472,8 @@ class Workflow:
         stream_events: bool = False,
         stream_executor_events: bool = True,
         store_events: bool = False,
+        store_media: bool = True,
+        media_storage: Optional[Any] = None,  # MediaStorage or AsyncMediaStorage
         events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None,
         store_executor_outputs: bool = True,
         input_schema: Optional[Type[BaseModel]] = None,
@@ -496,6 +498,8 @@ class Workflow:
         self.debug_mode = debug_mode
         self.debug_level = debug_level
         self.store_events = store_events
+        self.store_media = store_media
+        self.media_storage = media_storage
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_executor_events = stream_executor_events
@@ -1407,6 +1411,9 @@ class Workflow:
         Returns:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
+        if self.media_storage is not None:
+            await self._aoffload_workflow_session_media(session)
+
         if self.db is not None and session.session_data is not None:
             if session.session_data.get("session_state") is not None:
                 session.session_data["session_state"].pop("current_session_id", None)
@@ -1433,6 +1440,9 @@ class Workflow:
         Returns:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
+        if self.media_storage is not None:
+            self._offload_workflow_session_media(session)
+
         if self.db is not None and session.session_data is not None:
             if session.session_data.get("session_state") is not None:
                 session.session_data["session_state"].pop("current_session_id", None)
@@ -1463,10 +1473,7 @@ class Workflow:
             try:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=session)
-                else:
-                    self.save_session(session=session)
+                await self.asave_session(session=session)
                 if workflow_run_response.run_id:
                     await acleanup_run(workflow_run_response.run_id)
                     await acleanup_member_runs(workflow_run_response.run_id)
@@ -1476,6 +1483,77 @@ class Workflow:
         task = asyncio.create_task(_persist())
         _workflow_background_tasks.add(task)
         task.add_done_callback(_workflow_background_tasks.discard)
+
+    def _offload_workflow_session_media(self, session: WorkflowSession) -> None:
+        """Offload media in the session's runs to external storage before persisting.
+
+        Offload operates on deep copies so the user's returned run output (and any reused
+        input media) is never mutated; the offloaded copies replace the runs in the session
+        that gets persisted. Offload is idempotent — already-offloaded media is skipped.
+        """
+        if not session.runs:
+            return
+
+        import copy
+
+        from agno.media_storage.base import AsyncMediaStorage, MediaStorage
+
+        media_storage = self.media_storage
+        if not isinstance(media_storage, MediaStorage):
+            if isinstance(media_storage, AsyncMediaStorage):
+                log_warning("AsyncMediaStorage provided but sync workflow run was used. Skipping media offload.")
+            return
+
+        from agno.utils.agent import scrub_workflow_media
+        from agno.utils.media_offload import offload_workflow_media
+
+        new_runs = []
+        for run in session.runs:
+            run_copy = copy.deepcopy(run)
+            try:
+                offload_workflow_media(run_copy, media_storage, session.session_id, getattr(run, "run_id", "") or "")
+                if not self.store_media:
+                    scrub_workflow_media(run_copy, keep_references=True)
+            except Exception as e:
+                log_warning(f"Media offload failed, falling back to inline storage: {e}")
+                run_copy = run
+            new_runs.append(run_copy)
+        session.runs = new_runs
+
+    async def _aoffload_workflow_session_media(self, session: WorkflowSession) -> None:
+        """Async variant of _offload_workflow_session_media."""
+        if not session.runs:
+            return
+
+        import copy
+
+        from agno.media_storage.base import AsyncMediaStorage, MediaStorage
+
+        from agno.utils.agent import scrub_workflow_media
+
+        new_runs = []
+        for run in session.runs:
+            run_copy = copy.deepcopy(run)
+            run_id = getattr(run, "run_id", "") or ""
+            try:
+                if isinstance(self.media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import aoffload_workflow_media
+
+                    await aoffload_workflow_media(run_copy, self.media_storage, session.session_id, run_id)
+                elif isinstance(self.media_storage, MediaStorage):
+                    from agno.utils.media_offload import offload_workflow_media
+
+                    offload_workflow_media(run_copy, self.media_storage, session.session_id, run_id)
+                else:
+                    new_runs.append(run)
+                    continue
+                if not self.store_media:
+                    scrub_workflow_media(run_copy, keep_references=True)
+            except Exception as e:
+                log_warning(f"Media offload failed, falling back to inline storage: {e}")
+                run_copy = run
+            new_runs.append(run_copy)
+        session.runs = new_runs
 
     def get_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
@@ -3197,10 +3275,7 @@ class Workflow:
                                 session=workflow_session, workflow_run_response=workflow_run_response
                             )
                             workflow_session.upsert_run(run=workflow_run_response)
-                            if self._has_async_db():
-                                await self.asave_session(session=workflow_session)
-                            else:
-                                self.save_session(session=workflow_session)
+                            await self.asave_session(session=workflow_session)
 
                             return workflow_run_response
                         elif step_on_error == "skip":
@@ -3379,10 +3454,7 @@ class Workflow:
 
         self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
+        await self.asave_session(session=workflow_session)
         # Always clean up the run tracking
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
         await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
@@ -3468,10 +3540,7 @@ class Workflow:
                 try:
                     self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
                     workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await self.asave_session(session=workflow_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 await acleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -3757,10 +3826,7 @@ class Workflow:
                                 session=workflow_session, workflow_run_response=workflow_run_response
                             )
                             workflow_session.upsert_run(run=workflow_run_response)
-                            if self._has_async_db():
-                                await self.asave_session(session=workflow_session)
-                            else:
-                                self.save_session(session=workflow_session)
+                            await self.asave_session(session=workflow_session)
 
                             return
                         elif step_on_error == "skip":
@@ -3953,10 +4019,7 @@ class Workflow:
                 try:
                     self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
                     workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await self.asave_session(session=workflow_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 await acleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -4060,10 +4123,7 @@ class Workflow:
         # Store the completed workflow response
         self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
+        await self.asave_session(session=workflow_session)
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -4145,10 +4205,7 @@ class Workflow:
 
         # Store PENDING response immediately
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
+        await self.asave_session(session=workflow_session)
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -4167,10 +4224,7 @@ class Workflow:
             try:
                 # Update status to RUNNING and save
                 workflow_run_response.status = RunStatus.running
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await self.asave_session(session=workflow_session)
 
                 if self.agent is not None:
                     self._aexecute_workflow_agent(
@@ -4199,10 +4253,7 @@ class Workflow:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await self.asave_session(session=workflow_session)
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
@@ -4323,10 +4374,7 @@ class Workflow:
                     workflow_run_response.status = RunStatus.running
 
                     workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await self.asave_session(session=workflow_session)
 
                     # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
                     async for event in self._aexecute_stream(
@@ -4383,10 +4431,7 @@ class Workflow:
                 logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await self.asave_session(session=workflow_session)
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
@@ -4471,10 +4516,7 @@ class Workflow:
 
         # Persist RUNNING status so the run is visible in the DB immediately
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
+        await self.asave_session(session=workflow_session)
 
         log_info(f"Background stream workflow run {run_id} persisted with RUNNING status")
 
@@ -4579,10 +4621,7 @@ class Workflow:
                 try:
                     workflow_run_response.status = RunStatus.error
                     workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await self.asave_session(session=workflow_session)
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background stream workflow run {run_id}", exc_info=True
@@ -5276,10 +5315,7 @@ class Workflow:
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
             # Save session
-            if self._has_async_db():
-                await self.asave_session(session=session)
-            else:
-                self.save_session(session=session)
+            await self.asave_session(session=session)
 
         else:
             # Workflow was executed by the tool
@@ -5314,10 +5350,7 @@ class Workflow:
                     agent_response.workflow_id = last_run.workflow_id
 
                 # Save the reloaded session (which has the updated run)
-                if self._has_async_db():
-                    await self.asave_session(session=reloaded_session)
-                else:
-                    self.save_session(session=reloaded_session)
+                await self.asave_session(session=reloaded_session)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -5396,10 +5429,7 @@ class Workflow:
 
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
-            if self._has_async_db():
-                await self.asave_session(session=session)
-            else:
-                self.save_session(session=session)
+            await self.asave_session(session=session)
 
             log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
@@ -5432,10 +5462,7 @@ class Workflow:
                     agent_response.workflow_id = last_run.workflow_id
 
                 # Save the reloaded session (which has the updated run)
-                if self._has_async_db():
-                    await self.asave_session(session=reloaded_session)
-                else:
-                    self.save_session(session=reloaded_session)
+                await self.asave_session(session=reloaded_session)
 
                 log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
@@ -7782,10 +7809,7 @@ class Workflow:
         run_response.status = RunStatus.running
         run_response.error_requirements = None
         session.upsert_run(run=run_response)
-        if self._has_async_db():
-            await self.asave_session(session=session)
-        else:
-            self.save_session(session=session)
+        await self.asave_session(session=session)
 
         # Create run context
         run_context = RunContext(
@@ -9294,10 +9318,7 @@ class Workflow:
                 logger.exception("Background continue streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background continue streaming execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=session)
-                else:
-                    self.save_session(session=session)
+                await self.asave_session(session=session)
             finally:
                 # Update event buffer with the final status (paused, completed, error,
                 # cancelled) so reconnecting clients take the correct replay path.

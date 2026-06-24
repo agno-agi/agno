@@ -586,7 +586,9 @@ def get_team_router(
             try:
                 parsed = json.loads(files_metadata_raw)
                 if isinstance(parsed, list):
-                    files_metadata_list = parsed
+                    # Coerce non-object entries to None so the matching file is still
+                    # processed (just without metadata) instead of being dropped.
+                    files_metadata_list = [m if isinstance(m, dict) else None for m in parsed]
             except json.JSONDecodeError:
                 log_warning(f"Invalid files_metadata JSON: {files_metadata_raw}")
 

@@ -135,50 +135,48 @@ class MockModel(Model):
 
 
 class TestScrubKeepReferencesRunOutput:
-    def test_preserves_offloaded_images_removes_raw(self):
-        """Offloaded images (with media_reference) are preserved; raw images are removed."""
+    def test_keeps_offloaded_and_raw_images(self):
+        """Offloaded images are kept as references; raw images are kept inline (never lost)."""
         run_output = RunOutput(
             images=[_offloaded_image("img-1"), _raw_image("img-2")],
         )
         scrub_media_from_run_output(run_output, keep_references=True)
 
         assert run_output.images is not None
-        assert len(run_output.images) == 1
-        assert run_output.images[0].id == "img-1"
-        assert run_output.images[0].media_reference is not None
+        kept = {i.id: i for i in run_output.images}
+        assert set(kept) == {"img-1", "img-2"}
+        assert kept["img-1"].media_reference is not None  # offloaded -> reference
+        assert kept["img-2"].content is not None  # raw -> kept inline as fallback
 
-    def test_preserves_offloaded_videos_removes_raw(self):
+    def test_keeps_offloaded_and_raw_videos(self):
         run_output = RunOutput(
             videos=[_offloaded_video("vid-1"), _raw_video("vid-2")],
         )
         scrub_media_from_run_output(run_output, keep_references=True)
 
         assert run_output.videos is not None
-        assert len(run_output.videos) == 1
-        assert run_output.videos[0].id == "vid-1"
+        assert {v.id for v in run_output.videos} == {"vid-1", "vid-2"}
 
-    def test_preserves_offloaded_audio_removes_raw(self):
+    def test_keeps_offloaded_and_raw_audio(self):
         run_output = RunOutput(
             audio=[_offloaded_audio("aud-1"), _raw_audio("aud-2")],
         )
         scrub_media_from_run_output(run_output, keep_references=True)
 
         assert run_output.audio is not None
-        assert len(run_output.audio) == 1
-        assert run_output.audio[0].id == "aud-1"
+        assert {a.id for a in run_output.audio} == {"aud-1", "aud-2"}
 
-    def test_preserves_offloaded_files_removes_raw(self):
+    def test_keeps_offloaded_and_raw_files(self):
         run_output = RunOutput(
             files=[_offloaded_file("file-1"), _raw_file("file-2")],
         )
         scrub_media_from_run_output(run_output, keep_references=True)
 
         assert run_output.files is not None
-        assert len(run_output.files) == 1
-        assert run_output.files[0].id == "file-1"
+        assert {f.id for f in run_output.files} == {"file-1", "file-2"}
 
-    def test_nulls_when_no_offloaded_media_remains(self):
-        """When all media is raw (no references), result should be None."""
+    def test_keeps_raw_media_inline_as_fallback(self):
+        """Raw media (offload failed or was skipped) is kept inline instead of dropped."""
         run_output = RunOutput(
             images=[_raw_image()],
             videos=[_raw_video()],
@@ -187,13 +185,13 @@ class TestScrubKeepReferencesRunOutput:
         )
         scrub_media_from_run_output(run_output, keep_references=True)
 
-        assert run_output.images is None
-        assert run_output.videos is None
-        assert run_output.audio is None
-        assert run_output.files is None
+        assert run_output.images is not None and len(run_output.images) == 1
+        assert run_output.videos is not None and len(run_output.videos) == 1
+        assert run_output.audio is not None and len(run_output.audio) == 1
+        assert run_output.files is not None and len(run_output.files) == 1
 
-    def test_preserves_offloaded_input_media(self):
-        """RunInput media with references is preserved."""
+    def test_keeps_input_media(self):
+        """RunInput media is preserved: references stay references, raw stays inline."""
         run_input = RunInput(
             input_content="test input",
             images=[_offloaded_image("in-img-1"), _raw_image("in-img-2")],
@@ -204,11 +202,17 @@ class TestScrubKeepReferencesRunOutput:
         run_output = RunOutput(input=run_input)
         scrub_media_from_run_output(run_output, keep_references=True)
 
-        assert len(run_output.input.images) == 1
-        assert run_output.input.images[0].id == "in-img-1"
+        assert len(run_output.input.images) == 2
         assert len(run_output.input.videos) == 1
-        assert len(run_output.input.audios) == 0
+        assert len(run_output.input.audios) == 1
         assert len(run_output.input.files) == 1
+
+    def test_drops_empty_url_only_media(self):
+        """Media with no reference, content, or external handle (url-only) is dropped."""
+        run_output = RunOutput(images=[Image(url="https://example.com/x.png", id="url-only")])
+        scrub_media_from_run_output(run_output, keep_references=True)
+
+        assert run_output.images is None
 
     def test_works_on_team_run_output(self):
         team_output = TeamRunOutput(
@@ -217,8 +221,7 @@ class TestScrubKeepReferencesRunOutput:
         scrub_media_from_run_output(team_output, keep_references=True)
 
         assert team_output.images is not None
-        assert len(team_output.images) == 1
-        assert team_output.images[0].id == "team-img"
+        assert {i.id for i in team_output.images} == {"team-img", "team-raw"}
 
 
 # ---------------------------------------------------------------------------
@@ -227,45 +230,41 @@ class TestScrubKeepReferencesRunOutput:
 
 
 class TestScrubKeepReferencesMessage:
-    def test_preserves_offloaded_message_images(self):
+    def test_keeps_offloaded_and_raw_message_images(self):
         msg = Message(role="user", content="test")
         msg.images = [_offloaded_image("msg-img-1"), _raw_image("msg-img-2")]
 
         scrub_media_from_message(msg, keep_references=True)
 
         assert msg.images is not None
-        assert len(msg.images) == 1
-        assert msg.images[0].id == "msg-img-1"
+        assert {i.id for i in msg.images} == {"msg-img-1", "msg-img-2"}
 
-    def test_preserves_offloaded_message_audio(self):
+    def test_keeps_offloaded_and_raw_message_audio(self):
         msg = Message(role="user", content="test")
         msg.audio = [_offloaded_audio("msg-aud-1"), _raw_audio("msg-aud-2")]
 
         scrub_media_from_message(msg, keep_references=True)
 
         assert msg.audio is not None
-        assert len(msg.audio) == 1
-        assert msg.audio[0].id == "msg-aud-1"
+        assert {a.id for a in msg.audio} == {"msg-aud-1", "msg-aud-2"}
 
-    def test_preserves_offloaded_message_videos(self):
+    def test_keeps_offloaded_and_raw_message_videos(self):
         msg = Message(role="user", content="test")
         msg.videos = [_offloaded_video("msg-vid-1"), _raw_video("msg-vid-2")]
 
         scrub_media_from_message(msg, keep_references=True)
 
         assert msg.videos is not None
-        assert len(msg.videos) == 1
-        assert msg.videos[0].id == "msg-vid-1"
+        assert {v.id for v in msg.videos} == {"msg-vid-1", "msg-vid-2"}
 
-    def test_preserves_offloaded_message_files(self):
+    def test_keeps_offloaded_and_raw_message_files(self):
         msg = Message(role="user", content="test")
         msg.files = [_offloaded_file("msg-file-1"), _raw_file("msg-file-2")]
 
         scrub_media_from_message(msg, keep_references=True)
 
         assert msg.files is not None
-        assert len(msg.files) == 1
-        assert msg.files[0].id == "msg-file-1"
+        assert {f.id for f in msg.files} == {"msg-file-1", "msg-file-2"}
 
     def test_preserves_offloaded_audio_output(self):
         msg = Message(role="assistant", content="test")
@@ -276,13 +275,13 @@ class TestScrubKeepReferencesMessage:
         assert msg.audio_output is not None
         assert msg.audio_output.id == "aud-out"
 
-    def test_removes_raw_audio_output(self):
+    def test_keeps_raw_audio_output_inline(self):
         msg = Message(role="assistant", content="test")
         msg.audio_output = _raw_audio("aud-out-raw")
 
         scrub_media_from_message(msg, keep_references=True)
 
-        assert msg.audio_output is None
+        assert msg.audio_output is not None  # kept inline as fallback
 
     def test_preserves_offloaded_image_output(self):
         msg = Message(role="assistant", content="test")
@@ -292,27 +291,21 @@ class TestScrubKeepReferencesMessage:
 
         assert msg.image_output is not None
 
-    def test_removes_raw_image_output(self):
+    def test_keeps_raw_image_output_inline(self):
         msg = Message(role="assistant", content="test")
         msg.image_output = _raw_image("img-out-raw")
 
         scrub_media_from_message(msg, keep_references=True)
 
-        assert msg.image_output is None
+        assert msg.image_output is not None  # kept inline as fallback
 
-    def test_nulls_message_media_when_no_references_remain(self):
+    def test_drops_empty_url_only_message_media(self):
         msg = Message(role="user", content="test")
-        msg.images = [_raw_image()]
-        msg.audio = [_raw_audio()]
-        msg.videos = [_raw_video()]
-        msg.files = [_raw_file()]
+        msg.images = [Image(url="https://example.com/x.png", id="url-only")]
 
         scrub_media_from_message(msg, keep_references=True)
 
         assert msg.images is None
-        assert msg.audio is None
-        assert msg.videos is None
-        assert msg.files is None
 
 
 # ---------------------------------------------------------------------------
@@ -354,20 +347,22 @@ class TestScrubDefaultRemovesEverything:
 
 class TestScrubRunOutputForStorage:
     def test_store_media_false_with_media_storage_keeps_references(self):
-        """Agent(store_media=False, media_storage=configured) preserves offloaded media."""
+        """Agent(store_media=False, media_storage=configured): offloaded media kept as
+        reference, un-offloaded media kept inline (never silently lost)."""
         from agno.agent._run import scrub_run_output_for_storage
 
         agent = Agent(model=MockModel(), store_media=False, media_storage=_mock_storage())
 
         run_output = RunOutput(
-            images=[_offloaded_image("kept"), _raw_image("removed")],
+            images=[_offloaded_image("kept"), _raw_image("fallback")],
         )
         scrub_run_output_for_storage(agent, run_output)
 
         assert run_output.images is not None
-        assert len(run_output.images) == 1
-        assert run_output.images[0].id == "kept"
-        assert run_output.images[0].media_reference is not None
+        kept = {i.id: i for i in run_output.images}
+        assert set(kept) == {"kept", "fallback"}
+        assert kept["kept"].media_reference is not None
+        assert kept["fallback"].content is not None
 
     def test_store_media_false_without_media_storage_removes_everything(self):
         """Agent(store_media=False, media_storage=None) removes all media."""
@@ -403,11 +398,10 @@ class TestScrubRunOutputForStorage:
         agent = Agent(model=MockModel(), store_media=False, media_storage=_mock_storage())
 
         msg = Message(role="user", content="test")
-        msg.images = [_offloaded_image("msg-kept"), _raw_image("msg-removed")]
+        msg.images = [_offloaded_image("msg-kept"), _raw_image("msg-fallback")]
 
         run_output = RunOutput(messages=[msg])
         scrub_run_output_for_storage(agent, run_output)
 
         assert msg.images is not None
-        assert len(msg.images) == 1
-        assert msg.images[0].id == "msg-kept"
+        assert {i.id for i in msg.images} == {"msg-kept", "msg-fallback"}

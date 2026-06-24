@@ -1,9 +1,10 @@
 import hashlib
 import mimetypes
 from typing import Any, Dict, Optional
+from urllib.parse import quote
 
-from agno.media_storage.base import AsyncMediaStorage
-from agno.utils.log import logger
+from agno.media_storage.base import AsyncMediaStorage, sanitize_media_id, sanitize_s3_metadata
+from agno.utils.log import log_debug, log_warning
 
 
 class AsyncS3MediaStorage(AsyncMediaStorage):
@@ -60,6 +61,7 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
         return kwargs
 
     def _build_key(self, media_id: str, *, filename: Optional[str] = None, mime_type: Optional[str] = None) -> str:
+        media_id = sanitize_media_id(media_id)
         ext = ""
         if filename and "." in filename:
             ext = "." + filename.rsplit(".", 1)[-1]
@@ -87,20 +89,18 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
         if self.acl:
             put_kwargs["ACL"] = self.acl
 
-        s3_metadata: Dict[str, str] = {}
+        # S3 user metadata must be ASCII and small; sanitize best-effort (the full
+        # metadata is preserved on the MediaReference, so dropped entries aren't lost).
+        s3_metadata: Dict[str, str] = {"content-sha256": hashlib.sha256(content).hexdigest()}
+        extra: Dict[str, Any] = dict(metadata) if metadata else {}
         if filename:
-            s3_metadata["original-filename"] = filename
-        content_hash = hashlib.sha256(content).hexdigest()
-        s3_metadata["content-sha256"] = content_hash
-        if metadata:
-            for k, v in metadata.items():
-                s3_metadata[str(k)] = str(v)
-        if s3_metadata:
-            put_kwargs["Metadata"] = s3_metadata
+            extra.setdefault("original-filename", filename)
+        s3_metadata.update(sanitize_s3_metadata(extra))
+        put_kwargs["Metadata"] = s3_metadata
 
         async with session.client("s3", **self._client_kwargs()) as client:
             await client.put_object(**put_kwargs)
-        logger.debug(f"Uploaded media {media_id} to s3://{self.bucket}/{key}")
+        log_debug(f"Uploaded media {media_id} to s3://{self.bucket}/{key}")
         return key
 
     async def download(self, storage_key: str) -> bytes:
@@ -114,9 +114,14 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
             expires_in = self.presigned_url_expiry
 
         if self.acl == "public-read":
+            encoded_key = quote(storage_key)
             if self.endpoint_url:
-                return f"{self.endpoint_url}/{self.bucket}/{storage_key}"
-            return f"https://{self.bucket}.s3.{self.region or 'us-east-1'}.amazonaws.com/{storage_key}"
+                return f"{self.endpoint_url}/{self.bucket}/{encoded_key}"
+            if self.region:
+                host = f"{self.bucket}.s3.{self.region}.amazonaws.com"
+            else:
+                host = f"{self.bucket}.s3.amazonaws.com"
+            return f"https://{host}/{encoded_key}"
 
         session = self._get_session()
         async with session.client("s3", **self._client_kwargs()) as client:
@@ -133,7 +138,7 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
                 await client.delete_object(Bucket=self.bucket, Key=storage_key)
             return True
         except Exception as e:
-            logger.warning(f"Failed to delete {storage_key}: {e}")
+            log_warning(f"Failed to delete {storage_key}: {e}")
             return False
 
     async def exists(self, storage_key: str) -> bool:

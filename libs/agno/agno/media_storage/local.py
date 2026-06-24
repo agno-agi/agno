@@ -3,8 +3,8 @@ import mimetypes
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agno.media_storage.base import AsyncMediaStorage, MediaStorage
-from agno.utils.log import logger
+from agno.media_storage.base import AsyncMediaStorage, MediaStorage, sanitize_media_id
+from agno.utils.log import log_debug, log_warning
 
 
 class LocalMediaStorage(MediaStorage):
@@ -26,6 +26,7 @@ class LocalMediaStorage(MediaStorage):
         return "local"
 
     def _build_key(self, media_id: str, *, filename: Optional[str] = None, mime_type: Optional[str] = None) -> str:
+        media_id = sanitize_media_id(media_id)
         ext = ""
         if filename and "." in filename:
             ext = "." + filename.rsplit(".", 1)[-1]
@@ -36,7 +37,14 @@ class LocalMediaStorage(MediaStorage):
         return f"{media_id}{ext}"
 
     def _resolve_path(self, storage_key: str) -> Path:
-        return self.base_path / storage_key
+        # Resolve under base_path and reject keys that escape the storage root.
+        # Upload sanitizes the media id, but storage_key read back from the DB
+        # (or an injected media_reference) must not be trusted verbatim.
+        base = self.base_path.resolve()
+        path = (base / storage_key).resolve()
+        if path != base and base not in path.parents:
+            raise ValueError(f"storage_key escapes storage root: {storage_key!r}")
+        return path
 
     def upload(
         self,
@@ -68,7 +76,7 @@ class LocalMediaStorage(MediaStorage):
             sidecar = file_path.with_suffix(file_path.suffix + ".meta.json")
             sidecar.write_text(json.dumps(meta, indent=2))
 
-        logger.debug(f"Saved media {media_id} to {file_path}")
+        log_debug(f"Saved media {media_id} to {file_path}")
         return key
 
     def download(self, storage_key: str) -> bytes:
@@ -90,7 +98,7 @@ class LocalMediaStorage(MediaStorage):
             sidecar.unlink(missing_ok=True)
             return True
         except Exception as e:
-            logger.warning(f"Failed to delete {storage_key}: {e}")
+            log_warning(f"Failed to delete {storage_key}: {e}")
             return False
 
     def exists(self, storage_key: str) -> bool:

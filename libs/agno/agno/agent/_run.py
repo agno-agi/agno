@@ -4992,12 +4992,19 @@ def save_run_response_to_file(
             log_warning(f"Failed to save output to file: {str(e)}")
 
 
-def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
+def scrub_run_output_for_storage(
+    agent: Agent, run_response: RunOutput, keep_media_references: Optional[bool] = None
+) -> None:
     """Scrub run output based on storage flags before persisting to database."""
     if not agent.store_media:
         # If media_storage is configured, offload already ran — preserve MediaReferences
-        # (tiny metadata pointers needed to reconstruct media in future turns)
-        scrub_media_from_run_output(run_response, keep_references=agent.media_storage is not None)
+        # (tiny metadata pointers needed to reconstruct media in future turns). Team members
+        # don't own a media_storage, but the team offloads their media, so the caller can
+        # force-preserve references via keep_media_references.
+        keep_references = (
+            keep_media_references if keep_media_references is not None else (agent.media_storage is not None)
+        )
+        scrub_media_from_run_output(run_response, keep_references=keep_references)
 
     if not agent.store_tool_messages:
         scrub_tool_results_from_run_output(run_response)
@@ -5104,8 +5111,13 @@ def cleanup_and_store(
     from agno.agent import _session
     from agno.run.approval import update_approval_run_status
 
-    # Offload media to external storage before scrubbing
+    # Scrub a copy for storage — the original run_response is never mutated so the
+    # caller always sees full media regardless of store_media. When offloading,
+    # deep-copy first: offload strips content bytes off media objects, and a shallow
+    # copy would share those objects with the caller (e.g. reused input Images).
     if agent.media_storage is not None:
+        storage_copy = copy.deepcopy(run_response)
+
         from agno.media_storage.base import AsyncMediaStorage
 
         if isinstance(agent.media_storage, AsyncMediaStorage):
@@ -5114,13 +5126,12 @@ def cleanup_and_store(
             try:
                 from agno.utils.media_offload import offload_run_media
 
-                offload_run_media(run_response, agent.media_storage, session.session_id, run_response.run_id or "")
+                offload_run_media(storage_copy, agent.media_storage, session.session_id, run_response.run_id or "")
             except Exception as e:
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
+    else:
+        storage_copy = copy.copy(run_response)
 
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(agent, storage_copy)
 
     # Stop the timer for the Run duration
@@ -5176,8 +5187,13 @@ async def acleanup_and_store(
     from agno.agent import _session
     from agno.run.approval import aupdate_approval_run_status
 
-    # Offload media to external storage before scrubbing
+    # Scrub a copy for storage — the original run_response is never mutated so the
+    # caller always sees full media regardless of store_media. When offloading,
+    # deep-copy first: offload strips content bytes off media objects, and a shallow
+    # copy would share those objects with the caller (e.g. reused input Images).
     if agent.media_storage is not None:
+        storage_copy = copy.deepcopy(run_response)
+
         from agno.media_storage.base import AsyncMediaStorage, MediaStorage
 
         if not isinstance(agent.media_storage, AsyncMediaStorage):
@@ -5186,7 +5202,7 @@ async def acleanup_and_store(
                 try:
                     from agno.utils.media_offload import offload_run_media
 
-                    offload_run_media(run_response, agent.media_storage, session.session_id, run_response.run_id or "")
+                    offload_run_media(storage_copy, agent.media_storage, session.session_id, run_response.run_id or "")
                 except Exception as e:
                     log_warning(f"Media offload failed, falling back to inline storage: {e}")
             else:
@@ -5196,14 +5212,13 @@ async def acleanup_and_store(
                 from agno.utils.media_offload import aoffload_run_media
 
                 await aoffload_run_media(
-                    run_response, agent.media_storage, session.session_id, run_response.run_id or ""
+                    storage_copy, agent.media_storage, session.session_id, run_response.run_id or ""
                 )
             except Exception as e:
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
+    else:
+        storage_copy = copy.copy(run_response)
 
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(agent, storage_copy)
 
     # Stop the timer for the Run duration

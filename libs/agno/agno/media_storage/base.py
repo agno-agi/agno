@@ -1,5 +1,39 @@
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
+
+
+def sanitize_media_id(media_id: str) -> str:
+    """Make a media id safe to use as a storage-key path component.
+
+    Strips characters that could escape the storage root (path separators, ``..``),
+    preventing path traversal in filesystem-backed storage and stray prefixes in S3.
+    """
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(media_id))
+    safe = safe.replace("..", "_")
+    return safe.strip("._") or "media"
+
+
+def sanitize_s3_metadata(items: Dict[str, Any], *, max_bytes: int = 1800) -> Dict[str, str]:
+    """Coerce metadata to ASCII-only string values that S3 accepts.
+
+    S3 user metadata must be ASCII and small (~2KB total). Entries that can't be
+    ASCII-encoded or that would exceed the size budget are dropped — the full
+    metadata is preserved on the MediaReference, so nothing is permanently lost.
+    """
+    safe: Dict[str, str] = {}
+    total = 0
+    for k, v in items.items():
+        try:
+            key = str(k).encode("ascii").decode("ascii")
+            val = str(v).encode("ascii").decode("ascii")
+        except UnicodeEncodeError:
+            continue
+        total += len(key) + len(val)
+        if total > max_bytes:
+            break
+        safe[key] = val
+    return safe
 
 
 class MediaStorage(ABC):

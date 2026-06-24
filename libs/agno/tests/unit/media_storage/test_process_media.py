@@ -129,11 +129,12 @@ class TestProcessDocument:
         assert doc is not None
         assert doc.metadata == meta
 
-    def test_empty_file_returns_none(self):
-        """process_document's broad except catches the HTTPException for empty files, returning None."""
-        result = process_document(_make_upload(b"", "empty.pdf", "application/pdf"))
+    def test_empty_file_raises(self):
+        with pytest.raises(HTTPException) as exc_info:
+            process_document(_make_upload(b"", "empty.pdf", "application/pdf"))
 
-        assert result is None
+        assert exc_info.value.status_code == 400
+        assert "Empty file" in str(exc_info.value.detail)
 
     def test_text_plain(self):
         raw = b"Hello, plain text world!"

@@ -193,8 +193,11 @@ def save_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)
 
-        # Offload member response media to external storage before scrubbing
-        if team.media_storage is not None and team.store_media and session.runs is not None:
+        # Offload member response media to external storage before scrubbing.
+        # Runs whenever media_storage is set (independent of store_media) so member media
+        # is offloaded even when store_media=False; offload is idempotent (already-offloaded
+        # media is skipped), so this is a no-op when _cleanup_and_store already offloaded.
+        if team.media_storage is not None and session.runs is not None:
             from agno.media_storage.base import AsyncMediaStorage
 
             if not isinstance(team.media_storage, AsyncMediaStorage):
@@ -244,8 +247,11 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)
 
-        # Offload member response media to external storage before scrubbing
-        if team.media_storage is not None and team.store_media and session.runs is not None:
+        # Offload member response media to external storage before scrubbing.
+        # Runs whenever media_storage is set (independent of store_media) so member media
+        # is offloaded even when store_media=False; offload is idempotent (already-offloaded
+        # media is skipped), so this is a no-op when _cleanup_and_store already offloaded.
+        if team.media_storage is not None and session.runs is not None:
             from agno.media_storage.base import AsyncMediaStorage
 
             if isinstance(team.media_storage, AsyncMediaStorage):

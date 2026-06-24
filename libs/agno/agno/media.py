@@ -8,6 +8,34 @@ from pydantic import BaseModel, field_validator, model_validator
 from agno.utils.log import log_error
 
 
+def _bytes_from_url(url: str) -> Optional[bytes]:
+    """Read bytes from an http(s) or file:// URL. Raises on HTTP error responses."""
+    if url.startswith("file://"):
+        from urllib.parse import unquote, urlparse
+
+        return Path(unquote(urlparse(url).path)).read_bytes()
+    import httpx
+
+    resp = httpx.get(url, follow_redirects=True)
+    resp.raise_for_status()
+    return resp.content
+
+
+async def _abytes_from_url(url: str) -> Optional[bytes]:
+    """Async variant of _bytes_from_url."""
+    if url.startswith("file://"):
+        from urllib.parse import unquote, urlparse
+
+        path = unquote(urlparse(url).path)
+        return await asyncio.to_thread(lambda: Path(path).read_bytes())
+    import httpx
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+
 class Image(BaseModel):
     """Unified Image class for all use cases (input, output, artifacts)"""
 
@@ -42,6 +70,10 @@ class Image(BaseModel):
         if isinstance(data, dict):
             # media_reference is a valid source — skip normal validation
             if data.get("media_reference") is not None:
+                if isinstance(data["media_reference"], dict):
+                    from agno.media_storage.reference import MediaReference
+
+                    data["media_reference"] = MediaReference.from_dict(data["media_reference"])
                 if data.get("id") is None:
                     data["id"] = str(uuid4())
                 return data
@@ -68,13 +100,9 @@ class Image(BaseModel):
         if self.content:
             return self.content
         elif self.url:
-            import httpx
-
-            return httpx.get(self.url).content
+            return _bytes_from_url(self.url)
         elif self.media_reference and self.media_reference.url:
-            import httpx
-
-            return httpx.get(self.media_reference.url).content
+            return _bytes_from_url(self.media_reference.url)
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
@@ -84,11 +112,9 @@ class Image(BaseModel):
         if self.content:
             return self.content
         elif self.url:
-            import httpx
-
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(self.url)
-                return resp.content
+            return await _abytes_from_url(self.url)
+        elif self.media_reference and self.media_reference.url:
+            return await _abytes_from_url(self.media_reference.url)
         elif self.filepath:
             fp = self.filepath
             return await asyncio.to_thread(lambda: Path(fp).read_bytes())
@@ -181,6 +207,10 @@ class Audio(BaseModel):
         if isinstance(data, dict):
             # media_reference is a valid source — skip normal validation
             if data.get("media_reference") is not None:
+                if isinstance(data["media_reference"], dict):
+                    from agno.media_storage.reference import MediaReference
+
+                    data["media_reference"] = MediaReference.from_dict(data["media_reference"])
                 if data.get("id") is None:
                     data["id"] = str(uuid4())
                 return data
@@ -205,13 +235,9 @@ class Audio(BaseModel):
         if self.content:
             return self.content
         elif self.url:
-            import httpx
-
-            return httpx.get(self.url).content
+            return _bytes_from_url(self.url)
         elif self.media_reference and self.media_reference.url:
-            import httpx
-
-            return httpx.get(self.media_reference.url).content
+            return _bytes_from_url(self.media_reference.url)
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
@@ -221,11 +247,9 @@ class Audio(BaseModel):
         if self.content:
             return self.content
         elif self.url:
-            import httpx
-
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(self.url)
-                return resp.content
+            return await _abytes_from_url(self.url)
+        elif self.media_reference and self.media_reference.url:
+            return await _abytes_from_url(self.media_reference.url)
         elif self.filepath:
             fp = self.filepath
             return await asyncio.to_thread(lambda: Path(fp).read_bytes())
@@ -334,6 +358,10 @@ class Video(BaseModel):
         if isinstance(data, dict):
             # media_reference is a valid source — skip normal validation
             if data.get("media_reference") is not None:
+                if isinstance(data["media_reference"], dict):
+                    from agno.media_storage.reference import MediaReference
+
+                    data["media_reference"] = MediaReference.from_dict(data["media_reference"])
                 if data.get("id") is None:
                     data["id"] = str(uuid4())
                 return data
@@ -358,13 +386,9 @@ class Video(BaseModel):
         if self.content:
             return self.content
         elif self.url:
-            import httpx
-
-            return httpx.get(self.url).content
+            return _bytes_from_url(self.url)
         elif self.media_reference and self.media_reference.url:
-            import httpx
-
-            return httpx.get(self.media_reference.url).content
+            return _bytes_from_url(self.media_reference.url)
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
@@ -374,11 +398,9 @@ class Video(BaseModel):
         if self.content:
             return self.content
         elif self.url:
-            import httpx
-
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(self.url)
-                return resp.content
+            return await _abytes_from_url(self.url)
+        elif self.media_reference and self.media_reference.url:
+            return await _abytes_from_url(self.media_reference.url)
         elif self.filepath:
             fp = self.filepath
             return await asyncio.to_thread(lambda: Path(fp).read_bytes())
@@ -473,12 +495,17 @@ class File(BaseModel):
     @classmethod
     def check_at_least_one_source(cls, data):
         """Ensure at least one of id, url, filepath, content, external, or media_reference is provided."""
-        if isinstance(data, dict) and not any(
-            data.get(field) for field in ["id", "url", "filepath", "content", "external", "media_reference"]
-        ):
-            raise ValueError(
-                "At least one of id, url, filepath, content, external, or media_reference must be provided"
-            )
+        if isinstance(data, dict):
+            if not any(
+                data.get(field) for field in ["id", "url", "filepath", "content", "external", "media_reference"]
+            ):
+                raise ValueError(
+                    "At least one of id, url, filepath, content, external, or media_reference must be provided"
+                )
+            if isinstance(data.get("media_reference"), dict):
+                from agno.media_storage.reference import MediaReference
+
+                data["media_reference"] = MediaReference.from_dict(data["media_reference"])
         return data
 
     @field_validator("mime_type")
@@ -560,7 +587,7 @@ class File(BaseModel):
 
         if self.url:
             try:
-                response = httpx.get(self.url)
+                response = httpx.get(self.url, follow_redirects=True)
                 content = response.content
                 mime_type = response.headers.get("Content-Type", "").split(";")[0]
                 return content, mime_type
@@ -578,13 +605,9 @@ class File(BaseModel):
                 return self.content.encode("utf-8")
             return None
         elif self.url:
-            import httpx
-
-            return httpx.get(self.url).content
+            return _bytes_from_url(self.url)
         elif self.media_reference and self.media_reference.url:
-            import httpx
-
-            return httpx.get(self.media_reference.url).content
+            return _bytes_from_url(self.media_reference.url)
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
@@ -598,11 +621,9 @@ class File(BaseModel):
                 return self.content.encode("utf-8")
             return None
         elif self.url:
-            import httpx
-
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(self.url)
-                return resp.content
+            return await _abytes_from_url(self.url)
+        elif self.media_reference and self.media_reference.url:
+            return await _abytes_from_url(self.media_reference.url)
         elif self.filepath:
             fp = self.filepath
             return await asyncio.to_thread(lambda: Path(fp).read_bytes())

@@ -4399,8 +4399,13 @@ def _cleanup_and_store(
     from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
-    # Offload media to external storage before scrubbing
+    # Scrub a copy for storage — the original run_response is never mutated so the
+    # caller always sees full media regardless of store_media. When offloading,
+    # deep-copy first: offload strips content bytes off media objects, and a shallow
+    # copy would share those objects with the caller (e.g. reused input Images).
     if team.media_storage is not None:
+        storage_copy = copy.deepcopy(run_response)
+
         from agno.media_storage.base import AsyncMediaStorage
 
         if isinstance(team.media_storage, AsyncMediaStorage):
@@ -4409,16 +4414,15 @@ def _cleanup_and_store(
             try:
                 from agno.utils.media_offload import offload_run_media
 
-                offload_run_media(run_response, team.media_storage, session.session_id, run_response.run_id or "")
+                offload_run_media(storage_copy, team.media_storage, session.session_id, run_response.run_id or "")
             except Exception as e:
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
+    else:
+        storage_copy = copy.copy(run_response)
 
     if run_response.run_id:
         cleanup_member_runs(run_response.run_id)
 
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
@@ -4462,8 +4466,13 @@ async def _acleanup_and_store(
     from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
-    # Offload media to external storage before scrubbing
+    # Scrub a copy for storage — the original run_response is never mutated so the
+    # caller always sees full media regardless of store_media. When offloading,
+    # deep-copy first: offload strips content bytes off media objects, and a shallow
+    # copy would share those objects with the caller (e.g. reused input Images).
     if team.media_storage is not None:
+        storage_copy = copy.deepcopy(run_response)
+
         from agno.media_storage.base import AsyncMediaStorage, MediaStorage
 
         if not isinstance(team.media_storage, AsyncMediaStorage):
@@ -4471,7 +4480,7 @@ async def _acleanup_and_store(
                 try:
                     from agno.utils.media_offload import offload_run_media
 
-                    offload_run_media(run_response, team.media_storage, session.session_id, run_response.run_id or "")
+                    offload_run_media(storage_copy, team.media_storage, session.session_id, run_response.run_id or "")
                 except Exception as e:
                     log_warning(f"Media offload failed, falling back to inline storage: {e}")
             else:
@@ -4481,17 +4490,16 @@ async def _acleanup_and_store(
                 from agno.utils.media_offload import aoffload_run_media
 
                 await aoffload_run_media(
-                    run_response, team.media_storage, session.session_id, run_response.run_id or ""
+                    storage_copy, team.media_storage, session.session_id, run_response.run_id or ""
                 )
             except Exception as e:
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
+    else:
+        storage_copy = copy.copy(run_response)
 
     if run_response.run_id:
         await acleanup_member_runs(run_response.run_id)
 
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(team, storage_copy)
 
     # Stop the timer for the Run duration
@@ -4584,14 +4592,27 @@ def scrub_run_output_for_storage(team: "Team", run_response: TeamRunOutput) -> b
     return scrubbed
 
 
-def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
+def _scrub_member_responses(
+    team: "Team",
+    member_responses: List[Union[TeamRunOutput, RunOutput]],
+    keep_media_references: Optional[bool] = None,
+) -> None:
     """
     Scrub member responses based on each member's storage flags.
     This is called when saving the team session to ensure member data is scrubbed per member settings.
     Recursively handles nested team's member responses.
+
+    keep_media_references carries the offload context down the team hierarchy. Offload runs
+    whenever any team in the hierarchy has media_storage, so once a parent enables it the
+    nested members must preserve their references too — otherwise leaf media offloaded by the
+    root team would be scrubbed away (and orphaned in storage). None means "resolve from this
+    team", used for the top-level call.
     """
     from agno.team._tools import _find_member_by_id
     from agno.team.team import Team
+
+    if keep_media_references is None:
+        keep_media_references = team.media_storage is not None
 
     for member_response in member_responses:
         member_id = None
@@ -4611,14 +4632,20 @@ def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOu
 
         _, member = member_result
 
+        keep_references = keep_media_references or member.media_storage is not None
+
         if not member.store_media or not member.store_tool_messages or not member.store_history_messages:
             from agno.agent._run import scrub_run_output_for_storage
 
-            scrub_run_output_for_storage(member, run_response=member_response)  # type: ignore[arg-type]
+            scrub_run_output_for_storage(
+                member,  # type: ignore[arg-type]
+                run_response=member_response,  # type: ignore[arg-type]
+                keep_media_references=keep_references,
+            )
 
-        # If this is a nested team, recursively scrub its member responses
+        # If this is a nested team, recursively scrub its member responses, propagating context
         if isinstance(member, Team) and isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            member._scrub_member_responses(member_response.member_responses)  # type: ignore
+            member._scrub_member_responses(member_response.member_responses, keep_media_references=keep_references)  # type: ignore
 
 
 # ---------------------------------------------------------------------------
