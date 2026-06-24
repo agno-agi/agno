@@ -928,6 +928,11 @@ def _run_tasks_stream(
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
+        # Ensure the streamed RunCompletedEvent carries the final session_state
+        # after all tool / member modifications (mirrors the agent populator).
+        if run_context is not None and run_context.session_state is not None:
+            run_response.session_state = run_context.session_state
+
         # Create the run completed event
         completed_event = handle_event(
             create_team_run_completed_event(from_run_response=run_response),
@@ -1723,6 +1728,11 @@ def _run_stream(
                         )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+                # Ensure the streamed RunCompletedEvent carries the final session_state
+                # after all tool / member modifications (mirrors the agent populator).
+                if run_context is not None and run_context.session_state is not None:
+                    run_response.session_state = run_context.session_state
+
                 # Create the run completed event
                 completed_event = handle_event(
                     create_team_run_completed_event(
@@ -2814,6 +2824,11 @@ async def _arun_tasks_stream(
                 )
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+        # Ensure the streamed RunCompletedEvent carries the final session_state
+        # after all tool / member modifications (mirrors the agent populator).
+        if run_context is not None and run_context.session_state is not None:
+            run_response.session_state = run_context.session_state
 
         # Create the run completed event
         completed_event = handle_event(
@@ -3933,6 +3948,11 @@ async def _arun_stream(
                         )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Ensure the streamed RunCompletedEvent carries the final session_state
+                # after all tool / member modifications (mirrors the agent populator).
+                if run_context is not None and run_context.session_state is not None:
+                    run_response.session_state = run_context.session_state
 
                 # Create the run completed event
                 completed_event = handle_event(
@@ -7430,6 +7450,11 @@ def _continue_run_stream(
                             store_events=team.store_events,
                         )
 
+                # Ensure the streamed RunCompletedEvent carries the final session_state
+                # after all tool / member modifications (mirrors the agent populator).
+                if run_context is not None and run_context.session_state is not None:
+                    run_response.session_state = run_context.session_state
+
                 # Completed event
                 completed_event = handle_event(
                     create_team_run_completed_event(run_response),
@@ -8819,6 +8844,11 @@ async def _acontinue_run_stream(
                             events_to_skip=team.events_to_skip,
                             store_events=team.store_events,
                         )
+
+                # Ensure the streamed RunCompletedEvent carries the final session_state
+                # after all tool / member modifications (mirrors the agent populator).
+                if run_context is not None and run_context.session_state is not None:
+                    run_response.session_state = run_context.session_state
 
                 # Completed
                 completed_event = handle_event(
