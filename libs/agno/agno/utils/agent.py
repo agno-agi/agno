@@ -40,6 +40,7 @@ from agno.utils.log import log_debug, log_warning
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
     from agno.team.team import Team
+    from agno.workflow.workflow import Workflow
 
 
 def _has_async_db(entity: Union["Agent", "Team"]) -> bool:
@@ -1016,6 +1017,7 @@ def execute_instructions(
     instructions: Callable,
     agent: Optional[Union["Agent", "Team"]] = None,
     team: Optional["Team"] = None,
+    workflow: Optional["Workflow"] = None,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> Union[str, List[str]]:
@@ -1031,6 +1033,8 @@ def execute_instructions(
 
     if "team" in signature.parameters:
         instruction_args["team"] = team
+    if "workflow" in signature.parameters:
+        instruction_args["workflow"] = workflow
 
     # Check for session_state parameter
     if "session_state" in signature.parameters:
@@ -1052,6 +1056,7 @@ def execute_system_message(
     system_message: Callable,
     agent: Optional[Union["Agent", "Team"]] = None,
     team: Optional["Team"] = None,
+    workflow: Optional["Workflow"] = None,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> str:
@@ -1066,6 +1071,8 @@ def execute_system_message(
         system_message_args["agent"] = agent
     if "team" in signature.parameters:
         system_message_args["team"] = team
+    if "workflow" in signature.parameters:
+        system_message_args["workflow"] = workflow
     if inspect.iscoroutinefunction(system_message):
         raise ValueError("System message function is async, use `agent.arun()` instead")
 
@@ -1076,6 +1083,7 @@ async def aexecute_instructions(
     instructions: Callable,
     agent: Optional[Union["Agent", "Team"]] = None,
     team: Optional["Team"] = None,
+    workflow: Optional["Workflow"] = None,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> Union[str, List[str]]:
@@ -1090,6 +1098,8 @@ async def aexecute_instructions(
         instruction_args["agent"] = agent
     if "team" in signature.parameters:
         instruction_args["team"] = team
+    if "workflow" in signature.parameters:
+        instruction_args["workflow"] = workflow
 
     # Check for session_state parameter
     if "session_state" in signature.parameters:
@@ -1109,6 +1119,7 @@ async def aexecute_system_message(
     system_message: Callable,
     agent: Optional[Union["Agent", "Team"]] = None,
     team: Optional["Team"] = None,
+    workflow: Optional["Workflow"] = None,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> str:
@@ -1122,6 +1133,8 @@ async def aexecute_system_message(
         system_message_args["agent"] = agent
     if "team" in signature.parameters:
         system_message_args["team"] = team
+    if "workflow" in signature.parameters:
+        system_message_args["workflow"] = workflow
 
     if inspect.iscoroutinefunction(system_message):
         return await system_message(**system_message_args)

@@ -16,6 +16,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    cast,
     overload,
 )
 
@@ -64,6 +65,7 @@ from agno.team import (
 from agno.team.mode import TeamMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.agent import aexecute_instructions, execute_instructions
 from agno.utils.log import (
     log_error,
 )
@@ -464,7 +466,7 @@ class Team:
         # Deprecated params — kept for backward compatibility
         search_session_history: Optional[bool] = None,
         num_history_sessions: Optional[int] = None,
-        description: Optional[str] = None,
+        description: Optional[Union[str, Callable[..., str]]] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
@@ -587,7 +589,7 @@ class Team:
             num_past_session_runs_in_search=num_past_session_runs_in_search,
             search_session_history=search_session_history,
             num_history_sessions=num_history_sessions,
-            description=description,
+            description=cast(Optional[str], description),
             instructions=instructions,
             use_instruction_tags=use_instruction_tags,
             expected_output=expected_output,
@@ -1431,6 +1433,58 @@ class Team:
         return _messages.get_members_system_message_content(
             self, indent=indent, run_context=run_context, async_mode=async_mode
         )
+
+    def _resolve_team_prompt_field(
+        self,
+        field_name: str,
+        value: Optional[Union[str, Callable[..., str]]],
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> Optional[str]:
+        if value is None:
+            return None
+        if callable(value):
+            resolved_value = execute_instructions(
+                instructions=value,
+                agent=self,
+                team=self,
+                session_state=session_state,
+                run_context=run_context,
+            )
+            if resolved_value is None:
+                return None
+            if not isinstance(resolved_value, str):
+                raise Exception(f"{field_name} must resolve to a string")
+            return resolved_value
+        if isinstance(value, str):
+            return value
+        return str(value)
+
+    async def _aresolve_team_prompt_field(
+        self,
+        field_name: str,
+        value: Optional[Union[str, Callable[..., str]]],
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> Optional[str]:
+        if value is None:
+            return None
+        if callable(value):
+            resolved_value = await aexecute_instructions(
+                instructions=value,
+                agent=self,
+                team=self,
+                session_state=session_state,
+                run_context=run_context,
+            )
+            if resolved_value is None:
+                return None
+            if not isinstance(resolved_value, str):
+                raise Exception(f"{field_name} must resolve to a string")
+            return resolved_value
+        if isinstance(value, str):
+            return value
+        return str(value)
 
     def get_system_message(
         self,

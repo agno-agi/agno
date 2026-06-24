@@ -15,6 +15,7 @@ from typing import (
     Set,
     Type,
     Union,
+    cast,
     overload,
 )
 
@@ -452,7 +453,7 @@ class Agent:
         system_message_role: str = "system",
         introduction: Optional[str] = None,
         build_context: bool = True,
-        description: Optional[str] = None,
+        description: Optional[Union[str, Callable[..., str]]] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
@@ -489,7 +490,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
-        role: Optional[str] = None,
+        role: Optional[Union[str, Callable[..., str]]] = None,
         culture_manager: Optional[CultureManager] = None,
         enable_agentic_culture: bool = False,
         update_cultural_knowledge: bool = False,
@@ -623,7 +624,7 @@ class Agent:
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context
-        self.description = description
+        self.description = cast(Optional[str], description)
         self.instructions = instructions
         self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
@@ -667,7 +668,7 @@ class Agent:
         self.stream_events = stream_events
 
         self.store_events = store_events
-        self.role = role
+        self.role = cast(Optional[str], role)
         # By default, we skip the run response content event
         self.events_to_skip = events_to_skip
         if self.events_to_skip is None:

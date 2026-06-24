@@ -282,7 +282,7 @@ def generate_id(seed: Optional[str] = None) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
 
 
-def generate_id_from_name(name: Optional[str] = None) -> str:
+def generate_id_from_name(name: Optional[Any] = None) -> str:
     """
     Generate a deterministic ID from a name string.
     If no name is provided, generate a human-readable random ID.
@@ -290,7 +290,7 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
     Args:
         name (str): The name string to generate the ID from.
     """
-    if name:
+    if isinstance(name, str) and name:
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
         from agno.utils.names import generate_human_readable_id
