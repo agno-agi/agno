@@ -1,8 +1,9 @@
 import copy
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from agno.os.interfaces.agui.redact import DEFAULT_SENSITIVE_KEY_PATTERNS, redact_sensitive_data
 from agno.utils.log import log_warning
 
 
@@ -41,6 +42,10 @@ class StreamState:
     thread_id: str = ""
     run_id: str = ""
     run_state: Optional[Dict[str, Any]] = None
+
+    # Redaction configuration
+    enable_state_redaction: bool = True
+    redact_state_keys: Optional[Sequence[str]] = None
 
     def open_text_message(self) -> str:
         self.text_message_id = str(uuid.uuid4())
@@ -102,6 +107,15 @@ class StreamState:
             ops = patch.patch
             if not ops:
                 return None
+
+            # Redact the patch ops directly rather than the snapshot/current_state.
+            # This ensures we don't produce false "changed" ops due to redaction.
+            if self.enable_state_redaction:
+                keys = self.redact_state_keys if self.redact_state_keys is not None else DEFAULT_SENSITIVE_KEY_PATTERNS
+                for op in ops:
+                    if op.get("op") in ("add", "replace") and "value" in op:
+                        op["value"] = redact_sensitive_data(op["value"], keys)
+
             return ops
         except Exception as e:
             log_warning(f"Failed to compute state delta: {e}")

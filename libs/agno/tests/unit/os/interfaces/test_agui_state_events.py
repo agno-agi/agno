@@ -296,6 +296,109 @@ class TestAgentStateDelta:
         # But still have snapshots
         assert "STATE_SNAPSHOT" in types
 
+    def test_state_redaction_integration(self, agent_client):
+        client, agent = agent_client
+
+        mutable_state = {"public_info": "safe"}
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield RunContentEvent(content="Calling tool")
+
+            tool_mock = MagicMock()
+            tool_mock.tool_call_id = "tc_1"
+            tool_mock.tool_name = "login"
+            tool_mock.tool_args = {}
+
+            yield ToolCallStartedEvent(content="", tool=tool_mock)
+
+            # Tool writes a secret to state
+            mutable_state["api_key"] = "sk-1234567890abcdefg"
+            mutable_state["nested"] = {"password": "supersecret"}
+
+            tool_mock.result = "Logged in"
+            yield ToolCallCompletedEvent(content="", tool=tool_mock)
+
+            yield RunCompletedEvent(content="", session_state=mutable_state)
+
+        def mock_validate(state, thread_id):
+            if state is not None:
+                mutable_state.clear()
+                mutable_state.update(state)
+                return mutable_state
+            return None
+
+        with (
+            patch.object(
+                agent,
+                "arun",
+            ) as mock_arun,
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
+        ):
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("Login", state={"public_info": "safe"}))
+
+        events = parse_sse_events(response.text)
+        types = get_event_types(events)
+
+        assert "STATE_DELTA" in types
+        assert "STATE_SNAPSHOT" in types
+
+        # Check raw response text to ensure no leak of the literal string
+        assert "sk-1234567890abcdefg" not in response.text
+        assert "supersecret" not in response.text
+        assert "[REDACTED]" in response.text
+
+    def test_state_redaction_regression_non_sensitive(self, agent_client):
+        client, agent = agent_client
+
+        mutable_state = {"counter": 0}
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield RunContentEvent(content="Calling tool")
+
+            tool_mock = MagicMock()
+            tool_mock.tool_call_id = "tc_1"
+            tool_mock.tool_name = "increment"
+            tool_mock.tool_args = {}
+
+            yield ToolCallStartedEvent(content="", tool=tool_mock)
+
+            mutable_state["counter"] = 5
+
+            tool_mock.result = "Incremented"
+            yield ToolCallCompletedEvent(content="", tool=tool_mock)
+
+            yield RunCompletedEvent(content="", session_state=mutable_state)
+
+        def mock_validate(state, thread_id):
+            if state is not None:
+                mutable_state.clear()
+                mutable_state.update(state)
+                return mutable_state
+            return None
+
+        with (
+            patch.object(
+                agent,
+                "arun",
+            ) as mock_arun,
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
+        ):
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("Increment", state={"counter": 0}))
+
+        events = parse_sse_events(response.text)
+        types = get_event_types(events)
+
+        assert "STATE_DELTA" in types
+        delta_event = next(e for e in events if e.get("type") == "STATE_DELTA")
+        assert len(delta_event["delta"]) > 0
+        paths = [op["path"] for op in delta_event["delta"]]
+        assert "/counter" in paths
+
+        # Verify the non-sensitive value is NOT redacted
+        assert any(op.get("value") == 5 for op in delta_event["delta"])
+
 
 class TestAgentStateEdgeCases:
     def test_empty_dict_state(self, agent_client):

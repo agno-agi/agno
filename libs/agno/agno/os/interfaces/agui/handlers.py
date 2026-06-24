@@ -25,6 +25,7 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 
+from agno.os.interfaces.agui.redact import DEFAULT_SENSITIVE_KEY_PATTERNS, redact_sensitive_data
 from agno.os.interfaces.agui.state import StreamState
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunContentEvent, RunEvent
@@ -384,7 +385,13 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     if state.run_state is not None:
         authoritative_state = getattr(chunk, "session_state", None)
         final_state = authoritative_state if authoritative_state is not None else state.run_state
-        events.append(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(final_state)))
+        snapshot = copy.deepcopy(final_state)
+
+        if state.enable_state_redaction:
+            keys = state.redact_state_keys if state.redact_state_keys is not None else DEFAULT_SENSITIVE_KEY_PATTERNS
+            snapshot = redact_sensitive_data(snapshot, keys)
+
+        events.append(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=snapshot))
 
     events.append(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=state.thread_id, run_id=state.run_id))
     return events
