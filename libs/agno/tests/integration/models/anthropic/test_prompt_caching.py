@@ -520,6 +520,29 @@ def test_cache_tools_flag():
     assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
 
 
+def test_cache_tools_honors_extended_cache_time():
+    """cache_tools=True uses the model-level extended TTL when enabled."""
+    claude = Claude(
+        cache_system_prompt=True,
+        cache_tools=True,
+        extended_cache_time=True,
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_a",
+                "description": "A",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+    ]
+    kwargs = claude._prepare_request_kwargs("System.", tools=tools)
+
+    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
 def test_cache_tools_disabled():
     """cache_tools=False leaves tools untouched."""
     claude = Claude(cache_system_prompt=True, cache_tools=False)
@@ -666,4 +689,4 @@ def test_azure_cache_tools_and_blocks():
 
     # cache_tools marks the last tool
     assert "cache_control" not in kwargs["tools"][0]
-    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}

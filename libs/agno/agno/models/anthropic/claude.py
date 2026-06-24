@@ -600,7 +600,10 @@ class Claude(Model):
     def _apply_cache_tools(self, request_kwargs: Dict[str, Any]) -> None:
         """Tag the last tool with cache_control when cache_tools is enabled."""
         if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
-            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+            cache_control = {"type": "ephemeral"}
+            if self.extended_cache_time:
+                cache_control["ttl"] = "1h"
+            request_kwargs["tools"][-1]["cache_control"] = cache_control
 
     def _build_system(self, system_message: str) -> List[Dict[str, Any]]:
         """Assemble the Anthropic ``system`` array.
