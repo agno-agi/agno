@@ -1036,69 +1036,76 @@ async def test_parallel_calls_no_deadlock_with_timeout():
 
 
 @pytest.mark.asyncio
-async def test_structured_content_preserved_on_success():
-    """Test that structuredContent from CallToolResult is passed through to ToolResult."""
-    from agno.utils.mcp import get_entrypoint_for_tool
-    from agno.tools.function import ToolResult
-
-    # Mock the MCP tool
+async def test_mcp_tool_result_preserves_structured_content():
     mock_tool = MagicMock()
-    mock_tool.name = "test_tool"
+    mock_tool.name = "get_data"
 
-    # Mock session with structuredContent in result
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.isError = False
-    mock_result.content = []  # no text/image content
-    mock_result.structuredContent = {"key": "value", "nested": {"a": 1}}
-    mock_session.call_tool = AsyncMock(return_value=mock_result)
-    mock_session.send_ping = AsyncMock()
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[TextContent(type="text", text="hello")],
+            isError=False,
+            structuredContent={"id": "u1", "name": "Ada"},
+        )
+    )
 
-    # Create the tool function
-    tool_func = get_entrypoint_for_tool(mock_tool, mock_session)
-    result = await tool_func()
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
 
-    assert isinstance(result, ToolResult)
-    assert result.structured_content == {"key": "value", "nested": {"a": 1}}
+    assert result.structured_content == {"id": "u1", "name": "Ada"}
 
 
 @pytest.mark.asyncio
-async def test_structured_content_preserved_on_error():
-    """Test that structuredContent is also preserved when isError=True."""
-    from agno.utils.mcp import get_entrypoint_for_tool
-    from agno.tools.function import ToolResult
-
+async def test_mcp_tool_error_result_preserves_structured_content():
     mock_tool = MagicMock()
-    mock_tool.name = "test_tool"
+    mock_tool.name = "get_data"
 
-    mock_session = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.isError = True
-    mock_result.content = "something went wrong"
-    mock_result.structuredContent = {"error_details": {"code": 42}}
-    mock_session.call_tool = AsyncMock(return_value=mock_result)
-    mock_session.send_ping = AsyncMock()
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[TextContent(type="text", text="upstream error")],
+            isError=True,
+            structuredContent={"error_details": {"code": 42}},
+        )
+    )
 
-    tool_func = get_entrypoint_for_tool(mock_tool, mock_session)
-    result = await tool_func()
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
 
-    assert isinstance(result, ToolResult)
-    assert "Error" in result.content
+    assert "Error from MCP tool 'get_data'" in result.content
     assert result.structured_content == {"error_details": {"code": 42}}
 
 
-def test_tool_result_serialization_round_trip():
-    """Test that ToolResult with structured_content survives model_dump/model_validate."""
-    from agno.tools.function import ToolResult
+@pytest.mark.asyncio
+async def test_mcp_tool_result_handles_missing_structured_content_attr():
+    # mcp < 1.10.0 CallToolResult has no structuredContent attribute; the wrapper
+    # must fall back to None instead of raising AttributeError.
+    mock_tool = MagicMock()
+    mock_tool.name = "get_data"
 
-    original = ToolResult(
-        content="hello",
-        structured_content={"key": "value", "list": [1, 2, 3]},
-    )
-    dumped = original.model_dump()
-    restored = ToolResult.model_validate(dumped)
+    result = MagicMock()
+    result.isError = False
+    result.content = [TextContent(type="text", text="hello")]
+    result.meta = None
+    del result.structuredContent
 
-    assert restored.content == "hello"
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(return_value=result)
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert result.content == "hello"
+    assert result.structured_content is None
+
+
+def test_tool_result_model_dump_roundtrip_preserves_structured_content():
+    tool_result = ToolResult(content="hello", structured_content={"key": "value", "list": [1, 2, 3]})
+    payload = tool_result.model_dump()
+    restored = ToolResult.model_validate(payload)
     assert restored.structured_content == {"key": "value", "list": [1, 2, 3]}
 
 
@@ -1173,6 +1180,7 @@ def _make_session_returning(content_text: str):
     result.isError = False
     result.content = [TextContent(type="text", text=content_text)]
     result.meta = None
+    result.structuredContent = None
 
     session = AsyncMock()
     session.send_ping = AsyncMock()
