@@ -125,8 +125,14 @@ def get_tools(
 
     # Merge per-run client tools into run_context.tools after factory resolution.
     # Creates new list to avoid mutating cached factory results.
+    # Base priority: run_context.tools (factory-resolved) > agent.tools (static)
     if run_context.client_tools:
-        base = run_context.tools if run_context.tools is not None else []
+        if run_context.tools is not None:
+            base = run_context.tools
+        elif isinstance(agent.tools, list):
+            base = agent.tools
+        else:
+            base = []
         run_context.tools = list(base) + list(run_context.client_tools)
         run_context.client_tools = None
 
@@ -236,8 +242,14 @@ async def aget_tools(
 
     # Merge per-run client tools into run_context.tools after factory resolution.
     # Creates new list to avoid mutating cached factory results.
+    # Base priority: run_context.tools (factory-resolved) > agent.tools (static)
     if run_context.client_tools:
-        base = run_context.tools if run_context.tools is not None else []
+        if run_context.tools is not None:
+            base = run_context.tools
+        elif isinstance(agent.tools, list):
+            base = agent.tools
+        else:
+            base = []
         run_context.tools = list(base) + list(run_context.client_tools)
         run_context.client_tools = None
 
