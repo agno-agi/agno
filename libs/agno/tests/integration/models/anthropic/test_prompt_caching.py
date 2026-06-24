@@ -16,17 +16,11 @@ import pytest
 from agno.agent import Agent, RunOutput
 from agno.models.anthropic import Claude, SystemPromptBlock
 from agno.session.agent import AgentSession
-from agno.utils.media import download_file
 
 
 def _get_large_system_prompt() -> str:
     """Load an example large system message from S3"""
-    txt_path = Path(__file__).parent.joinpath("system_prompt.txt")
-    download_file(
-        "https://agno-public.s3.amazonaws.com/prompts/system_promt.txt",
-        str(txt_path),
-    )
-    return txt_path.read_text()
+    return Path(__file__).parent.joinpath("system_prompt.txt").read_text()
 
 
 def _assert_cache_metrics(response: RunOutput, expect_cache_write: bool = False, expect_cache_read: bool = False):

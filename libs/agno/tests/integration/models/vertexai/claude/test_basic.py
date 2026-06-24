@@ -7,7 +7,6 @@ from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
 from agno.models.vertexai.claude import Claude
 from agno.utils.log import log_warning
-from agno.utils.media import download_file
 
 
 @pytest.fixture(scope="module")
@@ -30,12 +29,7 @@ def _assert_metrics(response: RunOutput):
 
 def _get_large_system_prompt() -> str:
     """Load an example large system message from S3"""
-    txt_path = Path(__file__).parent.joinpath("system_prompt.txt")
-    download_file(
-        "https://agno-public.s3.amazonaws.com/prompts/system_promt.txt",
-        str(txt_path),
-    )
-    return txt_path.read_text(encoding="utf-8")
+    return Path(__file__).parent.joinpath("system_prompt.txt").read_text(encoding="utf-8")
 
 
 def test_basic(vertex_claude_model):

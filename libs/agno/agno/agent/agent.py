@@ -17,6 +17,7 @@ from typing import (
     Union,
     overload,
 )
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -895,6 +896,127 @@ class Agent:
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
         )
+
+    def _has_dynamic_system_prompt(self) -> bool:
+        """True if this agent's system prompt varies per run.
+
+        Used to warn that a warmed cache prefix may not match the first real run.
+        """
+        if callable(self.system_message) or callable(self.instructions):
+            return True
+        return bool(
+            self.add_datetime_to_context
+            or self.add_location_to_context
+            or self.add_session_state_to_context
+            or self.add_history_to_context
+            or self.add_dependencies_to_context
+            or self.add_knowledge_to_context
+            or self.add_name_to_context
+            or self.add_memories_to_context
+            or self.add_session_summary_to_context
+            or self.add_culture_to_context
+            or (self.add_learnings_to_context and getattr(self, "_learning", None) is not None)
+        )
+
+    def get_prewarm_payload(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Optional[tuple[Message, List[Union[Function, Dict[str, Any]]]]]:
+        """Return the (system_message, tools) pair this agent would send at runtime.
+
+        Builds the system message and tool list exactly as a real run would, without
+        making an API call. Pass the result to your model's ``prewarm()`` method to
+        pre-load the prompt cache::
+
+            payload = agent.get_prewarm_payload()
+            if payload is not None:
+                system_message, tools = payload
+                agent.model.prewarm(messages=[system_message], tools=tools)
+
+        For structured-output agents, also pass ``response_format`` so the warmed
+        prefix matches the first real run::
+
+            agent.model.prewarm(
+                messages=[system_message],
+                tools=tools,
+                response_format=agent.output_schema,
+            )
+
+        Agents whose system prompt is dynamic per-run (callable ``system_message`` /
+        ``instructions``, ``{var}`` placeholders, or any ``add_*_to_context`` flag)
+        will produce a payload that may not match the first real run — the caller
+        is responsible for matching the warming context to the run context.
+
+        Args:
+            session_id: Optional session id for the synthetic context.
+            user_id: Optional user id for the synthetic context.
+
+        Returns:
+            A ``(system_message, tools)`` tuple, or ``None`` when the agent has no
+            model or no system message to warm.
+        """
+        if self.model is None:
+            return None
+        if self._has_dynamic_system_prompt():
+            log_warning(
+                "Agent.get_prewarm_payload(): this agent builds a dynamic system prompt; "
+                "the warmed cache may not match the first real run."
+            )
+        sid = session_id or str(uuid4())
+        rid = str(uuid4())
+        session = AgentSession(session_id=sid, agent_id=self.id, user_id=user_id)
+        run_context = RunContext(run_id=rid, session_id=sid, user_id=user_id, output_schema=self.output_schema)
+        run_response = RunOutput(run_id=rid, session_id=sid, agent_id=self.id, user_id=user_id)
+        processed_tools = self.get_tools(
+            run_response=run_response, run_context=run_context, session=session, user_id=user_id
+        )
+        tools = _tools.determine_tools_for_model(self, self.model, processed_tools, run_response, run_context, session)
+        system_message = self.get_system_message(
+            session=session,
+            run_context=run_context,
+            tools=tools,
+            add_session_state_to_context=self.add_session_state_to_context,
+        )
+        if system_message is None:
+            return None
+        return (system_message, tools)
+
+    async def aget_prewarm_payload(
+        self,
+        *,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Optional[tuple[Message, List[Union[Function, Dict[str, Any]]]]]:
+        """Async variant of ``get_prewarm_payload()``."""
+        if self.model is None:
+            return None
+        if self._has_dynamic_system_prompt():
+            log_warning(
+                "Agent.aget_prewarm_payload(): this agent builds a dynamic system prompt; "
+                "the warmed cache may not match the first real run."
+            )
+        sid = session_id or str(uuid4())
+        rid = str(uuid4())
+        session = AgentSession(session_id=sid, agent_id=self.id, user_id=user_id)
+        run_context = RunContext(run_id=rid, session_id=sid, user_id=user_id, output_schema=self.output_schema)
+        run_response = RunOutput(run_id=rid, session_id=sid, agent_id=self.id, user_id=user_id)
+        processed_tools = await self.aget_tools(
+            run_response=run_response, run_context=run_context, session=session, user_id=user_id
+        )
+        tools = _tools.determine_tools_for_model(
+            self, self.model, processed_tools, run_response, run_context, session, async_mode=True
+        )
+        system_message = await self.aget_system_message(
+            session=session,
+            run_context=run_context,
+            tools=tools,
+            add_session_state_to_context=self.add_session_state_to_context,
+        )
+        if system_message is None:
+            return None
+        return (system_message, tools)
 
     def get_relevant_docs_from_knowledge(
         self,
