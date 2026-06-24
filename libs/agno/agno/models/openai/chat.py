@@ -841,14 +841,20 @@ class OpenAIChat(Model):
                 log_warning(f"Error processing tool calls: {str(e)}")
 
         # Add citations
-        response_citations = response_message.annotations
-        if response_citations is not None and len(response_citations) > 0:
-            citations: List[UrlCitation] = [
-                UrlCitation(title=cite.url_citation.title, url=cite.url_citation.url)
-                for cite in response_citations
-                if cite.url_citation is not None
-            ]
-            model_response.citations = Citations(urls=citations)
+        annotations = getattr(response_message, "annotations", None)
+        if annotations:
+            citations = Citations()
+            citations.raw = [annotation.model_dump() for annotation in annotations]
+            for annotation in annotations:
+                if annotation.type == "url_citation" and annotation.url_citation is not None:
+                    if citations.urls is None:
+                        citations.urls = []
+                    citations.urls.append(
+                        UrlCitation(url=annotation.url_citation.url, title=annotation.url_citation.title)
+                    )
+            if citations.urls or citations.documents:
+                model_response.citations = citations
+
         # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
         if response_audio and response_audio.transcript and not model_response.content:
@@ -928,6 +934,22 @@ class OpenAIChat(Model):
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
+
+                # Add citations (streaming deltas surface annotations as dicts via model_extra)
+                annotations = getattr(choice_delta, "annotations", None)
+                if annotations:
+                    citations = Citations()
+                    citations.raw = list(annotations)
+                    for annotation in annotations:
+                        url_citation = annotation.get("url_citation") if isinstance(annotation, dict) else None
+                        if url_citation is not None:
+                            if citations.urls is None:
+                                citations.urls = []
+                            citations.urls.append(
+                                UrlCitation(url=url_citation.get("url"), title=url_citation.get("title"))
+                            )
+                    if citations.urls or citations.documents:
+                        model_response.citations = citations
 
                 if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
                     model_response.reasoning_content = choice_delta.reasoning_content
