@@ -155,7 +155,7 @@ class AgentSession:
             return []
 
         if skip_statuses is None:
-            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
+            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error, RunStatus.regenerated]
 
         runs = self.runs
 

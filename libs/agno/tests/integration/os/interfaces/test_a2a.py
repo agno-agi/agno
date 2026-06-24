@@ -54,6 +54,27 @@ def test_client(test_agent: Agent):
     return TestClient(app)
 
 
+def _collect_route_paths(app) -> list[str]:
+    """Walk app.routes recursively, descending into any nested routers.
+
+    starlette 1.x wraps included routers in `_IncludedRouter`, which doesn't have
+    `.path` or `.routes` directly — the wrapped routes live on `.original_router`.
+    """
+    paths: list[str] = []
+
+    def visit(routes) -> None:
+        for r in routes:
+            if hasattr(r, "path"):
+                paths.append(r.path)
+            if hasattr(r, "routes"):
+                visit(r.routes)
+            elif hasattr(r, "original_router"):
+                visit(r.original_router.routes)
+
+    visit(app.routes)
+    return paths
+
+
 def test_a2a_interface_parameter():
     """Test that the A2A interface is setup correctly using the a2a_interface parameter."""
     agent = Agent()
@@ -62,8 +83,9 @@ def test_a2a_interface_parameter():
 
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    assert "/a2a/agents/{id}/v1/message:send" in [route.path for route in app.routes]  # type: ignore
-    assert "/a2a/agents/{id}/v1/message:stream" in [route.path for route in app.routes]  # type: ignore
+    paths = _collect_route_paths(app)
+    assert "/a2a/agents/{id}/v1/message:send" in paths
+    assert "/a2a/agents/{id}/v1/message:stream" in paths
 
 
 def test_a2a_interface_in_interfaces_parameter():
@@ -75,8 +97,9 @@ def test_a2a_interface_in_interfaces_parameter():
 
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    assert "/a2a/agents/{id}/v1/message:send" in [route.path for route in app.routes]  # type: ignore
-    assert "/a2a/agents/{id}/v1/message:stream" in [route.path for route in app.routes]  # type: ignore
+    paths = _collect_route_paths(app)
+    assert "/a2a/agents/{id}/v1/message:send" in paths
+    assert "/a2a/agents/{id}/v1/message:stream" in paths
 
 
 def test_a2a(test_agent: Agent, test_client: TestClient):

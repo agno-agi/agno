@@ -129,6 +129,14 @@ class Agent:
     # Database to use for this agent
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
+    # --- Checkpointing ---
+    # When to persist run state to the database. See specs/agno/features/checkpointing/.
+    #   "runs"  — default, write only at terminal states (today's behavior)
+    #   "tool-batch" — write after each model turn (post-gather barrier)
+    #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
+    # None during construction means "fall back to OS-level setting, else 'runs'".
+    checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None
+
     # --- Agent History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
@@ -400,6 +408,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
@@ -531,6 +540,7 @@ class Agent:
         self.add_session_state_to_context = add_session_state_to_context
 
         self.db = db
+        self.checkpoint = checkpoint
 
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
@@ -811,6 +821,51 @@ class Agent:
     @staticmethod
     async def acancel_run(run_id: str) -> bool:
         return await _run.acancel_run(run_id)
+
+    # ---------------------------------------------------------------
+    # Session forking — copy a session into a new independent session
+    # ---------------------------------------------------------------
+
+    def fork_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Branch a session into a new independent session.
+
+        Deep-copies every run from ``source_session_id`` into a new session with
+        a fresh ``session_id`` and fresh ``run_id``s. The original session is
+        untouched. Useful for exploring alternative conversation paths without
+        polluting the source.
+
+        Args:
+            source_session_id: The session to fork. Defaults to the agent's
+                current ``session_id``.
+            user_id: Caller user_id. Must own the source session. The new
+                session inherits this user_id.
+
+        Returns:
+            The new ``session_id``.
+        """
+        return _run.fork_session_dispatch(
+            self,
+            source_session_id=source_session_id,
+            user_id=user_id,
+        )
+
+    async def afork_session(
+        self,
+        *,
+        source_session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> str:
+        """Async variant of :meth:`fork_session`."""
+        return await _run.afork_session_dispatch(
+            self,
+            source_session_id=source_session_id,
+            user_id=user_id,
+        )
 
     # ---------------------------------------------------------------
     # _messages module delegates
@@ -1544,6 +1599,12 @@ class Agent:
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
+        input: Optional[str] = None,
+        continue_from: Union[int, Literal["end", "last_user"]] = "end",
+        fork: bool = False,
+        regenerate: bool = False,
+        replace_original: Optional[bool] = None,
+        additional_instructions: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = False,
         user_id: Optional[str] = None,
@@ -1562,6 +1623,12 @@ class Agent:
             run_id=run_id,
             updated_tools=updated_tools,
             requirements=requirements,
+            input=input,
+            continue_from=continue_from,
+            fork=fork,
+            regenerate=regenerate,
+            replace_original=replace_original,
+            additional_instructions=additional_instructions,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,
@@ -1620,6 +1687,12 @@ class Agent:
         run_id: Optional[str] = None,  # type: ignore
         updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
+        input: Optional[str] = None,
+        continue_from: Union[int, Literal["end", "last_user"]] = "end",
+        fork: bool = False,
+        regenerate: bool = False,
+        replace_original: Optional[bool] = None,
+        additional_instructions: Optional[str] = None,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1639,6 +1712,12 @@ class Agent:
             run_id=run_id,
             updated_tools=updated_tools,
             requirements=requirements,
+            input=input,
+            continue_from=continue_from,
+            fork=fork,
+            regenerate=regenerate,
+            replace_original=replace_original,
+            additional_instructions=additional_instructions,
             stream=stream,
             stream_events=stream_events,
             user_id=user_id,

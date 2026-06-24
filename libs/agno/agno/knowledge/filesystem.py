@@ -110,12 +110,12 @@ class FileSystemKnowledge:
 
                 # Match against query pattern (check both filename and relative path)
                 if query and query != "*":
-                    if not (fnmatch.fnmatch(filename, query) or fnmatch.fnmatch(str(rel_path), query)):
+                    if not (fnmatch.fnmatch(filename, query) or fnmatch.fnmatch(rel_path.as_posix(), query)):
                         continue
                 results.append(
                     Document(
-                        name=str(rel_path),
-                        content=str(rel_path),
+                        name=rel_path.as_posix(),
+                        content=rel_path.as_posix(),
                         meta_data={
                             "type": "file_listing",
                             "absolute_path": str(file_path),
@@ -153,7 +153,7 @@ class FileSystemKnowledge:
 
             return [
                 Document(
-                    name=str(rel_path),
+                    name=rel_path.as_posix(),
                     content=content,
                     meta_data={
                         "type": "file_content",
@@ -221,7 +221,7 @@ class FileSystemKnowledge:
                         rel_path = file_path.relative_to(self.base_path)
                         results.append(
                             Document(
-                                name=str(rel_path),
+                                name=rel_path.as_posix(),
                                 content="\n---\n".join(str(m["context"]) for m in matching_lines),
                                 meta_data={
                                     "type": "grep_result",
