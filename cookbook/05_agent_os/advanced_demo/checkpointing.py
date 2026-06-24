@@ -9,7 +9,6 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 research_agent = Agent(
     name="Research Agent",
-    role="Research agent",
     checkpoint="tool-batch",
     id="research_agent",
     model=OpenAIChat(id="gpt-5.2"),
