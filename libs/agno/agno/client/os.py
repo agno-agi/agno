@@ -390,10 +390,23 @@ class AgentOSClient:
                     # Extract and parse JSON payload
                     json_str = line[6:]  # Remove "data: " prefix
                     event_dict = json.loads(json_str)
+                    # Some streaming paths emit a full RunOutput/TeamRunOutput object
+                    # containing an `events` list instead of a single `event` object.
+                    # Normalize both payload shapes into a sequence of event dictionaries.
+                    if "event" in event_dict:
+                        event_payloads = [event_dict]
+                    elif isinstance(event_dict.get("events"), list):
+                        event_payloads = event_dict["events"]
+                    else:
+                        event_payloads = [event_dict]
 
-                    # Parse into typed event using provided factory
-                    event = event_parser(event_dict)
-                    yield event
+                    for event_payload in event_payloads:
+                        if not isinstance(event_payload, dict):
+                            logger.error(f"Invalid SSE event payload (expected dict): {event_payload}")
+                            continue
+                        # Parse into typed event using provided factory
+                        event = event_parser(event_payload)
+                        yield event
 
                 except json.JSONDecodeError:
                     logger.exception(f"Failed to parse SSE JSON: {line[:100]}...")
