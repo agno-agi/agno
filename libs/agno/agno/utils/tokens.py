@@ -204,7 +204,8 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
         return f"{{\n{_format_object_parameters(props, indent + 2)}\n}}"
     elif type_name in ["integer", "number"]:
         if "enum" in props:
-            return " | ".join([f'"{item}"' for item in props["enum"]])
+            # Numeric enums map to TypeScript numeric literal unions (e.g. 1 | 2 | 3), not quoted strings
+            return " | ".join([str(item) for item in props["enum"]])
         return "number"
     elif type_name == "boolean":
         return "boolean"
