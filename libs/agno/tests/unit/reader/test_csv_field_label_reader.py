@@ -227,10 +227,10 @@ Item3,Value3"""
 
 
 def test_read_nonexistent_file(field_labeled_reader, temp_dir):
-    """Test reading nonexistent file."""
+    """Test reading nonexistent file raises FileNotFoundError."""
     nonexistent_path = temp_dir / "nonexistent.csv"
-    documents = field_labeled_reader.read(nonexistent_path)
-    assert documents == []
+    with pytest.raises(FileNotFoundError):
+        field_labeled_reader.read(nonexistent_path)
 
 
 def test_read_empty_csv_file(field_labeled_reader, temp_dir):
@@ -357,10 +357,10 @@ async def test_async_read_empty_file(field_labeled_reader, temp_dir):
 
 @pytest.mark.asyncio
 async def test_async_read_nonexistent_file(field_labeled_reader, temp_dir):
-    """Test async reading of nonexistent file."""
+    """Test async reading of nonexistent file raises FileNotFoundError."""
     nonexistent_path = temp_dir / "nonexistent.csv"
-    documents = await field_labeled_reader.async_read(nonexistent_path)
-    assert documents == []
+    with pytest.raises(FileNotFoundError):
+        await field_labeled_reader.async_read(nonexistent_path)
 
 
 def test_custom_delimiter():
@@ -449,12 +449,12 @@ def test_format_headers_disabled(underscore_csv_file):
 
 
 def test_get_supported_content_types():
-    """Test supported content types."""
+    """Test supported content types - CSV only (Excel uses ExcelReader)."""
     content_types = FieldLabeledCSVReader.get_supported_content_types()
 
     from agno.knowledge.types import ContentType
 
-    expected_types = [ContentType.CSV, ContentType.XLSX, ContentType.XLS]
+    expected_types = [ContentType.CSV]
     assert content_types == expected_types
 
 
@@ -540,3 +540,76 @@ def test_reader_factory_integration():
     assert isinstance(reader, FieldLabeledCSVReader)
     assert reader.name == "Field Labeled CSV Reader"
     assert "field-labeled text format" in reader.description
+
+
+LATIN1_CSV = "name,city\nJosé,São Paulo\nFrançois,Montréal"
+
+
+def test_read_bytesio_with_custom_encoding():
+    """Test reading BytesIO with custom encoding (Latin-1)."""
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader(encoding="latin-1")
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 2
+    content = documents[0].content
+
+    # Verify accented characters are correctly decoded
+    assert "José" in content
+    assert "São Paulo" in content
+
+
+def test_read_bytesio_wrong_encoding_fails():
+    """Test that reading Latin-1 bytes as UTF-8 fails or corrupts data.
+
+    This demonstrates why the encoding parameter is important.
+    """
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader()  # Uses UTF-8 by default
+
+    # This should either raise an error or produce corrupted output
+    documents = reader.read(file_obj)
+
+    # If it didn't raise, the content should be corrupted (mojibake)
+    if documents:
+        content = documents[0].content
+        # The accented characters should NOT be correctly decoded
+        assert "José" not in content or "São Paulo" not in content
+
+
+@pytest.mark.asyncio
+async def test_async_read_bytesio_with_custom_encoding():
+    """Test async reading BytesIO with custom encoding (Latin-1)."""
+    latin1_bytes = LATIN1_CSV.encode("latin-1")
+    file_obj = io.BytesIO(latin1_bytes)
+    file_obj.name = "latin1.csv"
+
+    reader = FieldLabeledCSVReader(encoding="latin-1")
+    documents = await reader.async_read(file_obj)
+
+    assert len(documents) == 2
+    content = documents[0].content
+    assert "José" in content
+    assert "São Paulo" in content
+
+
+def test_read_csv_carriage_return_normalized():
+    """Test that carriage returns in CSV cells are normalized to spaces."""
+    csv_content = 'name,notes\nAlice,"line1\rline2"\nBob,"line1\r\nline2"'
+
+    file_obj = io.BytesIO(csv_content.encode("utf-8"))
+    file_obj.name = "cr_test.csv"
+
+    reader = FieldLabeledCSVReader()
+    documents = reader.read(file_obj)
+
+    assert len(documents) == 2
+    # CR and CRLF should be converted to spaces
+    assert documents[0].content == "Name: Alice\nNotes: line1 line2"
+    assert documents[1].content == "Name: Bob\nNotes: line1 line2"

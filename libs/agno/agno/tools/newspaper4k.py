@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning
 
 try:
     import newspaper
@@ -66,7 +66,7 @@ class Newspaper4kTools(Toolkit):
 
             return article_data
         except Exception as e:
-            logger.warning(f"Error reading article from {url}: {e}")
+            log_warning(f"Error reading article from {url}: {str(e)}")
             return None
 
     def read_article(self, url: str) -> str:

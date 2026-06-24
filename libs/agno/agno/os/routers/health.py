@@ -8,7 +8,7 @@ from agno.os.schema import HealthResponse
 def get_health_router(health_endpoint: str = "/health") -> APIRouter:
     router = APIRouter(tags=["Health"])
 
-    started_time_stamp = datetime.now(timezone.utc).timestamp()
+    started_at = datetime.now(timezone.utc)
 
     @router.get(
         health_endpoint,
@@ -20,12 +20,12 @@ def get_health_router(health_endpoint: str = "/health") -> APIRouter:
             200: {
                 "description": "API is healthy and operational",
                 "content": {
-                    "application/json": {"example": {"status": "ok", "instantiated_at": str(started_time_stamp)}}
+                    "application/json": {"example": {"status": "ok", "instantiated_at": "2025-06-10T12:00:00Z"}}
                 },
             }
         },
     )
     async def health_check() -> HealthResponse:
-        return HealthResponse(status="ok", instantiated_at=str(started_time_stamp))
+        return HealthResponse(status="ok", instantiated_at=started_at)
 
     return router

@@ -21,6 +21,7 @@ def team(shared_db):
         db=shared_db,
         instructions="Route a single question to the travel agent. Don't make multiple requests.",
         add_history_to_context=True,
+        store_history_messages=True,
     )
 
 
@@ -53,6 +54,7 @@ def team_with_members(shared_db):
         members=[weather_agent, time_agent],
         db=shared_db,
         instructions="Delegate weather questions to Weather Agent and time questions to Time Agent.",
+        store_history_messages=True,
         add_history_to_context=True,
     )
 
@@ -94,6 +96,7 @@ def test_num_history_runs(shared_db):
         db=shared_db,
         instructions="Use the simple_tool for each request.",
         add_history_to_context=True,
+        store_history_messages=True,
         num_history_runs=1,  # Only include the last run
     )
 
@@ -193,15 +196,15 @@ def test_share_member_interactions(shared_db):
 
 
 def test_search_session_history(shared_db):
-    """Test that the team can search through previous sessions when search_session_history=True."""
+    """Test that the team can search through previous sessions when search_past_sessions=True."""
 
     team = Team(
         model=OpenAIChat(id="gpt-5-mini"),
         members=[],
         db=shared_db,
-        instructions="You can search through previous sessions using available tools.",
-        search_session_history=True,  # Enable searching previous sessions
-        num_history_sessions=2,  # Include last 2 sessions
+        instructions="You MUST always search through previous sessions using available tools when asked about past conversations. Never ask clarifying questions - just search and respond with what you find.",
+        search_past_sessions=True,  # Enable searching previous sessions
+        num_past_sessions_to_search=2,  # Include last 2 sessions
     )
 
     # Session 1
@@ -214,7 +217,10 @@ def test_search_session_history(shared_db):
 
     # Session 3 - should be able to search previous sessions
     session_3 = "session_3"
-    response = team.run("What did I say in previous sessions?", session_id=session_3)
+    response = team.run(
+        "Search all my previous sessions and tell me exactly what I said. List all my favorite things.",
+        session_id=session_3,
+    )
 
     assert "pizza" in response.content.lower()
     assert "coffee" in response.content.lower()
@@ -229,6 +235,7 @@ def test_member_history_independent(shared_db):
         model=OpenAIChat(id="gpt-5-mini"),
         db=shared_db,
         add_history_to_context=True,  # Agent A has its own history
+        store_history_messages=True,
     )
 
     team = Team(

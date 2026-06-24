@@ -153,6 +153,7 @@ def test_history(azure_model):
         model=azure_model,
         db=SqliteDb(db_file="tmp/azure-ai-foundry/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

@@ -22,7 +22,7 @@ def test_output_schemas_on_members():
         model=OpenAIChat("gpt-4o"),
         output_schema=StockAnalysis,
         role="Searches for information on stocks and provides price analysis.",
-        tools=[YFinanceTools(include_tools=["get_current_stock_price", "get_analyst_recommendations"])],
+        tools=[YFinanceTools(enable_stock_price=True, enable_analyst_recommendations=True)],
     )
 
     company_info_agent = Agent(
@@ -32,10 +32,9 @@ def test_output_schemas_on_members():
         output_schema=CompanyAnalysis,
         tools=[
             YFinanceTools(
-                include_tools=[
-                    "get_company_info",
-                    "get_company_news",
-                ]
+                enable_stock_price=False,
+                enable_company_info=True,
+                enable_company_news=True,
             )
         ],
     )
@@ -82,14 +81,14 @@ def test_mixed_structured_output():
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
         output_schema=StockInfo,
-        tools=[YFinanceTools(include_tools=["get_current_stock_price"])],
+        tools=[YFinanceTools(enable_stock_price=True)],
     )
 
     news_agent = Agent(
         name="News Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get company news",
-        tools=[YFinanceTools(include_tools=["get_company_news"])],
+        tools=[YFinanceTools(enable_stock_price=False, enable_company_news=True)],
     )
 
     team = Team(

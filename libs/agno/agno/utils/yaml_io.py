@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 
 def read_yaml_file(file_path: Optional[Path]) -> Optional[Dict[str, Any]]:
@@ -13,7 +13,7 @@ def read_yaml_file(file_path: Optional[Path]) -> Optional[Dict[str, Any]]:
         if data_from_file is not None and isinstance(data_from_file, dict):
             return data_from_file
         else:
-            logger.error(f"Invalid file: {file_path}")
+            log_error(f"Invalid file: {file_path}")
     return None
 
 

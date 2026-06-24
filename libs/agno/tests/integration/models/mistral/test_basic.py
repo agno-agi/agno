@@ -144,6 +144,7 @@ def test_history():
         model=MistralChat(id="mistral-small"),
         db=SqliteDb(db_file="tmp/mistral/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

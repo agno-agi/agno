@@ -34,12 +34,12 @@ def prepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "cv_1.txt",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=get_filtered_data_dir() / "cv_2.txt",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -53,12 +53,12 @@ async def aprepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    await kb.add_content_async(
+    await kb.ainsert(
         path=get_filtered_data_dir() / "cv_1.txt",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    await kb.add_content_async(
+    await kb.ainsert(
         path=get_filtered_data_dir() / "cv_2.txt",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -73,7 +73,7 @@ def test_text_knowledge_base_directory(setup_vector_db):
     kb = Knowledge(
         vector_db=setup_vector_db,
     )
-    kb.add_content(
+    kb.insert(
         path=text_dir,
     )
 
@@ -98,7 +98,7 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
     text_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_content_async(
+    await kb.ainsert(
         path=text_dir,
     )
 
@@ -123,12 +123,12 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_1.txt"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_2.txt"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -153,12 +153,12 @@ def test_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_1.txt"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.insert(
         path=str(get_filtered_data_dir() / "cv_2.txt"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )

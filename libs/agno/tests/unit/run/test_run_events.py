@@ -82,6 +82,7 @@ def test_workflow_run_events():
         "age": 30,
         "created_at": event.created_at,
         "event": "",
+        "nested_depth": 0,
     }
     assert json.loads(event.to_json(indent=None)) == expected_json_dict
 
@@ -102,6 +103,73 @@ def test_agent_session_state_in_run_output():
     # Test deserialization
     reconstructed = RunOutput.from_dict(run_dict)
     assert reconstructed.session_state == {"key": "value", "counter": 10}
+
+
+def test_run_completed_event_includes_files():
+    """Test that RunCompletedEvent includes files in stream serialization."""
+    from agno.media import File
+    from agno.run.agent import RunOutput
+    from agno.utils.events import create_run_completed_event
+
+    run_output = RunOutput(
+        run_id="test_123",
+        agent_id="agent_456",
+        agent_name="TestAgent",
+        files=[
+            File(
+                id="file-1",
+                filename="report.pdf",
+                mime_type="application/pdf",
+                content="base64content",
+                file_type="pdf",
+                size=1024,
+            )
+        ],
+    )
+
+    event = create_run_completed_event(from_run_response=run_output)
+
+    assert event.files is not None
+    assert len(event.files) == 1
+    assert event.files[0].filename == "report.pdf"
+
+    event_dict = event.to_dict()
+    assert "files" in event_dict
+    assert len(event_dict["files"]) == 1
+    assert event_dict["files"][0]["filename"] == "report.pdf"
+
+    reconstructed = type(event).from_dict(event_dict)
+    assert reconstructed.files is not None
+    assert len(reconstructed.files) == 1
+    assert reconstructed.files[0].filename == "report.pdf"
+
+
+def test_run_content_event_includes_image():
+    """RunContentEvent must serialize its singular `image` field in to_dict().
+
+    `image` is excluded from the asdict() call but, unlike its sibling media
+    fields (images/videos/audio/response_audio), was never re-added, so it was
+    silently dropped from to_dict()/to_json() (e.g. in AgentOS SSE streaming).
+    """
+    from agno.media import Image
+    from agno.run.agent import RunContentEvent
+
+    event = RunContentEvent(
+        content="hello",
+        image=Image(id="img-1", url="https://example.com/a.png"),
+    )
+
+    assert event.image is not None
+
+    event_dict = event.to_dict()
+    assert "image" in event_dict
+    assert event_dict["image"]["id"] == "img-1"
+    assert event_dict["image"]["url"] == "https://example.com/a.png"
+
+    reconstructed = type(event).from_dict(event_dict)
+    assert isinstance(reconstructed.image, Image)
+    assert reconstructed.image.id == "img-1"
+    assert reconstructed.image.url == "https://example.com/a.png"
 
 
 def test_agent_session_state_in_completed_event():
@@ -212,6 +280,141 @@ def test_api_schema_session_state():
     team_api_response = team_schema.model_dump(exclude_none=True)
     assert "session_state" in team_api_response
     assert team_api_response["session_state"] == {"team_api_data": "value"}
+
+
+def test_custom_event_subclass_serialization():
+    """Test that CustomEvent subclass properties are preserved during serialization."""
+    from typing import Any, Dict
+
+    from agno.run.agent import CustomEvent, RunOutput, run_output_event_from_dict
+    from agno.session.agent import AgentSession
+
+    @dataclass
+    class MimeEvent(CustomEvent):
+        name: str = "MimeEvent"
+        mime_type: str = ""
+        data: Dict[str, Any] = field(default_factory=dict)
+
+    event = MimeEvent(
+        event="CustomEvent",
+        agent_id="test-agent",
+        mime_type="application/echart+json",
+        data={"title": "Test Chart", "series": [{"type": "pie"}]},
+    )
+
+    event_dict = event.to_dict()
+    assert "mime_type" in event_dict
+    assert "data" in event_dict
+    assert event_dict["mime_type"] == "application/echart+json"
+    assert event_dict["data"]["title"] == "Test Chart"
+
+    restored_event = run_output_event_from_dict(event_dict)
+    assert hasattr(restored_event, "mime_type")
+    assert hasattr(restored_event, "data")
+    assert restored_event.mime_type == "application/echart+json"
+    assert restored_event.data["title"] == "Test Chart"
+
+    run_output = RunOutput(
+        run_id="run-123",
+        agent_id="test-agent",
+        events=[event],
+    )
+
+    run_dict = run_output.to_dict()
+    assert "mime_type" in run_dict["events"][0]
+
+    restored_run = RunOutput.from_dict(run_dict)
+    restored_evt = restored_run.events[0]
+    assert hasattr(restored_evt, "mime_type")
+    assert hasattr(restored_evt, "data")
+    assert restored_evt.mime_type == "application/echart+json"
+
+    session = AgentSession(
+        session_id="session-123",
+        agent_id="test-agent",
+        runs=[run_output],
+    )
+
+    session_dict = session.to_dict()
+    restored_session = AgentSession.from_dict(session_dict)
+
+    restored_run_evt = restored_session.runs[0].events[0]
+    assert hasattr(restored_run_evt, "mime_type")
+    assert hasattr(restored_run_evt, "data")
+    assert restored_run_evt.mime_type == "application/echart+json"
+    assert restored_run_evt.data["title"] == "Test Chart"
+
+
+def test_team_custom_event_subclass_serialization():
+    """Test that Team CustomEvent subclass properties are preserved during serialization."""
+    from typing import Any, Dict
+
+    from agno.run.team import CustomEvent as TeamCustomEvent
+    from agno.run.team import TeamRunOutput, team_run_output_event_from_dict
+
+    @dataclass
+    class TeamMimeEvent(TeamCustomEvent):
+        name: str = "TeamMimeEvent"
+        mime_type: str = ""
+        data: Dict[str, Any] = field(default_factory=dict)
+
+    event = TeamMimeEvent(
+        event="CustomEvent",
+        team_id="test-team",
+        mime_type="text/html",
+        data={"content": "<h1>Hello</h1>"},
+    )
+
+    event_dict = event.to_dict()
+    assert "mime_type" in event_dict
+    assert event_dict["mime_type"] == "text/html"
+
+    restored = team_run_output_event_from_dict(event_dict)
+    assert hasattr(restored, "mime_type")
+    assert hasattr(restored, "data")
+    assert restored.mime_type == "text/html"
+
+    team_output = TeamRunOutput(
+        run_id="run-123",
+        team_id="test-team",
+        events=[event],
+    )
+
+    team_dict = team_output.to_dict()
+    restored_team = TeamRunOutput.from_dict(team_dict)
+    restored_evt = restored_team.events[0]
+    assert hasattr(restored_evt, "mime_type")
+    assert restored_evt.mime_type == "text/html"
+
+
+def test_workflow_custom_event_subclass_serialization():
+    """Test that Workflow CustomEvent subclass properties are preserved during serialization."""
+    from typing import Any, Dict
+
+    from agno.run.workflow import CustomEvent as WorkflowCustomEvent
+    from agno.run.workflow import workflow_run_output_event_from_dict
+
+    @dataclass
+    class WorkflowMimeEvent(WorkflowCustomEvent):
+        name: str = "WorkflowMimeEvent"
+        mime_type: str = ""
+        data: Dict[str, Any] = field(default_factory=dict)
+
+    event = WorkflowMimeEvent(
+        event="CustomEvent",
+        workflow_id="test-workflow",
+        mime_type="application/json",
+        data={"key": "value"},
+    )
+
+    event_dict = event.to_dict()
+    assert "mime_type" in event_dict
+
+    restored = workflow_run_output_event_from_dict(event_dict)
+    assert hasattr(restored, "mime_type")
+    assert hasattr(restored, "data")
+    assert restored.mime_type == "application/json"
+    assert restored.data["key"] == "value"
 
 
 def test_requirements_in_run_paused_event():

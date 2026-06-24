@@ -1,3 +1,4 @@
+import hashlib
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import List, Optional
@@ -11,6 +12,28 @@ class ChunkingStrategy(ABC):
     @abstractmethod
     def chunk(self, document: Document) -> List[Document]:
         raise NotImplementedError
+
+    def _generate_chunk_id(
+        self, document: Document, chunk_number: int, content: Optional[str] = None, prefix: Optional[str] = None
+    ) -> Optional[str]:
+        """Generate a deterministic ID for the chunk."""
+        suffix = f"_{prefix}_{chunk_number}" if prefix else f"_{chunk_number}"
+
+        if document.id:
+            return f"{document.id}{suffix}"
+        elif document.name:
+            return f"{document.name}{suffix}"
+        else:
+            # Hash the chunk content for a deterministic ID when no identifier exists
+            hash_source = content if content else document.content
+            if hash_source:
+                content_hash = hashlib.md5(hash_source.encode("utf-8")).hexdigest()[:12]  # nosec B324
+                return f"chunk_{content_hash}{suffix}"
+            return None
+
+    async def achunk(self, document: Document) -> List[Document]:
+        """Async version of chunk. Override for truly async implementations."""
+        return self.chunk(document)
 
     def clean_text(self, text: str) -> str:
         """Clean the text by replacing multiple newlines with a single newline"""
@@ -36,6 +59,7 @@ class ChunkingStrategyType(str, Enum):
     """Enumeration of available chunking strategies."""
 
     AGENTIC_CHUNKER = "AgenticChunker"
+    CODE_CHUNKER = "CodeChunker"
     DOCUMENT_CHUNKER = "DocumentChunker"
     RECURSIVE_CHUNKER = "RecursiveChunker"
     SEMANTIC_CHUNKER = "SemanticChunker"
@@ -70,6 +94,7 @@ class ChunkingStrategyFactory:
         """Create an instance of the chunking strategy with the given parameters."""
         strategy_map = {
             ChunkingStrategyType.AGENTIC_CHUNKER: cls._create_agentic_chunking,
+            ChunkingStrategyType.CODE_CHUNKER: cls._create_code_chunking,
             ChunkingStrategyType.DOCUMENT_CHUNKER: cls._create_document_chunking,
             ChunkingStrategyType.RECURSIVE_CHUNKER: cls._create_recursive_chunking,
             ChunkingStrategyType.SEMANTIC_CHUNKER: cls._create_semantic_chunking,
@@ -90,6 +115,18 @@ class ChunkingStrategyFactory:
             kwargs["max_chunk_size"] = chunk_size
         # Remove overlap since AgenticChunking doesn't support it
         return AgenticChunking(**kwargs)
+
+    @classmethod
+    def _create_code_chunking(
+        cls, chunk_size: Optional[int] = None, overlap: Optional[int] = None, **kwargs
+    ) -> ChunkingStrategy:
+        from agno.knowledge.chunking.code import CodeChunking
+
+        # CodeChunking accepts chunk_size but not overlap
+        if chunk_size is not None:
+            kwargs["chunk_size"] = chunk_size
+        # Remove overlap since CodeChunking doesn't support it
+        return CodeChunking(**kwargs)
 
     @classmethod
     def _create_document_chunking(

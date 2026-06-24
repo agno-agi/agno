@@ -17,16 +17,18 @@ except ImportError:
 class WikipediaReader(Reader):
     auto_suggest: bool = True
 
-    def __init__(
-        self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), auto_suggest: bool = True, **kwargs
-    ):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, auto_suggest: bool = True, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.auto_suggest = auto_suggest
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Wikipedia readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -35,7 +37,7 @@ class WikipediaReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.TOPIC]
 
     def read(self, topic: str) -> List[Document]:

@@ -5,10 +5,12 @@ from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
+from agno.db.base import AsyncBaseDb
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.remote_content.s3 import S3Config
 from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.routers.knowledge.schemas import (
@@ -19,6 +21,10 @@ from agno.os.routers.knowledge.schemas import (
     ContentStatusResponse,
     ContentUpdateSchema,
     ReaderSchema,
+    RemoteContentSourceSchema,
+    SourceFileSchema,
+    SourceFilesResponseSchema,
+    SourceFolderSchema,
     VectorDbSchema,
     VectorSearchRequestSchema,
     VectorSearchResult,
@@ -34,9 +40,9 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_knowledge_instance_by_db_id
+from agno.os.utils import get_knowledge_instance
 from agno.remote.base import RemoteKnowledge
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
 logger = logging.getLogger(__name__)
@@ -107,8 +113,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         chunk_size: Optional[int] = Form(None, description="Chunk size to use for processing"),
         chunk_overlap: Optional[int] = Form(None, description="Chunk overlap to use for processing"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to upload to"),
     ):
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         parsed_metadata = None
         if metadata:
@@ -132,7 +139,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 chunker=chunker,
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
-                db_id=db_id,
                 headers=headers,
             )
 
@@ -205,6 +211,168 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         )
         return response
 
+    @router.post(
+        "/knowledge/remote-content",
+        response_model=ContentResponseSchema,
+        status_code=202,
+        operation_id="upload_remote_content",
+        summary="Upload Remote Content",
+        description=(
+            "Upload content from a remote source (S3, GCS, SharePoint, GitHub) to the knowledge base. "
+            "Content is processed asynchronously in the background. "
+        ),
+        responses={
+            202: {
+                "description": "Remote content upload accepted for processing",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": "content-456",
+                            "name": "reports/q1-2024.pdf",
+                            "description": "Q1 Report from S3",
+                            "metadata": {"source": "s3-docs"},
+                            "status": "processing",
+                        }
+                    }
+                },
+            },
+            400: {
+                "description": "Invalid request - unknown config or missing path",
+                "model": BadRequestResponse,
+            },
+            422: {"description": "Validation error in request body", "model": ValidationErrorResponse},
+        },
+    )
+    async def upload_remote_content(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        config_id: str = Form(..., description="ID of the configured remote content source (from /knowledge/config)"),
+        path: str = Form(..., description="Path to file or folder in the remote source"),
+        source_params: Optional[str] = Form(
+            None,
+            description=(
+                "JSON object of per-request parameters forwarded to the source's factory. "
+                "Used for provider-specific routing that shouldn't be baked into the config. "
+                "Currently supported keys: GitHub accepts 'repo' ('owner/repo'), letting one "
+                "configured GitHub source serve multiple repositories the credentials can access."
+            ),
+        ),
+        name: Optional[str] = Form(None, description="Content name (auto-generated if not provided)"),
+        description: Optional[str] = Form(None, description="Content description"),
+        metadata: Optional[str] = Form(None, description="JSON metadata object"),
+        reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
+        chunker: Optional[str] = Form(None, description="Chunking strategy to apply"),
+        chunk_size: Optional[int] = Form(None, description="Chunk size for processing"),
+        chunk_overlap: Optional[int] = Form(None, description="Chunk overlap for processing"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use for content storage"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to upload to"),
+    ):
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            # TODO: Forward to remote knowledge instance
+            raise HTTPException(status_code=501, detail="Remote content upload not yet supported for RemoteKnowledge")
+
+        # Validate that the config_id exists in configured sources
+        config = knowledge._get_remote_config_by_id(config_id)
+        if config is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown content source: {config_id}. Check /knowledge/config for available sources.",
+            )
+
+        # Parse metadata if provided
+        parsed_metadata = None
+        if metadata:
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                parsed_metadata = {"value": metadata}
+
+        # Parse and validate source_params. Keys are allowlisted per provider
+        # so we never spread raw user input into a config's factory method.
+        from agno.knowledge.remote_content.github import GitHubConfig
+
+        allowed_source_params: Dict[type, set] = {
+            GitHubConfig: {"repo"},
+        }
+
+        parsed_source_params: Dict[str, Any] = {}
+        if source_params:
+            try:
+                decoded = json.loads(source_params)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="source_params must be a valid JSON object")
+            if not isinstance(decoded, dict):
+                raise HTTPException(status_code=400, detail="source_params must be a JSON object")
+            parsed_source_params = decoded
+
+        allowed = allowed_source_params.get(type(config), set())
+        if parsed_source_params:
+            if not allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Source type '{type(config).__name__}' does not accept source_params.",
+                )
+            unknown = set(parsed_source_params) - allowed
+            if unknown:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unknown source_params for {type(config).__name__}: {sorted(unknown)}. "
+                        f"Allowed: {sorted(allowed)}."
+                    ),
+                )
+
+        # GitHub requires an effective repo: either on the config or in source_params.
+        if isinstance(config, GitHubConfig) and config.repo is None and "repo" not in parsed_source_params:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"GitHub config '{config_id}' has no 'repo' set. "
+                    'Provide source_params={"repo": "owner/repo"} with the request, '
+                    "or configure a default on the source."
+                ),
+            )
+
+        # Use the config's factory methods to create the remote content object
+        # If path ends with '/', treat as folder, otherwise treat as file
+        is_folder = path.endswith("/")
+        if is_folder:
+            if hasattr(config, "folder"):
+                remote_content = config.folder(path.rstrip("/"), **parsed_source_params)
+            else:
+                raise HTTPException(status_code=400, detail=f"Config {config_id} does not support folder uploads")
+        else:
+            if hasattr(config, "file"):
+                remote_content = config.file(path, **parsed_source_params)
+            else:
+                raise HTTPException(status_code=400, detail=f"Config {config_id} does not support file uploads")
+
+        # Set name from path if not provided
+        content_name = name or path
+
+        content = Content(
+            name=content_name,
+            description=description,
+            metadata=parsed_metadata,
+            remote_content=remote_content,
+        )
+        content_hash = knowledge._build_content_hash(content)
+        content.content_hash = content_hash
+        content.id = generate_id(content_hash)
+
+        background_tasks.add_task(process_content, knowledge, content, reader_id, chunker, chunk_size, chunk_overlap)
+
+        response = ContentResponseSchema(
+            id=content.id,
+            name=content_name,
+            description=description,
+            metadata=parsed_metadata,
+            status=ContentStatus.PROCESSING,
+        )
+        return response
+
     @router.patch(
         "/knowledge/content/{content_id}",
         response_model=ContentResponseSchema,
@@ -251,9 +419,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         description: Optional[str] = Form(None, description="Content description"),
         metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> Optional[ContentResponseSchema]:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         # Parse metadata JSON string if provided
         parsed_metadata = None
@@ -272,7 +441,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 description=description,
                 metadata=parsed_metadata,
                 reader_id=reader_id,
-                db_id=db_id,
                 headers=headers,
             )
 
@@ -297,7 +465,17 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
 
-        updated_content_dict = knowledge.patch_content(content)
+        # Use async patch method if contents_db is an AsyncBaseDb, otherwise use sync patch method
+        updated_content_dict = None
+        try:
+            if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
+                updated_content_dict = await knowledge.apatch_content(content)
+            else:
+                updated_content_dict = knowledge.patch_content(content)
+        except Exception as e:
+            log_error(f"Error updating content: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error updating content: {str(e)}")
+
         if not updated_content_dict:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
@@ -344,13 +522,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     )
     async def get_content(
         request: Request,
-        limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
+        limit: Optional[int] = Query(default=20, description="Number of content entries to return", ge=1),
+        page: Optional[int] = Query(default=1, description="Page number", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> PaginatedResponse[ContentResponseSchema]:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
@@ -360,7 +539,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 page=page,
                 sort_by=sort_by,
                 sort_order=sort_order.value if sort_order else None,
-                db_id=db_id,
                 headers=headers,
             )
 
@@ -427,13 +605,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def get_content_by_id(
         request: Request,
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ContentResponseSchema:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await knowledge.get_content_by_id(content_id=content_id, db_id=db_id, headers=headers)
+            return await knowledge.get_content_by_id(content_id=content_id, headers=headers)
 
         content = await knowledge.aget_content_by_id(content_id=content_id)
         if not content:
@@ -472,13 +651,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def delete_content_by_id(
         request: Request,
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ContentResponseSchema:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            await knowledge.delete_content_by_id(content_id=content_id, db_id=db_id, headers=headers)
+            await knowledge.delete_content_by_id(content_id=content_id, headers=headers)
         else:
             await knowledge.aremove_content_by_id(content_id=content_id)
 
@@ -502,13 +682,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     )
     async def delete_all_content(
         request: Request,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ):
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await knowledge.delete_all_content(db_id=db_id, headers=headers)
+            return await knowledge.delete_all_content(headers=headers)
 
         await knowledge.aremove_all_content()
         return "success"
@@ -546,20 +727,21 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     async def get_content_status(
         request: Request,
         content_id: str,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ContentStatusResponse:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
-            return await knowledge.get_content_status(content_id=content_id, db_id=db_id, headers=headers)
+            return await knowledge.get_content_status(content_id=content_id, headers=headers)
 
         knowledge_status, status_message = await knowledge.aget_content_status(content_id=content_id)
 
         # Handle the case where content is not found
         if knowledge_status is None:
             return ContentStatusResponse(
-                status=ContentStatus.FAILED, status_message=status_message or "Content not found"
+                id=content_id, status=ContentStatus.FAILED, status_message=status_message or "Content not found"
             )
 
         # Convert knowledge ContentStatus to schema ContentStatus (they have same values)
@@ -583,7 +765,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         else:
             status = ContentStatus.PROCESSING
 
-        return ContentStatusResponse(status=status, status_message=status_message or "")
+        return ContentStatusResponse(id=content_id, status=status, status_message=status_message or "")
 
     @router.post(
         "/knowledge/search",
@@ -625,7 +807,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         start_time = time.time()
 
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, request.db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, request.db_id, request.knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(http_request)
@@ -635,7 +817,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 max_results=request.max_results,
                 filters=request.filters,
                 search_type=request.search_type,
-                db_id=request.db_id,
                 headers=headers,
             )
 
@@ -660,7 +841,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
-        results = await knowledge.async_search(
+        results = await knowledge.asearch(
             query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
         )
 
@@ -783,6 +964,19 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                         "RecursiveChunker",
                                     ],
                                 },
+                                "docling": {
+                                    "id": "docling",
+                                    "name": "DoclingReader",
+                                    "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
+                                    "chunkers": [
+                                        "AgenticChunker",
+                                        "CodeChunker",
+                                        "DocumentChunker",
+                                        "FixedSizeChunker",
+                                        "RecursiveChunker",
+                                        "SemanticChunker",
+                                    ],
+                                },
                                 "docx": {
                                     "id": "docx",
                                     "name": "DocxReader",
@@ -849,6 +1043,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "name": "TextReader",
                                     "description": "Reads text files",
                                     "chunkers": [
+                                        "CodeChunker",
                                         "FixedSizeChunker",
                                         "AgenticChunker",
                                         "DocumentChunker",
@@ -870,15 +1065,56 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                 "text": ["web_search"],
                                 "topic": ["arxiv"],
                                 "file": ["csv", "gcs"],
-                                ".csv": ["csv"],
-                                ".xlsx": ["csv"],
-                                ".xls": ["csv"],
-                                ".docx": ["docx"],
+                                ".csv": ["csv", "field_labeled_csv", "docling"],
+                                ".xlsx": ["excel", "docling"],
+                                ".xls": ["excel"],
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ["excel"],
+                                "application/vnd.ms-excel": ["excel"],
+                                ".docx": ["docx", "docling"],
+                                ".dotx": ["docling"],
+                                ".docm": ["docling"],
+                                ".dotm": ["docling"],
+                                ".pptx": ["docling", "pptx"],
+                                ".potx": ["docling"],
+                                ".ppsx": ["docling"],
+                                ".pptm": ["docling"],
+                                ".ppsm": ["docling"],
+                                ".potm": ["docling"],
                                 ".doc": ["docx"],
                                 ".json": ["json"],
-                                ".md": ["markdown"],
-                                ".pdf": ["pdf"],
+                                ".md": ["markdown", "docling"],
+                                ".pdf": ["pdf", "docling"],
                                 ".txt": ["text"],
+                                ".html": ["docling"],
+                                ".htm": ["docling"],
+                                ".xhtml": ["docling"],
+                                ".xml": ["docling"],
+                                ".nxml": ["docling"],
+                                ".xbrl": ["docling"],
+                                ".adoc": ["docling"],
+                                ".asciidoc": ["docling"],
+                                ".asc": ["docling"],
+                                ".xlsm": ["docling"],
+                                ".tex": ["docling"],
+                                ".latex": ["docling"],
+                                ".tar.gz": ["docling"],
+                                ".vtt": ["docling"],
+                                ".png": ["docling"],
+                                ".jpeg": ["docling"],
+                                ".jpg": ["docling"],
+                                ".tiff": ["docling"],
+                                ".tif": ["docling"],
+                                ".bmp": ["docling"],
+                                ".webp": ["docling"],
+                                ".wav": ["docling"],
+                                ".mp3": ["docling"],
+                                ".m4a": ["docling"],
+                                ".aac": ["docling"],
+                                ".ogg": ["docling"],
+                                ".flac": ["docling"],
+                                ".mp4": ["docling"],
+                                ".avi": ["docling"],
+                                ".mov": ["docling"],
                             },
                             "chunkers": {
                                 "AgenticChunker": {
@@ -886,6 +1122,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "name": "AgenticChunker",
                                     "description": "Chunking strategy that uses an LLM to determine natural breakpoints in the text",
                                     "metadata": {"chunk_size": 5000},
+                                },
+                                "CodeChunker": {
+                                    "key": "CodeChunker",
+                                    "name": "CodeChunker",
+                                    "description": "The CodeChunker splits code into chunks based on its structure, leveraging Abstract Syntax Trees (ASTs) to create contextually relevant segments",
+                                    "metadata": {"chunk_size": 2048},
                                 },
                                 "DocumentChunker": {
                                     "key": "DocumentChunker",
@@ -953,9 +1195,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
     )
     async def get_config(
         request: Request,
-        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ConfigResponseSchema:
-        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
@@ -1029,13 +1272,203 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
+        filters = await knowledge.aget_valid_filters()
 
+        # Get remote content sources if available
+        remote_content_sources = None
+        if hasattr(knowledge, "_get_remote_configs") and callable(knowledge._get_remote_configs):
+            remote_configs = knowledge._get_remote_configs()
+            if remote_configs:
+                from agno.os.routers.knowledge.schemas import RemoteContentSourceSchema
+
+                remote_content_sources = [
+                    RemoteContentSourceSchema(
+                        id=config.id,
+                        name=config.name,
+                        type=config.__class__.__name__.replace("Config", "").lower(),
+                        metadata=config.metadata,
+                    )
+                    for config in remote_configs
+                ]
         return ConfigResponseSchema(
             readers=reader_schemas,
             vector_dbs=vector_dbs,
             readersForType=types_of_readers,
             chunkers=chunkers_dict,
-            filters=knowledge.get_valid_filters(),
+            filters=filters,
+            remote_content_sources=remote_content_sources,
+        )
+
+    @router.get(
+        "/knowledge/{knowledge_id}/sources",
+        response_model=List[RemoteContentSourceSchema],
+        status_code=200,
+        operation_id="list_content_sources",
+        summary="List Content Sources",
+        description="List all registered content sources (S3, GCS, SharePoint, GitHub) for the knowledge base.",
+        responses={
+            200: {
+                "description": "Content sources retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {
+                                "id": "company-s3",
+                                "name": "Company Documents",
+                                "type": "s3",
+                                "prefix": "documents/",
+                            }
+                        ]
+                    }
+                },
+            },
+            404: {"description": "Knowledge base not found", "model": NotFoundResponse},
+        },
+    )
+    async def list_sources(
+        request: Request,
+        knowledge_id: str = Path(..., description="ID of the knowledge base"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> List[RemoteContentSourceSchema]:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Source listing not yet supported for RemoteKnowledge")
+
+        if not hasattr(knowledge, "_get_remote_configs") or not callable(knowledge._get_remote_configs):
+            return []
+
+        remote_configs = knowledge._get_remote_configs()
+        if not remote_configs:
+            return []
+
+        return [
+            RemoteContentSourceSchema(
+                id=config.id,
+                name=config.name,
+                type=config.__class__.__name__.replace("Config", "").lower(),
+                metadata=config.metadata,
+                prefix=getattr(config, "prefix", None),
+            )
+            for config in remote_configs
+        ]
+
+    @router.get(
+        "/knowledge/{knowledge_id}/sources/{source_id}/files",
+        response_model=SourceFilesResponseSchema,
+        status_code=200,
+        operation_id="list_source_files",
+        summary="List Files in Source",
+        description=(
+            "List available files and folders in a specific content source. Supports pagination and folder navigation."
+        ),
+        responses={
+            200: {
+                "description": "Files listed successfully",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "source_id": "company-s3",
+                            "source_name": "Company Documents",
+                            "prefix": "reports/",
+                            "folders": [{"prefix": "reports/2024/", "name": "2024", "is_empty": False}],
+                            "files": [
+                                {
+                                    "key": "reports/annual-summary.pdf",
+                                    "name": "annual-summary.pdf",
+                                    "size": 102400,
+                                    "last_modified": "2024-01-15T10:30:00Z",
+                                    "content_type": "application/pdf",
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 100, "total_pages": 1, "total_count": 1},
+                        }
+                    }
+                },
+            },
+            404: {"description": "Knowledge base or content source not found", "model": NotFoundResponse},
+            400: {"description": "Unsupported source type", "model": BadRequestResponse},
+        },
+    )
+    async def list_source_files(
+        request: Request,
+        knowledge_id: str = Path(..., description="ID of the knowledge base"),
+        source_id: str = Path(..., description="ID of the content source"),
+        prefix: Optional[str] = Query(default=None, description="Path prefix to filter files"),
+        limit: int = Query(default=100, ge=1, le=1000, description="Number of files per page"),
+        page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+        delimiter: str = Query(default="/", description="Folder delimiter (enables folder grouping)"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> SourceFilesResponseSchema:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Source file listing not yet supported for RemoteKnowledge")
+
+        # Get the config for this source
+        config = knowledge._get_remote_config_by_id(source_id)
+        if config is None:
+            raise HTTPException(status_code=404, detail=f"Content source not found: {source_id}")
+
+        # Only S3 sources support file listing
+        if not isinstance(config, S3Config):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Source type '{type(config).__name__}' does not support file listing.",
+            )
+
+        try:
+            result = await config.alist_files(
+                prefix=prefix,
+                delimiter=delimiter,
+                limit=limit,
+                page=page,
+            )
+        except ImportError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        except Exception as e:
+            error_str = str(e)
+            if "NoSuchBucket" in error_str:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Bucket '{config.bucket_name}' does not exist",
+                )
+            if "NoCredentials" in error_str or "InvalidAccessKeyId" in error_str:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid or missing AWS credentials for this source",
+                )
+            log_error(f"Error listing files from {type(config).__name__}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to list files: {error_str}")
+
+        return SourceFilesResponseSchema(
+            source_id=source_id,
+            source_name=config.name,
+            prefix=prefix or "",
+            folders=[
+                SourceFolderSchema(
+                    prefix=folder["prefix"],
+                    name=folder["name"],
+                    is_empty=folder["is_empty"],
+                )
+                for folder in result.folders
+            ],
+            files=[
+                SourceFileSchema(
+                    key=file["key"],
+                    name=file["name"],
+                    size=file["size"],
+                    last_modified=file["last_modified"],
+                    content_type=file["content_type"],
+                )
+                for file in result.files
+            ],
+            meta=PaginationInfo(
+                page=result.page,
+                limit=result.limit,
+                total_count=result.total_count,
+                total_pages=result.total_pages,
+            ),
         )
 
     return router
@@ -1080,7 +1513,7 @@ async def process_content(
             log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
-        await knowledge._load_content_async(content, upsert=False, skip_if_exists=True)
+        await knowledge._aload_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content.id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content: {e}")
@@ -1090,7 +1523,12 @@ async def process_content(
 
             content.status = KnowledgeContentStatus.FAILED
             content.status_message = str(e)
-            knowledge.patch_content(content)
+            # Use async patch method if contents_db is an AsyncBaseDb, otherwise use sync patch method
+            if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
+                await knowledge.apatch_content(content)
+            else:
+                knowledge.patch_content(content)
+
         except Exception:
             # Swallow any secondary errors to avoid crashing the background task
             pass

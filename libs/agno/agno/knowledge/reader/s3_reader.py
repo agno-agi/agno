@@ -31,13 +31,17 @@ except ImportError:
 class S3Reader(Reader):
     """Reader for S3 files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for S3 readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -46,7 +50,7 @@ class S3Reader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.FILE, ContentType.URL, ContentType.TEXT]
 
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
@@ -71,7 +75,7 @@ class S3Reader(Reader):
                 return documents
 
         except Exception as e:
-            log_error(f"Error reading: {s3_object.uri}: {e}")
+            log_error(f"Error reading: {s3_object.uri}: {str(e)}")
 
         return []
 

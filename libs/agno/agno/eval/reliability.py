@@ -1,3 +1,4 @@
+import json
 from dataclasses import asdict, dataclass, field
 from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -20,6 +21,10 @@ class ReliabilityResult:
     eval_status: str
     failed_tool_calls: List[str]
     passed_tool_calls: List[str]
+    additional_tool_calls: List[str] = field(default_factory=list)
+    missing_tool_calls: List[str] = field(default_factory=list)
+    failed_argument_checks: List[str] = field(default_factory=list)
+    passed_argument_checks: List[str] = field(default_factory=list)
 
     def print_eval(self, console: Optional["Console"] = None):
         from rich.console import Console
@@ -32,6 +37,14 @@ class ReliabilityResult:
         results_table.add_row("Evaluation Status", self.eval_status)
         results_table.add_row("Failed Tool Calls", str(self.failed_tool_calls))
         results_table.add_row("Passed Tool Calls", str(self.passed_tool_calls))
+        if self.additional_tool_calls:
+            results_table.add_row("Additional Tool Calls", str(self.additional_tool_calls))
+        if self.missing_tool_calls:
+            results_table.add_row("Missing Tool Calls", str(self.missing_tool_calls))
+        if self.failed_argument_checks:
+            results_table.add_row("Failed Argument Checks", str(self.failed_argument_checks))
+        if self.passed_argument_checks:
+            results_table.add_row("Passed Argument Checks", str(self.passed_argument_checks))
         console.print(results_table)
 
     def assert_passed(self):
@@ -53,6 +66,12 @@ class ReliabilityEval:
     team_response: Optional[TeamRunOutput] = None
     # Expected tool calls
     expected_tool_calls: Optional[List[str]] = None
+    # When True, tool calls not in expected_tool_calls are allowed (subset matching)
+    allow_additional_tool_calls: bool = False
+    # Expected arguments for specific tool calls
+    # Single check: {"multiply": {"a": 10, "b": 5}}
+    # Multiple checks: {"add": [{"a": 2, "b": 2}, {"a": 3, "b": 3}]}
+    expected_tool_call_arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = None
     # Result of the evaluation
     result: Optional[ReliabilityResult] = None
 
@@ -69,6 +88,130 @@ class ReliabilityEval:
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve our Evals and provide better support
     telemetry: bool = True
+
+    def _evaluate(self) -> ReliabilityResult:
+        """Core evaluation logic for checking tool calls and arguments."""
+        messages: list = []
+        if self.agent_response is not None:
+            messages = self.agent_response.messages or []
+        elif self.team_response is not None:
+            messages = list(self.team_response.messages or [])
+            for member_response in self.team_response.member_responses:
+                if member_response.messages is not None:
+                    messages += member_response.messages
+
+        # Collect all tool calls across all messages (without mutating originals)
+        actual_tool_calls: List[Dict[str, Any]] = []
+        for message in messages:  # type: ignore
+            if message.tool_calls:
+                actual_tool_calls.extend(message.tool_calls)
+
+        failed_tool_calls: List[str] = []
+        passed_tool_calls: List[str] = []
+        additional_tool_calls: List[str] = []
+        missing_tool_calls: List[str] = []
+        failed_argument_checks: List[str] = []
+        passed_argument_checks: List[str] = []
+
+        if not actual_tool_calls:
+            missing_tool_calls = list(self.expected_tool_calls) if self.expected_tool_calls else []
+            if self.expected_tool_call_arguments:
+                for arg_tool_name in self.expected_tool_call_arguments:
+                    if arg_tool_name not in missing_tool_calls:
+                        failed_argument_checks.append(arg_tool_name)
+        else:
+            actual_tool_names: set = set()
+            for tool_call in actual_tool_calls:
+                func = tool_call.get("function")
+                tool_name = func.get("name") if isinstance(func, dict) else None
+                if not tool_name:
+                    continue
+                actual_tool_names.add(tool_name)
+
+                if self.expected_tool_calls is not None and tool_name not in self.expected_tool_calls:
+                    if self.allow_additional_tool_calls:
+                        additional_tool_calls.append(tool_name)
+                    else:
+                        failed_tool_calls.append(tool_name)
+                else:
+                    passed_tool_calls.append(tool_name)
+
+            # Check for missing expected tool calls
+            if self.expected_tool_calls:
+                for expected_tool in self.expected_tool_calls:
+                    if expected_tool not in actual_tool_names:
+                        missing_tool_calls.append(expected_tool)
+
+            # Check tool call arguments (partial match)
+            if self.expected_tool_call_arguments:
+                for arg_tool_name, expected_args_raw in self.expected_tool_call_arguments.items():
+                    # Skip argument checks for tools already tracked as missing
+                    if arg_tool_name in missing_tool_calls:
+                        continue
+
+                    # Normalize: single dict becomes a one-element list
+                    arg_specs = expected_args_raw if isinstance(expected_args_raw, list) else [expected_args_raw]
+
+                    matching_calls = [
+                        tc
+                        for tc in actual_tool_calls
+                        if isinstance(tc.get("function"), dict) and tc["function"].get("name") == arg_tool_name
+                    ]
+                    if not matching_calls:
+                        failed_argument_checks.append(arg_tool_name)
+                        continue
+
+                    # Parse actual arguments from all matching calls
+                    parsed_args_list: List[Dict[str, Any]] = []
+                    for tc in matching_calls:
+                        func = tc.get("function")
+                        actual_args_raw = func.get("arguments", "{}") if isinstance(func, dict) else "{}"
+                        try:
+                            actual_args = (
+                                json.loads(actual_args_raw) if isinstance(actual_args_raw, str) else actual_args_raw
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            actual_args = {}
+                        if not isinstance(actual_args, dict):
+                            actual_args = {}
+                        parsed_args_list.append(actual_args)
+
+                    # Each spec must match at least one call
+                    all_specs_matched = True
+                    for spec in arg_specs:
+                        if not any(
+                            all(key in actual and actual[key] == value for key, value in spec.items())
+                            for actual in parsed_args_list
+                        ):
+                            all_specs_matched = False
+                            break
+
+                    if all_specs_matched:
+                        passed_argument_checks.append(arg_tool_name)
+                    else:
+                        failed_argument_checks.append(arg_tool_name)
+
+        eval_passed = len(failed_tool_calls) == 0 and len(missing_tool_calls) == 0 and len(failed_argument_checks) == 0
+
+        return ReliabilityResult(
+            eval_status="PASSED" if eval_passed else "FAILED",
+            failed_tool_calls=failed_tool_calls,
+            passed_tool_calls=passed_tool_calls,
+            additional_tool_calls=additional_tool_calls,
+            missing_tool_calls=missing_tool_calls,
+            failed_argument_checks=failed_argument_checks,
+            passed_argument_checks=passed_argument_checks,
+        )
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the evaluation"""
+        response = self.agent_response or self.team_response
+        return {
+            "team_id": self.team_response.team_id if self.team_response else None,
+            "agent_id": self.agent_response.agent_id if self.agent_response else None,
+            "model_id": response.model if response else None,  # type: ignore
+            "model_provider": response.model_provider if response else None,  # type: ignore
+        }
 
     def run(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
         if isinstance(self.db, AsyncBaseDb):
@@ -95,42 +238,7 @@ class ReliabilityEval:
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
             live_log.update(status)
 
-            actual_tool_calls = None
-            if self.agent_response is not None:
-                messages = self.agent_response.messages
-            elif self.team_response is not None:
-                messages = self.team_response.messages or []
-                for member_response in self.team_response.member_responses:
-                    if member_response.messages is not None:
-                        messages += member_response.messages
-
-            for message in reversed(messages):  # type: ignore
-                if message.tool_calls:
-                    if actual_tool_calls is None:
-                        actual_tool_calls = message.tool_calls
-                    else:
-                        actual_tool_calls.append(message.tool_calls[0])  # type: ignore
-
-            failed_tool_calls = []
-            passed_tool_calls = []
-            if not actual_tool_calls:
-                failed_tool_calls = self.expected_tool_calls or []
-            else:
-                for tool_call in actual_tool_calls:  # type: ignore
-                    tool_name = tool_call.get("function", {}).get("name")
-                    if not tool_name:
-                        continue
-                    else:
-                        if self.expected_tool_calls is not None and tool_name not in self.expected_tool_calls:
-                            failed_tool_calls.append(tool_call.get("function", {}).get("name"))
-                        else:
-                            passed_tool_calls.append(tool_call.get("function", {}).get("name"))
-
-            self.result = ReliabilityResult(
-                eval_status="PASSED" if len(failed_tool_calls) == 0 else "FAILED",
-                failed_tool_calls=failed_tool_calls,
-                passed_tool_calls=passed_tool_calls,
-            )
+            self.result = self._evaluate()
 
         # Save result to file if requested
         if self.file_path_to_save_results is not None and self.result is not None:
@@ -160,6 +268,8 @@ class ReliabilityEval:
 
             eval_input = {
                 "expected_tool_calls": self.expected_tool_calls,
+                "allow_additional_tool_calls": self.allow_additional_tool_calls,
+                "expected_tool_call_arguments": self.expected_tool_call_arguments,
             }
 
             log_eval_run(
@@ -211,49 +321,14 @@ class ReliabilityEval:
             status = Status("Running evaluation...", spinner="dots", speed=1.0, refresh_per_second=10)
             live_log.update(status)
 
-            actual_tool_calls = None
-            if self.agent_response is not None:
-                messages = self.agent_response.messages
-            elif self.team_response is not None:
-                messages = self.team_response.messages or []
-                for member_response in self.team_response.member_responses:
-                    if member_response.messages is not None:
-                        messages += member_response.messages
-
-            for message in reversed(messages):  # type: ignore
-                if message.tool_calls:
-                    if actual_tool_calls is None:
-                        actual_tool_calls = message.tool_calls
-                    else:
-                        actual_tool_calls.append(message.tool_calls[0])  # type: ignore
-
-            failed_tool_calls = []
-            passed_tool_calls = []
-            if not actual_tool_calls:
-                failed_tool_calls = self.expected_tool_calls or []
-            else:
-                for tool_call in actual_tool_calls:  # type: ignore
-                    tool_name = tool_call.get("function", {}).get("name")
-                    if not tool_name:
-                        continue
-                    else:
-                        if self.expected_tool_calls is not None and tool_name not in self.expected_tool_calls:
-                            failed_tool_calls.append(tool_call.get("function", {}).get("name"))
-                        else:
-                            passed_tool_calls.append(tool_call.get("function", {}).get("name"))
-
-            self.result = ReliabilityResult(
-                eval_status="PASSED" if len(failed_tool_calls) == 0 else "FAILED",
-                failed_tool_calls=failed_tool_calls,
-                passed_tool_calls=passed_tool_calls,
-            )
+            self.result = self._evaluate()
 
         # Save result to file if requested
         if self.file_path_to_save_results is not None and self.result is not None:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=run_id,
+                eval_id=self.eval_id,
                 result=self.result,
             )
 
@@ -276,6 +351,8 @@ class ReliabilityEval:
 
             eval_input = {
                 "expected_tool_calls": self.expected_tool_calls,
+                "allow_additional_tool_calls": self.allow_additional_tool_calls,
+                "expected_tool_call_arguments": self.expected_tool_call_arguments,
             }
 
             await async_log_eval(
@@ -304,12 +381,3 @@ class ReliabilityEval:
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
-
-    def _get_telemetry_data(self) -> Dict[str, Any]:
-        """Get the telemetry data for the evaluation"""
-        return {
-            "team_id": self.team_response.team_id if self.team_response else None,
-            "agent_id": self.agent_response.agent_id if self.agent_response else None,
-            "model_id": self.agent_response.model if self.agent_response else None,
-            "model_provider": self.agent_response.model_provider if self.agent_response else None,
-        }

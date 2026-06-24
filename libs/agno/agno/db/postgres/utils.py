@@ -15,6 +15,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 try:
     from sqlalchemy import Table, func
     from sqlalchemy.dialects import postgresql
+    from sqlalchemy.exc import NoSuchTableError
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session
     from sqlalchemy.sql.expression import text
@@ -71,7 +72,7 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_debug(f"Creating schema if not exists: {db_schema}")
         session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
     except Exception as e:
-        log_warning(f"Could not create schema {db_schema}: {e}")
+        log_warning(f"Could not create schema {db_schema}: {str(e)}")
 
 
 async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
@@ -85,7 +86,7 @@ async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
         log_debug(f"Creating schema if not exists: {db_schema}")
         await session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
     except Exception as e:
-        log_warning(f"Could not create schema {db_schema}: {e}")
+        log_warning(f"Could not create schema {db_schema}: {str(e)}")
 
 
 def is_table_available(session: Session, table_name: str, db_schema: str) -> bool:
@@ -103,7 +104,7 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
         return exists
 
     except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+        log_error(f"Error checking if table exists: {str(e)}")
         return False
 
 
@@ -121,7 +122,7 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
         exists = (await session.execute(exists_query, {"schema": db_schema, "table": table_name})).scalar() is not None
         return exists
     except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+        log_error(f"Error checking if table exists: {str(e)}")
         return False
 
 
@@ -153,7 +154,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
         return True
     except Exception as e:
-        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+        log_error(f"Error validating table schema for {db_schema}.{table_name}: {str(e)}")
         return False
 
 
@@ -183,8 +184,11 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
             return False
 
         return True
+    except NoSuchTableError as e:
+        log_error(f"Table {db_schema}.{table_name} does not exist: {str(e)}")
+        return False
     except Exception as e:
-        log_error(f"Error validating table schema for {db_schema}.{table_name}: {e}")
+        log_error(f"Error validating table schema for {db_schema}.{table_name}: {str(e)}")
         return False
 
 
@@ -317,8 +321,8 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                         model_counts[f"{model_id}:{model_provider}"] = (
                             model_counts.get(f"{model_id}:{model_provider}", 0) + 1
                         )
-
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
+            session_data = session.get("session_data", {}) or {}
+            session_metrics = session_data.get("session_metrics", {}) or {}
             for field in token_metrics:
                 token_metrics[field] += session_metrics.get(field, 0)
 

@@ -1,113 +1,137 @@
-# Agno AgentOS Demo
+# Agno Demo
 
-This demo shows how to run a multi-agent system using the **Agno AgentOS: a high performance runtime for multi-agent systems**:
+A demo AgentOS built from wiki agents. Ingest URLs, images, voice memos, or PDFs. Store them as clean, linked pages across three backends: local markdown files, a git repo, or Notion.
 
-## Getting Started
+Built on AgentOS with SQLite-backed sessions. The codebase is small enough to grok in an afternoon, and stable enough to build on.
 
-### 0. Clone the repository
+> For a production version of this demo, see the [agent-platform-railway](https://github.com/agno-agi/agent-platform-railway) codebase.
 
-```shell
-git clone https://github.com/agno-agi/agno.git
-cd agno
-```
+## Agents
+
+| Agent | What it does |
+|-------|--------------|
+| **LocalWiki** | Reads and writes a markdown wiki. Ingest a URL, an attached image, or a PDF. It digests and files a page in one call. |
+| **GitWiki** *(env-gated)* | The same agent with the wiki stored as a git repo. It auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` and `WIKI_GITHUB_TOKEN` are set. |
+| **NotionWiki** *(env-gated)* | The same agent with the wiki stored as a Notion database, one row per page. The database is the source of truth your team opens in Notion. Registered when `NOTION_API_KEY` and `NOTION_DATABASE_ID` are set. |
+| **CodeSearch** | Answers questions about this repository, with file paths and line numbers. |
+
+The three wiki agents can also produce downloadable HTML files. Agents run on **gpt-5.5** by default, and you can use any model (see `settings.py`).
+
+## Get started
 
 ### 1. Create a virtual environment
 
-```shell
-uv venv .demoenv --python 3.12
-source .demoenv/bin/activate
+```bash
+uv venv .venvs/demo --python 3.12
+source .venvs/demo/bin/activate
 ```
 
 ### 2. Install dependencies
 
-```shell
+```bash
 uv pip install -r cookbook/01_demo/requirements.txt
 ```
 
-### 3. Run Postgres with PgVector
+### 3. Set your API keys
 
-We'll use postgres for storing agent sessions, memories, metrics, evals and knowledge. Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) and run the following command to start a postgres container with PgVector.
+```bash
+export OPENAI_API_KEY="..."      # required: default model is gpt-5.5
 
-```shell
-./cookbook/scripts/run_pgvector.sh
+export PARALLEL_API_KEY="..."    # optional: raises limits on the keyless Parallel MCP
+
+export GOOGLE_API_KEY="..."      # optional: for gemini audio and video
 ```
 
-OR use the docker run command directly:
+GitWiki and NotionWiki each switch on when their backend credentials are set. See "Enable the other wiki backends" below.
 
-```shell
-docker run -d \
-  -e POSTGRES_DB=ai \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -e PGDATA=/var/lib/postgresql \
-  -v pgvolume:/var/lib/postgresql \
-  -p 5532:5432 \
-  --name pgvector \
-  agnohq/pgvector:18
+### 4. Serve
+
+```bash
+fastapi dev cookbook/01_demo/run.py
 ```
 
-### 4. Export API Keys
+Then open [os.agno.com](https://os.agno.com) and sign in:
 
-We'll use OpenAI, Anthropic and Parallel Search services. Please export the following environment variables:
+1. **Add OS** → **Local**
+2. Connect to `http://localhost:8000`, call it Local AgentOS
+3. Chat with your agents
 
-```shell
-export ANTHROPIC_API_KEY=***
-export OPENAI_API_KEY=***
-export PARALLEL_API_KEY=***
+## Enable the other wiki backends
+
+LocalWiki and CodeSearch run with just `OPENAI_API_KEY`. GitWiki and NotionWiki are the same wiki agent pointed at a different backend, and each registers once its credentials are set.
+
+### GitWiki: a wiki in a GitHub repo
+
+The wiki lives in a git repo. Every write is auto-committed and pushed.
+
+1. **Pick a repo** to hold the wiki. A fresh, empty repo is fine. Create it with an initial commit (tick *"Add a README"* on GitHub) so the `main` branch exists for the first clone.
+2. **Create a token** with write access to that repo:
+   - *Fine-grained PAT (recommended):* GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → **Generate new token**. Scope it to the one repo and set **Repository permissions → Contents → Read and write**.
+   - *Classic PAT:* use the `repo` scope.
+3. **Export and restart:**
+   ```bash
+   export WIKI_REPO_URL="https://github.com/<owner>/<repo>.git"  # HTTPS, not SSH
+   export WIKI_GITHUB_TOKEN="github_pat_..."                     # contents: read and write
+   export WIKI_BRANCH="main"                                     # optional, default: main
+   ```
+
+The URL must be HTTPS. SSH `git@…` URLs are rejected. The token is embedded for auth and scrubbed from logs. The clone is stored under `data/git-wiki/` (gitignored).
+
+### NotionWiki: a wiki in a Notion database
+
+The wiki is a Notion database, one row per page, that your team opens in Notion. The agent files markdown, and Notion stays the source of truth.
+
+1. **Create an integration** at [notion.so/profile/integrations](https://www.notion.so/profile/integrations) → **New integration** → *Internal*. Copy its token (`ntn_…`). The default read, insert, and update content capabilities are all it needs.
+2. **Create a database** for the wiki. Use a full-page database; table view is fine. The only column it needs is the built-in **title**, and the agent names each page. The wiki is flat: one row per page, no nested pages.
+3. **Connect the integration to the database.** This step is easy to miss. Open the database as a full page → **•••** menu → **Connections** → add your integration. Without it, the API cannot see the database.
+4. **Copy the database ID** from its URL. It's the 32-character hex in the path, before the `?v=` (the `v=` value is the view, so leave it out):
+   ```
+   https://www.notion.so/<workspace>/<DATABASE_ID>?v=<view_id>
+   ```
+5. **Export and restart:**
+   ```bash
+   export NOTION_API_KEY="ntn_..."
+   export NOTION_DATABASE_ID="<32-char hex from the URL>"
+   ```
+
+The local mirror lands under `data/notion-wiki/` (gitignored). On startup the backend rebuilds the mirror from Notion, so the database is always the source of truth.
+
+## Try it
+
+- **Ingest a URL** with LocalWiki: *"Add https://docs.agno.com/ to the wiki."* It fetches, digests, and files a page.
+- **Ingest media** by attaching `evals/assets/sample-diagram.png` (or your own image or PDF) to LocalWiki: *"Digest this and file it under notes/."*
+- **Ask the wiki:** *"What's in the wiki?"* or *"What does the wiki say about X?"*
+- **Code Q&A** with CodeSearch: *"Which agents are registered in this demo?"*
+- **Generate HTML** with LocalWiki: *"Render the wiki's docs page as a standalone HTML page."* It returns a downloadable `.html` file.
+
+## Evals
+
+From the repo root:
+
+```bash
+python -m cookbook.01_demo.evals               # run all cases (concise)
+python -m cookbook.01_demo.evals -v            # stream the full agent run
+python -m cookbook.01_demo.evals --case <name> # run one case
 ```
 
-### 5. Run the demo AgentOS
+Or from `cookbook/01_demo`:
 
-```shell
-python cookbook/01_demo/run.py
+```bash
+python -m evals
+python -m evals -v
+python -m evals --case <name>
 ```
 
-### 6. Connect to the AgentOS UI
+Each case runs one agent once, then checks the response with `AgentAsJudgeEval` (an LLM rubric with a binary pass or fail) and optionally `ReliabilityEval` (a tool-call assertion). Results log to SQLite. Connect AgentOS at os.agno.com to see history.
 
-- Open the web interface: [os.agno.com](https://os.agno.com/)
-- Connect to http://localhost:7777 to interact with the demo AgentOS.
+## Extending
 
-### Load Knowledge Base for the Agno Knowledge Agent
+To add an agent: drop a file in `agents/`, register it in the `AgentOS(agents=[...])` list in `run.py`, add quick prompts to `config.yaml`, and restart. Add eval cases in `evals/cases.py` once it's stable.
 
-The Agno Knowledge Agent is a great example of building a knowledge agent using Agentic RAG. It loads the Agno documentation into pgvector and answers questions from the docs. It uses the OpenAI embedding model to embed the docs and the pgvector to store the embeddings.
+## Regenerating requirements
 
-To populate the knowledge base, run the following command:
-
-```sh
-python cookbook/01_demo/agents/agno_knowledge_agent.py
+```bash
+./cookbook/01_demo/generate_requirements.sh
 ```
 
-### Load data for the SQL Agent
-
-To load the data for the SQL Agent, run:
-
-```sh
-python cookbook/01_demo/agents/sql/load_f1_data.py
-```
-
-To populate the knowledge base, run:
-
-```sh
-python cookbook/01_demo/agents/sql/load_sql_knowledge.py
-```
-
-### Load Knowledge Base for the Deep Knowledge Agent
-
-The Deep Knowledge Agent is a great example of building a deep research agent using Agno.
-
-To populate the knowledge base, run the following command:
-
-```sh
-python cookbook/01_demo/agents/deep_knowledge_agent.py
-```
-
----
-
-## Additional Resources
-
-Need help, have a question, or want to connect with the community?
-
-- 📚 **[Read the Agno Docs](https://docs.agno.com)** for more in-depth information.
-- 💬 **Chat with us on [Discord](https://agno.link/discord)** for live discussions.
-- ❓ **Ask a question on [Discourse](https://agno.link/community)** for community support.
-- 🐛 **[Report an Issue](https://github.com/agno-agi/agno/issues)** on GitHub if you find a bug or have a feature request.
+Edits to `requirements.in` are the source of truth. The `.txt` is regenerated and pinned with `uv pip compile`.

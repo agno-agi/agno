@@ -39,6 +39,7 @@ def test_agent_with_custom_knowledge_retriever_search_knowledge_error():
         knowledge_retriever=custom_knowledge_retriever,
         search_knowledge=True,
         debug_mode=True,
+        instructions="Always search the knowledge base for information before answering.",
     )
     response = agent.run("Search my knowledge base for information about the capital of France")
     assert response.metadata is None, "There should be no references"

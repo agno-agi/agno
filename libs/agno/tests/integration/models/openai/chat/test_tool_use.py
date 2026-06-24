@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
+from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -140,7 +140,7 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True), WebSearchTools(cache_results=True)],
         markdown=True,
         telemetry=False,
     )

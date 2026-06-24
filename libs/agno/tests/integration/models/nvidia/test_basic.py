@@ -136,6 +136,7 @@ def test_history():
         model=Nvidia(id="meta/llama-3.3-70b-instruct"),
         db=SqliteDb(db_file="tmp/nvidia/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

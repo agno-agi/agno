@@ -18,14 +18,14 @@ from agno.utilities.logging import log_warning, logger
 from agno.utils.log import log_info
 
 TEMPLATE_TO_NAME_MAP: Dict[InfraStarterTemplate, str] = {
-    InfraStarterTemplate.agent_infra_docker: "agent-infra-docker",
-    InfraStarterTemplate.agent_infra_aws: "agent-infra-aws",
-    InfraStarterTemplate.agent_infra_railway: "agent-infra-railway",
+    InfraStarterTemplate.agentos_docker: "agentos-docker",
+    InfraStarterTemplate.agentos_aws: "agentos-aws",
+    InfraStarterTemplate.agentos_railway: "agentos-railway",
 }
 TEMPLATE_TO_REPO_MAP: Dict[InfraStarterTemplate, str] = {
-    InfraStarterTemplate.agent_infra_docker: "https://github.com/agno-agi/agent-infra-docker",
-    InfraStarterTemplate.agent_infra_aws: "https://github.com/agno-agi/agent-infra-aws",
-    InfraStarterTemplate.agent_infra_railway: "https://github.com/agno-agi/agent-infra-railway",
+    InfraStarterTemplate.agentos_docker: "https://github.com/agno-agi/agentos-docker-template",
+    InfraStarterTemplate.agentos_aws: "https://github.com/agno-agi/agentos-aws-template",
+    InfraStarterTemplate.agentos_railway: "https://github.com/agno-agi/agentos-railway-template",
 }
 
 
@@ -61,7 +61,7 @@ def create_infra_from_template(
 
     infra_dir_name: Optional[str] = name
     repo_to_clone: Optional[str] = url
-    infra_template = InfraStarterTemplate.agent_infra_docker
+    infra_template = InfraStarterTemplate.agentos_docker
     templates = list(InfraStarterTemplate.__members__.values())
 
     print_subheading("Creating a new AgentOS codebase...\n")
@@ -71,7 +71,7 @@ def create_infra_from_template(
         if template is None:
             # Get starter template from the user if template is not provided
             # Display available starter templates and ask user to select one
-            print_info("Select starter template or press Enter for default (agent-infra-docker)")
+            print_info("Select starter template or press Enter for default (agentos-docker)")
             for template_id, template_name in enumerate(templates, start=1):
                 print_info("  [b][{}][/b] {}".format(template_id, InfraStarterTemplate(template_name).value))
 
@@ -104,7 +104,7 @@ def create_infra_from_template(
             default_infra_name = url.split("/")[-1].split(".")[0]
         else:
             # Get default_infra_name from template
-            default_infra_name = TEMPLATE_TO_NAME_MAP.get(infra_template, "agent-infra-docker")
+            default_infra_name = TEMPLATE_TO_NAME_MAP.get(infra_template, "agentos-docker")
         logger.debug(f"Asking for infra name with default: {default_infra_name}")
         # Ask user for infra name if not provided
         infra_dir_name = Prompt.ask("Infra Project Directory", default=default_infra_name, console=console)

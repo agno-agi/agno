@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.models.message import Citations, UrlCitation
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 
@@ -41,6 +41,8 @@ class Perplexity(OpenAILike):
     id: str = "sonar"
     name: str = "Perplexity"
     provider: str = "Perplexity"
+    # Perplexity returns cumulative token counts in each streaming chunk, so only collect on final chunk
+    collect_metrics_on_completion: bool = True
 
     api_key: Optional[str] = field(default_factory=lambda: getenv("PERPLEXITY_API_KEY"))
     base_url: str = "https://api.perplexity.ai/"
@@ -132,7 +134,7 @@ class Perplexity(OpenAILike):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {str(e)}")
 
         # Add citations if present
         if hasattr(response, "citations") and response.citations is not None:
@@ -180,11 +182,11 @@ class Perplexity(OpenAILike):
 
         return model_response
 
-    def _get_metrics(self, response_usage: CompletionUsage) -> Metrics:
+    def _get_metrics(self, response_usage: CompletionUsage) -> MessageMetrics:
         """
-        Parse the given Perplexity usage into an Agno Metrics object.
+        Parse the given Perplexity usage into an Agno MessageMetrics object.
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.prompt_tokens or 0
         metrics.output_tokens = response_usage.completion_tokens or 0
@@ -200,4 +202,5 @@ class Perplexity(OpenAILike):
             metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
             metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
 
+        metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
         return metrics

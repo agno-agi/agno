@@ -146,6 +146,7 @@ def test_history(groq_model):
         model=groq_model,
         db=SqliteDb(db_file="tmp/groq/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
 

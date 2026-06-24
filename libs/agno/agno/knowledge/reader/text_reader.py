@@ -14,13 +14,17 @@ from agno.utils.log import log_debug, log_error, log_warning
 class TextReader(Reader):
     """Reader for Text files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Text readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -29,7 +33,7 @@ class TextReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.TXT]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -60,7 +64,7 @@ class TextReader(Reader):
                 return chunked_documents
             return documents
         except Exception as e:
-            log_error(f"Error reading: {file}: {e}")
+            log_error(f"Error reading: {file}: {str(e)}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -77,8 +81,8 @@ class TextReader(Reader):
 
                     async with aiofiles.open(file, "r", encoding=self.encoding or "utf-8") as f:
                         file_contents = await f.read()
-                except ImportError:
-                    log_warning("aiofiles not installed, using synchronous file I/O")
+                except ImportError as e:
+                    log_warning(f"aiofiles not installed, using synchronous file I/O: {str(e)}")
                     file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
                 log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")
@@ -96,7 +100,7 @@ class TextReader(Reader):
                 return await self._async_chunk_document(document)
             return [document]
         except Exception as e:
-            log_error(f"Error reading asynchronously: {file}: {e}")
+            log_error(f"Error reading asynchronously: {file}: {str(e)}")
             return []
 
     async def _async_chunk_document(self, document: Document) -> List[Document]:
@@ -109,7 +113,7 @@ class TextReader(Reader):
         chunked_documents = self.chunk_document(document)
 
         if not chunked_documents:
-            return [document]
+            return []
 
         tasks = [process_chunk(chunk_doc) for chunk_doc in chunked_documents]
         return await asyncio.gather(*tasks)

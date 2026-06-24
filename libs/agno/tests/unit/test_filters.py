@@ -1,7 +1,8 @@
 """Unit tests for search filter expressions.
 
 Tests cover:
-- Basic filter operators (EQ, IN, GT, LT)
+- Basic filter operators (EQ, IN, GT, LT, NEQ, GTE, LTE)
+- String matching operators (CONTAINS, STARTSWITH)
 - Logical operators (AND, OR, NOT)
 - Operator overloading (&, |, ~)
 - Serialization (to_dict)
@@ -12,7 +13,22 @@ Tests cover:
 
 import pytest
 
-from agno.filters import AND, EQ, GT, IN, LT, NOT, OR, FilterExpr, from_dict
+from agno.filters import (
+    AND,
+    CONTAINS,
+    EQ,
+    GT,
+    GTE,
+    IN,
+    LT,
+    LTE,
+    NEQ,
+    NOT,
+    OR,
+    STARTSWITH,
+    FilterExpr,
+    from_dict,
+)
 
 
 class TestBasicOperators:
@@ -128,6 +144,209 @@ class TestBasicOperators:
         """Test LT operator with zero."""
         filter_expr = LT("balance", 0)
         assert filter_expr.value == 0
+
+
+class TestNewComparisonOperators:
+    """Test new comparison operators (NEQ, GTE, LTE)."""
+
+    def test_neq_with_string(self):
+        """Test NEQ operator with string values."""
+        filter_expr = NEQ("status", "archived")
+        assert filter_expr.key == "status"
+        assert filter_expr.value == "archived"
+        assert filter_expr.to_dict() == {
+            "op": "NEQ",
+            "key": "status",
+            "value": "archived",
+        }
+
+    def test_neq_with_int(self):
+        """Test NEQ operator with integer values."""
+        filter_expr = NEQ("priority", 0)
+        assert filter_expr.key == "priority"
+        assert filter_expr.value == 0
+        assert filter_expr.to_dict() == {"op": "NEQ", "key": "priority", "value": 0}
+
+    def test_neq_with_bool(self):
+        """Test NEQ operator with boolean values."""
+        filter_expr = NEQ("is_deleted", True)
+        assert filter_expr.key == "is_deleted"
+        assert filter_expr.value is True
+        assert filter_expr.to_dict() == {"op": "NEQ", "key": "is_deleted", "value": True}
+
+    def test_neq_with_none(self):
+        """Test NEQ operator with None value."""
+        filter_expr = NEQ("error", None)
+        assert filter_expr.key == "error"
+        assert filter_expr.value is None
+
+    def test_gte_with_int(self):
+        """Test GTE operator with integer."""
+        filter_expr = GTE("age", 18)
+        assert filter_expr.key == "age"
+        assert filter_expr.value == 18
+        assert filter_expr.to_dict() == {"op": "GTE", "key": "age", "value": 18}
+
+    def test_gte_with_float(self):
+        """Test GTE operator with float."""
+        filter_expr = GTE("score", 85.5)
+        assert filter_expr.key == "score"
+        assert filter_expr.value == 85.5
+        assert filter_expr.to_dict() == {"op": "GTE", "key": "score", "value": 85.5}
+
+    def test_gte_with_timestamp(self):
+        """Test GTE operator with ISO timestamp string."""
+        ts = "2025-01-01T00:00:00Z"
+        filter_expr = GTE("created_at", ts)
+        assert filter_expr.value == ts
+        assert filter_expr.to_dict() == {"op": "GTE", "key": "created_at", "value": ts}
+
+    def test_gte_with_zero(self):
+        """Test GTE operator with zero (boundary value)."""
+        filter_expr = GTE("duration_ms", 0)
+        assert filter_expr.value == 0
+
+    def test_lte_with_int(self):
+        """Test LTE operator with integer."""
+        filter_expr = LTE("age", 65)
+        assert filter_expr.key == "age"
+        assert filter_expr.value == 65
+        assert filter_expr.to_dict() == {"op": "LTE", "key": "age", "value": 65}
+
+    def test_lte_with_float(self):
+        """Test LTE operator with float."""
+        filter_expr = LTE("price", 99.99)
+        assert filter_expr.key == "price"
+        assert filter_expr.value == 99.99
+        assert filter_expr.to_dict() == {"op": "LTE", "key": "price", "value": 99.99}
+
+    def test_lte_with_timestamp(self):
+        """Test LTE operator with ISO timestamp string."""
+        ts = "2025-12-31T23:59:59Z"
+        filter_expr = LTE("created_at", ts)
+        assert filter_expr.value == ts
+
+    def test_lte_with_negative(self):
+        """Test LTE operator with negative number."""
+        filter_expr = LTE("temperature", -5)
+        assert filter_expr.value == -5
+
+    def test_range_with_gte_lte(self):
+        """Test range query using GTE and LTE together."""
+        filter_expr = AND(GTE("age", 18), LTE("age", 65))
+        result = filter_expr.to_dict()
+        assert result["op"] == "AND"
+        assert result["conditions"][0] == {"op": "GTE", "key": "age", "value": 18}
+        assert result["conditions"][1] == {"op": "LTE", "key": "age", "value": 65}
+
+    def test_neq_combined_with_and(self):
+        """Test NEQ in complex AND expression."""
+        filter_expr = AND(NEQ("status", "archived"), NEQ("status", "deleted"))
+        result = filter_expr.to_dict()
+        assert len(result["conditions"]) == 2
+        assert all(c["op"] == "NEQ" for c in result["conditions"])
+
+
+class TestStringMatchingOperators:
+    """Test string matching operators (CONTAINS, STARTSWITH)."""
+
+    def test_contains_basic(self):
+        """Test CONTAINS operator with basic string."""
+        filter_expr = CONTAINS("user_id", "admin")
+        assert filter_expr.key == "user_id"
+        assert filter_expr.value == "admin"
+        assert filter_expr.to_dict() == {
+            "op": "CONTAINS",
+            "key": "user_id",
+            "value": "admin",
+        }
+
+    def test_contains_with_spaces(self):
+        """Test CONTAINS operator with string containing spaces."""
+        filter_expr = CONTAINS("name", "John Doe")
+        assert filter_expr.value == "John Doe"
+
+    def test_contains_with_empty_string(self):
+        """Test CONTAINS operator with empty string."""
+        filter_expr = CONTAINS("description", "")
+        assert filter_expr.value == ""
+
+    def test_contains_case_sensitivity_note(self):
+        """Test CONTAINS stores the value as-is (case handling is in converter)."""
+        filter_expr = CONTAINS("name", "ADMIN")
+        assert filter_expr.value == "ADMIN"
+        result = filter_expr.to_dict()
+        assert result["value"] == "ADMIN"
+
+    def test_contains_with_special_characters(self):
+        """Test CONTAINS operator with special characters."""
+        filter_expr = CONTAINS("path", "/usr/local")
+        assert filter_expr.value == "/usr/local"
+
+    def test_startswith_basic(self):
+        """Test STARTSWITH operator with basic string."""
+        filter_expr = STARTSWITH("name", "Agent")
+        assert filter_expr.key == "name"
+        assert filter_expr.value == "Agent"
+        assert filter_expr.to_dict() == {
+            "op": "STARTSWITH",
+            "key": "name",
+            "value": "Agent",
+        }
+
+    def test_startswith_with_prefix(self):
+        """Test STARTSWITH operator with common prefix patterns."""
+        filter_expr = STARTSWITH("session_id", "sess_")
+        assert filter_expr.value == "sess_"
+
+    def test_startswith_with_empty_string(self):
+        """Test STARTSWITH operator with empty string."""
+        filter_expr = STARTSWITH("name", "")
+        assert filter_expr.value == ""
+
+    def test_startswith_with_unicode(self):
+        """Test STARTSWITH operator with unicode characters."""
+        filter_expr = STARTSWITH("name", "日本")
+        assert filter_expr.value == "日本"
+
+    def test_contains_in_and_expression(self):
+        """Test CONTAINS within AND expression."""
+        filter_expr = AND(
+            CONTAINS("user_id", "admin"),
+            EQ("status", "OK"),
+        )
+        result = filter_expr.to_dict()
+        assert result["op"] == "AND"
+        assert result["conditions"][0]["op"] == "CONTAINS"
+        assert result["conditions"][1]["op"] == "EQ"
+
+    def test_startswith_in_or_expression(self):
+        """Test STARTSWITH within OR expression."""
+        filter_expr = OR(
+            STARTSWITH("name", "Agent"),
+            STARTSWITH("name", "Team"),
+        )
+        result = filter_expr.to_dict()
+        assert result["op"] == "OR"
+        assert all(c["op"] == "STARTSWITH" for c in result["conditions"])
+
+    def test_contains_and_startswith_combined(self):
+        """Test combining CONTAINS and STARTSWITH in complex expression."""
+        filter_expr = AND(
+            CONTAINS("user_id", "user"),
+            STARTSWITH("agent_id", "stock_"),
+            EQ("status", "OK"),
+        )
+        result = filter_expr.to_dict()
+        assert len(result["conditions"]) == 3
+
+    def test_not_contains(self):
+        """Test NOT(CONTAINS(...)) for negated substring match."""
+        filter_expr = NOT(CONTAINS("name", "test"))
+        result = filter_expr.to_dict()
+        assert result["op"] == "NOT"
+        assert result["condition"]["op"] == "CONTAINS"
+        assert result["condition"]["value"] == "test"
 
 
 class TestLogicalOperators:
@@ -341,6 +560,54 @@ class TestSerialization:
         assert result["conditions"][1]["op"] == "OR"
         assert len(result["conditions"][1]["conditions"]) == 2
 
+    def test_neq_serialization(self):
+        """Test NEQ serialization maintains correct structure."""
+        filter_expr = NEQ("status", "archived")
+        result = filter_expr.to_dict()
+        assert result == {"op": "NEQ", "key": "status", "value": "archived"}
+
+    def test_gte_serialization(self):
+        """Test GTE serialization maintains correct structure."""
+        filter_expr = GTE("age", 18)
+        result = filter_expr.to_dict()
+        assert result == {"op": "GTE", "key": "age", "value": 18}
+
+    def test_lte_serialization(self):
+        """Test LTE serialization maintains correct structure."""
+        filter_expr = LTE("price", 100.0)
+        result = filter_expr.to_dict()
+        assert result == {"op": "LTE", "key": "price", "value": 100.0}
+
+    def test_contains_serialization(self):
+        """Test CONTAINS serialization maintains correct structure."""
+        filter_expr = CONTAINS("name", "admin")
+        result = filter_expr.to_dict()
+        assert result == {"op": "CONTAINS", "key": "name", "value": "admin"}
+
+    def test_startswith_serialization(self):
+        """Test STARTSWITH serialization maintains correct structure."""
+        filter_expr = STARTSWITH("name", "Agent")
+        result = filter_expr.to_dict()
+        assert result == {"op": "STARTSWITH", "key": "name", "value": "Agent"}
+
+    def test_complex_with_new_operators(self):
+        """Test serialization of complex expression with new operators."""
+        filter_expr = AND(
+            NEQ("status", "archived"),
+            GTE("duration_ms", 100),
+            LTE("duration_ms", 5000),
+            CONTAINS("user_id", "admin"),
+            STARTSWITH("name", "Agent"),
+        )
+        result = filter_expr.to_dict()
+        assert result["op"] == "AND"
+        assert len(result["conditions"]) == 5
+        assert result["conditions"][0]["op"] == "NEQ"
+        assert result["conditions"][1]["op"] == "GTE"
+        assert result["conditions"][2]["op"] == "LTE"
+        assert result["conditions"][3]["op"] == "CONTAINS"
+        assert result["conditions"][4]["op"] == "STARTSWITH"
+
     def test_complex_serialization_roundtrip(self):
         """Test that complex expressions serialize to valid dict structure."""
         filter_expr = OR(
@@ -398,6 +665,81 @@ class TestDeserialization:
         assert isinstance(deserialized, LT)
         assert deserialized.key == "price"
         assert deserialized.value == 100.0
+
+    def test_neq_deserialization(self):
+        """Test NEQ filter deserialization."""
+        original = NEQ("status", "archived")
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, NEQ)
+        assert deserialized.key == "status"
+        assert deserialized.value == "archived"
+
+    def test_gte_deserialization(self):
+        """Test GTE filter deserialization."""
+        original = GTE("age", 18)
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, GTE)
+        assert deserialized.key == "age"
+        assert deserialized.value == 18
+
+    def test_lte_deserialization(self):
+        """Test LTE filter deserialization."""
+        original = LTE("price", 99.99)
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, LTE)
+        assert deserialized.key == "price"
+        assert deserialized.value == 99.99
+
+    def test_contains_deserialization(self):
+        """Test CONTAINS filter deserialization."""
+        original = CONTAINS("user_id", "admin")
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, CONTAINS)
+        assert deserialized.key == "user_id"
+        assert deserialized.value == "admin"
+
+    def test_startswith_deserialization(self):
+        """Test STARTSWITH filter deserialization."""
+        original = STARTSWITH("name", "Agent")
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, STARTSWITH)
+        assert deserialized.key == "name"
+        assert deserialized.value == "Agent"
+
+    def test_invalid_neq_missing_fields(self):
+        """Test NEQ deserialization with missing fields raises ValueError."""
+        with pytest.raises(ValueError, match="NEQ filter requires"):
+            from_dict({"op": "NEQ", "key": "status"})
+
+    def test_invalid_gte_missing_fields(self):
+        """Test GTE deserialization with missing fields raises ValueError."""
+        with pytest.raises(ValueError, match="GTE filter requires"):
+            from_dict({"op": "GTE", "key": "age"})
+
+    def test_invalid_lte_missing_fields(self):
+        """Test LTE deserialization with missing fields raises ValueError."""
+        with pytest.raises(ValueError, match="LTE filter requires"):
+            from_dict({"op": "LTE", "value": 100})
+
+    def test_invalid_contains_missing_fields(self):
+        """Test CONTAINS deserialization with missing fields raises ValueError."""
+        with pytest.raises(ValueError, match="CONTAINS filter requires"):
+            from_dict({"op": "CONTAINS", "key": "name"})
+
+    def test_invalid_startswith_missing_fields(self):
+        """Test STARTSWITH deserialization with missing fields raises ValueError."""
+        with pytest.raises(ValueError, match="STARTSWITH filter requires"):
+            from_dict({"op": "STARTSWITH", "value": "Agent"})
 
     def test_and_deserialization(self):
         """Test AND filter deserialization."""
@@ -493,6 +835,32 @@ class TestDeserialization:
         with pytest.raises(ValueError, match="NOT filter requires 'condition' field"):
             from_dict({"op": "NOT"})
 
+    def test_complex_nested_with_new_operators(self):
+        """Test complex nested deserialization with new operators."""
+        original = AND(
+            NEQ("status", "archived"),
+            OR(
+                CONTAINS("user_id", "admin"),
+                STARTSWITH("agent_id", "stock_"),
+            ),
+            GTE("duration_ms", 100),
+            LTE("duration_ms", 5000),
+        )
+        serialized = original.to_dict()
+
+        deserialized = from_dict(serialized)
+        assert isinstance(deserialized, AND)
+        assert len(deserialized.expressions) == 4
+        assert isinstance(deserialized.expressions[0], NEQ)
+        assert isinstance(deserialized.expressions[1], OR)
+        assert isinstance(deserialized.expressions[2], GTE)
+        assert isinstance(deserialized.expressions[3], LTE)
+
+        # Verify nested OR
+        or_expr = deserialized.expressions[1]
+        assert isinstance(or_expr.expressions[0], CONTAINS)
+        assert isinstance(or_expr.expressions[1], STARTSWITH)
+
     def test_roundtrip_preserves_semantics(self):
         """Test that serialization -> deserialization preserves filter semantics."""
         filters = [
@@ -500,10 +868,16 @@ class TestDeserialization:
             IN("category", ["tech", "science"]),
             GT("views", 1000),
             LT("age", 65),
+            NEQ("status", "archived"),
+            GTE("age", 18),
+            LTE("price", 100.0),
+            CONTAINS("name", "admin"),
+            STARTSWITH("session_id", "sess_"),
             EQ("active", True) & GT("score", 80),
             EQ("priority", "high") | EQ("urgent", True),
             ~EQ("status", "archived"),
             (EQ("type", "article") & GT("word_count", 500)) | (EQ("type", "tutorial")),
+            AND(NEQ("status", "deleted"), GTE("duration_ms", 0), CONTAINS("user_id", "test")),
         ]
 
         for original in filters:
@@ -581,6 +955,37 @@ class TestRepr:
         filter_expr = AND(EQ("a", 1), EQ("b", 2))
         repr_str = repr(filter_expr)
         assert "AND" in repr_str
+
+    def test_neq_repr(self):
+        """Test NEQ __repr__ output."""
+        filter_expr = NEQ("status", "archived")
+        repr_str = repr(filter_expr)
+        assert "NEQ" in repr_str
+        assert "status" in repr_str
+
+    def test_gte_repr(self):
+        """Test GTE __repr__ output."""
+        filter_expr = GTE("age", 18)
+        repr_str = repr(filter_expr)
+        assert "GTE" in repr_str
+
+    def test_lte_repr(self):
+        """Test LTE __repr__ output."""
+        filter_expr = LTE("price", 99.99)
+        repr_str = repr(filter_expr)
+        assert "LTE" in repr_str
+
+    def test_contains_repr(self):
+        """Test CONTAINS __repr__ output."""
+        filter_expr = CONTAINS("name", "admin")
+        repr_str = repr(filter_expr)
+        assert "CONTAINS" in repr_str
+
+    def test_startswith_repr(self):
+        """Test STARTSWITH __repr__ output."""
+        filter_expr = STARTSWITH("name", "Agent")
+        repr_str = repr(filter_expr)
+        assert "STARTSWITH" in repr_str
 
     def test_complex_repr(self):
         """Test complex expression __repr__ is valid."""
@@ -780,3 +1185,145 @@ class TestUsagePatterns:
         filters = []
         assert isinstance(filters, list)
         assert len(filters) == 0
+
+
+class TestTraceFilterScenarios:
+    """Test real-world trace filtering scenarios matching the FE advanced filter bar."""
+
+    def test_status_equals_ok(self):
+        """Test filtering traces where status = OK."""
+        filter_expr = EQ("status", "OK")
+        result = filter_expr.to_dict()
+        assert result == {"op": "EQ", "key": "status", "value": "OK"}
+
+    def test_status_not_error(self):
+        """Test filtering traces where status != ERROR."""
+        filter_expr = NEQ("status", "ERROR")
+        result = filter_expr.to_dict()
+        assert result == {"op": "NEQ", "key": "status", "value": "ERROR"}
+
+    def test_user_id_contains(self):
+        """Test filtering traces where user_id contains 'admin'."""
+        filter_expr = CONTAINS("user_id", "admin")
+        result = filter_expr.to_dict()
+        assert result == {"op": "CONTAINS", "key": "user_id", "value": "admin"}
+
+    def test_status_ok_and_user_contains(self):
+        """Test composite: status = OK AND user_id contains 'user'."""
+        filter_expr = AND(
+            EQ("status", "OK"),
+            CONTAINS("user_id", "user"),
+        )
+        result = filter_expr.to_dict()
+        assert result["op"] == "AND"
+        assert len(result["conditions"]) == 2
+        assert result["conditions"][0] == {"op": "EQ", "key": "status", "value": "OK"}
+        assert result["conditions"][1] == {"op": "CONTAINS", "key": "user_id", "value": "user"}
+
+    def test_duration_range_filter(self):
+        """Test filtering traces by duration range (100ms to 5000ms)."""
+        filter_expr = AND(
+            GTE("duration_ms", 100),
+            LTE("duration_ms", 5000),
+        )
+        result = filter_expr.to_dict()
+        assert result["conditions"][0] == {"op": "GTE", "key": "duration_ms", "value": 100}
+        assert result["conditions"][1] == {"op": "LTE", "key": "duration_ms", "value": 5000}
+
+    def test_agent_id_startswith(self):
+        """Test filtering traces where agent_id starts with 'stock_'."""
+        filter_expr = STARTSWITH("agent_id", "stock_")
+        result = filter_expr.to_dict()
+        assert result == {"op": "STARTSWITH", "key": "agent_id", "value": "stock_"}
+
+    def test_multiple_agent_ids(self):
+        """Test filtering traces for multiple agent IDs."""
+        filter_expr = IN("agent_id", ["stock_agent", "weather_agent", "news_agent"])
+        result = filter_expr.to_dict()
+        assert result["op"] == "IN"
+        assert len(result["values"]) == 3
+
+    def test_complex_trace_search(self):
+        """Test complex trace search: (status=OK AND agent_id starts with 'stock') OR (status=ERROR AND duration > 5000)."""
+        filter_expr = OR(
+            AND(EQ("status", "OK"), STARTSWITH("agent_id", "stock")),
+            AND(EQ("status", "ERROR"), GT("duration_ms", 5000)),
+        )
+        result = filter_expr.to_dict()
+        assert result["op"] == "OR"
+        assert len(result["conditions"]) == 2
+        assert result["conditions"][0]["op"] == "AND"
+        assert result["conditions"][1]["op"] == "AND"
+
+    def test_time_range_filter(self):
+        """Test filtering traces by time range."""
+        filter_expr = AND(
+            GTE("start_time", "2025-01-01T00:00:00Z"),
+            LTE("end_time", "2025-12-31T23:59:59Z"),
+        )
+        result = filter_expr.to_dict()
+        assert result["op"] == "AND"
+        assert result["conditions"][0]["op"] == "GTE"
+        assert result["conditions"][1]["op"] == "LTE"
+
+    def test_exclude_specific_sessions(self):
+        """Test filtering traces excluding specific sessions."""
+        filter_expr = AND(
+            EQ("status", "OK"),
+            NOT(IN("session_id", ["test-session-1", "test-session-2"])),
+        )
+        result = filter_expr.to_dict()
+        assert result["op"] == "AND"
+        assert result["conditions"][1]["op"] == "NOT"
+        assert result["conditions"][1]["condition"]["op"] == "IN"
+
+    def test_workflow_traces_with_duration(self):
+        """Test filtering workflow traces with minimum duration."""
+        filter_expr = AND(
+            NEQ("workflow_id", None),
+            GTE("duration_ms", 1000),
+        )
+        result = filter_expr.to_dict()
+        assert result["op"] == "AND"
+        assert result["conditions"][0]["op"] == "NEQ"
+
+    def test_search_request_body_structure(self):
+        """Test the structure of a search request body as sent by the FE."""
+        filter_dict = AND(
+            EQ("status", "OK"),
+            CONTAINS("user_id", "admin"),
+        ).to_dict()
+
+        request_body = {
+            "filter": filter_dict,
+            "page": 1,
+            "limit": 20,
+        }
+
+        assert "filter" in request_body
+        assert request_body["filter"]["op"] == "AND"
+        assert request_body["page"] == 1
+        assert request_body["limit"] == 20
+
+    def test_all_trace_filter_operators_roundtrip(self):
+        """Test roundtrip for all operators applicable to trace filtering."""
+        trace_filters = [
+            EQ("status", "OK"),
+            NEQ("status", "ERROR"),
+            GT("duration_ms", 100),
+            GTE("duration_ms", 100),
+            LT("duration_ms", 5000),
+            LTE("duration_ms", 5000),
+            IN("status", ["OK", "ERROR"]),
+            CONTAINS("user_id", "admin"),
+            STARTSWITH("name", "Agent"),
+            AND(EQ("status", "OK"), GT("duration_ms", 0)),
+            OR(EQ("agent_id", "a1"), EQ("agent_id", "a2")),
+            NOT(EQ("status", "ERROR")),
+        ]
+
+        for original in trace_filters:
+            serialized = original.to_dict()
+            deserialized = from_dict(serialized)
+            reserialized = deserialized.to_dict()
+            assert serialized == reserialized, f"Roundtrip failed for {original}"

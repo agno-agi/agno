@@ -9,6 +9,7 @@ from tavily import TavilyClient  # noqa
 from agno.tools.tavily import TavilyTools
 
 TEST_API_KEY = os.environ.get("TAVILY_API_KEY", "test_api_key")
+TEST_API_BASE_URL = os.environ.get("TAVILY_API_BASE_URL", "https://custom.tavily.com")
 
 
 @pytest.fixture
@@ -37,9 +38,12 @@ def tavily_tools(mock_tavily_client):
 def test_init_with_env_vars():
     """Test initialization with environment variables."""
     with patch("agno.tools.tavily.TavilyClient"):
-        with patch.dict("os.environ", {"TAVILY_API_KEY": TEST_API_KEY}, clear=True):
+        with patch.dict(
+            "os.environ", {"TAVILY_API_KEY": TEST_API_KEY, "TAVILY_API_BASE_URL": TEST_API_BASE_URL}, clear=True
+        ):
             tools = TavilyTools()
             assert tools.api_key == TEST_API_KEY
+            assert tools.api_base_url == TEST_API_BASE_URL
             assert tools.search_depth == "advanced"
             assert tools.extract_depth == "basic"
             assert tools.extract_format == "markdown"
@@ -51,6 +55,7 @@ def test_init_with_params():
     with patch("agno.tools.tavily.TavilyClient"):
         tools = TavilyTools(
             api_key="param_api_key",
+            api_base_url="https://custom.tavily.com",
             search_depth="basic",
             extract_depth="advanced",
             extract_format="text",
@@ -58,6 +63,7 @@ def test_init_with_params():
             include_favicon=True,
         )
         assert tools.api_key == "param_api_key"
+        assert tools.api_base_url == "https://custom.tavily.com"
         assert tools.search_depth == "basic"
         assert tools.extract_depth == "advanced"
         assert tools.extract_format == "text"

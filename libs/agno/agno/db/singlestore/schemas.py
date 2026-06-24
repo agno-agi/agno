@@ -8,7 +8,7 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 SESSION_TABLE_SCHEMA = {
-    "session_id": {"type": lambda: String(128), "nullable": False},
+    "session_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
     "session_type": {"type": lambda: String(20), "nullable": False, "index": True},
     "agent_id": {"type": lambda: String(128), "nullable": True},
     "team_id": {"type": lambda: String(128), "nullable": True},
@@ -23,12 +23,6 @@ SESSION_TABLE_SCHEMA = {
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
-    "_unique_constraints": [
-        {
-            "name": "uq_session_id",
-            "columns": ["session_id"],
-        },
-    ],
 }
 
 USER_MEMORY_TABLE_SCHEMA = {
@@ -131,35 +125,56 @@ TRACE_TABLE_SCHEMA = {
     "created_at": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
 }
 
-SPAN_TABLE_SCHEMA = {
-    "span_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
-    "trace_id": {
-        "type": lambda: String(128),
-        "nullable": False,
-        "index": True,
-        "foreign_key": "agno_traces.trace_id",  # Foreign key to traces table
-    },
-    "parent_span_id": {"type": lambda: String(128), "nullable": True, "index": True},
-    "name": {"type": lambda: String(512), "nullable": False},
-    "span_kind": {"type": lambda: String(50), "nullable": False},
-    "status_code": {"type": lambda: String(20), "nullable": False},
-    "status_message": {"type": Text, "nullable": True},
-    "start_time": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
-    "end_time": {"type": lambda: String(64), "nullable": False},  # ISO 8601 datetime string
-    "duration_ms": {"type": BigInteger, "nullable": False},
-    "attributes": {"type": JSON, "nullable": True},
-    "created_at": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
-}
+
+def _get_span_table_schema(traces_table_name: str = "agno_traces", db_schema: str = "agno") -> dict[str, Any]:
+    """Get the span table schema with the correct foreign key reference.
+
+    Args:
+        traces_table_name: The name of the traces table to reference in the foreign key.
+        db_schema: The database schema name.
+
+    Returns:
+        The span table schema dictionary.
+    """
+    return {
+        "span_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+        "trace_id": {
+            "type": lambda: String(128),
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{db_schema}.{traces_table_name}.trace_id",
+        },
+        "parent_span_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "name": {"type": lambda: String(512), "nullable": False},
+        "span_kind": {"type": lambda: String(50), "nullable": False},
+        "status_code": {"type": lambda: String(20), "nullable": False},
+        "status_message": {"type": Text, "nullable": True},
+        "start_time": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
+        "end_time": {"type": lambda: String(64), "nullable": False},  # ISO 8601 datetime string
+        "duration_ms": {"type": BigInteger, "nullable": False},
+        "attributes": {"type": JSON, "nullable": True},
+        "created_at": {"type": lambda: String(64), "nullable": False, "index": True},  # ISO 8601 datetime string
+    }
 
 
-def get_table_schema_definition(table_type: str) -> dict[str, Any]:
+def get_table_schema_definition(
+    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
+
     Args:
         table_type (str): The type of table to get the schema for.
+        traces_table_name (str): The name of the traces table (used for spans foreign key).
+        db_schema (str): The database schema name (used for spans foreign key).
+
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
     """
+    # Handle spans table specially to resolve the foreign key reference
+    if table_type == "spans":
+        return _get_span_table_schema(traces_table_name, db_schema)
+
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
@@ -169,7 +184,6 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
-        "spans": SPAN_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

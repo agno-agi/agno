@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import List, Optional, Union, cast
 
 from fastapi import Depends, HTTPException, Query, Request
@@ -16,7 +16,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
+from agno.os.utils import get_db, to_utc_datetime
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
@@ -79,9 +79,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                         "reasoning_tokens": 0,
                                     },
                                     "model_metrics": [{"model_id": "gpt-4o", "model_provider": "OpenAI", "count": 5}],
-                                    "date": "2025-07-31T00:00:00",
-                                    "created_at": 1753993132,
-                                    "updated_at": 1753993741,
+                                    "date": "2025-07-31T00:00:00Z",
+                                    "created_at": "2025-07-31T12:38:52Z",
+                                    "updated_at": "2025-07-31T12:49:01Z",
                                 }
                             ]
                         }
@@ -121,9 +121,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
-                updated_at=datetime.fromtimestamp(latest_updated_at, tz=timezone.utc)
-                if latest_updated_at is not None
-                else None,
+                updated_at=to_utc_datetime(latest_updated_at),
             )
 
         except Exception as e:
@@ -167,9 +165,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                                     "reasoning_tokens": 0,
                                 },
                                 "model_metrics": [{"model_id": "gpt-4o", "model_provider": "OpenAI", "count": 2}],
-                                "date": "2025-08-12T00:00:00",
-                                "created_at": 1755016907,
-                                "updated_at": 1755016907,
+                                "date": "2025-08-12T00:00:00Z",
+                                "created_at": "2025-08-12T08:01:47Z",
+                                "updated_at": "2025-08-12T08:01:47Z",
                             }
                         ]
                     }

@@ -17,7 +17,7 @@ jobs:
           TITLE: "${{ github.event.pull_request.title }}"
         run: |
           TITLE_LOWER=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]')
-          REGEX='^(\[(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert)\][[:space:]]+.+|(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert):[[:space:]]+.+|(feat|fix|cookbook|test|refactor|build|ci|chore|perf|style|revert)-[a-z0-9-]+)$'
+          REGEX='^(\[(feat|fix|cookbook|test|refactor|chore|style|revert|release)\][[:space:]]+.+|(feat|fix|cookbook|test|refactor|chore|style|revert|release):[[:space:]]+.+|(feat|fix|cookbook|test|refactor|chore|style|revert|release)-[a-z0-9-]+)$'
 
           if [[ "$TITLE_LOWER" =~ $REGEX ]]; then
             echo "✅ PR Title format is valid."

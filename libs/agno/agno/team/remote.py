@@ -1,5 +1,4 @@
 import json
-import time
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Literal, Optional, Sequence, Tuple, Union, overload
 
 from pydantic import BaseModel
@@ -22,24 +21,33 @@ class RemoteTeam(BaseRemote):
     # Private cache for team config with TTL: (config, timestamp)
     _cached_team_config: Optional[Tuple["TeamResponse", float]] = None
 
+    knowledge_filters: Optional[Dict[str, Any]] = None
+    enable_agentic_knowledge_filters: Optional[bool] = False
+
     def __init__(
         self,
         base_url: str,
         team_id: str,
         timeout: float = 300.0,
+        protocol: Literal["agentos", "a2a"] = "agentos",
+        a2a_protocol: Literal["json-rpc", "rest"] = "rest",
         config_ttl: float = 300.0,
     ):
-        """Initialize AgentOSRunner for local or remote execution.
+        """Initialize RemoteTeam for remote execution.
 
-        For remote execution, provide base_url and team_id.
+        Supports two protocols:
+        - "agentos": Agno's proprietary AgentOS REST API (default)
+        - "a2a": A2A (Agent-to-Agent) protocol for cross-framework communication
 
         Args:
-            base_url: Base URL for remote AgentOS instance (e.g., "http://localhost:7777")
-            team_id: ID of remote team
+            base_url: Base URL for remote instance (e.g., "http://localhost:7777")
+            team_id: ID of remote team on the remote server
             timeout: Request timeout in seconds (default: 300)
+            protocol: Communication protocol - "agentos" (default) or "a2a"
+            a2a_protocol: For A2A protocol only - Whether to use JSON-RPC or REST protocol.
             config_ttl: Time-to-live for cached config in seconds (default: 300)
         """
-        super().__init__(base_url, timeout, config_ttl)
+        super().__init__(base_url, timeout, protocol, a2a_protocol, config_ttl)
         self.team_id = team_id
         self._cached_team_config = None
 
@@ -48,48 +56,95 @@ class RemoteTeam(BaseRemote):
         return self.team_id
 
     async def get_team_config(self) -> "TeamResponse":
-        """Get the team config from remote (always fetches fresh)."""
-        return await self.client.aget_team(self.team_id)
+        """
+        Get the team config from remote.
 
-    @property
-    def _team_config(self) -> "TeamResponse":
-        """Get the team config from remote, cached with TTL."""
+        - For AgentOS protocol, always fetches fresh config from the remote.
+        - For A2A protocol, returns a minimal TeamResponse because A2A servers
+          do not expose detailed config endpoints.
+
+        Returns:
+            TeamResponse: The remote team configuration.
+        """
         from agno.os.routers.teams.schema import TeamResponse
 
-        current_time = time.time()
+        if self.a2a_client:
+            from agno.client.a2a.schemas import AgentCard
 
-        # Check if cache is valid
+            agent_card: Optional[AgentCard] = await self.a2a_client.aget_agent_card()
+
+            return TeamResponse(
+                id=self.team_id,
+                name=agent_card.name if agent_card else self.team_id,
+                description=agent_card.description if agent_card else f"A2A team: {self.team_id}",
+            )
+
+        # Fetch fresh config from remote for AgentOS
+        return await self.agentos_client.aget_team(self.team_id)  # type: ignore
+
+    @property
+    def _team_config(self) -> Optional["TeamResponse"]:
+        """
+        Get the team config from remote, cached with TTL.
+
+        - Returns None for A2A protocol (no config available).
+        - For AgentOS protocol, uses TTL caching for efficiency.
+        """
+        import time
+
+        from agno.os.routers.teams.schema import TeamResponse
+
+        if self.a2a_client:
+            from agno.client.a2a.schemas import AgentCard
+
+            agent_card: Optional[AgentCard] = self.a2a_client.get_agent_card()
+
+            return TeamResponse(
+                id=self.team_id,
+                name=agent_card.name if agent_card else self.team_id,
+                description=agent_card.description if agent_card else f"A2A team: {self.team_id}",
+            )
+
+        current_time = time.time()
         if self._cached_team_config is not None:
             config, cached_at = self._cached_team_config
             if current_time - cached_at < self.config_ttl:
                 return config
 
-        # Fetch fresh config
-        config: TeamResponse = self.client.get_team(self.team_id)  # type: ignore
+        # Fetch fresh config and update cache
+        config: TeamResponse = self.agentos_client.get_team(self.team_id)  # type: ignore
         self._cached_team_config = (config, current_time)
         return config
 
-    def refresh_config(self) -> "TeamResponse":
-        """Force refresh the cached team config."""
+    async def refresh_config(self) -> Optional["TeamResponse"]:
+        """
+        Force refresh the cached team config from remote.
+        """
+        import time
+
         from agno.os.routers.teams.schema import TeamResponse
 
-        config: TeamResponse = self.client.get_team(self.team_id)  # type: ignore
+        if self.a2a_client:
+            return None
+
+        config: TeamResponse = await self.agentos_client.aget_team(self.team_id)  # type: ignore
         self._cached_team_config = (config, time.time())
         return config
 
     @property
     def name(self) -> Optional[str]:
-        if self._team_config is not None:
-            return self._team_config.name
-        return None
+        config = self._team_config
+        if config is not None:
+            return config.name
+        return self.team_id
 
     @property
     def description(self) -> Optional[str]:
-        if self._team_config is not None:
-            return self._team_config.description
-        return None
+        config = self._team_config
+        if config is not None:
+            return config.description
+        return ""
 
-    @property
     def role(self) -> Optional[str]:
         if self._team_config is not None:
             return self._team_config.role
@@ -101,16 +156,21 @@ class RemoteTeam(BaseRemote):
             try:
                 return json.loads(self._team_config.tools["tools"]) if self._team_config.tools else None
             except Exception as e:
-                log_warning(f"Failed to load tools for team {self.team_id}: {e}")
+                log_warning(f"Failed to load tools for team {self.team_id}: {str(e)}")
                 return None
         return None
 
     @property
     def db(self) -> Optional[RemoteDb]:
-        if self._team_config is not None and self._team_config.db_id is not None:
+        if (
+            self.agentos_client
+            and self._config
+            and self._team_config is not None
+            and self._team_config.db_id is not None
+        ):
             return RemoteDb.from_config(
                 db_id=self._team_config.db_id,
-                client=self.client,
+                client=self.agentos_client,
                 config=self._config,
             )
         return None
@@ -118,12 +178,12 @@ class RemoteTeam(BaseRemote):
     @property
     def knowledge(self) -> Optional[RemoteKnowledge]:
         """Whether the team has knowledge enabled."""
-        if self._team_config is not None and self._team_config.knowledge is not None:
+        if self.agentos_client and self._team_config is not None and self._team_config.knowledge is not None:
             return RemoteKnowledge(
-                client=self.client,
+                client=self.agentos_client,
                 contents_db=RemoteDb(
                     id=self._team_config.knowledge.get("db_id"),  # type: ignore
-                    client=self.client,
+                    client=self.agentos_client,
                     knowledge_table_name=self._team_config.knowledge.get("knowledge_table"),
                 )
                 if self._team_config.knowledge.get("db_id") is not None
@@ -219,53 +279,156 @@ class RemoteTeam(BaseRemote):
         serialized_input = serialize_input(validated_input)
         headers = self._get_auth_headers(auth_token)
 
-        if stream:
-            # Handle streaming response
-            return self.get_client().run_team_stream(  # type: ignore
-                team_id=self.team_id,
+        # A2A protocol path
+        if self.a2a_client:
+            return self._arun_a2a(  # type: ignore[return-value]
                 message=serialized_input,
-                session_id=session_id,
+                stream=stream or False,
                 user_id=user_id,
+                context_id=session_id,  # Map session_id → context_id for A2A
                 audio=audio,
                 images=images,
                 videos=videos,
                 files=files,
-                session_state=session_state,
-                stream_events=stream_events,
-                retries=retries,
-                knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history_to_context,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                dependencies=dependencies,
-                metadata=metadata,
                 headers=headers,
-                **kwargs,
-            )
-        else:
-            return self.get_client().run_team(  # type: ignore
-                team_id=self.team_id,
-                message=serialized_input,
-                session_id=session_id,
-                user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                session_state=session_state,
-                stream_events=stream_events,
-                retries=retries,
-                knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history_to_context,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
-                dependencies=dependencies,
-                metadata=metadata,
-                headers=headers,
-                **kwargs,
             )
 
-    async def cancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
+        # AgentOS protocol path (default)
+        if self.agentos_client:
+            if stream:
+                # Handle streaming response
+                return self.agentos_client.run_team_stream(  # type: ignore
+                    team_id=self.team_id,
+                    message=serialized_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    session_state=session_state,
+                    stream_events=stream_events,
+                    retries=retries,
+                    knowledge_filters=knowledge_filters,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    headers=headers,
+                    **kwargs,
+                )
+            else:
+                return self.agentos_client.run_team(  # type: ignore
+                    team_id=self.team_id,
+                    message=serialized_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    session_state=session_state,
+                    stream_events=stream_events,
+                    retries=retries,
+                    knowledge_filters=knowledge_filters,
+                    add_history_to_context=add_history_to_context,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    headers=headers,
+                    **kwargs,
+                )
+        else:
+            raise ValueError("No client available")
+
+    def _arun_a2a(
+        self,
+        message: str,
+        stream: bool,
+        user_id: Optional[str],
+        context_id: Optional[str],
+        audio: Optional[Sequence[Audio]],
+        images: Optional[Sequence[Image]],
+        videos: Optional[Sequence[Video]],
+        files: Optional[Sequence[File]],
+        headers: Optional[Dict[str, str]],
+    ) -> Union[TeamRunOutput, AsyncIterator[TeamRunOutputEvent]]:
+        """Execute via A2A protocol.
+
+        Args:
+            message: Serialized message string
+            stream: Whether to stream the response
+            user_id: User identifier
+            context_id: Session/context ID (maps to session_id)
+            audio: Audio files to include
+            images: Images to include
+            videos: Videos to include
+            files: Files to include
+            headers: HTTP headers to include in the request (optional)
+        Returns:
+            TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming
+        """
+        from agno.client.a2a.utils import map_stream_events_to_team_run_events
+
+        if not self.a2a_client:
+            raise ValueError("A2A client not available")
+        if stream:
+            # Return async generator for streaming
+            event_stream = self.a2a_client.stream_message(
+                message=message,
+                context_id=context_id,
+                user_id=user_id,
+                audio=list(audio) if audio else None,
+                images=list(images) if images else None,
+                videos=list(videos) if videos else None,
+                files=list(files) if files else None,
+                headers=headers,
+            )
+            return map_stream_events_to_team_run_events(event_stream, team_id=self.team_id)
+        else:
+            # Return coroutine for non-streaming
+            return self._arun_a2a_send(  # type: ignore[return-value]
+                message=message,
+                user_id=user_id,
+                context_id=context_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                headers=headers,
+            )
+
+    async def _arun_a2a_send(
+        self,
+        message: str,
+        user_id: Optional[str],
+        context_id: Optional[str],
+        audio: Optional[Sequence[Audio]],
+        images: Optional[Sequence[Image]],
+        videos: Optional[Sequence[Video]],
+        files: Optional[Sequence[File]],
+        headers: Optional[Dict[str, str]],
+    ) -> TeamRunOutput:
+        """Send a non-streaming A2A message and convert response to TeamRunOutput."""
+        if not self.a2a_client:
+            raise ValueError("A2A client not available")
+        from agno.client.a2a.utils import map_task_result_to_team_run_output
+
+        task_result = await self.a2a_client.send_message(
+            message=message,
+            context_id=context_id,
+            user_id=user_id,
+            images=list(images) if images else None,
+            audio=list(audio) if audio else None,
+            videos=list(videos) if videos else None,
+            files=list(files) if files else None,
+            headers=headers,
+        )
+        return map_task_result_to_team_run_output(task_result, team_id=self.team_id, user_id=user_id)
+
+    async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
         """Cancel a running team execution.
 
         Args:
@@ -277,7 +440,7 @@ class RemoteTeam(BaseRemote):
         """
         headers = self._get_auth_headers(auth_token)
         try:
-            await self.get_client().cancel_team_run(
+            await self.agentos_client.cancel_team_run(  # type: ignore
                 team_id=self.team_id,
                 run_id=run_id,
                 headers=headers,
@@ -285,3 +448,81 @@ class RemoteTeam(BaseRemote):
             return True
         except Exception:
             return False
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Literal[False] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def acontinue_run(
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Literal[True] = True,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[TeamRunOutputEvent]: ...
+
+    def acontinue_run(  # type: ignore
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Union[
+        TeamRunOutput,
+        AsyncIterator[TeamRunOutputEvent],
+    ]:
+        """Continue a paused team run with requirements (e.g., tool approval results).
+
+        Args:
+            run_id: The run_id to continue.
+            requirements: List of RunRequirement objects with tool execution results.
+            stream: Whether to stream the response.
+            user_id: Optional user ID.
+            session_id: Optional session ID.
+            auth_token: Optional JWT token for authentication.
+            **kwargs: Additional parameters.
+
+        Returns:
+            TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming.
+        """
+        headers = self._get_auth_headers(auth_token)
+
+        if self.agentos_client:
+            if stream:
+                # Handle streaming response
+                return self.agentos_client.continue_team_run_stream(  # type: ignore
+                    team_id=self.team_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    requirements=requirements,
+                    headers=headers,
+                    **kwargs,
+                )
+            else:
+                return self.agentos_client.continue_team_run(  # type: ignore
+                    team_id=self.team_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    requirements=requirements,
+                    headers=headers,
+                    **kwargs,
+                )
+        else:
+            raise ValueError("No client available for continue_run. A2A protocol does not support continue_run.")

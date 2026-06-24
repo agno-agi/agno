@@ -1,18 +1,18 @@
 """JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
 
 import fnmatch
+import hmac
 import json
 import re
 from enum import Enum
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
 
-import jwt
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
     get_accessible_resource_ids,
@@ -20,6 +20,9 @@ from agno.os.scopes import (
     has_required_scopes,
 )
 from agno.utils.log import log_debug, log_warning
+
+if TYPE_CHECKING:
+    from jwt import PyJWK
 
 
 class TokenSource(str, Enum):
@@ -107,8 +110,8 @@ class JWTValidator:
         if env_key and env_key not in self.verification_keys:
             self.verification_keys.append(env_key)
 
-        # JWKS configuration - load keys from JWKS file or environment variable
-        self.jwks_keys: Dict[str, PyJWK] = {}  # kid -> PyJWK mapping
+        # JWKS configuration - load keys from JWKS file or environment variable.
+        self.jwks_keys: "Dict[str, PyJWK]" = {}
 
         # Try jwks_file parameter first
         if jwks_file:
@@ -151,6 +154,8 @@ class JWTValidator:
         Args:
             jwks_data: Parsed JWKS dictionary with "keys" array
         """
+        from jwt import PyJWK
+
         keys = jwks_data.get("keys", [])
         if not keys:
             log_warning("JWKS contains no keys")
@@ -166,9 +171,11 @@ class JWTValidator:
                     # If no kid, use a default key (for single-key JWKS)
                     self.jwks_keys["_default"] = jwk
             except Exception as e:
-                log_warning(f"Failed to parse JWKS key: {e}")
+                log_warning(f"Failed to parse JWKS key: {str(e)}")
 
-    def validate_token(self, token: str, expected_audience: Optional[str] = None) -> Dict[str, Any]:
+    def validate_token(
+        self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
+    ) -> Dict[str, Any]:
         """
         Validate JWT token and extract claims.
 
@@ -184,6 +191,8 @@ class JWTValidator:
             jwt.ExpiredSignatureError: If token has expired
             jwt.InvalidTokenError: If token is invalid
         """
+        import jwt
+
         decode_options: Dict[str, Any] = {}
         decode_kwargs: Dict[str, Any] = {
             "algorithms": [self.algorithm],
@@ -191,10 +200,9 @@ class JWTValidator:
         }
 
         # Configure audience verification
-        if expected_audience:
-            decode_kwargs["audience"] = expected_audience
-        else:
-            decode_options["verify_aud"] = False
+        # We'll decode without audience verification and if we need to verify the audience,
+        # we'll manually verify the audience to provide better error messages
+        decode_options["verify_aud"] = False
 
         # If validation is disabled, decode without signature verification
         if not self.validate:
@@ -206,6 +214,7 @@ class JWTValidator:
             decode_kwargs["options"] = decode_options
 
         last_exception: Optional[Exception] = None
+        payload: Optional[Dict[str, Any]] = None
 
         # Try JWKS keys first if configured
         if self.jwks_keys:
@@ -222,9 +231,7 @@ class JWTValidator:
                     jwk = self.jwks_keys["_default"]
 
                 if jwk:
-                    return jwt.decode(token, jwk.key, **decode_kwargs)
-            except jwt.InvalidAudienceError:
-                raise
+                    payload = jwt.decode(token, jwk.key, **decode_kwargs)
             except jwt.ExpiredSignatureError:
                 raise
             except jwt.InvalidTokenError as e:
@@ -233,20 +240,54 @@ class JWTValidator:
                 last_exception = e
 
         # Try each static verification key until one succeeds
-        for key in self.verification_keys:
-            try:
-                return jwt.decode(token, key, **decode_kwargs)
-            except jwt.InvalidAudienceError:
-                raise
-            except jwt.ExpiredSignatureError:
-                raise
-            except jwt.InvalidTokenError as e:
-                last_exception = e
-                continue
+        if payload is None:
+            for key in self.verification_keys:
+                try:
+                    payload = jwt.decode(token, key, **decode_kwargs)
+                    break
+                except jwt.ExpiredSignatureError:
+                    raise
+                except jwt.InvalidTokenError as e:
+                    last_exception = e
+                    continue
 
-        if last_exception:
-            raise last_exception
-        raise jwt.InvalidTokenError("No verification keys configured")
+        if payload is None:
+            if last_exception:
+                raise last_exception
+            raise jwt.InvalidTokenError("No verification keys configured")
+
+        # Manually verify audience if expected_audience was provided
+        if expected_audience:
+            token_audience = payload.get(self.audience_claim)
+            if token_audience is None:
+                raise jwt.InvalidTokenError(
+                    f'Token is missing the "{self.audience_claim}" claim. '
+                    f"Audience verification requires this claim to be present in the token."
+                )
+
+            # Normalize expected_audience to a list
+            if isinstance(expected_audience, str):
+                expected_audiences = [expected_audience]
+            elif isinstance(expected_audience, Iterable):
+                expected_audiences = list(expected_audience)
+            else:
+                expected_audiences = []
+
+            # Normalize token_audience to a list
+            if isinstance(token_audience, str):
+                token_audiences = [token_audience]
+            elif isinstance(token_audience, list):
+                token_audiences = token_audience
+            else:
+                token_audiences = [token_audience] if token_audience else []
+
+            # Check if any token audience matches any expected audience
+            if not any(aud in expected_audiences for aud in token_audiences):
+                raise jwt.InvalidAudienceError(
+                    f"Invalid audience. Expected one of: {expected_audiences}, got: {token_audiences}"
+                )
+
+        return payload
 
     def extract_claims(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -286,7 +327,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
     7. Returns 401 for invalid tokens, 403 for insufficient scopes
 
     RBAC is opt-in: Only enabled when authorization=True or scope_mappings are provided.
-    Without authorization enabled, the middleware only extracts and validates JWT tokens.
+    Without authorization enabled, the middleware only extracts and validates JWT tokens —
+    endpoints return 200 regardless of scopes. Pass `authorization=True` (or set it via
+    AgentOS(authorization=True)) to enforce the default scope map.
 
     Audience Verification:
     - The `aud` claim in JWT tokens should contain the AgentOS ID
@@ -364,12 +407,14 @@ class JWTMiddleware(BaseHTTPMiddleware):
         user_id_claim: str = "sub",
         session_id_claim: str = "session_id",
         audience_claim: str = "aud",
+        audience: Optional[Union[str, Iterable[str]]] = None,
         verify_audience: bool = False,
         dependencies_claims: Optional[List[str]] = None,
         session_state_claims: Optional[List[str]] = None,
         scope_mappings: Optional[Dict[str, List[str]]] = None,
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
+        user_isolation: bool = False,
     ):
         """
         Initialize the JWT middleware.
@@ -400,7 +445,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             user_id_claim: JWT claim name for user ID (default: "sub")
             session_id_claim: JWT claim name for session ID (default: "session_id")
             audience_claim: JWT claim name for audience/OS ID (default: "aud")
-            verify_audience: Whether to verify the audience claim matches AgentOS ID (default: False)
+            audience: Optional expected audience claim to validate against the token's audience claim (default: AgentOS ID)
+            verify_audience: Whether to verify the token's audience claim matches the expected audience claim (default: False)
             dependencies_claims: A list of claims to extract from the JWT token for dependencies
             session_state_claims: A list of claims to extract from the JWT token for session state
             scope_mappings: Optional dictionary mapping route patterns to required scopes.
@@ -410,6 +456,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
                            Format: {"POST /agents/*/runs": ["agents:run"], "GET /public": []}
             excluded_route_paths: List of route paths to exclude from JWT/RBAC checks
             admin_scope: The scope that grants admin access (default: "agent_os:admin")
+            user_isolation: Opt in to per-user data isolation (default False).
+                When True, route handlers wrap the DB in a per-request scoped
+                adapter and enforce session/run ownership on non-admin callers.
+                When False (the default) JWT and RBAC still apply but
+                ownership/scoping gates stay dormant — preserves backwards
+                compatibility with deployments that handle isolation in their
+                own application layer.
 
         Note:
             - At least one verification key or JWKS file must be provided if validate=True
@@ -453,6 +506,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.dependencies_claims: List[str] = dependencies_claims or []
         self.session_state_claims: List[str] = session_state_claims or []
 
+        self.audience = audience
+
         # RBAC configuration (opt-in via scope_mappings)
         self.authorization = authorization
 
@@ -475,12 +530,14 @@ class JWTMiddleware(BaseHTTPMiddleware):
             excluded_route_paths if excluded_route_paths is not None else self._get_default_excluded_routes()
         )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
+        self.user_isolation = user_isolation
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
         return [
             "/",
             "/health",
+            "/info",
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -597,8 +654,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
         detail: str,
         origin: Optional[str] = None,
         cors_allowed_origins: Optional[List[str]] = None,
+        required_scopes: Optional[List[str]] = None,
     ) -> JSONResponse:
         """Create an error response with CORS headers."""
+        if required_scopes:
+            detail = build_insufficient_permissions_detail(required_scopes)
         response = JSONResponse(status_code=status_code, content={"detail": detail})
 
         # Add CORS headers to the error response
@@ -622,6 +682,26 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
+        import jwt
+
+        # Ensure the JWT auth config is accessible on app.state for WebSocket
+        # endpoints (which don't flow through this middleware) and any other
+        # components that need it outside the middleware chain. This handles
+        # both built-in (AgentOS authorization=True) and manual
+        # (app.add_middleware(JWTMiddleware, ...)) setup paths.
+        #
+        # All these values must be cached together: resolve_ws_jwt_config
+        # returns early once it sees ``jwt_validator``, so without the
+        # companion fields a manual-setup WebSocket connection arriving after
+        # the first HTTP request would silently drop verify_audience, the
+        # custom admin scope, and the user_isolation flag.
+        if not getattr(request.app.state, "jwt_validator", None):
+            request.app.state.jwt_validator = self.validator
+            request.app.state.jwt_verify_audience = self.verify_audience
+            request.app.state.jwt_audience = self.audience
+            request.app.state.admin_scope = self.admin_scope
+            request.app.state.user_isolation_enabled = self.user_isolation
+
         path = request.url.path
         method = request.method
 
@@ -646,9 +726,46 @@ class JWTMiddleware(BaseHTTPMiddleware):
             error_msg = self._get_missing_token_error_message()
             return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
 
+        # Check for internal service token (used by scheduler executor)
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_token and hmac.compare_digest(token, internal_token):
+            request.state.authenticated = True
+            request.state.user_id = "__scheduler__"
+            request.state.session_id = None
+            internal_scopes = list(INTERNAL_SERVICE_SCOPES)
+            request.state.scopes = internal_scopes
+            request.state.authorization_enabled = self.authorization or False
+            request.state.admin_scope = self.admin_scope
+            request.state.user_isolation_enabled = self.user_isolation
+
+            # Enforce RBAC for internal token (do not skip scope checks)
+            if self.authorization:
+                required_scopes = self._get_required_scopes(method, path)
+                if required_scopes:
+                    if not has_required_scopes(
+                        internal_scopes,
+                        required_scopes,
+                        admin_scope=self.admin_scope,
+                    ):
+                        log_warning(
+                            f"Internal service token denied for {method} {path}. "
+                            f"Required: {required_scopes}, Token has: {internal_scopes}"
+                        )
+                        return self._create_error_response(
+                            403,
+                            "Insufficient permissions",
+                            origin,
+                            cors_allowed_origins,
+                            required_scopes=required_scopes,
+                        )
+
+            return await call_next(request)
+
         try:
             # Validate token and extract claims (with audience verification if configured)
-            expected_audience = agent_os_id if self.verify_audience else None
+            expected_audience = None
+            if self.verify_audience:
+                expected_audience = self.audience or agent_os_id
             payload: Dict[str, Any] = self.validator.validate_token(token, expected_audience)  # type: ignore
 
             # Extract standard claims and store in request.state
@@ -668,8 +785,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.session_id = session_id
             request.state.scopes = scopes
+            request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
+            # Expose admin scope so downstream helpers (e.g. get_scoped_user_id)
+            # honour custom admin scopes configured via JWTMiddleware(admin_scope=...).
+            request.state.admin_scope = self.admin_scope
+            # Per-user isolation is opt-in. get_scoped_user_id short-circuits
+            # to None when this is False, so the DB wrapper and route-level
+            # ownership gates stay dormant.
+            request.state.user_isolation_enabled = self.user_isolation
 
             # Extract dependencies claims
             dependencies = {}
@@ -710,6 +835,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     resource_id = self._extract_resource_id_from_path(path, resource_type)
 
                 required_scopes = self._get_required_scopes(method, path)
+                request.state.required_scopes = required_scopes
 
                 # Empty list [] means no scopes required (allow access)
                 if required_scopes:
@@ -725,9 +851,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     # Special handling for listing endpoints (no resource_id)
                     if not has_access and not resource_id and resource_type:
                         # For listing endpoints, always allow access but store accessible IDs for filtering
-                        # This allows endpoints to return filtered results (including empty list) instead of 403
+                        # This allows endpoints to return filtered results (including empty list) instead of 403.
+                        # Pass the action from required_scopes (e.g. "read" for "agents:read") so the cached
+                        # IDs only include resources the user is authorised for under that action — otherwise
+                        # a user with only `agents:run` would leak through `GET /agents`.
+                        required_action: Optional[str] = None
+                        first_required = required_scopes[0]
+                        if ":" in first_required:
+                            required_action = first_required.rsplit(":", 1)[1]
                         accessible_ids = get_accessible_resource_ids(
-                            scopes, resource_type, admin_scope=self.admin_scope
+                            scopes, resource_type, admin_scope=self.admin_scope, action=required_action
                         )
                         has_access = True  # Always allow listing endpoints
                         request.state.accessible_resource_ids = accessible_ids
@@ -742,7 +875,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
                             f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
                         )
                         return self._create_error_response(
-                            403, "Insufficient permissions", origin, cors_allowed_origins
+                            403,
+                            "Insufficient permissions",
+                            origin,
+                            cors_allowed_origins,
+                            required_scopes=required_scopes,
                         )
 
                     log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")
@@ -754,12 +891,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.token = token
             request.state.authenticated = True
 
-        except jwt.InvalidAudienceError:
-            log_warning(f"Invalid audience - expected: {agent_os_id}")
+        except jwt.InvalidAudienceError as e:
+            log_warning(f"Invalid token audience - expected: {expected_audience}: {str(e)}")
             return self._create_error_response(
-                401, "Invalid audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
+                401, "Invalid token audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
             )
-
         except jwt.ExpiredSignatureError as e:
             if self.validate:
                 log_warning(f"Token has expired: {str(e)}")

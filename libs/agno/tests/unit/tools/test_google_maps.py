@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.tools.google_maps import GoogleMapTools
+from agno.tools.google.maps import GoogleMapTools
 
 # Mock responses
 MOCK_PLACES_RESPONSE = {

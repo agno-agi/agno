@@ -19,14 +19,18 @@ except ImportError:
 class YouTubeReader(Reader):
     """Reader for YouTube video transcripts"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RecursiveChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = RecursiveChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for YouTube readers."""
         return [
             ChunkingStrategyType.RECURSIVE_CHUNKER,
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
             ChunkingStrategyType.SEMANTIC_CHUNKER,
@@ -34,7 +38,7 @@ class YouTubeReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.YOUTUBE]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
@@ -71,8 +75,8 @@ class YouTubeReader(Reader):
             return documents
 
         except Exception as e:
-            log_error(f"Error reading transcript for {url}: {e}")
+            log_error(f"Error reading transcript for {url}: {str(e)}")
             return []
 
     async def async_read(self, url: str) -> List[Document]:
-        return await asyncio.get_event_loop().run_in_executor(None, self.read, url)
+        return await asyncio.get_running_loop().run_in_executor(None, self.read, url)

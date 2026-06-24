@@ -1,10 +1,11 @@
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.reasoning.step import NextAction, ReasoningStep
+from agno.run.base import RunContext
 from agno.run.messages import RunMessages
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 
 def get_reasoning_agent(
@@ -12,9 +13,7 @@ def get_reasoning_agent(
     telemetry: bool = False,
     debug_mode: bool = False,
     debug_level: Literal[1, 2] = 1,
-    session_state: Optional[Dict[str, Any]] = None,
-    dependencies: Optional[Dict[str, Any]] = None,
-    metadata: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
 ) -> "Agent":  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
@@ -23,9 +22,9 @@ def get_reasoning_agent(
         telemetry=telemetry,
         debug_mode=debug_mode,
         debug_level=debug_level,
-        session_state=session_state,
-        dependencies=dependencies,
-        metadata=metadata,
+        session_state=run_context.session_state if run_context else None,
+        dependencies=run_context.dependencies if run_context else None,
+        metadata=run_context.metadata if run_context else None,
     )
 
 
@@ -34,8 +33,8 @@ def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
     if isinstance(next_action, str):
         try:
             return NextAction(next_action)
-        except ValueError:
-            logger.warning(f"Reasoning error. Invalid next action: {next_action}")
+        except ValueError as e:
+            log_warning(f"Reasoning error. Invalid next action: {next_action}: {str(e)}")
             return NextAction.FINAL_ANSWER
     return next_action
 

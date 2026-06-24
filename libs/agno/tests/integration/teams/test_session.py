@@ -16,7 +16,7 @@ def team_factory(shared_db, session_id: Optional[str] = None, session_state: Opt
         session_state=session_state,
         members=[],
         db=shared_db,
-        enable_user_memories=True,
+        update_memory_on_run=True,
         markdown=True,
         telemetry=False,
     )

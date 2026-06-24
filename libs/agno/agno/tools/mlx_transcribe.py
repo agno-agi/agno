@@ -17,10 +17,10 @@ provides high-quality transcription capabilities.
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     import mlx_whisper
@@ -33,9 +33,10 @@ class MLXTranscribeTools(Toolkit):
         self,
         base_dir: Optional[Path] = None,
         enable_read_files_in_base_dir: bool = True,
+        restrict_to_base_dir: bool = True,
         path_or_hf_repo: str = "mlx-community/whisper-large-v3-turbo",
         verbose: Optional[bool] = None,
-        temperature: Optional[Union[float, Tuple[float, ...]]] = None,
+        temperature: Optional[Union[float, tuple[float, ...]]] = None,
         compression_ratio_threshold: Optional[float] = None,
         logprob_threshold: Optional[float] = None,
         no_speech_threshold: Optional[float] = None,
@@ -50,10 +51,11 @@ class MLXTranscribeTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        self.base_dir: Path = base_dir or Path.cwd()
+        self.base_dir: Path = (base_dir or Path.cwd()).resolve()
+        self.restrict_to_base_dir = restrict_to_base_dir
         self.path_or_hf_repo: str = path_or_hf_repo
         self.verbose: Optional[bool] = verbose
-        self.temperature: Optional[Union[float, Tuple[float, ...]]] = temperature
+        self.temperature: Optional[Union[float, tuple[float, ...]]] = temperature
         self.compression_ratio_threshold: Optional[float] = compression_ratio_threshold
         self.logprob_threshold: Optional[float] = logprob_threshold
         self.no_speech_threshold: Optional[float] = no_speech_threshold
@@ -83,9 +85,10 @@ class MLXTranscribeTools(Toolkit):
             str: The transcribed text or an error message if the transcription fails.
         """
         try:
-            audio_file_path = str(self.base_dir.joinpath(file_name))
-            if audio_file_path is None:
-                return "No audio file path provided"
+            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            if not safe:
+                return f"Error: Path '{file_name}' is outside the allowed base directory"
+            audio_file_path = str(file_path)
 
             log_info(f"Transcribing audio file {audio_file_path}")
             transcription_kwargs: Dict[str, Any] = {
@@ -122,7 +125,7 @@ class MLXTranscribeTools(Toolkit):
             return transcription.get("text", "")
         except Exception as e:
             _e = f"Failed to transcribe audio file {e}"
-            logger.error(_e)
+            log_error(_e)
             return _e
 
     def read_files(self) -> str:
@@ -135,5 +138,5 @@ class MLXTranscribeTools(Toolkit):
             log_info(f"Reading files in : {self.base_dir}")
             return json.dumps([str(file_name) for file_name in self.base_dir.iterdir()], indent=4)
         except Exception as e:
-            logger.error(f"Error reading files: {e}")
+            logger.exception("Error reading files")
             return f"Error reading files: {e}"

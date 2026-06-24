@@ -17,13 +17,17 @@ class JSONReader(Reader):
 
     chunk: bool = False
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for JSON readers."""
         return [
+            ChunkingStrategyType.CODE_CHUNKER,
             ChunkingStrategyType.FIXED_SIZE_CHUNKER,
             ChunkingStrategyType.AGENTIC_CHUNKER,
             ChunkingStrategyType.DOCUMENT_CHUNKER,
@@ -32,7 +36,7 @@ class JSONReader(Reader):
         ]
 
     @classmethod
-    def get_supported_content_types(self) -> List[ContentType]:
+    def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.JSON]
 
     def read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -59,7 +63,7 @@ class JSONReader(Reader):
                     name=json_name,
                     id=str(uuid4()),
                     meta_data={"page": page_number},
-                    content=json.dumps(content),
+                    content=json.dumps(content, ensure_ascii=False),
                 )
                 for page_number, content in enumerate(json_contents, start=1)
             ]
@@ -72,7 +76,7 @@ class JSONReader(Reader):
         except (FileNotFoundError, ValueError, json.JSONDecodeError):
             raise
         except Exception as e:
-            log_error(f"Error reading: {path}: {e}")
+            log_error(f"Error reading: {path}: {str(e)}")
             raise
 
     async def async_read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:

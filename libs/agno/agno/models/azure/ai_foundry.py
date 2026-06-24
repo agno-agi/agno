@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
@@ -140,11 +140,12 @@ class AzureAIFoundry(Model):
         if not self.azure_endpoint:
             log_error("AZURE_ENDPOINT not set. Please set the AZURE_ENDPOINT environment variable.")
 
-        base_params = {
+        base_params: Dict[str, Any] = {
             "endpoint": self.azure_endpoint,
-            "credential": AzureKeyCredential(self.api_key),
             "api_version": self.api_version,
         }
+        if self.api_key:
+            base_params["credential"] = AzureKeyCredential(self.api_key)
 
         # Create client_params dict with non-None values
         client_params = {k: v for k, v in base_params.items() if v is not None}
@@ -213,9 +214,6 @@ class AzureAIFoundry(Model):
         Send a chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().complete(
                 messages=[format_message(m, compress_tool_results) for m in messages],
@@ -228,7 +226,7 @@ class AzureAIFoundry(Model):
             return model_response
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -236,7 +234,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -254,9 +252,6 @@ class AzureAIFoundry(Model):
         """
 
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().complete(
                 messages=[format_message(m, compress_tool_results) for m in messages],
@@ -269,7 +264,7 @@ class AzureAIFoundry(Model):
             return model_response
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -277,7 +272,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -294,9 +289,6 @@ class AzureAIFoundry(Model):
         Send a streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().complete(
@@ -309,7 +301,7 @@ class AzureAIFoundry(Model):
             assistant_message.metrics.stop_timer()
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -317,7 +309,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -334,9 +326,6 @@ class AzureAIFoundry(Model):
         Sends an asynchronous streaming chat completion request to the Azure AI API.
         """
         try:
-            if run_response and run_response.metrics:
-                run_response.metrics.set_time_to_first_token()
-
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().complete(
@@ -350,7 +339,7 @@ class AzureAIFoundry(Model):
             assistant_message.metrics.stop_timer()
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -358,7 +347,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _parse_provider_response(self, response: ChatCompletions, **kwargs) -> ModelResponse:
@@ -404,7 +393,7 @@ class AzureAIFoundry(Model):
                 model_response.response_usage = self._get_metrics(response.usage)
 
         except Exception as e:
-            log_error(f"Error parsing Azure AI response: {e}")
+            log_error(f"Error parsing Azure AI response: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
         return model_response
@@ -471,19 +460,24 @@ class AzureAIFoundry(Model):
                 model_response.response_usage = self._get_metrics(response_delta.usage)
 
         except Exception as e:
-            log_error(f"Error parsing Azure AI response delta: {e}")
+            log_error(f"Error parsing Azure AI response delta: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
         return model_response
 
-    def _get_metrics(self, response_usage) -> Metrics:
+    def _get_metrics(self, response_usage) -> MessageMetrics:
         """
-        Parse the given Azure AI Foundry usage into an Agno Metrics object.
+        Parse the given Azure AI Foundry usage into an Agno MessageMetrics object.
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         metrics.input_tokens = response_usage.get("prompt_tokens", 0)
         metrics.output_tokens = response_usage.get("completion_tokens", 0)
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        if prompt_details := response_usage.get("prompt_tokens_details"):
+            metrics.cache_read_tokens = prompt_details.get("cached_tokens", 0) or 0
+        if completion_details := response_usage.get("completion_tokens_details"):
+            metrics.reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
 
         return metrics

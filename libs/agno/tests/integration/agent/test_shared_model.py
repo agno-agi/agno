@@ -14,13 +14,13 @@ def shared_model():
 @pytest.fixture
 def web_agent(shared_model):
     """Create a web agent for testing."""
-    from agno.tools.duckduckgo import DuckDuckGoTools
+    from agno.tools.websearch import WebSearchTools
 
     return Agent(
         name="Web Agent",
         model=shared_model,
         role="Search the web for information",
-        tools=[DuckDuckGoTools(cache_results=True)],
+        tools=[WebSearchTools(cache_results=True)],
     )
 
 
@@ -33,7 +33,7 @@ def finance_agent(shared_model):
         name="Finance Agent",
         model=shared_model,
         role="Get financial data",
-        tools=[YFinanceTools()],
+        tools=[YFinanceTools(all=True)],
     )
 
 
@@ -45,15 +45,15 @@ def test_tools_available_to_agents(web_agent, finance_agent):
         tools = mock_invoke.call_args[1].get("tools", [])
         tool_names = [tool["function"]["name"] for tool in tools]
         assert tool_names == [
-            "get_current_stock_price",
+            "get_analyst_recommendations",
             "get_company_info",
-            "get_stock_fundamentals",
+            "get_company_news",
+            "get_current_stock_price",
+            "get_historical_stock_prices",
             "get_income_statements",
             "get_key_financial_ratios",
-            "get_analyst_recommendations",
-            "get_company_news",
+            "get_stock_fundamentals",
             "get_technical_indicators",
-            "get_historical_stock_prices",
         ]
 
     with patch.object(web_agent.model, "invoke", wraps=web_agent.model.invoke) as mock_invoke:
@@ -62,4 +62,4 @@ def test_tools_available_to_agents(web_agent, finance_agent):
         # Get the tools passed to invoke
         tools = mock_invoke.call_args[1].get("tools", [])
         tool_names = [tool["function"]["name"] for tool in tools]
-        assert tool_names == ["duckduckgo_search", "duckduckgo_news"]
+        assert tool_names == ["search_news", "web_search"]

@@ -5,7 +5,7 @@ from typing import AsyncIterator
 
 import pytest
 
-from agno.models.metrics import Metrics
+from agno.models.metrics import SessionMetrics
 from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 
@@ -196,7 +196,7 @@ def test_workflow_session_metrics_basic(shared_db):
 
     # Basic assertions
     assert session_metrics is not None
-    assert isinstance(session_metrics, Metrics)
+    assert isinstance(session_metrics, SessionMetrics)
 
 
 def test_workflow_session_metrics_aggregation(shared_db, test_agent):

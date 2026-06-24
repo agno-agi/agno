@@ -1,6 +1,6 @@
 from dataclasses import asdict
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -10,6 +10,7 @@ from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
+from agno.os.utils import to_utc_datetime
 
 
 class EvalRunInput(BaseModel):
@@ -42,6 +43,13 @@ class EvalRunInput(BaseModel):
 
     # Reliability eval specific fields
     expected_tool_calls: Optional[List[str]] = Field(None, description="Expected tool calls for reliability evaluation")
+    allow_additional_tool_calls: bool = Field(
+        False, description="When True, tool calls not in expected_tool_calls are allowed (subset matching)"
+    )
+    expected_tool_call_arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = Field(
+        None,
+        description='Expected arguments for specific tool calls, e.g. {"tool_name": {"arg_name": "expected_value"}} or {"tool_name": [{"arg_name": "val1"}, {"arg_name": "val2"}]}',
+    )
 
 
 class EvalSchema(BaseModel):
@@ -74,8 +82,8 @@ class EvalSchema(BaseModel):
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
             eval_input=eval_run.get("eval_input"),
-            created_at=datetime.fromtimestamp(eval_run["created_at"], tz=timezone.utc),
-            updated_at=datetime.fromtimestamp(eval_run["updated_at"], tz=timezone.utc),
+            created_at=to_utc_datetime(eval_run.get("created_at")),
+            updated_at=to_utc_datetime(eval_run.get("updated_at")),
         )
 
     @classmethod

@@ -8,7 +8,11 @@ from unittest.mock import patch
 import pytest
 
 from agno.media import Audio, File, Image
-from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.openai import (
+    _format_file_for_message,
+    audio_to_message,
+    images_to_message,
+)
 
 
 # Helper function to create dummy file
@@ -390,6 +394,18 @@ def test_format_file_raw_bytes():
     msg = _format_file_for_message(f)
     assert msg["type"] == "file"
     assert msg["file"]["filename"] == "file"
+    data_url = msg["file"]["file_data"]
+    assert data_url.startswith("data:application/pdf;base64,")
+    assert base64.b64decode(data_url.split(",", 1)[1]) == content
+
+
+def test_format_file_raw_bytes_no_filename():
+    """Test _format_file_for_message with raw bytes and no filename (default None)."""
+    content = b"RAWBYTES_NO_NAME"
+    f = File(content=content)  # filename defaults to None
+    msg = _format_file_for_message(f)
+    assert msg["type"] == "file"
+    assert msg["file"]["filename"] == "file"  # Should default to "file"
     data_url = msg["file"]["file_data"]
     assert data_url.startswith("data:application/pdf;base64,")
     assert base64.b64decode(data_url.split(",", 1)[1]) == content
