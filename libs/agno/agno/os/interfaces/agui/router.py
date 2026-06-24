@@ -98,10 +98,12 @@ def attach_routes(
     enable_state_redaction: bool = True,
     redact_state_keys: Optional[Sequence[str]] = None,
 ) -> APIRouter:
-    if agent is None and team is None:
+    if agent is not None:
+        entity = agent
+    elif team is not None:
+        entity = team
+    else:
         raise ValueError("Either agent or team must be provided.")
-
-    entity = agent or team
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")

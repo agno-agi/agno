@@ -36,7 +36,7 @@ def parse_sse_events(content: str) -> List[Dict[str, Any]]:
 
 
 def get_event_types(events: List[Dict[str, Any]]) -> List[str]:
-    return [e.get("type") for e in events]
+    return [str(e.get("type")) for e in events if e.get("type") is not None]
 
 
 def make_request_body(message: str, state: Any = None, thread_id: str = "test-thread") -> Dict[str, Any]:
@@ -299,7 +299,7 @@ class TestAgentStateDelta:
     def test_state_redaction_integration(self, agent_client):
         client, agent = agent_client
 
-        mutable_state = {"public_info": "safe"}
+        mutable_state: Dict[str, Any] = {"public_info": "safe"}
 
         async def mock_stream() -> AsyncIterator[RunOutputEvent]:
             yield RunContentEvent(content="Calling tool")

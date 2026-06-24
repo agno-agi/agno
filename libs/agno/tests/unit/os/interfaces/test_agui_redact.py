@@ -1,6 +1,4 @@
-import pytest
-
-from agno.os.interfaces.agui.redact import DEFAULT_SENSITIVE_KEY_PATTERNS, redact_sensitive_data
+from agno.os.interfaces.agui.redact import redact_sensitive_data
 
 
 def test_redact_sensitive_data_keys():
