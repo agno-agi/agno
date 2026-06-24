@@ -1,6 +1,6 @@
 import copy
 import uuid
-from typing import AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, Dict, Optional, Union
 
 from agno.utils.log import log_error
 
@@ -17,7 +17,7 @@ try:
 except ImportError as e:
     raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
@@ -30,8 +30,16 @@ from agno.team.team import Team
 async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
+    dependencies: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[BaseEvent]:
-    """Shared handler for running an Agent or Team with AG-UI input/output mapping."""
+    """Shared handler for running an Agent or Team with AG-UI input/output mapping.
+
+    ``dependencies`` carries server-side values populated by middleware via
+    ``request.state.dependencies`` (#6164) — e.g. user claims, permissions, or a
+    custom system prompt. They are merged with the AG-UI client context
+    dependencies, with the server-side values taking precedence (they are
+    trusted runtime config and must not be overridden by client input).
+    """
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
@@ -49,9 +57,12 @@ async def run_entity(
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
         ui_deps = extract_context(run_input.context)
+        # Merge client AG-UI context deps with server-side request.state deps
+        # (#6164); server-side values win since they are trusted runtime config.
+        merged_deps = {**(ui_deps or {}), **(dependencies or {})}
         run_kwargs: dict = {}
-        if ui_deps:
-            run_kwargs["dependencies"] = ui_deps
+        if merged_deps:
+            run_kwargs["dependencies"] = merged_deps
             run_kwargs["add_dependencies_to_context"] = True
 
         response_stream = entity.arun(  # type: ignore
@@ -92,9 +103,15 @@ def attach_routes(
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")
-    async def run_agent_agui(run_input: RunAgentInput):
+    async def run_agent_agui(run_input: RunAgentInput, request: Request):
+        # Surface request.state.dependencies populated by middleware (#6164) so
+        # runtime config (user claims, permissions, custom prompts) reaches the run.
+        dependencies = None
+        if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
+            dependencies = request.state.dependencies
+
         async def event_generator():
-            async for event in run_entity(entity, run_input):  # type: ignore
+            async for event in run_entity(entity, run_input, dependencies=dependencies):  # type: ignore
                 yield encoder.encode(event)
 
         return StreamingResponse(
