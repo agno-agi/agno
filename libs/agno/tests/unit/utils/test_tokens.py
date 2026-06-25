@@ -415,6 +415,14 @@ def test_format_type_numeric_enum_unquoted():
     assert _format_type({"type": "string", "enum": ["low", "high"]}, 0) == '"low" | "high"'
 
 
+def test_format_type_untyped_enum_renders_union():
+    """Untyped enums (e.g. mixed-type Literals) must become a literal union, not 'any'."""
+    assert _format_type({"enum": [1, "auto"]}, 0) == '1 | "auto"'
+    assert _format_type({"enum": [1, 2]}, 0) == "1 | 2"
+    # An unknown type with no enum still falls back to "any".
+    assert _format_type({"type": "weird"}, 0) == "any"
+
+
 @pytest.mark.asyncio
 async def test_model_acount_tokens_with_schema():
     """Test model.acount_tokens includes schema tokens."""
