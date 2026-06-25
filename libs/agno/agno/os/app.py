@@ -233,6 +233,7 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
+        agent_protocol_interface: bool = False,
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         cors_allowed_origins: Optional[List[str]] = None,
@@ -271,6 +272,7 @@ class AgentOS:
             knowledge: List of knowledge bases to include in the OS
             interfaces: List of interfaces to include in the OS
             a2a_interface: Whether to expose the OS agents and teams in an A2A server
+            agent_protocol_interface: Whether to expose the OS agents and teams via Agent Protocol endpoints
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
@@ -304,6 +306,7 @@ class AgentOS:
         self.teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = teams
         self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
         self.a2a_interface = a2a_interface
+        self.agent_protocol_interface = agent_protocol_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
@@ -537,6 +540,15 @@ class AgentOS:
             )
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
+
+        # Add Agent Protocol interface if relevant
+        has_ap_interface = any(interface.__class__.__name__ == "AgentProtocol" for interface in self.interfaces)
+        if self.agent_protocol_interface and not has_ap_interface:
+            from agno.os.interfaces.agent_protocol import AgentProtocol
+
+            ap_interface = AgentProtocol(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            self.interfaces.append(ap_interface)
+            self._add_router(app, ap_interface.get_router())
 
     def _raise_if_duplicate_ids(self) -> None:
         """Check for duplicate IDs within each entity type.
