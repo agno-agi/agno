@@ -16,12 +16,7 @@ from agno.utils.log import log_warning
 
 
 def extract_user_input(messages: List[AGUIMessage]) -> str:
-    """Extract the last user message content from AG-UI messages.
-
-    AG-UI frontends send the full conversation history on every request.
-    The agent manages its own history via session DB, so we only need the
-    latest user message as input — matching the REST API pattern.
-    """
+    # AG-UI sends full history; we only need the last user message
     for msg in reversed(messages):
         if msg.role == "user" and msg.content is not None:
             if isinstance(msg.content, str):
@@ -39,37 +34,29 @@ def extract_user_input(messages: List[AGUIMessage]) -> str:
 def extract_media(
     messages: List[AGUIMessage],
 ) -> Tuple[List[Image], List[Audio], List[Video], List[File]]:
-    """Extract media from the last user message.
-
-    Returns (images, audio, videos, files) tuple.
-    """
     images: List[Image] = []
     audio: List[Audio] = []
     videos: List[Video] = []
     files: List[File] = []
 
-    # 1. Find the last user message
     for msg in reversed(messages):
         if msg.role != "user" or msg.content is None:
             continue
 
-        # String content has no media
         if isinstance(msg.content, str):
             return images, audio, videos, files
 
-        # 2. Process each content part
         for part in msg.content:
             if not hasattr(part, "type"):
                 continue
 
-            # 3. Extract content bytes and MIME type based on part structure
             content: Optional[bytes] = None
             url: Optional[str] = None
             mime: Optional[str] = None
             filename: Optional[str] = None
 
             if part.type == "binary":
-                # BinaryInputContent: flat structure (deprecated but still used)
+                # BinaryInputContent: flat structure
                 mime = getattr(part, "mime_type", None)
                 filename = getattr(part, "filename", None)
                 url = getattr(part, "url", None)
@@ -78,7 +65,7 @@ def extract_media(
                     content = _decode_base64(data)
 
             elif part.type in ("image", "audio", "video", "document"):
-                # Typed content: nested source structure
+                # ImageInputContent, AudioInputContent, etc: nested source
                 source = getattr(part, "source", None)
                 if source and hasattr(source, "type"):
                     mime = getattr(source, "mime_type", None)
@@ -88,8 +75,7 @@ def extract_media(
                     elif source.type == "data" and value:
                         content = _decode_base64(value)
 
-            # 4. Create Agno media object and append to correct list
-            # Route by part.type first (typed content), fall back to MIME (binary content)
+            # Route by part.type first, fall back to MIME for binary content
             if url or content:
                 if part.type == "image" or (mime and mime.startswith("image/")):
                     images.append(Image(url=url, content=content, mime_type=mime))
@@ -108,7 +94,6 @@ def extract_media(
 
 
 def validate_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
-    """Validate the given AGUI state is of the expected type (dict)."""
     if state is None:
         return None
 
@@ -140,7 +125,7 @@ def validate_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_context(context: Optional[List[Any]]) -> Optional[Dict[str, Any]]:
-    """Convert AG-UI context list to a dependencies dict."""
+    # Convert AG-UI context list to Agno dependencies dict
     if not context:
         return None
 
@@ -158,9 +143,8 @@ def extract_context(context: Optional[List[Any]]) -> Optional[Dict[str, Any]]:
 
 
 def _decode_base64(value: str) -> Optional[bytes]:
-    """Decode base64 string to bytes. Handles data: URLs and raw base64."""
     try:
-        # data: URLs embed MIME and base64 together, urllib handles them
+        # data: URLs handled by urllib
         if value.startswith("data:"):
             return urllib.request.urlopen(value).read()
         return base64.b64decode(value, validate=True)
@@ -170,12 +154,7 @@ def _decode_base64(value: str) -> Optional[bytes]:
 
 
 def extract_tool_messages(messages: List[AGUIMessage]) -> List[AGUIToolMessage]:
-    """Return trailing tool-role messages, indicating a tool-resume request.
-
-    When AG-UI frontends resume a paused run (external_execution tools), they append
-    ToolMessages at the end of the history. If the tail of the list is entirely
-    tool-role messages, this is a resume — not a fresh user turn.
-    """
+    # Trailing tool messages = frontend executed tools and sent results back
     tool_msgs: List[AGUIToolMessage] = []
     for msg in reversed(messages):
         if msg.role == "tool":
@@ -186,12 +165,7 @@ def extract_tool_messages(messages: List[AGUIMessage]) -> List[AGUIToolMessage]:
 
 
 def agui_tools_to_external_functions(agui_tools: Optional[List[AGUITool]]) -> List[Function]:
-    """Convert AG-UI tool definitions to Agno Functions with external_execution=True.
-
-    Frontend tools execute in the browser, not on the server. Setting
-    external_execution=True tells the agent to pause after generating the tool call,
-    yielding control back to the frontend for execution.
-    """
+    # Frontend tools run in the browser; external_execution=True pauses the run
     if not agui_tools:
         return []
     return [
@@ -210,20 +184,7 @@ def merge_tool_results_into_requirements(
     stored_requirements: List[RunRequirement],
     tool_messages: List[AGUIToolMessage],
 ) -> List[RunRequirement]:
-    """Merge tool results from AG-UI ToolMessages into stored requirements.
-
-    The stored requirements (from a paused run in DB) already have the full
-    ToolExecution objects with tool_call_id, tool_name, tool_args, and
-    external_execution_required=True. This function fills in the result
-    field from the corresponding ToolMessage.
-
-    Args:
-        stored_requirements: Requirements loaded from the paused run in DB
-        tool_messages: ToolMessages from the AG-UI frontend with results
-
-    Returns:
-        The same requirements list with results filled in
-    """
+    # Fill in tool results from ToolMessages into stored requirements
     results_map = {tm.tool_call_id: (tm.content, getattr(tm, "error", None)) for tm in tool_messages}
 
     for req in stored_requirements:
@@ -242,9 +203,4 @@ def merge_tool_results_into_requirements(
 
 
 def build_tool_results_map(tool_messages: List[AGUIToolMessage]) -> Dict[str, str]:
-    """Build a mapping of tool_call_id to result content from ToolMessages.
-
-    This is a simpler helper when you just need the mapping without
-    modifying stored requirements directly.
-    """
     return {tm.tool_call_id: tm.content for tm in tool_messages}
