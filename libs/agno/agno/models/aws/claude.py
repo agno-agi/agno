@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -42,12 +42,26 @@ class Claude(AnthropicClaude):
     client: Optional[AnthropicBedrock] = None  # type: ignore
     async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
 
+    # Claude models that support native structured outputs via Anthropic Bedrock API.
+    # Allowlist approach: only explicitly supported models get native structured outputs.
+    _STRUCTURED_OUTPUT_PATTERNS: ClassVar[Tuple[str, ...]] = (
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+    )
+
     def __post_init__(self):
-        """Validate model configuration after initialization"""
+        """Validate model configuration after initialization."""
         super().__post_init__()
-        # Overwrite output schema support for AWS Bedrock Claude
-        self.supports_native_structured_outputs = False
+        self.supports_native_structured_outputs = self._supports_structured_outputs()
         self.supports_json_schema_outputs = False
+
+    def _supports_structured_outputs(self) -> bool:
+        """Check if the model supports native structured outputs."""
+        model_id_lower = self.id.lower()
+        return any(pattern in model_id_lower for pattern in self._STRUCTURED_OUTPUT_PATTERNS)
 
     def _get_client_params(self) -> Dict[str, Any]:
         if self.session:
@@ -253,6 +267,11 @@ class Claude(AnthropicClaude):
             request_kwargs["tools"] = format_tools_for_model(tools)
 
         self._apply_cache_tools(request_kwargs)
+
+        # Build output_format if response_format is provided
+        output_format = self._build_output_format(response_format)
+        if output_format:
+            request_kwargs["output_format"] = output_format
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

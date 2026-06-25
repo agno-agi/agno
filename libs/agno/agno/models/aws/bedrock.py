@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -85,10 +85,23 @@ class AwsBedrock(Model):
     async_client: Optional[Any] = None
     async_session: Optional[Any] = None
 
+    # Claude models that support native structured outputs via outputConfig.
+    # Allowlist approach: only explicitly supported models get native structured outputs.
+    # Per AWS docs: Claude Sonnet 4.5, Haiku 4.5, Opus 4.5, Sonnet 4.6, Opus 4.6
+    _STRUCTURED_OUTPUT_PATTERNS: ClassVar[Tuple[str, ...]] = (
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+    )
+
     def __post_init__(self):
         super().__post_init__()
         if self.append_trailing_user_message is None:
             self.append_trailing_user_message = not supports_prefill(self.id)
+        if self._supports_native_structured_outputs():
+            self.supports_native_structured_outputs = True
 
     def get_client(self) -> AwsClient:
         """
@@ -260,6 +273,88 @@ class AwsBedrock(Model):
                 )
 
         return parsed_tools
+
+    def _format_tool_choice(self, tool_choice: Union[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if isinstance(tool_choice, dict):
+            if "auto" in tool_choice or "any" in tool_choice or "tool" in tool_choice:
+                return tool_choice
+            return None
+
+        if isinstance(tool_choice, str):
+            choice_lower = tool_choice.lower()
+            if choice_lower == "auto":
+                return {"auto": {}}
+            if choice_lower in ("any", "required"):
+                return {"any": {}}
+            if choice_lower == "none":
+                log_warning("Bedrock Converse API does not support tool_choice='none'. Ignoring tool_choice.")
+                return None
+            return {"tool": {"name": tool_choice}}
+
+    def _ensure_additional_properties_false(self, schema: Dict[str, Any]) -> None:
+        if not isinstance(schema, dict):
+            return
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+        for key, value in schema.items():
+            if key in ("properties", "$defs") and isinstance(value, dict):
+                # Both contain named sub-schemas
+                for sub_schema in value.values():
+                    if isinstance(sub_schema, dict):
+                        self._ensure_additional_properties_false(sub_schema)
+            elif key in ("items", "allOf", "anyOf", "oneOf"):
+                if isinstance(value, dict):
+                    self._ensure_additional_properties_false(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            self._ensure_additional_properties_false(item)
+
+    def _supports_native_structured_outputs(self) -> bool:
+        """Check if the model supports native structured outputs via outputConfig."""
+        model_id_lower = self.id.lower()
+        return any(pattern in model_id_lower for pattern in self._STRUCTURED_OUTPUT_PATTERNS)
+
+    def _build_output_config(self, response_format: Optional[Union[Dict, Type[BaseModel]]]) -> Optional[Dict[str, Any]]:
+        """Build outputConfig for native structured outputs (boto3 1.42+)."""
+        if response_format is None:
+            return None
+        if not self._supports_native_structured_outputs():
+            return None
+
+        # Handle Pydantic models
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            schema = response_format.model_json_schema()
+            self._ensure_additional_properties_false(schema)
+            return {
+                "textFormat": {
+                    "type": "json_schema",
+                    "structure": {
+                        "jsonSchema": {
+                            "schema": json.dumps(schema),
+                            "name": response_format.__name__,
+                        }
+                    },
+                }
+            }
+
+        # Handle dict schemas (skip {"type": "json_object"} which is just a mode flag)
+        if isinstance(response_format, dict) and response_format.get("type") != "json_object":
+            schema = response_format.copy()
+            self._ensure_additional_properties_false(schema)
+            return {
+                "textFormat": {
+                    "type": "json_schema",
+                    "structure": {
+                        "jsonSchema": {
+                            "schema": json.dumps(schema),
+                            "name": "output_schema",
+                        }
+                    },
+                }
+            }
+
+        return None
 
     def _get_inference_config(self) -> Dict[str, Any]:
         """
@@ -510,14 +605,23 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
+            # Native structured outputs for Claude 4.5+
+            output_config = self._build_output_config(response_format)
+
+            tool_config: Optional[Dict[str, Any]] = None
             if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
+                formatted_tools = self._format_tools_for_request(tools)
+                tool_config = {"tools": formatted_tools}
+                if tool_choice is not None:
+                    formatted_choice = self._format_tool_choice(tool_choice)
+                    if formatted_choice is not None:
+                        tool_config["toolChoice"] = formatted_choice
 
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
+                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -556,14 +660,23 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
+            # Native structured outputs for Claude 4.5+
+            output_config = self._build_output_config(response_format)
+
+            tool_config: Optional[Dict[str, Any]] = None
             if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
+                formatted_tools = self._format_tools_for_request(tools)
+                tool_config = {"tools": formatted_tools}
+                if tool_choice is not None:
+                    formatted_choice = self._format_tool_choice(tool_choice)
+                    if formatted_choice is not None:
+                        tool_config["toolChoice"] = formatted_choice
 
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
+                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -606,14 +719,23 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
+            # Native structured outputs for Claude 4.5+
+            output_config = self._build_output_config(response_format)
+
+            tool_config: Optional[Dict[str, Any]] = None
             if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
+                formatted_tools = self._format_tools_for_request(tools)
+                tool_config = {"tools": formatted_tools}
+                if tool_choice is not None:
+                    formatted_choice = self._format_tool_choice(tool_choice)
+                    if formatted_choice is not None:
+                        tool_config["toolChoice"] = formatted_choice
 
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
+                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -655,14 +777,23 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            tool_config = None
+            # Native structured outputs for Claude 4.5+
+            output_config = self._build_output_config(response_format)
+
+            tool_config: Optional[Dict[str, Any]] = None
             if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
+                formatted_tools = self._format_tools_for_request(tools)
+                tool_config = {"tools": formatted_tools}
+                if tool_choice is not None:
+                    formatted_choice = self._format_tool_choice(tool_choice)
+                    if formatted_choice is not None:
+                        tool_config["toolChoice"] = formatted_choice
 
             body = {
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
+                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -772,7 +903,9 @@ class AwsBedrock(Model):
         return model_response
 
     def _parse_provider_response_delta(
-        self, response_delta: Dict[str, Any], current_tool: Dict[str, Any]
+        self,
+        response_delta: Dict[str, Any],
+        current_tool: Dict[str, Any],
     ) -> Tuple[ModelResponse, Dict[str, Any]]:
         """Parse the provider response delta for streaming.
 

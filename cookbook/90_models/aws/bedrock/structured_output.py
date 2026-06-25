@@ -1,56 +1,50 @@
 """
-Aws Structured Output
-=====================
+AWS Bedrock Structured Output
+=============================
 
-Cookbook example for `aws/bedrock/structured_output.py`.
+Demonstrates native structured output (Pydantic models) with AWS Bedrock.
+
+Claude 4.5+ (Sonnet 4.5, Haiku 4.5, Opus 4.5+) supports native outputConfig.textFormat
+for guaranteed JSON output matching the Pydantic schema.
+
+Run with:
+    python cookbook/90_models/aws/bedrock/structured_output.py
 """
 
 from typing import List
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent
 from agno.models.aws import AwsBedrock
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Schema Definition
+# ---------------------------------------------------------------------------
+
+
+class MovieScript(BaseModel):
+    name: str = Field(..., description="Movie name")
+    setting: str = Field(..., description="Setting for the movie")
+    genre: str = Field(..., description="Genre (action, drama, comedy, etc.)")
+    characters: List[str] = Field(..., description="Main characters")
+    storyline: str = Field(..., description="Brief storyline (2-3 sentences)")
+
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 
-
-class MovieScript(BaseModel):
-    setting: str = Field(
-        ..., description="Provide a nice setting for a blockbuster movie."
-    )
-    ending: str = Field(
-        ...,
-        description="Ending of the movie. If not available, provide a happy ending.",
-    )
-    genre: str = Field(
-        ...,
-        description="Genre of the movie. If not available, select action, thriller or romantic comedy.",
-    )
-    name: str = Field(..., description="Give a name to this movie")
-    characters: List[str] = Field(..., description="Name of characters for this movie.")
-    storyline: str = Field(
-        ..., description="3 sentence storyline for the movie. Make it exciting!"
-    )
-
-
-movie_agent = Agent(
-    model=AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0"),
-    description="You help people write movie scripts.",
+# Claude 4.5+ uses native outputConfig for structured outputs
+agent = Agent(
+    model=AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0"),
+    description="You write creative movie scripts.",
     output_schema=MovieScript,
 )
 
-# Get the response in a variable
-# movie_agent: RunOutput = movie_agent.run("New York")
-# pprint(movie_agent.content)
-
-movie_agent.print_response("New York")
 
 # ---------------------------------------------------------------------------
-# Run Agent
+# Run Demo
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    pass
+    agent.print_response("Write a movie set in Tokyo")
