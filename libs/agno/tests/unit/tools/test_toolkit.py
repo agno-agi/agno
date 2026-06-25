@@ -856,3 +856,146 @@ def test_check_path_restrict_false_returns_false_on_nul_byte(basic_toolkit):
         ok, path = basic_toolkit._check_path("name\x00", base, restrict_to_base_dir=False)
         assert ok is False
         assert path == base
+
+
+# ---------------------------------------------------------------------------
+# Tests for functools.wraps preservation in bound methods (#7569)
+# ---------------------------------------------------------------------------
+
+
+class SyncToolkitForWraps(Toolkit):
+    def __init__(self):
+        super().__init__(name="sync_wraps_toolkit", tools=[self.my_sync_tool])
+
+    @tool(description="A sync tool with type annotations.")
+    def my_sync_tool(self, x: int) -> str:
+        """My sync docstring."""
+        return str(x)
+
+
+class AsyncToolkitForWraps(Toolkit):
+    def __init__(self):
+        super().__init__(name="async_wraps_toolkit", tools=[self.my_async_tool])
+
+    @tool(description="An async tool with type annotations.")
+    async def my_async_tool(self, x: int) -> str:
+        """My async docstring."""
+        return str(x)
+
+
+def test_sync_bound_method_preserves_name():
+    t = SyncToolkitForWraps()
+    fn = t.functions["my_sync_tool"].entrypoint
+    assert fn.__name__ == "my_sync_tool"
+
+
+def test_sync_bound_method_preserves_qualname():
+    t = SyncToolkitForWraps()
+    fn = t.functions["my_sync_tool"].entrypoint
+    assert fn.__qualname__ == "SyncToolkitForWraps.my_sync_tool"
+
+
+def test_sync_bound_method_preserves_doc():
+    t = SyncToolkitForWraps()
+    fn = t.functions["my_sync_tool"].entrypoint
+    assert fn.__doc__ == "My sync docstring."
+
+
+def test_sync_bound_method_preserves_annotations():
+    t = SyncToolkitForWraps()
+    fn = t.functions["my_sync_tool"].entrypoint
+    assert fn.__annotations__ == {"x": int, "return": str}
+
+
+def test_sync_bound_method_sets_wrapped():
+    t = SyncToolkitForWraps()
+    fn = t.functions["my_sync_tool"].entrypoint
+    assert hasattr(fn, "__wrapped__")
+
+
+def test_async_bound_method_preserves_name():
+    t = AsyncToolkitForWraps()
+    fn = t.async_functions["my_async_tool"].entrypoint
+    assert fn.__name__ == "my_async_tool"
+
+
+def test_async_bound_method_preserves_qualname():
+    t = AsyncToolkitForWraps()
+    fn = t.async_functions["my_async_tool"].entrypoint
+    assert fn.__qualname__ == "AsyncToolkitForWraps.my_async_tool"
+
+
+def test_async_bound_method_preserves_annotations():
+    t = AsyncToolkitForWraps()
+    fn = t.async_functions["my_async_tool"].entrypoint
+    assert fn.__annotations__ == {"x": int, "return": str}
+
+
+def test_async_bound_method_preserves_doc():
+    t = AsyncToolkitForWraps()
+    fn = t.async_functions["my_async_tool"].entrypoint
+    assert fn.__doc__ == "My async docstring."
+
+
+def test_async_bound_method_sets_wrapped():
+    t = AsyncToolkitForWraps()
+    fn = t.async_functions["my_async_tool"].entrypoint
+    assert hasattr(fn, "__wrapped__")
+
+
+# --- Schema integrity: self must not leak into the tool parameter schema ---
+
+
+def test_sync_bound_method_schema_correct():
+    t = SyncToolkitForWraps()
+    params = t.functions["my_sync_tool"].parameters
+    assert "x" in params["properties"]
+    assert "self" not in params["properties"]
+    assert params["required"] == ["x"]
+
+
+def test_async_bound_method_schema_correct():
+    t = AsyncToolkitForWraps()
+    params = t.async_functions["my_async_tool"].parameters
+    assert "x" in params["properties"]
+    assert "self" not in params["properties"]
+    assert params["required"] == ["x"]
+
+
+# --- Execution: instance binding must survive functools.wraps ---
+
+
+def test_sync_bound_method_executes_correctly():
+    t = SyncToolkitForWraps()
+    fn = t.functions["my_sync_tool"].entrypoint
+    assert fn(x=42) == "42"
+
+
+@pytest.mark.asyncio
+async def test_async_bound_method_executes_correctly():
+    t = AsyncToolkitForWraps()
+    fn = t.async_functions["my_async_tool"].entrypoint
+    assert await fn(x=99) == "99"
+
+
+# --- inspect.unwrap must reach the original function ---
+
+
+def test_sync_bound_method_unwrap_reaches_original():
+    import inspect
+
+    t = SyncToolkitForWraps()
+    fn = t.functions["my_sync_tool"].entrypoint
+    original = inspect.unwrap(fn)
+    assert original.__name__ == "my_sync_tool"
+    assert "self" in inspect.signature(original).parameters
+
+
+def test_async_bound_method_unwrap_reaches_original():
+    import inspect
+
+    t = AsyncToolkitForWraps()
+    fn = t.async_functions["my_async_tool"].entrypoint
+    original = inspect.unwrap(fn)
+    assert original.__name__ == "my_async_tool"
+    assert "self" in inspect.signature(original).parameters
