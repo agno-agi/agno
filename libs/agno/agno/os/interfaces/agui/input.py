@@ -10,7 +10,6 @@ from ag_ui.core.types import ToolMessage as AGUIToolMessage
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.models.response import ToolExecution
 from agno.run.requirement import RunRequirement
 from agno.tools.function import Function
 from agno.utils.log import log_warning

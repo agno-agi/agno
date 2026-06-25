@@ -127,26 +127,43 @@ async def _resume_paused_run(
     (tool_call_id, tool_name, tool_args, external_execution_required=True).
     We load them, match by tool_call_id, fill in results from ToolMessages,
     and call acontinue_run.
+
+    Requires the entity to have a db configured for session storage.
     """
+    # Check if entity has DB configured
+    if not getattr(entity, "db", None):
+        raise ValueError(
+            "Frontend tool resume requires a database to be configured on the agent. "
+            "Set db=SqliteDb(...) or db=PgDb(...) on your Agent."
+        )
+
     # Load the session to get stored requirements from the paused run
-    session = await entity.aread_session(session_id=session_id)  # type: ignore
+    from agno.run.base import RunStatus
+    from agno.session.agent import AgentSession
+
+    session = entity.db.get_session(session_id=session_id)  # type: ignore[union-attr]
     if not session:
         raise ValueError(f"Session {session_id} not found")
+    if not isinstance(session, AgentSession):
+        raise ValueError(f"Session {session_id} is not an AgentSession")
 
-    # Find the paused run
-    paused_run = next((r for r in (session.runs or []) if r.run_id == run_id), None)
+    # Find the paused run (AG-UI sends new run_id on resume, so we find by status)
+    paused_run = next(
+        (r for r in (session.runs or []) if r.status == RunStatus.paused),
+        None,
+    )
     if not paused_run:
-        raise ValueError(f"Run {run_id} not found in session {session_id}")
+        raise ValueError(f"No paused run found in session {session_id}")
 
     if not paused_run.requirements:
-        raise ValueError(f"Run {run_id} has no requirements to resume")
+        raise ValueError(f"Run {paused_run.run_id} has no requirements to resume")
 
     # Merge tool results into stored requirements
     requirements = merge_tool_results_into_requirements(paused_run.requirements, tool_messages)
 
-    # Resume the run
+    # Resume the run using the original paused run's ID
     return entity.acontinue_run(  # type: ignore
-        run_id=run_id,
+        run_id=paused_run.run_id,
         session_id=session_id,
         requirements=requirements,
         stream=True,
