@@ -10,6 +10,8 @@ from ag_ui.core.types import ToolMessage as AGUIToolMessage
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
+from agno.models.response import ToolExecution
+from agno.run.requirement import RunRequirement
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 
@@ -203,3 +205,47 @@ def agui_tools_to_external_functions(agui_tools: Optional[List[AGUITool]]) -> Li
         )
         for tool in agui_tools
     ]
+
+
+def merge_tool_results_into_requirements(
+    stored_requirements: List[RunRequirement],
+    tool_messages: List[AGUIToolMessage],
+) -> List[RunRequirement]:
+    """Merge tool results from AG-UI ToolMessages into stored requirements.
+
+    The stored requirements (from a paused run in DB) already have the full
+    ToolExecution objects with tool_call_id, tool_name, tool_args, and
+    external_execution_required=True. This function fills in the result
+    field from the corresponding ToolMessage.
+
+    Args:
+        stored_requirements: Requirements loaded from the paused run in DB
+        tool_messages: ToolMessages from the AG-UI frontend with results
+
+    Returns:
+        The same requirements list with results filled in
+    """
+    results_map = {tm.tool_call_id: (tm.content, getattr(tm, "error", None)) for tm in tool_messages}
+
+    for req in stored_requirements:
+        if req.tool_execution and req.tool_execution.tool_call_id:
+            tool_call_id = req.tool_execution.tool_call_id
+            if tool_call_id in results_map:
+                content, error = results_map[tool_call_id]
+                if error:
+                    req.tool_execution.tool_call_error = True
+                    req.tool_execution.result = error
+                else:
+                    req.tool_execution.result = content
+                req.external_execution_result = req.tool_execution.result
+
+    return stored_requirements
+
+
+def build_tool_results_map(tool_messages: List[AGUIToolMessage]) -> Dict[str, str]:
+    """Build a mapping of tool_call_id to result content from ToolMessages.
+
+    This is a simpler helper when you just need the mapping without
+    modifying stored requirements directly.
+    """
+    return {tm.tool_call_id: tm.content for tm in tool_messages}

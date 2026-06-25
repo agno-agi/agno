@@ -1,8 +1,15 @@
 from ag_ui.core.types import Tool as AGUITool
 from ag_ui.core.types import ToolMessage, UserMessage
 
-from agno.os.interfaces.agui.input import agui_tools_to_external_functions, extract_tool_messages
+from agno.models.response import ToolExecution
+from agno.os.interfaces.agui.input import (
+    agui_tools_to_external_functions,
+    build_tool_results_map,
+    extract_tool_messages,
+    merge_tool_results_into_requirements,
+)
 from agno.os.interfaces.agui.utils import to_json_str
+from agno.run.requirement import RunRequirement
 from agno.tools.function import Function
 
 
@@ -226,3 +233,134 @@ def test_to_json_str_empty_dict():
 
 def test_to_json_str_empty_list():
     assert to_json_str("[]") == "[]"
+
+
+# merge_tool_results_into_requirements tests
+
+
+def test_merge_tool_results_basic():
+    """Test basic merging of tool results into requirements."""
+    stored_requirements = [
+        RunRequirement(
+            tool_execution=ToolExecution(
+                tool_call_id="call_1",
+                tool_name="change_background",
+                tool_args={"color": "blue"},
+                external_execution_required=True,
+            )
+        )
+    ]
+    tool_messages = [ToolMessage(id="t1", tool_call_id="call_1", content="Background changed to blue")]
+
+    result = merge_tool_results_into_requirements(stored_requirements, tool_messages)
+
+    assert len(result) == 1
+    assert result[0].tool_execution.result == "Background changed to blue"
+    assert result[0].external_execution_result == "Background changed to blue"
+
+
+def test_merge_tool_results_multiple():
+    """Test merging multiple tool results."""
+    stored_requirements = [
+        RunRequirement(
+            tool_execution=ToolExecution(
+                tool_call_id="call_1",
+                tool_name="tool_a",
+                tool_args={},
+                external_execution_required=True,
+            )
+        ),
+        RunRequirement(
+            tool_execution=ToolExecution(
+                tool_call_id="call_2",
+                tool_name="tool_b",
+                tool_args={"x": 1},
+                external_execution_required=True,
+            )
+        ),
+    ]
+    tool_messages = [
+        ToolMessage(id="t1", tool_call_id="call_1", content="result_a"),
+        ToolMessage(id="t2", tool_call_id="call_2", content="result_b"),
+    ]
+
+    result = merge_tool_results_into_requirements(stored_requirements, tool_messages)
+
+    assert result[0].tool_execution.result == "result_a"
+    assert result[1].tool_execution.result == "result_b"
+
+
+def test_merge_tool_results_with_error():
+    """Test merging tool results when tool returned an error."""
+    stored_requirements = [
+        RunRequirement(
+            tool_execution=ToolExecution(
+                tool_call_id="call_1",
+                tool_name="failing_tool",
+                tool_args={},
+                external_execution_required=True,
+            )
+        )
+    ]
+    tool_messages = [ToolMessage(id="t1", tool_call_id="call_1", content="", error="Something went wrong")]
+
+    result = merge_tool_results_into_requirements(stored_requirements, tool_messages)
+
+    assert result[0].tool_execution.tool_call_error is True
+    assert result[0].tool_execution.result == "Something went wrong"
+
+
+def test_merge_tool_results_no_match():
+    """Test that unmatched requirements are unchanged."""
+    stored_requirements = [
+        RunRequirement(
+            tool_execution=ToolExecution(
+                tool_call_id="call_1",
+                tool_name="some_tool",
+                tool_args={},
+                external_execution_required=True,
+            )
+        )
+    ]
+    tool_messages = [ToolMessage(id="t1", tool_call_id="call_other", content="result")]
+
+    result = merge_tool_results_into_requirements(stored_requirements, tool_messages)
+
+    assert result[0].tool_execution.result is None
+
+
+def test_merge_tool_results_empty_inputs():
+    """Test with empty inputs."""
+    assert merge_tool_results_into_requirements([], []) == []
+
+    stored = [
+        RunRequirement(
+            tool_execution=ToolExecution(
+                tool_call_id="call_1",
+                tool_name="tool",
+                external_execution_required=True,
+            )
+        )
+    ]
+    result = merge_tool_results_into_requirements(stored, [])
+    assert result[0].tool_execution.result is None
+
+
+# build_tool_results_map tests
+
+
+def test_build_tool_results_map_basic():
+    """Test building a simple results map."""
+    tool_messages = [
+        ToolMessage(id="t1", tool_call_id="call_1", content="result_1"),
+        ToolMessage(id="t2", tool_call_id="call_2", content="result_2"),
+    ]
+
+    result = build_tool_results_map(tool_messages)
+
+    assert result == {"call_1": "result_1", "call_2": "result_2"}
+
+
+def test_build_tool_results_map_empty():
+    """Test with empty input."""
+    assert build_tool_results_map([]) == {}

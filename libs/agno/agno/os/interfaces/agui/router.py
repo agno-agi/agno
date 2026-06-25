@@ -21,7 +21,15 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input, validate_state
+from agno.os.interfaces.agui.input import (
+    agui_tools_to_external_functions,
+    extract_context,
+    extract_media,
+    extract_tool_messages,
+    extract_user_input,
+    merge_tool_results_into_requirements,
+    validate_state,
+)
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -35,10 +43,15 @@ async def run_entity(
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
-        # AG-UI frontends send full conversation history every request.
-        # Extract only the last user message — entity manages history via session DB.
-        user_input = extract_user_input(run_input.messages or [])
-        images, audio, videos, files = extract_media(run_input.messages or [])
+        messages = run_input.messages or []
+
+        # 1. Extract inputs from AG-UI message history
+        user_input = extract_user_input(messages)
+        images, audio, videos, files = extract_media(messages)
+        tool_messages = extract_tool_messages(messages)
+
+        # 2. Convert frontend tool definitions to Agno Functions
+        client_tools = agui_tools_to_external_functions(run_input.tools) or None
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -54,20 +67,36 @@ async def run_entity(
             run_kwargs["dependencies"] = ui_deps
             run_kwargs["add_dependencies_to_context"] = True
 
-        response_stream = entity.arun(  # type: ignore
-            input=user_input,
-            session_id=run_input.thread_id,
-            stream=True,
-            stream_events=True,
-            user_id=user_id,
-            images=images or None,
-            audio=audio or None,
-            videos=videos or None,
-            files=files or None,
-            session_state=session_state,
-            run_id=run_id,
-            **run_kwargs,
-        )
+        # 3. Determine if this is a resume (trailing ToolMessages) or fresh run
+        if tool_messages:
+            # Resume: frontend executed external tools and sent results back
+            response_stream = await _resume_paused_run(
+                entity=entity,
+                run_id=run_id,
+                session_id=run_input.thread_id,
+                tool_messages=tool_messages,
+                client_tools=client_tools,
+                user_id=user_id,
+                session_state=session_state,
+                run_kwargs=run_kwargs,
+            )
+        else:
+            # Fresh run: new user input
+            response_stream = entity.arun(  # type: ignore
+                input=user_input,
+                session_id=run_input.thread_id,
+                stream=True,
+                stream_events=True,
+                user_id=user_id,
+                images=images or None,
+                audio=audio or None,
+                videos=videos or None,
+                files=files or None,
+                session_state=session_state,
+                run_id=run_id,
+                client_tools=client_tools,
+                **run_kwargs,
+            )
 
         async for event in async_stream_agno_response_as_agui_events(
             response_stream=response_stream,  # type: ignore
@@ -80,6 +109,53 @@ async def run_entity(
     except Exception as e:
         log_error(f"Error running entity: {str(e)}")
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
+
+
+async def _resume_paused_run(
+    entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
+    run_id: str,
+    session_id: str,
+    tool_messages: list,
+    client_tools: Optional[list],
+    user_id: Optional[str],
+    session_state: Optional[dict],
+    run_kwargs: dict,
+):
+    """Resume a paused run by loading stored requirements and filling in tool results.
+
+    The paused run's requirements are stored in DB with full ToolExecution objects
+    (tool_call_id, tool_name, tool_args, external_execution_required=True).
+    We load them, match by tool_call_id, fill in results from ToolMessages,
+    and call acontinue_run.
+    """
+    # Load the session to get stored requirements from the paused run
+    session = await entity.aread_session(session_id=session_id)  # type: ignore
+    if not session:
+        raise ValueError(f"Session {session_id} not found")
+
+    # Find the paused run
+    paused_run = next((r for r in (session.runs or []) if r.run_id == run_id), None)
+    if not paused_run:
+        raise ValueError(f"Run {run_id} not found in session {session_id}")
+
+    if not paused_run.requirements:
+        raise ValueError(f"Run {run_id} has no requirements to resume")
+
+    # Merge tool results into stored requirements
+    requirements = merge_tool_results_into_requirements(paused_run.requirements, tool_messages)
+
+    # Resume the run
+    return entity.acontinue_run(  # type: ignore
+        run_id=run_id,
+        session_id=session_id,
+        requirements=requirements,
+        stream=True,
+        stream_events=True,
+        user_id=user_id,
+        session_state=session_state,
+        client_tools=client_tools,
+        **run_kwargs,
+    )
 
 
 def attach_routes(
