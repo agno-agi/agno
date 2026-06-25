@@ -1,6 +1,6 @@
 import json
 from textwrap import dedent
-from typing import Any, List, Optional
+from typing import List, Optional
 from uuid import uuid4
 
 from agno.db.base import BaseDb
@@ -8,6 +8,7 @@ from agno.db.schemas import UserMemory
 from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
+from agno.utils.string import sanitize_tool_name
 
 
 class MemoryTools(Toolkit):
@@ -25,11 +26,39 @@ class MemoryTools(Toolkit):
         add_few_shot: bool = True,
         few_shot_examples: Optional[str] = None,
         all: bool = False,
+        *,
+        memory_name: str = "memory",
         **kwargs,
     ):
+        # The database to use for memory operations
+        self.db: BaseDb = db
+
+        # Sanitize memory_name for safe use in tool names
+        _name = sanitize_tool_name(memory_name)
+
+        # Tool names for this memory store
+        self._think_tool = f"think_{_name}"
+        self._get_tool = f"get_memories_{_name}"
+        self._add_tool = f"add_memory_{_name}"
+        self._update_tool = f"update_memory_{_name}"
+        self._delete_tool = f"delete_memory_{_name}"
+        self._analyze_tool = f"analyze_{_name}"
+
+        # Namespaced session state keys to avoid clashes when multiple MemoryTools are on the same agent
+        self._thoughts_key = f"memory_thoughts_{_name}"
+        self._operations_key = f"memory_operations_{_name}"
+        self._analysis_key = f"memory_analysis_{_name}"
+
         # Add instructions for using this toolkit
         if instructions is None:
-            self.instructions = self.DEFAULT_INSTRUCTIONS
+            self.instructions = self.DEFAULT_INSTRUCTIONS.format(
+                think_tool=self._think_tool,
+                get_tool=self._get_tool,
+                add_tool=self._add_tool,
+                update_tool=self._update_tool,
+                delete_tool=self._delete_tool,
+                analyze_tool=self._analyze_tool,
+            )
             if add_few_shot:
                 if few_shot_examples is not None:
                     self.instructions += "\n" + few_shot_examples
@@ -38,30 +67,26 @@ class MemoryTools(Toolkit):
         else:
             self.instructions = instructions
 
-        # The database to use for memory operations
-        self.db: BaseDb = db
-
-        tools: List[Any] = []
-        if enable_think or all:
-            tools.append(self.think)
-        if enable_get_memories or all:
-            tools.append(self.get_memories)
-        if enable_add_memory or all:
-            tools.append(self.add_memory)
-        if enable_update_memory or all:
-            tools.append(self.update_memory)
-        if enable_delete_memory or all:
-            tools.append(self.delete_memory)
-        if enable_analyze or all:
-            tools.append(self.analyze)
-
         super().__init__(
-            name="memory_tools",
+            name=f"{_name}_tools",
             instructions=self.instructions,
             add_instructions=add_instructions,
-            tools=tools,
+            auto_register=False,
             **kwargs,
         )
+
+        if enable_think or all:
+            self.register(self.think, name=self._think_tool)
+        if enable_get_memories or all:
+            self.register(self.get_memories, name=self._get_tool)
+        if enable_add_memory or all:
+            self.register(self.add_memory, name=self._add_tool)
+        if enable_update_memory or all:
+            self.register(self.update_memory, name=self._update_tool)
+        if enable_delete_memory or all:
+            self.register(self.delete_memory, name=self._delete_tool)
+        if enable_analyze or all:
+            self.register(self.analyze, name=self._analyze_tool)
 
     def think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about memory operations, refine your approach, brainstorm memory content, or revise your plan.
@@ -78,12 +103,12 @@ class MemoryTools(Toolkit):
             # Add the thought to the session state
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "memory_thoughts" not in run_context.session_state:
-                run_context.session_state["memory_thoughts"] = []
-            run_context.session_state["memory_thoughts"].append(thought)
+            if self._thoughts_key not in run_context.session_state:
+                run_context.session_state[self._thoughts_key] = []
+            run_context.session_state[self._thoughts_key].append(thought)
 
             # Return the full log of thoughts and the new thought
-            thoughts = "\n".join([f"- {t}" for t in run_context.session_state["memory_thoughts"]])
+            thoughts = "\n".join([f"- {t}" for t in run_context.session_state[self._thoughts_key]])
             formatted_thoughts = dedent(
                 f"""Memory Thoughts:
                 {thoughts}
@@ -107,8 +132,8 @@ class MemoryTools(Toolkit):
             # Store the result in session state for analysis
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "memory_operations" not in run_context.session_state:
-                run_context.session_state["memory_operations"] = []
+            if self._operations_key not in run_context.session_state:
+                run_context.session_state[self._operations_key] = []
 
             operation_result = {
                 "operation": "get_memories",
@@ -116,7 +141,7 @@ class MemoryTools(Toolkit):
                 "memories": [memory.to_dict() for memory in memories],  # type: ignore
                 "error": None,
             }
-            run_context.session_state["memory_operations"].append(operation_result)
+            run_context.session_state[self._operations_key].append(operation_result)
 
             return json.dumps([memory.to_dict() for memory in memories], indent=2)  # type: ignore
         except Exception as e:
@@ -158,8 +183,8 @@ class MemoryTools(Toolkit):
             # Store the result in session state for analysis
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "memory_operations" not in run_context.session_state:
-                run_context.session_state["memory_operations"] = []
+            if self._operations_key not in run_context.session_state:
+                run_context.session_state[self._operations_key] = []
 
             memory_dict = created_memory.to_dict() if created_memory else None  # type: ignore
 
@@ -169,7 +194,7 @@ class MemoryTools(Toolkit):
                 "memory": memory_dict,
                 "error": None,
             }
-            run_context.session_state["memory_operations"].append(operation_result)
+            run_context.session_state[self._operations_key].append(operation_result)
 
             if created_memory:
                 return json.dumps({"success": True, "operation": "add_memory", "memory": memory_dict}, indent=2)
@@ -224,8 +249,8 @@ class MemoryTools(Toolkit):
             # Store the result in session state for analysis
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "memory_operations" not in run_context.session_state:
-                run_context.session_state["memory_operations"] = []
+            if self._operations_key not in run_context.session_state:
+                run_context.session_state[self._operations_key] = []
 
             memory_dict = updated_result.to_dict() if updated_result else None  # type: ignore
 
@@ -235,7 +260,7 @@ class MemoryTools(Toolkit):
                 "memory": memory_dict,
                 "error": None,
             }
-            run_context.session_state["memory_operations"].append(operation_result)
+            run_context.session_state[self._operations_key].append(operation_result)
 
             if updated_result:
                 return json.dumps({"success": True, "operation": "update_memory", "memory": memory_dict}, indent=2)
@@ -278,8 +303,8 @@ class MemoryTools(Toolkit):
             # Store the result in session state for analysis
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "memory_operations" not in run_context.session_state:
-                run_context.session_state["memory_operations"] = []
+            if self._operations_key not in run_context.session_state:
+                run_context.session_state[self._operations_key] = []
 
             memory_dict = existing_memory.to_dict() if existing_memory else None  # type: ignore
 
@@ -290,7 +315,7 @@ class MemoryTools(Toolkit):
                 "deleted_memory": memory_dict,
                 "error": None,
             }
-            run_context.session_state["memory_operations"].append(operation_result)
+            run_context.session_state[self._operations_key].append(operation_result)
 
             return json.dumps(
                 {
@@ -319,12 +344,12 @@ class MemoryTools(Toolkit):
             # Add the analysis to the session state
             if run_context.session_state is None:
                 run_context.session_state = {}
-            if "memory_analysis" not in run_context.session_state:
-                run_context.session_state["memory_analysis"] = []
-            run_context.session_state["memory_analysis"].append(analysis)
+            if self._analysis_key not in run_context.session_state:
+                run_context.session_state[self._analysis_key] = []
+            run_context.session_state[self._analysis_key].append(analysis)
 
             # Return the full log of analysis and the new analysis
-            analysis_log = "\n".join([f"- {a}" for a in run_context.session_state["memory_analysis"]])
+            analysis_log = "\n".join([f"- {a}" for a in run_context.session_state[self._analysis_key]])
             formatted_analysis = dedent(
                 f"""Memory Analysis:
                 {analysis_log}
@@ -336,33 +361,33 @@ class MemoryTools(Toolkit):
             return f"Error recording memory analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\
-        You have access to the Think, Add Memory, Update Memory, Delete Memory, and Analyze tools that will help you manage user memories and analyze their operations. Use these tools as frequently as needed to successfully complete memory management tasks.
+        You have access to the `{think_tool}`, `{get_tool}`, `{add_tool}`, `{update_tool}`, `{delete_tool}`, and `{analyze_tool}` tools that will help you manage user memories and analyze their operations. Use these tools as frequently as needed to successfully complete memory management tasks.
 
         ## How to use the Think, Memory Operations, and Analyze tools:
 
         1. **Think**
         - Purpose: A scratchpad for planning memory operations, brainstorming memory content, and refining your approach. You never reveal your "Think" content to the user.
-        - Usage: Call `think` whenever you need to figure out what memory operations to perform, analyze requirements, or decide on strategy.
+        - Usage: Call `{think_tool}` whenever you need to figure out what memory operations to perform, analyze requirements, or decide on strategy.
 
         2. **Get Memories**
         - Purpose: Retrieves a list of memories from the database for the current user.
-        - Usage: Call `get_memories` when you need to retrieve memories for the current user.
+        - Usage: Call `{get_tool}` when you need to retrieve memories for the current user.
 
         3. **Add Memory**
         - Purpose: Creates new memories in the database with specified content and metadata.
-        - Usage: Call `add_memory` with memory content and optional topics when you need to store new information.
+        - Usage: Call `{add_tool}` with memory content and optional topics when you need to store new information.
 
         4. **Update Memory**
         - Purpose: Modifies existing memories in the database by memory ID.
-        - Usage: Call `update_memory` with a memory ID and the fields you want to change. Only specify the fields that need updating.
+        - Usage: Call `{update_tool}` with a memory ID and the fields you want to change. Only specify the fields that need updating.
 
         5. **Delete Memory**
         - Purpose: Removes memories from the database by memory ID.
-        - Usage: Call `delete_memory` with a memory ID when a memory is no longer needed or requested to be removed.
+        - Usage: Call `{delete_tool}` with a memory ID when a memory is no longer needed or requested to be removed.
 
         6. **Analyze**
         - Purpose: Evaluate whether the memory operations results are correct and sufficient. If not, go back to "Think" or use memory operations with refined parameters.
-        - Usage: Call `analyze` after performing memory operations to verify:
+        - Usage: Call `{analyze_tool}` after performing memory operations to verify:
             - Success: Did the operation complete successfully?
             - Accuracy: Is the memory content correct and well-formed?
             - Completeness: Are all required fields populated appropriately?

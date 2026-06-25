@@ -1,12 +1,13 @@
 import json
 from textwrap import dedent
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.run import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
+from agno.utils.string import sanitize_tool_name
 
 
 class KnowledgeTools(Toolkit):
@@ -26,9 +27,28 @@ class KnowledgeTools(Toolkit):
         if knowledge is None:
             raise ValueError("knowledge must be provided when using KnowledgeTools")
 
+        # The knowledge to search
+        self.knowledge: Knowledge = knowledge
+
+        # Use knowledge name for namespacing (falls back to "knowledge" if not set)
+        _name = sanitize_tool_name(knowledge.name or "knowledge")
+
+        # Tool names for this knowledge base
+        self._think_tool = f"think_{_name}"
+        self._search_tool = f"search_{_name}"
+        self._analyze_tool = f"analyze_{_name}"
+
+        # Namespaced session state keys to avoid clashes when multiple KnowledgeTools are on the same agent
+        self._thoughts_key = f"thoughts_{_name}"
+        self._analysis_key = f"analysis_{_name}"
+
         # Add instructions for using this toolkit
         if instructions is None:
-            self.instructions = self.DEFAULT_INSTRUCTIONS
+            self.instructions = self.DEFAULT_INSTRUCTIONS.format(
+                think_tool=self._think_tool,
+                search_tool=self._search_tool,
+                analyze_tool=self._analyze_tool,
+            )
             if add_few_shot:
                 if few_shot_examples is not None:
                     self.instructions += "\n" + few_shot_examples
@@ -37,24 +57,20 @@ class KnowledgeTools(Toolkit):
         else:
             self.instructions = instructions
 
-        # The knowledge to search
-        self.knowledge: Knowledge = knowledge
-
-        tools: List[Any] = []
-        if enable_think or all:
-            tools.append(self.think)
-        if enable_search or all:
-            tools.append(self.search_knowledge)
-        if enable_analyze or all:
-            tools.append(self.analyze)
-
         super().__init__(
-            name="knowledge_tools",
-            tools=tools,
+            name=f"{_name}_tools",
             instructions=self.instructions,
             add_instructions=add_instructions,
+            auto_register=False,
             **kwargs,
         )
+
+        if enable_think or all:
+            self.register(self.think, name=self._think_tool)
+        if enable_search or all:
+            self.register(self.search_knowledge, name=self._search_tool)
+        if enable_analyze or all:
+            self.register(self.analyze, name=self._analyze_tool)
 
     def think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.
@@ -76,12 +92,12 @@ class KnowledgeTools(Toolkit):
             if session_state is None:
                 session_state = {}
                 run_context.session_state = session_state
-            if "thoughts" not in session_state:
-                session_state["thoughts"] = []
-            session_state["thoughts"].append(thought)
+            if self._thoughts_key not in session_state:
+                session_state[self._thoughts_key] = []
+            session_state[self._thoughts_key].append(thought)
 
             # Return the full log of thoughts and the new thought
-            thoughts = "\n".join([f"- {t}" for t in session_state["thoughts"]])
+            thoughts = "\n".join([f"- {t}" for t in session_state[self._thoughts_key]])
             formatted_thoughts = dedent(
                 f"""Thoughts:
                 {thoughts}
@@ -132,12 +148,12 @@ class KnowledgeTools(Toolkit):
             if session_state is None:
                 session_state = {}
                 run_context.session_state = session_state
-            if "analysis" not in session_state:
-                session_state["analysis"] = []
-            session_state["analysis"].append(analysis)
+            if self._analysis_key not in session_state:
+                session_state[self._analysis_key] = []
+            session_state[self._analysis_key].append(analysis)
 
             # Return the full log of thoughts and the new thought
-            analysis = "\n".join([f"- {a}" for a in session_state["analysis"]])
+            analysis = "\n".join([f"- {a}" for a in session_state[self._analysis_key]])
             formatted_analysis = dedent(
                 f"""Analysis:
                 {analysis}
@@ -149,23 +165,23 @@ class KnowledgeTools(Toolkit):
             return f"Error recording analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\
-        You have access to the Think, Search, and Analyze tools that will help you search your knowledge for relevant information. Use these tools as frequently as needed to find the most relevant information.
+        You have access to the `{think_tool}`, `{search_tool}`, and `{analyze_tool}` tools that will help you search your knowledge for relevant information. Use these tools as frequently as needed to find the most relevant information.
 
         ## How to use the Think, Search, and Analyze tools:
         1. **Think**
         - Purpose: A scratchpad for planning, brainstorming keywords, and refining your approach. You never reveal your "Think" content to the user.
-        - Usage: Call `think` whenever you need to figure out what to do next, analyze your approach, or decide new search terms before (or after) you look up documents.
+        - Usage: Call `{think_tool}` whenever you need to figure out what to do next, analyze your approach, or decide new search terms before (or after) you look up documents.
 
         2. **Search**
         - Purpose: Executes a query against the knowledge base.
-        - Usage: Call `search` with a clear query string whenever you want to retrieve documents or data. You can and should call this tool multiple times in one conversation.
+        - Usage: Call `{search_tool}` with a clear query string whenever you want to retrieve documents or data. You can and should call this tool multiple times in one conversation.
             - For complex topics, use multiple focused searches rather than one broad search
             - Try different phrasing and keywords if initial searches don't yield useful results
             - Use quotes for exact phrases and OR for alternative terms (e.g., "protein synthesis" OR "protein formation")
 
         3. **Analyze**
         - Purpose: Evaluate whether the returned documents are correct and sufficient. If not, go back to "Think" or "Search" with refined queries.
-        - Usage: Call `analyze` after getting search results to verify the quality and correctness of that information. Consider:
+        - Usage: Call `{analyze_tool}` after getting search results to verify the quality and correctness of that information. Consider:
             - Relevance: Do the documents directly address the user's question?
             - Completeness: Is there enough information to provide a thorough answer?
             - Reliability: Are the sources credible and up-to-date?
