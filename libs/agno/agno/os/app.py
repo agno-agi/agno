@@ -67,6 +67,7 @@ from agno.os.utils import (
     collect_mcp_tools_from_team,
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
+    flatten_routes,
     load_yaml_config,
     resolve_origins,
     setup_tracing_for_os,
@@ -1167,7 +1168,7 @@ class AgentOS:
         """
         app = self.get_app()
 
-        return app.routes
+        return flatten_routes(app.routes)
 
     def _add_router(self, fastapi_app: FastAPI, router: APIRouter) -> None:
         """Add a router to the FastAPI app, avoiding route conflicts.
