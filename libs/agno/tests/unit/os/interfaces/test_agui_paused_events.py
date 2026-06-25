@@ -1,4 +1,4 @@
-"""Tests for AGUI utils _create_completion_events with paused events."""
+"""Tests for AGUI process_completion with paused events."""
 
 import uuid
 
@@ -9,7 +9,8 @@ pytest.importorskip("ag_ui", reason="ag_ui not installed")
 from ag_ui.core import ToolCallArgsEvent, ToolCallEndEvent, ToolCallStartEvent
 
 from agno.models.response import ToolExecution
-from agno.os.interfaces.agui.utils import EventBuffer, _create_completion_events
+from agno.os.interfaces.agui.handlers import process_completion
+from agno.os.interfaces.agui.state import StreamState
 from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 
@@ -46,26 +47,17 @@ def _make_paused_event_cls(event_cls, tools=None):
     return event_cls(**kwargs)
 
 
-class TestCreateCompletionEventsPaused:
-    """Test that _create_completion_events handles both Agent and Team RunPausedEvent."""
+class TestProcessCompletionPaused:
+    """Test that process_completion handles both Agent and Team RunPausedEvent."""
 
     def test_agent_run_paused_event_emits_tool_events(self):
         """Agent RunPausedEvent with external_execution tools should emit tool call events."""
         tools = [_make_external_tool("notify")]
         chunk = _make_paused_event_cls(AgentRunPausedEvent, tools=tools)
 
-        event_buffer = EventBuffer()
-        thread_id = "thread-1"
-        run_id = "run-1"
+        state = StreamState(thread_id="thread-1", run_id="run-1")
 
-        events = _create_completion_events(
-            chunk=chunk,
-            event_buffer=event_buffer,
-            message_started=False,
-            message_id=str(uuid.uuid4()),
-            thread_id=thread_id,
-            run_id=run_id,
-        )
+        events = process_completion(chunk, state)
 
         # Should emit tool call start, args, and end events
         tool_start_events = [e for e in events if isinstance(e, ToolCallStartEvent)]
@@ -82,18 +74,9 @@ class TestCreateCompletionEventsPaused:
         tools = [_make_external_tool("send_notification")]
         chunk = _make_paused_event_cls(TeamRunPausedEvent, tools=tools)
 
-        event_buffer = EventBuffer()
-        thread_id = "thread-1"
-        run_id = "run-1"
+        state = StreamState(thread_id="thread-1", run_id="run-1")
 
-        events = _create_completion_events(
-            chunk=chunk,
-            event_buffer=event_buffer,
-            message_started=False,
-            message_id=str(uuid.uuid4()),
-            thread_id=thread_id,
-            run_id=run_id,
-        )
+        events = process_completion(chunk, state)
 
         # Should emit tool call start, args, and end events
         tool_start_events = [e for e in events if isinstance(e, ToolCallStartEvent)]
@@ -116,16 +99,9 @@ class TestCreateCompletionEventsPaused:
         )
         chunk = _make_paused_event_cls(AgentRunPausedEvent, tools=[tool])
 
-        event_buffer = EventBuffer()
+        state = StreamState(thread_id="thread-1", run_id="run-1")
 
-        events = _create_completion_events(
-            chunk=chunk,
-            event_buffer=event_buffer,
-            message_started=False,
-            message_id=str(uuid.uuid4()),
-            thread_id="thread-1",
-            run_id="run-1",
-        )
+        events = process_completion(chunk, state)
 
         tool_start_events = [e for e in events if isinstance(e, ToolCallStartEvent)]
         assert len(tool_start_events) == 0
@@ -134,16 +110,9 @@ class TestCreateCompletionEventsPaused:
         """Team RunPausedEvent without tools should not error."""
         chunk = _make_paused_event_cls(TeamRunPausedEvent, tools=None)
 
-        event_buffer = EventBuffer()
+        state = StreamState(thread_id="thread-1", run_id="run-1")
 
-        events = _create_completion_events(
-            chunk=chunk,
-            event_buffer=event_buffer,
-            message_started=False,
-            message_id=str(uuid.uuid4()),
-            thread_id="thread-1",
-            run_id="run-1",
-        )
+        events = process_completion(chunk, state)
 
         tool_start_events = [e for e in events if isinstance(e, ToolCallStartEvent)]
         assert len(tool_start_events) == 0
