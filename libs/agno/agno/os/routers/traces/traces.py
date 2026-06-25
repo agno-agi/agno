@@ -38,7 +38,7 @@ def _apply_user_scope_to_filter(filter_expr_dict: Optional[dict], effective_user
     """AND a ``user_id`` constraint into a filter for non-admin scoped callers.
 
     Scoped users must not be able to query across other users' traces, so their
-    ``user_id`` is ANDed into whatever filter they supplied. Admins / unscoped
+    ``user_id`` is AND-ed into whatever filter they supplied. Admins / unscoped
     callers (``effective_user_id is None``) get the raw filter unchanged.
 
     The AND/OR wrapper key is canonically ``"conditions"`` (see ``agno.filters``);
