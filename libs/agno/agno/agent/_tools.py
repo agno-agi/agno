@@ -123,21 +123,14 @@ def get_tools(
     resolve_callable_tools(agent, run_context)
     resolve_callable_knowledge(agent, run_context)
 
-    # Merge per-run client tools into run_context.tools after factory resolution.
-    # Creates new list to avoid mutating cached factory results.
-    # Base priority: run_context.tools (factory-resolved) > agent.tools (static)
-    if run_context.client_tools:
-        if run_context.tools is not None:
-            base = run_context.tools
-        elif isinstance(agent.tools, list):
-            base = agent.tools
-        else:
-            base = []
-        run_context.tools = list(base) + list(run_context.client_tools)
-        run_context.client_tools = None
-
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
+
+    # Merge per-run client tools into a local list after factory resolution.
+    # Does NOT mutate run_context.tools to avoid issues with callable factory retries.
+    # Priority: resolved tools (factory/static) first, client tools appended.
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -240,21 +233,14 @@ async def aget_tools(
     await aresolve_callable_tools(agent, run_context)
     await aresolve_callable_knowledge(agent, run_context)
 
-    # Merge per-run client tools into run_context.tools after factory resolution.
-    # Creates new list to avoid mutating cached factory results.
-    # Base priority: run_context.tools (factory-resolved) > agent.tools (static)
-    if run_context.client_tools:
-        if run_context.tools is not None:
-            base = run_context.tools
-        elif isinstance(agent.tools, list):
-            base = agent.tools
-        else:
-            base = []
-        run_context.tools = list(base) + list(run_context.client_tools)
-        run_context.client_tools = None
-
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
+
+    # Merge per-run client tools into a local list after factory resolution.
+    # Does NOT mutate run_context.tools to avoid issues with callable factory retries.
+    # Priority: resolved tools (factory/static) first, client tools appended.
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
