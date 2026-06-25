@@ -17,7 +17,7 @@ class Toolkit:
     def __init__(
         self,
         name: str = "toolkit",
-        tools: Sequence[Union[Callable[..., Any], Function]] = [],
+        tools: Optional[Sequence[Union[Callable[..., Any], Function]]] = None,
         async_tools: Optional[Sequence[tuple[Callable[..., Any], str]]] = None,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
@@ -54,6 +54,8 @@ class Toolkit:
             show_result_tools (Optional[List[str]]): List of function names whose results should be shown.
         """
         self.name: str = name
+        if tools is None:
+            tools = []
         self.tools: Sequence[Union[Callable[..., Any], Function]] = tools
         self._async_tools: Sequence[tuple[Callable[..., Any], str]] = async_tools or []
         # Functions dict - used by agent.run() and agent.print_response()
