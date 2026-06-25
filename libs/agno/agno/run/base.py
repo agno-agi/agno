@@ -335,3 +335,14 @@ class RunStatus(str, Enum):
     # history-builders can skip it when rebuilding context. Pass replace_original=false
     # to keep the original COMPLETED and visible instead.
     regenerated = "REGENERATED"
+
+
+# V1 Compatibility Aliases
+BaseRunResponseEvent = BaseRunOutputEvent
+
+
+@dataclass
+class RunResponseExtraData:
+    """V1-compatible extra data for run responses."""
+
+    pass

@@ -38,13 +38,17 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install -U -e "${AGNO_DIR}[tests]"
 # break numpy 2.x. Its runtime deps are already satisfied at newer versions.
 VIRTUAL_ENV=${VENV_DIR} uv pip install brave-search --no-deps
 
-
 print_heading "Installing agno-infra"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt
 
 print_heading "Installing agno-infra in editable mode with dev dependencies"
 VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_INFRA_DIR}[dev]
+
+print_heading "Pinning test dependency versions for CI compatibility"
+# Must run after agno-infra (its requirements pin pydantic==2.11.7).
+# scipy>=1.18 requires numpy>=2; google-genai>=2.9 needs pydantic>=2.12.
+VIRTUAL_ENV=${VENV_DIR} uv pip install "numpy>=2.0,<2.8" "google-genai>=2.0.0" "pydantic>=2.12"
 
 print_heading "Development setup complete"
 print_heading "Activate venv using: source .venv/bin/activate"
