@@ -1,3 +1,5 @@
+import os
+import tempfile
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -229,13 +231,24 @@ class MoviePyVideoTools(Toolkit):
         Returns:
             str: Path to the extracted audio file
         """
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            suffix=os.path.splitext(output_path)[1],
+            dir=os.path.dirname(output_path) or ".",
+        )
+        os.close(tmp_fd)
         try:
             log_debug(f"Extracting audio from {video_path}")
             video = VideoFileClip(video_path)
-            video.audio.write_audiofile(output_path)
+            try:
+                video.audio.write_audiofile(tmp_path)
+            finally:
+                video.close()
+            os.rename(tmp_path, output_path)
             log_info(f"Audio extracted to {output_path}")
             return output_path
         except Exception as e:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             logger.exception("Failed to extract audio")
             return f"Failed to extract audio: {str(e)}"
 
@@ -247,14 +260,19 @@ class MoviePyVideoTools(Toolkit):
         Returns:
             str: Path to the created SRT file, or error message if failed
         """
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            suffix=".srt",
+            dir=os.path.dirname(output_path) or ".",
+        )
         try:
             log_debug(f"Creating SRT file at {output_path}")
-            # Since we're getting SRT format from Whisper API now,
-            # we can just write it directly to file
-            with open(output_path, "w", encoding="utf-8") as f:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
                 f.write(transcription)
+            os.rename(tmp_path, output_path)
             return output_path
         except Exception as e:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
             logger.exception("Failed to create SRT file")
             return f"Failed to create SRT file: {str(e)}"
 
@@ -325,22 +343,36 @@ class MoviePyVideoTools(Toolkit):
             # Combine video with all captions
             final_video = CompositeVideoClip([video] + all_caption_clips, size=video.size)
 
-            # Write output with optimized settings
-            final_video.write_videofile(
-                output_path,
-                codec="libx264",
-                audio_codec="aac",
-                fps=video.fps,
-                preset="medium",
-                threads=4,
-                # Disable default progress bar
+            # Write to temp file for atomic output
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                suffix=os.path.splitext(output_path)[1],
+                dir=os.path.dirname(output_path) or ".",
             )
+            os.close(tmp_fd)
 
-            # Cleanup
-            video.close()
-            final_video.close()
-            for clip in all_caption_clips:
-                clip.close()
+            try:
+                # Write output with optimized settings
+                final_video.write_videofile(
+                    tmp_path,
+                    codec="libx264",
+                    audio_codec="aac",
+                    fps=video.fps,
+                    preset="medium",
+                    threads=4,
+                    # Disable default progress bar
+                )
+
+                os.rename(tmp_path, output_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                raise
+            finally:
+                # Cleanup
+                video.close()
+                final_video.close()
+                for clip in all_caption_clips:
+                    clip.close()
 
             return output_path
 
