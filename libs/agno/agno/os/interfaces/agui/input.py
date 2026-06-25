@@ -5,9 +5,12 @@ from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from ag_ui.core.types import Message as AGUIMessage
+from ag_ui.core.types import Tool as AGUITool
+from ag_ui.core.types import ToolMessage as AGUIToolMessage
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
+from agno.tools.function import Function
 from agno.utils.log import log_warning
 
 
@@ -163,3 +166,40 @@ def _decode_base64(value: str) -> Optional[bytes]:
     except Exception:
         log_warning("Failed to decode base64 content")
         return None
+
+
+def extract_tool_messages(messages: List[AGUIMessage]) -> List[AGUIToolMessage]:
+    """Return trailing tool-role messages, indicating a tool-resume request.
+
+    When AG-UI frontends resume a paused run (external_execution tools), they append
+    ToolMessages at the end of the history. If the tail of the list is entirely
+    tool-role messages, this is a resume — not a fresh user turn.
+    """
+    tool_msgs: List[AGUIToolMessage] = []
+    for msg in reversed(messages):
+        if msg.role == "tool":
+            tool_msgs.append(msg)  # type: ignore[arg-type]
+        else:
+            break
+    return list(reversed(tool_msgs))
+
+
+def agui_tools_to_external_functions(agui_tools: Optional[List[AGUITool]]) -> List[Function]:
+    """Convert AG-UI tool definitions to Agno Functions with external_execution=True.
+
+    Frontend tools execute in the browser, not on the server. Setting
+    external_execution=True tells the agent to pause after generating the tool call,
+    yielding control back to the frontend for execution.
+    """
+    if not agui_tools:
+        return []
+    return [
+        Function(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.parameters or {"type": "object", "properties": {}},
+            external_execution=True,
+            external_execution_silent=True,
+        )
+        for tool in agui_tools
+    ]
