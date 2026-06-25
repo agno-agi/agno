@@ -33,6 +33,7 @@ agent_os = AgentOS(
         AGUI(agent=backend_tool_agent, prefix="/backend_tool_rendering"),
         AGUI(agent=hitl_agent, prefix="/human_in_the_loop"),
         AGUI(agent=generative_ui_agent, prefix="/tool_based_generative_ui"),
+        AGUI(agent=generative_ui_agent, prefix="/agentic_generative_ui"),
         AGUI(agent=shared_state_agent, prefix="/shared_state"),
         AGUI(agent=reasoning_agent, prefix="/agentic_chat_reasoning"),
         AGUI(agent=media_agent, prefix="/agentic_chat_multimodal"),
