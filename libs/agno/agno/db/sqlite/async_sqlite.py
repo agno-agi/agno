@@ -32,7 +32,7 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
-    serialize_session_json_fields,
+    json_serializer,
 )
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
@@ -125,16 +125,16 @@ class AsyncSqliteDb(AsyncBaseDb):
         _engine: Optional[AsyncEngine] = db_engine
         if _engine is None:
             if db_url is not None:
-                _engine = create_async_engine(db_url)
+                _engine = create_async_engine(db_url, json_serializer=json_serializer)
             elif db_file is not None:
                 db_path = Path(db_file).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 db_file = str(db_path)
-                _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+                _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", json_serializer=json_serializer)
             else:
                 # If none of db_engine, db_url, or db_file are provided, create a db in the current directory
                 default_db_path = Path("./agno.db").resolve()
-                _engine = create_async_engine(f"sqlite+aiosqlite:///{default_db_path}")
+                _engine = create_async_engine(f"sqlite+aiosqlite:///{default_db_path}", json_serializer=json_serializer)
                 db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
@@ -777,7 +777,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             if table is None:
                 return None
 
-            serialized_session = serialize_session_json_fields(session.to_dict())
+            serialized_session = session.to_dict()
 
             if isinstance(session, AgentSession):
                 async with self.async_session_factory() as sess, sess.begin():
@@ -953,7 +953,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = session.to_dict()
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
@@ -1008,7 +1008,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = session.to_dict()
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
@@ -1063,7 +1063,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = session.to_dict()
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
