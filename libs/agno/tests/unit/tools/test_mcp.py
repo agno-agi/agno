@@ -78,6 +78,52 @@ def test_url_defaults_to_streamable_http_transport():
     assert tools.transport == "streamable-http"
 
 
+def test_api_key_sets_x_agno_api_key_header():
+    """Test that managed Agno API keys are sent as x-agno-api-key."""
+    tools = MCPTools(url="http://localhost:8080/mcp", api_key="ag-test-key")
+    assert isinstance(tools.server_params, StreamableHTTPClientParams)
+    assert tools.server_params.headers == {"x-agno-api-key": "ag-test-key"}
+
+
+def test_api_key_uses_bearer_for_provider_keys():
+    """Test that non-Agno keys use Authorization Bearer."""
+    tools = MCPTools(url="http://localhost:8080/mcp", api_key="sk-provider-key")
+    assert tools.server_params.headers == {"Authorization": "Bearer sk-provider-key"}
+
+
+def test_api_key_reads_from_env(monkeypatch):
+    """Test that AGNO_API_KEY is used when api_key is not provided."""
+    monkeypatch.setenv("AGNO_API_KEY", "ag-env-key")
+    tools = MCPTools(url="http://localhost:8080/mcp")
+    assert tools.server_params.headers == {"x-agno-api-key": "ag-env-key"}
+
+
+def test_headers_merge_with_api_key():
+    """Test that explicit headers merge with auth headers."""
+    tools = MCPTools(
+        url="http://localhost:8080/mcp",
+        api_key="ag-test-key",
+        headers={"X-Custom": "value"},
+    )
+    assert tools.server_params.headers == {
+        "x-agno-api-key": "ag-test-key",
+        "X-Custom": "value",
+    }
+
+
+def test_api_key_merges_into_existing_server_params():
+    """Test that api_key merges into provided server_params headers."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp", headers={"X-Existing": "1"}),
+        transport="streamable-http",
+        api_key="ag-test-key",
+    )
+    assert tools.server_params.headers == {
+        "X-Existing": "1",
+        "x-agno-api-key": "ag-test-key",
+    }
+
+
 def test_stdio_transport_with_url_overrides_to_streamable_http():
     """Test that stdio transport gets overridden to streamable-http when url is present."""
     tools = MCPTools(url="http://localhost:8080/mcp", transport="stdio")

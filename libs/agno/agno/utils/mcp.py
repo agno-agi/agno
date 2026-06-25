@@ -260,3 +260,15 @@ def prepare_command(command: str) -> list[str]:
         return parts
 
     raise ValueError(f"MCP command needs to use one of the following executables: {ALLOWED_COMMANDS}")
+
+
+def _looks_like_jwt(key: str) -> bool:
+    """Detect a JWS compact JWT for Agno gateway auth routing."""
+    return key.startswith("eyJ") and key.count(".") == 2
+
+
+def build_mcp_auth_headers(api_key: str) -> dict[str, str]:
+    """Build HTTP auth headers for MCP servers that use Agno gateway-style credentials."""
+    if api_key.lower().startswith("ag-") or _looks_like_jwt(api_key):
+        return {"x-agno-api-key": api_key}
+    return {"Authorization": f"Bearer {api_key}"}
