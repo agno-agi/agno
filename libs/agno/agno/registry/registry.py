@@ -245,6 +245,31 @@ class Registry:
             return next((db for db in self.dbs if db.id == db_id), None)
         return None
 
+    def get_model(self, model_id: str, provider: Optional[str] = None, name: Optional[str] = None) -> Optional[Model]:
+        """Get a registered model instance by id, disambiguating by provider/name when given.
+
+        Returns the live, fully-configured instance the user registered. Reconstructing a model
+        from its serialized config only round-trips ``id``/``name``/``provider`` (see
+        ``Model.to_dict``), so connection params like ``azure_endpoint``/``base_url`` and any
+        credentials are lost. Preferring the registered instance keeps those intact.
+
+        ``provider`` and ``name`` are matched only when supplied, so distinct provider classes that
+        share an id (e.g. OpenAIChat vs OpenAIResponses, or the Azure model classes -- all report
+        provider "Azure") resolve to the right instance. Returns None when nothing matches, letting
+        the caller fall back to rebuilding from the serialized dict.
+        """
+        if not self.models or not model_id:
+            return None
+        for model in self.models:
+            if getattr(model, "id", None) != model_id:
+                continue
+            if provider is not None and getattr(model, "provider", None) != provider:
+                continue
+            if name is not None and getattr(model, "name", None) != name:
+                continue
+            return model
+        return None
+
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
 

@@ -11,12 +11,14 @@ import pytest
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
+from agno.models.base import Model
 from agno.models.utils import (
     MODEL_PROVIDER_CLASSES,
     _canonical_provider_display,
     _get_model_class,
     _resolve_provider_key,
     get_model_from_dict,
+    resolve_model,
 )
 
 ALL_PROVIDER_KEYS = sorted(MODEL_PROVIDER_CLASSES)
@@ -171,6 +173,64 @@ def test_unsupported_provider_raises():
 def test_get_model_from_dict_requires_id():
     with pytest.raises(ValueError, match="missing an 'id'"):
         get_model_from_dict({"provider": "openai"})
+
+
+class _FakeRegistry:
+    """Minimal registry stub exposing get_model() the way Registry does."""
+
+    def __init__(self, model):
+        self._model = model
+
+    def get_model(self, model_id, provider=None, name=None):
+        if getattr(self._model, "id", None) != model_id:
+            return None
+        if provider is not None and getattr(self._model, "provider", None) != provider:
+            return None
+        if name is not None and getattr(self._model, "name", None) != name:
+            return None
+        return self._model
+
+
+def test_resolve_model_prefers_registry_instance():
+    """A dict that matches a registered model resolves to the live instance, not a rebuild."""
+
+    class _M:
+        id = "gpt-5.5"
+        provider = "OpenAI"
+        name = "OpenAIResponses"
+
+    live = _M()
+    registry = _FakeRegistry(live)
+
+    resolved = resolve_model({"id": "gpt-5.5", "provider": "OpenAI", "name": "OpenAIResponses"}, registry)
+    assert resolved is live
+
+
+def test_resolve_model_falls_back_to_dict_when_not_registered():
+    """When the registry has no match, resolve_model rebuilds from the dict (unchanged behavior)."""
+    registry = _FakeRegistry(None)
+    rebuilt = resolve_model({"id": "gpt-4o", "provider": "OpenAI", "name": "OpenAIResponses"}, registry)
+    assert isinstance(rebuilt, Model)
+    assert rebuilt.id == "gpt-4o"
+
+
+def test_resolve_model_without_registry_rebuilds_from_dict():
+    rebuilt = resolve_model({"id": "gpt-4o", "provider": "OpenAI", "name": "OpenAIResponses"})
+    assert isinstance(rebuilt, Model)
+    assert rebuilt.id == "gpt-4o"
+
+
+def test_resolve_model_from_string():
+    rebuilt = resolve_model("openai:gpt-4o")
+    assert isinstance(rebuilt, Model)
+    assert rebuilt.id == "gpt-4o"
+
+
+def test_resolve_model_passes_through_unhandled_values():
+    """Values that are neither a model dict nor a string are returned unchanged."""
+    sentinel = object()
+    assert resolve_model(sentinel) is sentinel
+    assert resolve_model({"no": "id"}) == {"no": "id"}
 
 
 # Abstract/intermediate Model subclasses that are not concrete providers and so must not appear

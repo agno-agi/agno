@@ -1,8 +1,11 @@
 import importlib
 from collections import Counter
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple, Union
 
 from agno.models.base import Model
+
+if TYPE_CHECKING:
+    from agno.registry.registry import Registry
 
 # Single source of truth for every supported model provider. One row per stable provider key:
 #   key -> (module, class_name, default_name, default_provider_display)
@@ -202,3 +205,29 @@ def get_model_from_dict(model_data: Dict[str, Any]) -> Optional[Model]:
 
     provider_key = _resolve_provider_key(model_data.get("provider"), model_data.get("name"))
     return _get_model_class(model_id, provider_key)
+
+
+def resolve_model(model_data: Any, registry: Optional["Registry"] = None) -> Any:
+    """Reconstruct a model from its serialized config, preferring a registered live instance.
+
+    Rebuilding from a serialized dict only round-trips ``id``/``name``/``provider`` (see
+    ``Model.to_dict``), so connection params like ``azure_endpoint``/``base_url`` and any
+    credentials are lost. When the model is present in the registry, its live, fully-configured
+    instance is reused; otherwise we fall back to rebuilding from the dict (or a ``provider:id``
+    string). Values that are neither a model dict nor a string are returned unchanged.
+
+    Shared by Agent and Team reconstruction so both resolve models identically.
+    """
+    if isinstance(model_data, dict) and "id" in model_data:
+        if registry is not None:
+            registered_model = registry.get_model(
+                model_data["id"],
+                provider=model_data.get("provider"),
+                name=model_data.get("name"),
+            )
+            if registered_model is not None:
+                return registered_model
+        return get_model_from_dict(model_data)
+    elif isinstance(model_data, str):
+        return get_model(model_data)
+    return model_data

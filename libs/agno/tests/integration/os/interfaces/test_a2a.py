@@ -62,9 +62,9 @@ def test_a2a_interface_parameter():
 
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    route_paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
-    assert "/a2a/agents/{id}/v1/message:send" in route_paths
-    assert "/a2a/agents/{id}/v1/message:stream" in route_paths
+    paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
+    assert "/a2a/agents/{id}/v1/message:send" in paths
+    assert "/a2a/agents/{id}/v1/message:stream" in paths
 
 
 def test_a2a_interface_in_interfaces_parameter():
@@ -76,9 +76,9 @@ def test_a2a_interface_in_interfaces_parameter():
 
     assert app is not None
     assert any([isinstance(interface, A2A) for interface in agent_os.interfaces])
-    route_paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
-    assert "/a2a/agents/{id}/v1/message:send" in route_paths
-    assert "/a2a/agents/{id}/v1/message:stream" in route_paths
+    paths = [route.path for route in agent_os.get_routes() if hasattr(route, "path")]
+    assert "/a2a/agents/{id}/v1/message:send" in paths
+    assert "/a2a/agents/{id}/v1/message:stream" in paths
 
 
 def test_a2a(test_agent: Agent, test_client: TestClient):

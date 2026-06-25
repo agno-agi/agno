@@ -45,19 +45,14 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import json
-from os import getenv
-from pathlib import Path
 from typing import Any, List, Optional, Union
 
-from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
+from agno.tools.google.base import GoogleToolkit
 
 try:
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import Resource, build
 except ImportError:
     raise ImportError(
         "`google-api-python-client` `google-auth-httplib2` `google-auth-oauthlib` not installed. Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
@@ -67,14 +62,14 @@ except ImportError:
 authenticate = google_authenticate("sheets")
 
 
-class GoogleSheetsTools(Toolkit):
-    # Default scopes for Google Sheets API access
+class GoogleSheetsTools(GoogleToolkit):
+    api_name = "sheets"
+    api_version = "v4"
+    google_service_name = "sheets"
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/spreadsheets.readonly",
         "write": "https://www.googleapis.com/auth/spreadsheets",
     }
-
-    service: Optional[Resource]
 
     def __init__(
         self,
@@ -82,10 +77,12 @@ class GoogleSheetsTools(Toolkit):
         spreadsheet_id: Optional[str] = None,
         spreadsheet_range: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
-        creds_path: Optional[str] = None,
+        credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         oauth_port: int = 0,
+        # Deprecated alias (use credentials_path instead)
+        creds_path: Optional[str] = None,
         read_sheet: bool = True,
         create_sheet: bool = False,
         update_sheet: bool = False,
@@ -105,7 +102,7 @@ class GoogleSheetsTools(Toolkit):
             spreadsheet_id (Optional[str]): ID of the target spreadsheet.
             spreadsheet_range (Optional[str]): Range within the spreadsheet.
             creds (Optional[Credentials | ServiceAccountCredentials]): Pre-existing credentials.
-            creds_path (Optional[str]): Path to credentials file.
+            credentials_path (Optional[str]): Path to credentials file.
             token_path (Optional[str]): Path to token file.
             service_account_path (Optional[str]): Path to a service account file.
             oauth_port (int): Port to use for OAuth authentication. Defaults to 0.
@@ -129,13 +126,15 @@ class GoogleSheetsTools(Toolkit):
 
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
-        self.creds = creds
-        self.credentials_path = creds_path
-        self.token_path = token_path
-        self.oauth_port = oauth_port
-        self.service: Optional[Resource] = None
-        self.service_account_path = service_account_path
         # Determine required scopes based on operations if no custom scopes provided
+        # Handle deprecated alias
+        if creds_path is not None:
+            from agno.utils.log import log_warning
+
+            log_warning("creds_path is deprecated, use credentials_path instead")
+            if credentials_path is None:
+                credentials_path = creds_path
+
         if scopes is None:
             self.scopes = []
             if _read_sheet:
@@ -170,61 +169,24 @@ class GoogleSheetsTools(Toolkit):
         if all or _create_duplicate_sheet:
             tools.append(self.create_duplicate_sheet)
 
-        super().__init__(name="google_sheets_tools", tools=tools, **kwargs)
-
-    def _build_service(self):
-        return build("sheets", "v4", credentials=self.creds)
-
-    def _auth(self) -> None:
-        """
-        Authenticate with Google Sheets API
-        """
-        if self.creds and self.creds.valid:
-            return
-
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-
-        if service_account_path:
-            self.creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            if self.creds and self.creds.expired:
-                self.creds.refresh(Request())
-            return
-
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        if token_file.exists():
-            self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-
-        if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
-                self.creds.refresh(Request())
-            else:
-                client_config = {
-                    "installed": {
-                        "client_id": getenv("GOOGLE_CLIENT_ID"),
-                        "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                        "project_id": getenv("GOOGLE_PROJECT_ID"),
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                    }
-                }
-                # File based authentication
-                if creds_file.exists():
-                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-                else:
-                    flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-                # Opens up a browser window for OAuth authentication
-                self.creds = flow.run_local_server(port=self.oauth_port)
-            token_file.write_text(self.creds.to_json()) if self.creds else None  # type: ignore
+        super().__init__(
+            name="google_sheets_tools",
+            tools=tools,
+            scopes=self.scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            service_account_path=service_account_path,
+            oauth_port=oauth_port,
+            **kwargs,
+        )
 
     @authenticate
-    def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:
+    def read_sheet(
+        self,
+        spreadsheet_id: Optional[str] = None,
+        spreadsheet_range: Optional[str] = None,
+    ) -> str:
         """
         Read values from a Google Sheet. Prioritizes instance attributes over method parameters.
 
@@ -279,7 +241,10 @@ class GoogleSheetsTools(Toolkit):
 
     @authenticate
     def update_sheet(
-        self, data: List[List[Any]], spreadsheet_id: Optional[str] = None, range_name: Optional[str] = None
+        self,
+        data: List[List[Any]],
+        spreadsheet_id: Optional[str] = None,
+        range_name: Optional[str] = None,
     ) -> str:
         """Updates a Google Sheet with the provided data.
 
@@ -316,7 +281,10 @@ class GoogleSheetsTools(Toolkit):
 
     @authenticate
     def create_duplicate_sheet(
-        self, source_id: str, new_title: Optional[str] = None, copy_permissions: bool = True
+        self,
+        source_id: str,
+        new_title: Optional[str] = None,
+        copy_permissions: bool = True,
     ) -> str:
         """Duplicate a Google Spreadsheet using the Google Drive API's copy feature.
         This ensures an exact duplicate including formatting and data.
@@ -341,9 +309,10 @@ class GoogleSheetsTools(Toolkit):
             # Ensure the drive scope is included
             if "https://www.googleapis.com/auth/drive" not in self.scopes:
                 self.scopes.append("https://www.googleapis.com/auth/drive")
-                self._auth()  # Re-authenticate with updated scopes
+                self.creds = self._resolve_creds()
 
-            drive_service = build("drive", "v3", credentials=self.creds)
+            # Use shared helper for timeout-aware service construction
+            drive_service = self._build_google_service("drive", "v3", self.creds)
 
             # Use new_title if provided, otherwise fetch the title from the source spreadsheet
             if not new_title:
