@@ -4251,7 +4251,6 @@ def acontinue_run_dispatch(  # type: ignore
         metadata_provided=metadata is not None,
     )
 
-
     # Set client_tools on run_context for per-run additive tools (e.g., AG-UI frontend tools)
     if client_tools:
         run_context.client_tools = client_tools

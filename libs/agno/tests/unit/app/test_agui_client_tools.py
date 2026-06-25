@@ -12,8 +12,8 @@ from agno.os.interfaces.agui.utils import to_json_str
 from agno.run.requirement import RunRequirement
 from agno.tools.function import Function
 
-
 # extract_tool_messages tests
+
 
 def test_extract_tool_messages_empty_list():
     result = extract_tool_messages([])
@@ -92,6 +92,7 @@ def test_extract_tool_messages_empty_content():
 
 
 # agui_tools_to_external_functions tests
+
 
 def test_agui_tools_to_external_functions_empty():
     assert agui_tools_to_external_functions(None) == []
@@ -188,6 +189,7 @@ def test_agui_tools_preserves_order():
 
 
 # to_json_str tests
+
 
 def test_to_json_str_valid_json_passthrough():
     valid_json = '{"city": "Tokyo", "temp": 26}'
