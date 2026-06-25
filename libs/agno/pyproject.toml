@@ -144,6 +144,7 @@ redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 salesforce = ["simple-salesforce"]
 scrapegraph = ["scrapegraph-py>=2.0.0"]
+snowflake = ["snowflake-connector-python"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -275,6 +276,7 @@ tools = [
   "agno[parallel]",
   "agno[salesforce]",
   "agno[scrapegraph]",
+  "agno[snowflake]",
   "agno[valyu]",
   "agno[yfinance]",
   "agno[confluence]",
@@ -474,6 +476,7 @@ module = [
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
+  "cryptography.*",
   "daytona.*",
   "daytona_api_client.*",
   "discord.*",
@@ -561,6 +564,7 @@ module = [
   "setuptools.*",
   "simplejson.*",
   "slack_sdk.*",
+  "snowflake.*",
   "spider.*",
   "sqlalchemy.*",
   "starlette.*",
