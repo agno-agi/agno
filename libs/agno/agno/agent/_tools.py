@@ -126,9 +126,7 @@ def get_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
-    # Merge per-run client tools into a local list after factory resolution.
-    # Does NOT mutate run_context.tools to avoid issues with callable factory retries.
-    # Priority: resolved tools (factory/static) first, client tools appended.
+    # Append client_tools (e.g., AG-UI frontend tools) if present
     if run_context.client_tools:
         resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
 
@@ -236,9 +234,7 @@ async def aget_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
-    # Merge per-run client tools into a local list after factory resolution.
-    # Does NOT mutate run_context.tools to avoid issues with callable factory retries.
-    # Priority: resolved tools (factory/static) first, client tools appended.
+    # Append client_tools (e.g., AG-UI frontend tools) if present
     if run_context.client_tools:
         resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
 
