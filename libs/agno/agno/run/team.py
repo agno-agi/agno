@@ -729,6 +729,7 @@ class TeamRunOutput:
     """Response returned by Team.run() functions"""
 
     run_id: Optional[str] = None
+    agent_id: Optional[str] = None
     team_id: Optional[str] = None
     team_name: Optional[str] = None
     session_id: Optional[str] = None
