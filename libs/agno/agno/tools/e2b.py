@@ -31,6 +31,10 @@ class E2BTools(Toolkit):
     ):
         """Initialize E2B toolkit for code interpretation and running Python code in a sandbox.
 
+        The sandbox is created lazily on the first tool call, not at construction time.
+        This prevents unnecessary sandbox creation when agents are registered with AgentOS
+        but haven't yet received a request that uses E2B tools.
+
         Args:
             api_key: E2B API key (defaults to E2B_API_KEY environment variable)
             timeout: Timeout in seconds for the sandbox (default: 5 minutes)
@@ -41,15 +45,9 @@ class E2BTools(Toolkit):
         if not self.api_key:
             raise ValueError("E2B_API_KEY not set. Please set the E2B_API_KEY environment variable.")
 
-        # Create the sandbox once and reuse it
         self.sandbox_options = sandbox_options or {}
-
-        # According to official docs, the parameter is 'timeout' (in seconds), not 'timeout_ms'
-        try:
-            self.sandbox = Sandbox.create(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
-        except Exception as e:
-            logger.exception("Warning: Could not create sandbox")
-            raise e
+        self._timeout = timeout
+        self._sandbox: Optional[Any] = None
 
         # Last execution result for reference
         self.last_execution = None
@@ -84,6 +82,19 @@ class E2BTools(Toolkit):
         ]
 
         super().__init__(name="e2b_tools", tools=tools, **kwargs)
+
+    @property
+    def sandbox(self) -> Any:
+        """Return the sandbox, creating it on first access (lazy initialization)."""
+        if self._sandbox is None:
+            try:
+                self._sandbox = Sandbox.create(
+                    api_key=self.api_key, timeout=self._timeout, **self.sandbox_options
+                )
+            except Exception as e:
+                logger.exception("Warning: Could not create sandbox")
+                raise e
+        return self._sandbox
 
     # Code Execution Functions
     def run_python_code(self, code: str) -> str:
@@ -647,7 +658,7 @@ class E2BTools(Toolkit):
         """
         try:
             # Collect sandbox information
-            sandbox_id = getattr(self.sandbox, "id", "Unknown")
+            sandbox_id = getattr(self._sandbox, "id", "Unknown")
 
             return sandbox_id
 
@@ -662,7 +673,10 @@ class E2BTools(Toolkit):
             str: Success message or error message
         """
         try:
-            cont = self.sandbox.kill()
+            if self._sandbox is None:
+                return json.dumps({"status": "success", "message": "No sandbox is running"})
+            cont = self._sandbox.kill()
+            self._sandbox = None
             return json.dumps({"status": "success", "message": "Sandbox shut down successfully", "content": cont})
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error shutting down sandbox: {str(e)}"})
@@ -675,7 +689,7 @@ class E2BTools(Toolkit):
             str: JSON string containing information about running sandboxes or error message
         """
         try:
-            running_sandboxes = self.sandbox.list()
+            running_sandboxes = Sandbox.list(api_key=self.api_key)
 
             if not running_sandboxes:
                 return json.dumps({"status": "success", "message": "No running sandboxes found", "sandboxes": []})
