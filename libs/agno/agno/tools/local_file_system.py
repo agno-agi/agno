@@ -53,23 +53,34 @@ class LocalFileSystemTools(Toolkit):
         """
         try:
             filename = filename or str(uuid4())
-            directory = directory or self.target_directory
-            if filename and "." in filename:
-                path_obj = Path(filename)
-                filename = path_obj.stem
-                extension = extension or path_obj.suffix.lstrip(".")
+            directory = directory or "."
+            base_directory = Path(self.target_directory)
+            filename_path = Path(filename)
+            filename_parent = filename_path.parent
+            filename_base = filename_path.with_suffix("").name
+            extension = extension or filename_path.suffix.lstrip(".")
 
             log_debug(f"Writing file to local system: {filename}")
 
             extension = (extension or self.default_extension).lstrip(".")
 
-            # Create directory if it doesn't exist
-            dir_path = Path(directory)
-            dir_path.mkdir(parents=True, exist_ok=True)
+            safe_directory, dir_path = self._check_path(directory, base_directory)
+            if not safe_directory:
+                return "Error: directory escapes target directory"
 
-            # Construct full filename with extension
-            full_filename = f"{filename}.{extension}"
-            file_path = dir_path / full_filename
+            # Keep directory constraints while still supporting paths inside filename.
+            if str(filename_parent) not in ("", "."):
+                safe_file_dir, checked_file_dir = self._check_path(str(filename_parent), dir_path)
+                if not safe_file_dir:
+                    return "Error: file path escapes target directory"
+                dir_path = checked_file_dir
+
+            safe_file, file_path = self._check_path(f"{filename_base}.{extension}", dir_path)
+            if not safe_file:
+                return "Error: file path escapes target directory"
+
+            dir_path.mkdir(parents=True, exist_ok=True)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
 
             file_path.write_text(content)
 
