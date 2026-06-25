@@ -11,6 +11,7 @@ Dojo expects:
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools import tool
 
@@ -76,6 +77,7 @@ def get_weather(location: str) -> dict:
 agentic_chat_agent = Agent(
     name="agentic_chat",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=SqliteDb(db_file="/tmp/agui_agentic_chat.db"),
     tools=[change_background, get_weather],
     instructions="""You are a helpful assistant with frontend and backend capabilities.
 
@@ -84,5 +86,6 @@ Tools available:
 - get_weather: Gets weather for a location. Returns temperature, humidity, wind speed, and conditions.
 
 Be helpful and use tools when appropriate.""",
+    add_history_to_context=True,
     markdown=True,
 )

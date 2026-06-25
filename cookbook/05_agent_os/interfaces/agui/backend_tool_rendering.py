@@ -10,6 +10,7 @@ Dojo expects get_weather(location: str) with detailed return:
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools import tool
 
@@ -69,9 +70,11 @@ def get_weather(location: str) -> dict:
 backend_tool_agent = Agent(
     name="backend_tool_rendering",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=SqliteDb(db_file="/tmp/agui_backend_tool.db"),
     tools=[get_weather],
     instructions="""You help users check weather. When asked about weather, always use the get_weather tool.
 
 The tool returns structured data that the frontend will render as a weather card.""",
+    add_history_to_context=True,
     markdown=True,
 )
