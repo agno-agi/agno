@@ -112,12 +112,27 @@ def get_members_system_message_content(
     return content
 
 
-def _get_opening_prompt() -> str:
+def _get_opening_prompt(team: "Team") -> str:
     """Opening identity statement for the team leader."""
+    if not team.enable_team_leader_response:
+        return (
+            "You coordinate a team of specialized AI agents to fulfill the user's request. "
+            "You must ALWAYS delegate to a member — never respond to the user directly.\n"
+        )
     return (
         "You coordinate a team of specialized AI agents to fulfill the user's request. "
         "Delegate to members when their expertise or tools are needed. "
         "For straightforward requests you can handle directly — including using your own tools — respond without delegating.\n"
+    )
+
+
+def _get_direct_response_preamble(team: "Team") -> str:
+    """Sentence describing when the leader may respond directly vs must delegate."""
+    if not team.enable_team_leader_response:
+        return "You must ALWAYS delegate to a member — never respond to the user directly."
+    return (
+        "For requests you can handle directly — simple questions, using your own tools, "
+        "or general conversation — respond without delegating."
     )
 
 
@@ -126,6 +141,7 @@ def _get_mode_instructions(team: "Team") -> str:
     from agno.team.mode import TeamMode
 
     content = "\n<how_to_respond>\n"
+    direct = _get_direct_response_preamble(team)
 
     if team.mode == TeamMode.tasks:
         content += (
@@ -150,10 +166,9 @@ def _get_mode_instructions(team: "Team") -> str:
         )
     elif team.mode == TeamMode.route:
         content += (
-            "You operate in route mode. For requests that need member expertise, "
-            "identify the single best member and delegate to them — their response is returned directly to the user. "
-            "For requests you can handle directly — simple questions, using your own tools, or general conversation — "
-            "respond without delegating.\n\n"
+            f"You operate in route mode. For requests that need member expertise, "
+            f"identify the single best member and delegate to them — their response is returned directly to the user. "
+            f"{direct}\n\n"
             "When routing to a member:\n"
             "- Analyze the request to determine which member's role and tools are the best match.\n"
             "- Delegate to exactly one member. Use only the member's ID — do not prefix it with the team ID.\n"
@@ -162,10 +177,9 @@ def _get_mode_instructions(team: "Team") -> str:
         )
     elif team.mode == TeamMode.broadcast:
         content += (
-            "You operate in broadcast mode. For requests that benefit from multiple perspectives, "
-            "send the request to all members simultaneously and synthesize their collective responses. "
-            "For requests you can handle directly — simple questions, using your own tools, or general conversation — "
-            "respond without delegating.\n\n"
+            f"You operate in broadcast mode. For requests that benefit from multiple perspectives, "
+            f"send the request to all members simultaneously and synthesize their collective responses. "
+            f"{direct}\n\n"
             "When broadcasting:\n"
             "- Call `delegate_task_to_members` exactly once with a clear task description. "
             "This sends the task to every member in parallel.\n"
@@ -178,10 +192,9 @@ def _get_mode_instructions(team: "Team") -> str:
     else:
         # coordinate mode (default)
         content += (
-            "You operate in coordinate mode. For requests that need member expertise, "
-            "select the best member(s), delegate with clear task descriptions, and synthesize their outputs "
-            "into a unified response. For requests you can handle directly — simple questions, "
-            "using your own tools, or general conversation — respond without delegating.\n\n"
+            f"You operate in coordinate mode. For requests that need member expertise, "
+            f"select the best member(s), delegate with clear task descriptions, and synthesize their outputs "
+            f"into a unified response. {direct}\n\n"
             "Delegation:\n"
             "- Match each sub-task to the member whose role and tools are the best fit. "
             "Delegate to multiple members when the request spans different areas of expertise.\n"
@@ -212,7 +225,7 @@ def _build_team_context(
     content = ""
     resolved_members = get_resolved_members(team, run_context)
     if resolved_members is not None and len(resolved_members) > 0:
-        content += _get_opening_prompt()
+        content += _get_opening_prompt(team)
         content += "\n<team_members>\n"
         content += team.get_members_system_message_content(run_context=run_context, async_mode=async_mode)
         if team.get_member_information_tool:
