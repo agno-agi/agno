@@ -17,12 +17,14 @@ class ClickUpTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         master_space_id: Optional[str] = None,
+        timeout: int = 30,
         **kwargs,
     ):
         self.api_key = api_key or getenv("CLICKUP_API_KEY")
         self.master_space_id = master_space_id or getenv("MASTER_SPACE_ID")
         self.base_url = "https://api.clickup.com/api/v2"
         self.headers = {"Authorization": self.api_key}
+        self.timeout = timeout
 
         if not self.api_key:
             raise ValueError("CLICKUP_API_KEY not set. Please set the CLICKUP_API_KEY environment variable.")
@@ -47,7 +49,7 @@ class ClickUpTools(Toolkit):
         """Make a request to the ClickUp API."""
         url = f"{self.base_url}/{endpoint}"
         try:
-            response = requests.request(method=method, url=url, headers=self.headers, params=params, json=data)
+            response = requests.request(method=method, url=url, headers=self.headers, params=params, json=data, timeout=self.timeout)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
