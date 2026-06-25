@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
@@ -364,11 +363,13 @@ def test_function_cache_key_dict_order_independence():
 
 def test_function_cache_file_path(tmp_path):
     """Test generation of cache file paths."""
+    import os
+
     func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
 
     cache_key = "test_key"
     cache_file = func._get_cache_file_path(cache_key)
-    assert Path(cache_file) == tmp_path / "functions" / "test_func" / "test_key.json"
+    assert cache_file == os.path.join(str(tmp_path), "functions", "test_func", "test_key.json")
 
 
 def test_function_cache_operations(tmp_path):
