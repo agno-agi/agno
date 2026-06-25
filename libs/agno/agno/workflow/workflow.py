@@ -5499,7 +5499,7 @@ class Workflow:
         continued run is the same logical run, so restore the persisted ids onto the steps
         being resumed - clients correlate a step's pause/continue lifecycle by step_id.
         """
-        steps = self.steps or []
+        steps: List[Any] = self.steps if isinstance(self.steps, list) else []
         for step_req in run_response.step_requirements or []:
             index = step_req.step_index
             if step_req.step_id is None or not isinstance(index, int) or not (0 <= index < len(steps)):
