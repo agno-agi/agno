@@ -2,7 +2,7 @@ import copy
 import uuid
 from typing import AsyncIterator, Optional, Sequence, Union
 
-from agno.os.interfaces.agui.redact import DEFAULT_SENSITIVE_KEY_PATTERNS, redact_sensitive_data
+from agno.os.interfaces.agui.redact import DEFAULT_SENSITIVE_KEY_PATTERNS, redact_sensitive_data, resolve_key_patterns
 from agno.utils.log import log_error
 
 try:
@@ -36,6 +36,7 @@ async def run_entity(
 ) -> AsyncIterator[BaseEvent]:
     """Shared handler for running an Agent or Team with AG-UI input/output mapping."""
     run_id = run_input.run_id or str(uuid.uuid4())
+    redact_state_keys = resolve_key_patterns(redact_state_keys)
 
     try:
         # AG-UI frontends send full conversation history every request.
@@ -51,8 +52,7 @@ async def run_entity(
         if session_state is not None:
             snapshot = copy.deepcopy(session_state)
             if enable_state_redaction:
-                keys = redact_state_keys if redact_state_keys is not None else DEFAULT_SENSITIVE_KEY_PATTERNS
-                snapshot = redact_sensitive_data(snapshot, keys)
+                snapshot = redact_sensitive_data(snapshot, redact_state_keys)
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=snapshot)
 
         ui_deps = extract_context(run_input.context)

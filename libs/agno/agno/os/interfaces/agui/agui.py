@@ -37,12 +37,14 @@ class AGUI(BaseInterface):
             enable_state_redaction: Whether to redact sensitive data from state snapshots and deltas.
             redact_state_keys: Custom keys to redact from state. Merged with defaults if provided.
         """
+        from agno.os.interfaces.agui.redact import resolve_key_patterns
+
         self.agent = agent
         self.team = team
         self.prefix = prefix
         self.tags = tags or ["AGUI"]
         self.enable_state_redaction = enable_state_redaction
-        self.redact_state_keys = redact_state_keys
+        self.redact_state_keys = resolve_key_patterns(redact_state_keys)
 
         if not (self.agent or self.team):
             raise ValueError("AGUI requires an agent or a team")

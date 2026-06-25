@@ -388,7 +388,7 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         snapshot = copy.deepcopy(final_state)
 
         if state.enable_state_redaction:
-            keys = state.redact_state_keys if state.redact_state_keys is not None else DEFAULT_SENSITIVE_KEY_PATTERNS
+            keys = state.redact_state_keys or DEFAULT_SENSITIVE_KEY_PATTERNS
             snapshot = redact_sensitive_data(snapshot, keys)
 
         events.append(StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=snapshot))

@@ -399,6 +399,66 @@ class TestAgentStateDelta:
         # Verify the non-sensitive value is NOT redacted
         assert any(op.get("value") == 5 for op in delta_event["delta"])
 
+    def test_state_redaction_custom_keys_merge(self, test_agent: Agent):
+        # Construct AGUI with a custom key, ensuring it doesn't overwrite defaults
+        agui_iface = AGUI(agent=test_agent, redact_state_keys=["ssn"])
+        agent_os = AgentOS(agents=[test_agent], interfaces=[agui_iface])
+        app = agent_os.get_app()
+        client = TestClient(app)
+
+        mutable_state = {"safe_data": "ok"}
+
+        async def mock_stream() -> AsyncIterator[RunOutputEvent]:
+            yield RunContentEvent(content="Processing")
+            tool_mock = MagicMock()
+            tool_mock.tool_call_id = "tc_1"
+            tool_mock.tool_name = "fetch_data"
+            tool_mock.tool_args = {}
+            yield ToolCallStartedEvent(content="", tool=tool_mock)
+
+            # Write BOTH a custom sensitive key and a default sensitive key
+            mutable_state["ssn"] = "123-45-6789"
+            mutable_state["api_key"] = "sk-defaultsecret"
+
+            tool_mock.result = "Fetched"
+            yield ToolCallCompletedEvent(content="", tool=tool_mock)
+            yield RunCompletedEvent(content="", session_state=mutable_state)
+
+        def mock_validate(state, thread_id):
+            if state is not None:
+                mutable_state.clear()
+                mutable_state.update(state)
+                return mutable_state
+            return None
+
+        with (
+            patch.object(
+                test_agent,
+                "arun",
+            ) as mock_arun,
+            patch("agno.os.interfaces.agui.router.validate_state", side_effect=mock_validate),
+        ):
+            mock_arun.return_value = mock_stream()
+            response = client.post("/agui", json=make_request_body("Fetch", state={"safe_data": "ok"}))
+
+        events = parse_sse_events(response.text)
+        types = get_event_types(events)
+
+        assert "STATE_DELTA" in types
+        assert "STATE_SNAPSHOT" in types
+
+        # Check raw response text to ensure NEITHER string leaked
+        assert "123-45-6789" not in response.text
+        assert "sk-defaultsecret" not in response.text
+        
+        # Verify both custom and default keys were redacted in delta
+        delta_event = next(e for e in events if e.get("type") == "STATE_DELTA")
+        ssn_op = next((op for op in delta_event["delta"] if op["path"] == "/ssn"), None)
+        api_key_op = next((op for op in delta_event["delta"] if op["path"] == "/api_key"), None)
+        
+        assert ssn_op and ssn_op["value"] == "[REDACTED]"
+        assert api_key_op and api_key_op["value"] == "[REDACTED]"
+
 
 class TestAgentStateEdgeCases:
     def test_empty_dict_state(self, agent_client):

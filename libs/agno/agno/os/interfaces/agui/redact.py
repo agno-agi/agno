@@ -17,6 +17,17 @@ DEFAULT_SENSITIVE_KEY_PATTERNS = [
     "db_password",
 ]
 
+def resolve_key_patterns(custom_keys: Sequence[str] | None) -> Sequence[str]:
+    """
+    Merges custom redaction keys with defaults.
+    Ensures that default sensitive keys are never overridden, only appended to.
+    """
+    if not custom_keys:
+        return DEFAULT_SENSITIVE_KEY_PATTERNS
+    
+    # Use dict.fromkeys for deduping while preserving order
+    return list(dict.fromkeys([*DEFAULT_SENSITIVE_KEY_PATTERNS, *custom_keys]))
+
 # This list of regexes is a best-effort secondary net, not an exhaustive list.
 # The primary defense is the key-name match above, because it doesn't depend on
 # guessing every vendor's token format. No fixed set of examples can cover every

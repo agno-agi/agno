@@ -3,7 +3,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from agno.os.interfaces.agui.redact import DEFAULT_SENSITIVE_KEY_PATTERNS, redact_sensitive_data
+from agno.os.interfaces.agui.redact import DEFAULT_SENSITIVE_KEY_PATTERNS, redact_sensitive_data, resolve_key_patterns
 from agno.utils.log import log_warning
 
 
@@ -46,6 +46,9 @@ class StreamState:
     # Redaction configuration
     enable_state_redaction: bool = True
     redact_state_keys: Optional[Sequence[str]] = None
+
+    def __post_init__(self):
+        self.redact_state_keys = resolve_key_patterns(self.redact_state_keys)
 
     def open_text_message(self) -> str:
         self.text_message_id = str(uuid.uuid4())
@@ -111,10 +114,14 @@ class StreamState:
             # Redact the patch ops directly rather than the snapshot/current_state.
             # This ensures we don't produce false "changed" ops due to redaction.
             if self.enable_state_redaction:
-                keys = self.redact_state_keys if self.redact_state_keys is not None else DEFAULT_SENSITIVE_KEY_PATTERNS
+                keys = self.redact_state_keys or DEFAULT_SENSITIVE_KEY_PATTERNS
                 for op in ops:
                     if op.get("op") in ("add", "replace") and "value" in op:
-                        op["value"] = redact_sensitive_data(op["value"], keys)
+                        path_lower = str(op.get("path", "")).lower()
+                        if any(pattern in path_lower for pattern in keys):
+                            op["value"] = "[REDACTED]"
+                        else:
+                            op["value"] = redact_sensitive_data(op["value"], keys)
 
             return ops
         except Exception as e:
