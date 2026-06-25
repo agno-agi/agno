@@ -2,13 +2,12 @@ import asyncio
 from contextlib import asynccontextmanager
 from functools import partial
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute
 from httpx import HTTPStatusError
 from rich import box
 from rich.panel import Panel
@@ -68,6 +67,7 @@ from agno.os.utils import (
     collect_mcp_tools_from_workflow,
     find_conflicting_routes,
     load_yaml_config,
+    remove_routes_by_methods,
     resolve_origins,
     setup_tracing_for_os,
     update_cors_middleware,
@@ -1215,12 +1215,11 @@ class AgentOS:
                         f"AgentOS route will override existing custom route"
                     )
 
-                # Remove conflicting routes
-                for route in fastapi_app.routes:
-                    for conflict in conflicts:
-                        if isinstance(route, APIRoute):
-                            if route.path == conflict["path"] and list(route.methods) == list(conflict["methods"]):  # type: ignore
-                                fastapi_app.routes.pop(fastapi_app.routes.index(route))
+                # Remove conflicting routes, including any nested inside included routers
+                conflicting_methods: Dict[str, Set[str]] = {}
+                for conflict in conflicts:
+                    conflicting_methods.setdefault(conflict["path"], set()).update(conflict["methods"])
+                fastapi_app.router.routes = remove_routes_by_methods(fastapi_app.router.routes, conflicting_methods)
 
                 fastapi_app.include_router(router)
 
