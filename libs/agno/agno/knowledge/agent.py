@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 @dataclass
 class AgentKnowledge:
     """V1 compatibility stub for agent knowledge/RAG base class"""
+
     name: Optional[str] = None
     description: Optional[str] = None
     valid_metadata_filters: Optional[Dict[str, Any]] = None

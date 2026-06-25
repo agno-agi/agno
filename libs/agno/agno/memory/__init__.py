@@ -22,3 +22,8 @@ __all__ = [
     "TeamRun",
     "v2",
 ]
+
+# Banavo-enhanced memory (agno_custom migration)
+from agno.banavo.memory.memory import Memory as BanavoMemory, TeamContext  # noqa: E402
+
+Memory = BanavoMemory

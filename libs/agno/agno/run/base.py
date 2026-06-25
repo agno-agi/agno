@@ -328,4 +328,5 @@ BaseRunResponseEvent = BaseRunOutputEvent
 @dataclass
 class RunResponseExtraData:
     """V1-compatible extra data for run responses."""
+
     pass

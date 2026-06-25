@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 @dataclass
 class AgentRun:
     """V1 compatibility stub for agent run"""
+
     response: Optional[Any] = None
     message: Optional[Any] = None
     messages: Optional[List[Any]] = None
@@ -18,6 +19,7 @@ class AgentRun:
 @dataclass
 class AgentMemory:
     """V1 compatibility stub for agent memory"""
+
     runs: List[AgentRun] = field(default_factory=list)
     messages: List[Any] = field(default_factory=list)
     create_user_memories: bool = False

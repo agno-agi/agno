@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 @dataclass
 class TeamRun:
     """V1 compatibility stub for team run"""
+
     response: Optional[Any] = None
     message: Optional[Any] = None
     messages: Optional[List[Any]] = None
@@ -18,6 +19,7 @@ class TeamRun:
 @dataclass
 class TeamMemory:
     """V1 compatibility stub for team memory"""
+
     runs: List[TeamRun] = field(default_factory=list)
     messages: List[Any] = field(default_factory=list)
     create_user_memories: bool = False

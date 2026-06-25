@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 @dataclass
 class SessionMetrics:
     """V1 compatibility stub for session metrics tracking"""
+
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
@@ -23,13 +24,13 @@ class SessionMetrics:
             other_metrics = other
 
         # Use getattr for V1/V2 compatibility - V2 MessageMetrics may not have all V1 attributes
-        other_input = getattr(other_metrics, 'input_tokens', 0) or 0
-        other_output = getattr(other_metrics, 'output_tokens', 0) or 0
-        other_total = getattr(other_metrics, 'total_tokens', 0) or 0
-        other_completion = getattr(other_metrics, 'completion_tokens', 0) or 0
-        other_prompt = getattr(other_metrics, 'prompt_tokens', 0) or 0
-        other_cache_creation = getattr(other_metrics, 'cache_creation_input_tokens', 0) or 0
-        other_cache_read = getattr(other_metrics, 'cache_read_input_tokens', 0) or 0
+        other_input = getattr(other_metrics, "input_tokens", 0) or 0
+        other_output = getattr(other_metrics, "output_tokens", 0) or 0
+        other_total = getattr(other_metrics, "total_tokens", 0) or 0
+        other_completion = getattr(other_metrics, "completion_tokens", 0) or 0
+        other_prompt = getattr(other_metrics, "prompt_tokens", 0) or 0
+        other_cache_creation = getattr(other_metrics, "cache_creation_input_tokens", 0) or 0
+        other_cache_read = getattr(other_metrics, "cache_read_input_tokens", 0) or 0
 
         return SessionMetrics(
             input_tokens=self.input_tokens + other_input,

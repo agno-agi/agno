@@ -599,19 +599,23 @@ __all__ = [
 # V1 Compatibility: Response Classes
 class AudioResponse(Audio):
     """V1-compatible AudioResponse class (alias for Audio)."""
+
     pass
 
 
 class ImageResponse(Image):
     """V1-compatible ImageResponse class (alias for Image)."""
+
     pass
 
 
 class VideoResponse(Video):
     """V1-compatible VideoResponse class (alias for Video)."""
+
     pass
 
 
 class FileResponse(File):
     """V1-compatible FileResponse class (alias for File)."""
+
     pass

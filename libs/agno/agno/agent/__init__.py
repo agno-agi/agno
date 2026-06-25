@@ -1,5 +1,5 @@
+from agno.banavo.agent.agent import Agent as Agent
 from agno.agent.agent import (
-    Agent,
     AgentSession,
     Function,
     Message,
