@@ -102,11 +102,13 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
 
     def _handle_auth_params(
         self,
-        auth_token_getters: dict[str, Callable[[], str]] = {},
+        auth_token_getters: Optional[dict[str, Callable[[], str]]] = None,
         auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
         auth_headers: Optional[dict[str, Callable[[], str]]] = None,
     ):
         """handle authentication parameters for toolbox-core client"""
+        if auth_token_getters is None:
+            auth_token_getters = {}
         if auth_tokens:
             if auth_token_getters:
                 warn(
@@ -137,10 +139,10 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
     async def load_tool(
         self,
         tool_name: str,
-        auth_token_getters: dict[str, Callable[[], str]] = {},
+        auth_token_getters: Optional[dict[str, Callable[[], str]]] = None,
         auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
         auth_headers: Optional[dict[str, Callable[[], str]]] = None,
-        bound_params: dict[str, Union[Any, Callable[[], Any]]] = {},
+        bound_params: Optional[dict[str, Union[Any, Callable[[], Any]]]] = None,
     ) -> Function:
         """Loads the tool with the given tool name from the Toolbox service.
 
@@ -162,6 +164,8 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
             auth_tokens=auth_tokens,
             auth_headers=auth_headers,
         )
+        if bound_params is None:
+            bound_params = {}
 
         core_sync_tool = await self.__core_client.load_tool(
             name=tool_name,
@@ -177,10 +181,10 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
     async def load_toolset(
         self,
         toolset_name: Optional[str] = None,
-        auth_token_getters: dict[str, Callable[[], str]] = {},
+        auth_token_getters: Optional[dict[str, Callable[[], str]]] = None,
         auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
         auth_headers: Optional[dict[str, Callable[[], str]]] = None,
-        bound_params: dict[str, Union[Any, Callable[[], Any]]] = {},
+        bound_params: Optional[dict[str, Union[Any, Callable[[], Any]]]] = None,
         strict: bool = False,
     ) -> List[Function]:
         """Loads tools from the configured toolset.
@@ -205,6 +209,8 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
             auth_tokens=auth_tokens,
             auth_headers=auth_headers,
         )
+        if bound_params is None:
+            bound_params = {}
 
         core_sync_tools = await self.__core_client.load_toolset(
             name=toolset_name,
@@ -224,8 +230,8 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
     async def load_multiple_toolsets(
         self,
         toolset_names: List[str],
-        auth_token_getters: dict[str, Callable[[], str]] = {},
-        bound_params: dict[str, Union[Any, Callable[[], Any]]] = {},
+        auth_token_getters: Optional[dict[str, Callable[[], str]]] = None,
+        bound_params: Optional[dict[str, Union[Any, Callable[[], Any]]]] = None,
         strict: bool = False,
     ) -> List[Function]:
         """Load tools from multiple toolsets.
@@ -239,6 +245,10 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         Returns:
             List[Function]: A list of all tools loaded from the specified toolsets.
         """
+        if auth_token_getters is None:
+            auth_token_getters = {}
+        if bound_params is None:
+            bound_params = {}
         all_tools = []
         for toolset_name in toolset_names:
             tools = await self.load_toolset(
