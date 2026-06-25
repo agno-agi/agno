@@ -5492,6 +5492,22 @@ class Workflow:
             await team_acancel_run(executor_run_id)
         return result
 
+    def _restore_paused_step_ids(self, run_response: WorkflowRunOutput) -> None:
+        """Re-apply the original run's step_ids onto this freshly copied workflow.
+
+        The OS re-copies the workflow per request, and each copy mints fresh step_ids. A
+        continued run is the same logical run, so restore the persisted ids onto the steps
+        being resumed - clients correlate a step's pause/continue lifecycle by step_id.
+        """
+        steps: List[Any] = self.steps if isinstance(self.steps, list) else []
+        for step_req in run_response.step_requirements or []:
+            index = step_req.step_index
+            if step_req.step_id is None or not isinstance(index, int) or not (0 <= index < len(steps)):
+                continue
+            resumed_step = steps[index]
+            if hasattr(resumed_step, "step_id"):
+                resumed_step.step_id = step_req.step_id
+
     @overload
     def continue_run(
         self,
@@ -5740,6 +5756,9 @@ class Workflow:
         paused_step_index = run_response.paused_step_index
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
+
+        # Keep step identity stable across the run's pause/continue boundary
+        self._restore_paused_step_ids(run_response)
 
         # Extract user input and router selection from active (last) requirement only.
         # With accumulated requirements, old resolved ones must NOT be picked up.
@@ -7727,6 +7746,9 @@ class Workflow:
         paused_step_index = run_response.paused_step_index
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
+
+        # Keep step identity stable across the run's pause/continue boundary
+        self._restore_paused_step_ids(run_response)
 
         # Extract user input and router selection from active (last) requirement only.
         # With accumulated requirements, old resolved ones must NOT be picked up.
@@ -10565,9 +10587,11 @@ class Workflow:
                 step_kwargs["workflow"] = (
                     step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
                 )
-            # Copy Step configuration attributes
+            # Copy Step configuration attributes.
+            # NOTE: step_id is intentionally omitted so each copy gets a fresh uuid. Workflows are
+            # deep-copied per request for isolation, and reusing a step_id across copies would make
+            # concurrent runs collide on step identity in events/telemetry.
             for attr in [
-                "step_id",
                 "max_retries",
                 "timeout_seconds",
                 "skip_on_failure",

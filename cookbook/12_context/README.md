@@ -23,7 +23,7 @@ Providers ship in this package:
 | `WorkspaceContextProvider` | Local project workspace | `query_<id>` (read-only `Workspace` sub-agent with project-aware excludes) |
 | `WebContextProvider` + `ExaMCPBackend` | Web via Exa's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ExaBackend` | Web via Exa's direct SDK | `query_<id>` (search + fetch sub-agent) |
-| `WebContextProvider` + `ParallelBackend` | Web via Parallel's beta API | `query_<id>` (search + fetch sub-agent) |
+| `WebContextProvider` + `ParallelBackend` | Web via Parallel's direct SDK | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ParallelMCPBackend` | Web via Parallel's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
 | `DatabaseContextProvider` | Any SQL database (SQLAlchemy) | `query_<id>`, `update_<id>` (separate read/write sub-agents) |
 | `SlackContextProvider` | A Slack workspace | `query_<id>`, `update_<id>` (separate read/write sub-agents; writer only gets `send_message` + the lookup tools it needs) |
@@ -43,7 +43,7 @@ All read+write providers (`WikiContextProvider`, `DatabaseContextProvider`, `Sla
 | `00_filesystem.py` | Browse local files via `FilesystemContextProvider` |
 | `01_web_exa.py` | Web research via Exa's direct SDK (needs `EXA_API_KEY`) |
 | `02_web_exa_mcp.py` | Web research via Exa's keyless public MCP endpoint |
-| `03_web_parallel.py` | Web research via Parallel's beta API |
+| `03_web_parallel.py` | Web research via Parallel's direct SDK |
 | `04_database_read_write.py` | Read + write a SQLite DB; end-to-end round trip |
 | `05_slack.py` | Slack workspace: read channels (always) + optional post via `SLACK_WRITE_CHANNEL` |
 | `06_mcp_server.py` | Wrap an MCP server; explicit `asetup` / `aclose` lifecycle |

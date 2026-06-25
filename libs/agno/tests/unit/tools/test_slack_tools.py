@@ -46,10 +46,44 @@ def test_init_registers_default_tools():
 
 
 def test_init_all_flag_enables_all():
-    with patch.dict("os.environ", {"SLACK_TOKEN": "test"}):
+    with patch.dict("os.environ", {"SLACK_TOKEN": "test", "SLACK_USER_TOKEN": "xoxp-user"}):
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools(all=True)
             assert len(tools.functions) == 12
+
+
+def test_init_creates_user_client_when_user_token_provided():
+    with patch.dict("os.environ", {"SLACK_TOKEN": "xoxb-bot"}):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            tools = SlackTools(user_token="xoxp-user")
+            assert mock_client.call_count == 2
+            assert tools._user_token == "xoxp-user"
+            assert tools._user_client is not None
+
+
+def test_init_reads_user_token_from_env():
+    with patch.dict("os.environ", {"SLACK_TOKEN": "xoxb-bot", "SLACK_USER_TOKEN": "xoxp-env"}):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            tools = SlackTools()
+            assert mock_client.call_count == 2
+            assert tools._user_token == "xoxp-env"
+
+
+def test_init_no_user_client_without_user_token():
+    with patch.dict("os.environ", {"SLACK_TOKEN": "xoxb-bot"}, clear=True):
+        with patch("agno.tools.slack.WebClient") as mock_client:
+            tools = SlackTools()
+            assert mock_client.call_count == 1
+            assert tools._user_client is None
+
+
+def test_search_messages_disabled_without_user_token():
+    with patch.dict("os.environ", {"SLACK_TOKEN": "xoxb-bot"}, clear=True):
+        with patch("agno.tools.slack.WebClient"):
+            with patch("agno.tools.slack.log_warning") as mock_warn:
+                tools = SlackTools(enable_search_messages=True)
+                assert "search_messages" not in tools.functions
+                mock_warn.assert_called_once()
 
 
 def test_explicit_flags_expose_expected_surfaces():
@@ -247,7 +281,8 @@ def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tool
 
 
 def test_search_messages(slack_tools):
-    slack_tools.client.search_messages.return_value = {
+    slack_tools._user_client = slack_tools.client
+    slack_tools._user_client.search_messages.return_value = {
         "messages": {"matches": [{"text": "found", "user": "U1", "channel": {}, "ts": "1"}]}
     }
     result = slack_tools.search_messages("query")
