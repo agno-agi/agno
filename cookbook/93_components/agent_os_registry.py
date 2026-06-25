@@ -8,6 +8,7 @@ Demonstrates configuring AgentOS with a Registry and serving the app.
 from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
+from agno.models.azure import AzureOpenAI
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.registry import Registry
@@ -34,6 +35,7 @@ registry = Registry(
         OpenAIChat(id="gpt-5-mini"),
         OpenAIChat(id="gpt-5"),
         Claude(id="claude-sonnet-4-5"),
+        AzureOpenAI(id="gpt-5-mini"),
     ],
     dbs=[db],
 )

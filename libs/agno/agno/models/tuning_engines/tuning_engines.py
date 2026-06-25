@@ -26,14 +26,8 @@ class TuningEngines(OpenAILike):
     name: str = "Tuning Engines"
     provider: str = "Tuning Engines"
 
-    api_key: Optional[str] = field(
-        default_factory=lambda: getenv("TUNING_ENGINES_API_KEY")
-    )
-    base_url: str = field(
-        default_factory=lambda: getenv(
-            "TUNING_ENGINES_BASE_URL", "https://api.tuningengines.com/v1"
-        )
-    )
+    api_key: Optional[str] = field(default_factory=lambda: getenv("TUNING_ENGINES_API_KEY"))
+    base_url: str = field(default_factory=lambda: getenv("TUNING_ENGINES_BASE_URL", "https://api.tuningengines.com/v1"))
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Resolve the API key from TUNING_ENGINES_API_KEY and fail fast with a clear
@@ -44,8 +38,7 @@ class TuningEngines(OpenAILike):
             if not self.api_key:
                 raise ModelAuthenticationError(
                     message=(
-                        "TUNING_ENGINES_API_KEY not set. Please set the "
-                        "TUNING_ENGINES_API_KEY environment variable."
+                        "TUNING_ENGINES_API_KEY not set. Please set the TUNING_ENGINES_API_KEY environment variable."
                     ),
                     model_name=self.name,
                 )
