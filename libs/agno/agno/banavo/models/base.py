@@ -30,8 +30,8 @@ from agno.utils.timer import Timer
 from pydantic import BaseModel
 
 from agno.banavo.events.stream_events import BaseBanavoStreamEvent
-from agno.banavo.run.response import RunResponseContentEvent, RunResponseEvent
-from agno.banavo.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
+from agno.banavo.run.compat import is_content_event
+from agno.banavo.run.response import RunResponseEvent
 from agno.banavo.run.team import TeamRunResponseEvent
 from agno.banavo.tools import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.banavo.utils.functions import get_function_call_for_tool_call, get_function_call_for_tool_execution
@@ -1175,7 +1175,7 @@ class Model(AgnoModel):
                     item, tuple(get_args(TeamRunResponseEvent))
                 ):
                     # We only capture content events
-                    if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                    if is_content_event(item):
                         # Capture output
                         function_call_output += item.content or ""
 
@@ -1526,7 +1526,7 @@ class Model(AgnoModel):
                         item, tuple(get_args(TeamRunResponseEvent))
                     ):
                         # We only capture content events
-                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                        if is_content_event(item):
                             # Capture output
                             function_call_output += item.content or ""
 
@@ -1550,7 +1550,7 @@ class Model(AgnoModel):
                         item, tuple(get_args(TeamRunResponseEvent))
                     ):
                         # We only capture content events
-                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                        if is_content_event(item):
                             # Capture output
                             # NOTE: New feature - allow transfer function to specify which downstream agent outputs to include in the function call output
                             agent_id = getattr(item, "agent_id", None) or getattr(item, "team_id", None)

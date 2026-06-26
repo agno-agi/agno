@@ -8,7 +8,7 @@ dependency instead of vendoring `agno_custom` locally.
 | Module | Status | Notes |
 |--------|--------|-------|
 | `message_persistence.py` | **Delta** | Patches `Message.to_dict` to persist `provider_data` (GPT-5 follow-up chat) |
-| `storage/`, `memory/v2/`, `run/response.py` | **Delta** | V1 storage + run event compat (PR 1) |
+| `storage/`, `memory/v2/`, `run/response.py`, `run/compat.py` | **Delta** | V1 storage + V1/V2 run event bridge |
 | `events/stream_events.py` | **Delta** | `BaseBanavoStreamEvent` for typed tool stream events |
 | `models/` | **Delta** | Banavo `Model` base, GPT-5 Responses, Claude tool-schema fixes |
 | `memory/`, `utils/`, `run/team.py`, `base/` | **Delta** | V1 `RunResponse` orchestration helpers |
