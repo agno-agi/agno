@@ -10,8 +10,10 @@ from agno.tools.google.auth.tokens import (
     load_token_from_db,
     save_token_to_db,
 )
+from agno.utils.encryption import generate_encryption_key
 
-ENCRYPTION_KEY = "integration-test-secret-key"
+ENCRYPTION_KEY = generate_encryption_key()
+WRONG_KEY = generate_encryption_key()
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 SCOPES = ["https://mail.google.com/"]
 
@@ -107,7 +109,7 @@ def test_full_plaintext_token_lifecycle(db, creds):
 def test_wrong_key_cannot_decrypt(db, creds):
     save_token_to_db(db, creds, SCOPES, ENCRYPTION_KEY, encrypt_tokens=True)
 
-    row, loaded = load_token_from_db(db, "wrong-key")
+    row, loaded = load_token_from_db(db, WRONG_KEY)
     assert row is None
     assert loaded is None
 
