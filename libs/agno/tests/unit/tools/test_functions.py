@@ -361,15 +361,15 @@ def test_function_cache_key_dict_order_independence():
     assert cache_key1 == cache_key2 == cache_key3
 
 
-def test_function_cache_file_path():
+def test_function_cache_file_path(tmp_path):
     """Test generation of cache file paths."""
-    func = Function(name="test_func", cache_results=True, cache_dir="/tmp")
+    import os
+
+    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
 
     cache_key = "test_key"
     cache_file = func._get_cache_file_path(cache_key)
-    assert cache_file.startswith("/tmp/")
-    assert "test_func" in cache_file
-    assert "test_key" in cache_file
+    assert cache_file == os.path.join(str(tmp_path), "functions", "test_func", "test_key.json")
 
 
 def test_function_cache_operations(tmp_path):

@@ -96,3 +96,9 @@ python cookbook/92_models/openai/audio_input_agent.py
 ```shell
 python cookbook/92_models/openai/audio_output_agent.py
 ```
+
+### 13. Run Agent that returns web search citations
+
+```shell
+python cookbook/90_models/openai/chat/citations.py
+```

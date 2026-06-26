@@ -14,7 +14,7 @@ from agno.models.minimax import MiniMax
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=MiniMax(id="MiniMax-M2.7"), markdown=True)
+agent = Agent(model=MiniMax(id="MiniMax-M3"), markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent

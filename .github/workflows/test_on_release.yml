@@ -7,7 +7,6 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "poc/user-scoped-db"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -857,6 +856,7 @@ jobs:
           ./libs/agno/tests/integration/teams/test_tool_hooks.py \
           ./libs/agno/tests/integration/teams/test_member_dedup.py \
           ./libs/agno/tests/integration/teams/human_in_the_loop/test_member_run_persistence.py \
+          ./libs/agno/tests/integration/teams/test_team_run_cancellation.py \
 
   verify-split-test-coverage:
     runs-on: ubuntu-latest

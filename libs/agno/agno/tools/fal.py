@@ -81,14 +81,13 @@ class FalTools(Toolkit):
                             url=url,
                         )
                         images.append(image_artifact)
-                
+
                 if images:
                     urls_text = ", ".join(urls)
                     return ToolResult(
-                        content=f"Generated {len(images)} image(s) successfully: {urls_text}",
-                        images=images
+                        content=f"Generated {len(images)} image(s) successfully: {urls_text}", images=images
                     )
-            
+
             # Handle single image (singular)
             elif "image" in result:
                 url = result.get("image", {}).get("url", "")
@@ -97,7 +96,7 @@ class FalTools(Toolkit):
                     url=url,
                 )
                 return ToolResult(content=f"Image generated successfully at {url}", images=[image_artifact])
-            
+
             # Handle videos array (plural)
             elif "videos" in result and isinstance(result["videos"], list) and len(result["videos"]) > 0:
                 videos = []
@@ -111,14 +110,13 @@ class FalTools(Toolkit):
                             url=url,
                         )
                         videos.append(video_artifact)
-                
+
                 if videos:
                     urls_text = ", ".join(urls)
                     return ToolResult(
-                        content=f"Generated {len(videos)} video(s) successfully: {urls_text}",
-                        videos=videos
+                        content=f"Generated {len(videos)} video(s) successfully: {urls_text}", videos=videos
                     )
-            
+
             # Handle single video (singular)
             elif "video" in result:
                 url = result.get("video", {}).get("url", "")

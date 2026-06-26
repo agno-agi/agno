@@ -72,7 +72,7 @@ class HackerNewsTools(Toolkit):
             log_debug(f"Getting details for user: {username}")
             user = httpx.get(f"https://hacker-news.firebaseio.com/v0/user/{username}.json").json()
             user_details = {
-                "id": user.get("user_id"),
+                "id": user.get("id"),
                 "karma": user.get("karma"),
                 "about": user.get("about"),
                 "total_items_submitted": len(user.get("submitted", [])),

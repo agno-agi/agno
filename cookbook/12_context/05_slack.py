@@ -27,6 +27,7 @@ Requires:
 
     Optional:
     SLACK_TOKEN         (falls back here if SLACK_BOT_TOKEN isn't set)
+    SLACK_USER_TOKEN    (user token; xoxp-...) for search_messages API
     SLACK_WRITE_CHANNEL (e.g. `#agno-test`) — opt in to the write demo
 """
 
