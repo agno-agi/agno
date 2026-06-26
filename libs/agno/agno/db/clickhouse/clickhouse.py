@@ -334,10 +334,7 @@ class ClickhouseDb(BaseDb):
                 log_debug("get_trace called without filters")
                 return None
 
-            sql = (
-                f"SELECT {cols} FROM {qualified} FINAL "
-                f"WHERE {' AND '.join(where)} ORDER BY start_time DESC LIMIT 1"
-            )
+            sql = f"SELECT {cols} FROM {qualified} FINAL WHERE {' AND '.join(where)} ORDER BY start_time DESC LIMIT 1"
             res = self._client.query(sql, parameters=params)
             if not res.result_rows:
                 return None
@@ -393,9 +390,7 @@ class ClickhouseDb(BaseDb):
 
             if filter_expr:
                 try:
-                    where.append(
-                        filter_expr_to_clickhouse(filter_expr, params, allowed_columns=TRACE_FILTER_COLUMNS)
-                    )
+                    where.append(filter_expr_to_clickhouse(filter_expr, params, allowed_columns=TRACE_FILTER_COLUMNS))
                 except ValueError:
                     raise
                 except (KeyError, TypeError) as e:

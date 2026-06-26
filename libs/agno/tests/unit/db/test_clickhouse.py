@@ -1,4 +1,4 @@
-"""Unit tests for ClickhouseDb / AsyncClickhouseDb.
+"""Unit tests for ClickhouseDb.
 
 These tests don't touch a real ClickHouse server — the underlying client is
 mocked. They cover the contract that other tests would otherwise have to
@@ -21,8 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agno.db.clickhouse import AsyncClickhouseDb, ClickhouseDb
-
+from agno.db.clickhouse import ClickhouseDb
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -70,28 +69,8 @@ class TestDeterministicId:
         assert a.id != b.id
 
     def test_sync_explicit_id_wins(self):
-        db = ClickhouseDb(
-            host="h", port=1, username="u", password="p", database="d", id="traces", create_schema=False
-        )
+        db = ClickhouseDb(host="h", port=1, username="u", password="p", database="d", id="traces", create_schema=False)
         assert db.id == "traces"
-
-    def test_sync_and_async_have_distinct_default_ids_for_same_connection(self):
-        # The seed is namespaced by adapter so a sync and async DB pointing at
-        # the same server don't collide in AgentOS's registry.
-        sync = ClickhouseDb(host="h", port=1, username="u", password="p", database="d", create_schema=False)
-        async_ = AsyncClickhouseDb(
-            host="h", port=1, username="u", password="p", database="d", create_schema=False
-        )
-        assert sync.id != async_.id
-
-    def test_async_id_is_stable_across_constructions(self):
-        a = AsyncClickhouseDb(
-            host="h", port=1, username="u", password="p", database="d", create_schema=False
-        )
-        b = AsyncClickhouseDb(
-            host="h", port=1, username="u", password="p", database="d", create_schema=False
-        )
-        assert a.id == b.id
 
 
 # --------------------------------------------------------------------------- #
@@ -126,9 +105,7 @@ class TestRoundTrip:
         assert restored.id == "my-traces"
 
     def test_to_dict_includes_type_marker(self):
-        db = ClickhouseDb(
-            host="h", port=1, username="u", password="p", database="d", create_schema=False
-        )
+        db = ClickhouseDb(host="h", port=1, username="u", password="p", database="d", create_schema=False)
         assert db.to_dict()["type"] == "clickhouse"
 
 
@@ -261,9 +238,7 @@ class TestFilterExprConverter:
         from agno.db.clickhouse.utils import filter_expr_to_clickhouse
 
         params: dict = {}
-        sql = filter_expr_to_clickhouse(
-            {"op": "EQ", "key": "trace_id", "value": "abc"}, params, cols
-        )
+        sql = filter_expr_to_clickhouse({"op": "EQ", "key": "trace_id", "value": "abc"}, params, cols)
         assert "trace_id =" in sql
         # Value is parameterized, not interpolated.
         assert "abc" not in sql
@@ -300,9 +275,7 @@ class TestFilterExprConverter:
         from agno.db.clickhouse.utils import filter_expr_to_clickhouse
 
         params: dict = {}
-        sql = filter_expr_to_clickhouse(
-            {"op": "IN", "key": "status", "values": ["OK", "ERROR"]}, params, cols
-        )
+        sql = filter_expr_to_clickhouse({"op": "IN", "key": "status", "values": ["OK", "ERROR"]}, params, cols)
         assert " IN " in sql
         assert ["OK", "ERROR"] in params.values()
 
@@ -310,17 +283,13 @@ class TestFilterExprConverter:
         from agno.db.clickhouse.utils import filter_expr_to_clickhouse
 
         with pytest.raises(ValueError, match="Invalid filter field"):
-            filter_expr_to_clickhouse(
-                {"op": "EQ", "key": "not_a_column", "value": "x"}, {}, cols
-            )
+            filter_expr_to_clickhouse({"op": "EQ", "key": "not_a_column", "value": "x"}, {}, cols)
 
     def test_column_alias_is_prefixed(self, cols):
         from agno.db.clickhouse.utils import filter_expr_to_clickhouse
 
         params: dict = {}
-        sql = filter_expr_to_clickhouse(
-            {"op": "EQ", "key": "agent_id", "value": "a1"}, params, cols, column_alias="t"
-        )
+        sql = filter_expr_to_clickhouse({"op": "EQ", "key": "agent_id", "value": "a1"}, params, cols, column_alias="t")
         assert sql.startswith("t.agent_id ")
 
     def test_max_depth_enforced(self, cols):

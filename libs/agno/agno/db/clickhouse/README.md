@@ -1,10 +1,10 @@
 # ClickHouse Traces Database
 
-`ClickhouseDb` and `AsyncClickhouseDb` are **traces-only** Agno DB adapters
-backed by [ClickHouse](https://clickhouse.com/). They implement the trace/span
-surface of `BaseDb` and intentionally leave session/memory/knowledge/eval
-methods unimplemented — ClickHouse is an OLAP columnar store and is not a
-good fit for those workloads.
+`ClickhouseDb` is a **traces-only** Agno DB adapter backed by
+[ClickHouse](https://clickhouse.com/). It implements the trace/span surface of
+`BaseDb` and intentionally leaves session/memory/knowledge/eval methods
+unimplemented — ClickHouse is an OLAP columnar store and is not a good fit for
+those workloads.
 
 ## Why ClickHouse for traces?
 
@@ -54,7 +54,7 @@ when you set `secure=True` and the appropriate `port`/`host`.
 
 ## Usage
 
-### Basic (sync)
+### Basic
 
 ```python
 from agno.agent import Agent
@@ -81,21 +81,6 @@ agent = Agent(
 )
 agent.print_response("hello")
 ```
-
-### Async
-
-```python
-from agno.db.clickhouse import AsyncClickhouseDb
-
-traces_db = AsyncClickhouseDb(
-    host="localhost", port=8123, username="ai", password="ai",
-    database="agno_traces",
-)
-setup_tracing(db=traces_db, batch_processing=True)
-```
-
-`setup_tracing` detects `AsyncBaseDb` automatically and `await`s the
-exporter calls.
 
 ### ClickHouse Cloud
 

@@ -286,9 +286,7 @@ def filter_expr_to_clickhouse(
         condition = filter_dict.get("condition")
         if not condition:
             raise ValueError(f"NOT filter requires 'condition' field. Got: {filter_dict}")
-        inner = filter_expr_to_clickhouse(
-            condition, params, allowed_columns, column_alias, _depth + 1, _counter
-        )
+        inner = filter_expr_to_clickhouse(condition, params, allowed_columns, column_alias, _depth + 1, _counter)
         return f"NOT ({inner})"
 
     raise ValueError(f"Unknown filter operator: {op}")

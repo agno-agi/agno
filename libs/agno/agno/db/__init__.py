@@ -24,9 +24,5 @@ def __getattr__(name: str):
         from agno.db.clickhouse import ClickhouseDb
 
         return ClickhouseDb
-    elif name == "AsyncClickhouseDb":
-        from agno.db.clickhouse import AsyncClickhouseDb
-
-        return AsyncClickhouseDb
     # Add other db implementations as needed
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")

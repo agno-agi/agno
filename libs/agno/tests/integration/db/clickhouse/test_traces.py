@@ -160,15 +160,11 @@ def test_get_traces_with_filter_expr_trace_id(clickhouse_db: ClickhouseDb):
         clickhouse_db.upsert_trace(create_trace_from_spans(spans))
         clickhouse_db.create_spans(spans)
 
-    matched, total = clickhouse_db.get_traces(
-        filter_expr={"op": "EQ", "key": "trace_id", "value": "trace-fe-1"}
-    )
+    matched, total = clickhouse_db.get_traces(filter_expr={"op": "EQ", "key": "trace_id", "value": "trace-fe-1"})
     assert total == 1
     assert matched[0].trace_id == "trace-fe-1"
 
-    miss, total = clickhouse_db.get_traces(
-        filter_expr={"op": "EQ", "key": "trace_id", "value": "does-not-exist"}
-    )
+    miss, total = clickhouse_db.get_traces(filter_expr={"op": "EQ", "key": "trace_id", "value": "does-not-exist"})
     assert total == 0
     assert miss == []
 
@@ -249,9 +245,7 @@ def test_get_traces_filter_expr_datetime_columns(clickhouse_db: ClickhouseDb):
     now = datetime.now(timezone.utc)
     iso = (now - timedelta(hours=1)).isoformat()
 
-    matched, total = clickhouse_db.get_traces(
-        filter_expr={"op": "GTE", "key": "start_time", "value": iso}
-    )
+    matched, total = clickhouse_db.get_traces(filter_expr={"op": "GTE", "key": "start_time", "value": iso})
     assert total == 1
     assert matched[0].trace_id == "trace-fe-dt"
 
@@ -261,9 +255,7 @@ def test_get_traces_with_filter_expr_unknown_column_returns_empty(clickhouse_db:
     spans = _make_spans("trace-bad-filter", count=1)
     clickhouse_db.upsert_trace(create_trace_from_spans(spans))
 
-    out, total = clickhouse_db.get_traces(
-        filter_expr={"op": "EQ", "key": "not_a_column", "value": "x"}
-    )
+    out, total = clickhouse_db.get_traces(filter_expr={"op": "EQ", "key": "not_a_column", "value": "x"})
     assert (out, total) == ([], 0)
 
 
