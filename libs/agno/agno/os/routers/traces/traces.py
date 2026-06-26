@@ -34,6 +34,25 @@ from agno.utils.log import log_error
 logger = logging.getLogger(__name__)
 
 
+def _apply_user_scope_to_filter(filter_expr_dict: Optional[dict], effective_user_id: Optional[str]) -> Optional[dict]:
+    """AND a ``user_id`` constraint into a filter for non-admin scoped callers.
+
+    Scoped users must not be able to query across other users' traces, so their
+    ``user_id`` is AND-ed into whatever filter they supplied. Admins / unscoped
+    callers (``effective_user_id is None``) get the raw filter unchanged.
+
+    The AND/OR wrapper key is canonically ``"conditions"`` (see ``agno.filters``);
+    using any other key makes ``from_dict`` raise and yields empty results.
+    """
+    if effective_user_id is None:
+        return filter_expr_dict
+
+    user_clause = {"op": "EQ", "key": "user_id", "value": effective_user_id}
+    if filter_expr_dict is None:
+        return user_clause
+    return {"op": "AND", "conditions": [user_clause, filter_expr_dict]}
+
+
 def get_traces_router(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
 ) -> APIRouter:
@@ -666,12 +685,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # For non-admin scoped callers, AND a user_id constraint into the
             # filter so they can't query across other users' traces. Admins /
             # unscoped callers get the raw filter unchanged.
-            if effective_user_id is not None:
-                user_clause = {"op": "EQ", "key": "user_id", "value": effective_user_id}
-                if filter_expr_dict is None:
-                    filter_expr_dict = user_clause
-                else:
-                    filter_expr_dict = {"op": "AND", "exprs": [user_clause, filter_expr_dict]}
+            filter_expr_dict = _apply_user_scope_to_filter(filter_expr_dict, effective_user_id)
 
             # Branch based on group_by mode
             if body.group_by == TraceSearchGroupBy.SESSION:
