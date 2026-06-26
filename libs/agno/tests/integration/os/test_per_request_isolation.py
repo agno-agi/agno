@@ -1589,6 +1589,42 @@ class TestCustomExecutorWithInternalAgentTeam:
         assert parallel_copy1.steps[1].agent is not agent
         assert parallel_copy2.steps[1].agent is not agent
 
+    def test_step_id_stable_across_continue(self):
+        """A run's step_id must stay stable across its own pause/continue, even though the OS
+        deep-copies the workflow afresh for the continue request (clients correlate by step_id)."""
+        from agno.db.in_memory import InMemoryDb
+        from agno.workflow.types import StepInput, StepOutput
+
+        def my_func(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="Result")
+
+        db = InMemoryDb()
+        workflow = Workflow(
+            name="continue-step-id-workflow",
+            id="continue-step-id-workflow-id",
+            db=db,
+            steps=[Step(name="gated", executor=my_func, requires_confirmation=True)],
+        )
+
+        # The OS run route deep-copies per request
+        run_copy = workflow.deep_copy()
+        paused = run_copy.run("go", session_id="sess-1")
+        assert paused.is_paused
+        original_step_id = paused.step_requirements[0].step_id
+
+        for requirement in paused.active_step_requirements:
+            requirement.confirm()
+
+        # The OS continue route deep-copies AGAIN - a different fresh copy with new step_ids
+        continue_copy = workflow.deep_copy()
+        assert continue_copy.steps[0].step_id != original_step_id
+        resumed = continue_copy.continue_run(paused, session_id="sess-1")
+
+        # The continued step events must carry the original step_id so the pause/continue
+        # lifecycle stays correlatable by step_id.
+        continued_step_ids = [getattr(step_output, "step_id", None) for step_output in resumed.step_results]
+        assert original_step_id in continued_step_ids
+
     def test_function_executor_calling_agent_run(self):
         """Function executor that calls agent.run() internally - agent is shared via closure."""
         from agno.workflow.types import StepInput, StepOutput
@@ -1720,7 +1756,7 @@ class TestCustomExecutorWithInternalAgentTeam:
 
             return alice_user_id, bob_user_id
 
-        alice_id, bob_id = asyncio.get_event_loop().run_until_complete(simulate_requests())
+        alice_id, bob_id = asyncio.run(simulate_requests())
 
         # After both requests, inner_agent has bob's user_id (last write wins)
         assert inner_agent.metadata["user_id"] == "bob"

@@ -160,6 +160,27 @@ def test_searxng_initialization():
     )  # All 8 tools: search, image_search, it_search, map_search, music_search, news_search, science_search, video_search
 
 
+def test_default_engines_not_shared_between_instances():
+    """The default `engines` must not be a shared mutable object across instances."""
+    first = Searxng(host="http://localhost:53153")
+    second = Searxng(host="http://localhost:53153")
+
+    assert first.engines is not second.engines
+    assert first.engines == []
+    assert second.engines == []
+
+
+def test_default_engines_isolated_under_mutation():
+    """Mutating one instance's engines must not affect another instance."""
+    first = Searxng(host="http://localhost:53153")
+    second = Searxng(host="http://localhost:53153")
+
+    first.engines.append("google")
+
+    assert first.engines == ["google"]
+    assert second.engines == []
+
+
 @pytest.mark.parametrize(
     "category,method_name",
     [
