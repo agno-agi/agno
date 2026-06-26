@@ -70,33 +70,29 @@ class SlackEventHandler:
     def _client(self) -> AsyncWebClient:
         return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
 
-    def _is_thread_reply(self, event: dict) -> bool:
-        thread_ts = event.get("thread_ts")
-        return bool(thread_ts and thread_ts != event.get("ts"))
-
-    async def _check_ambient(self, event: dict, client: AsyncWebClient, bot_user_id: Optional[str]) -> bool:
-        if not (self.reply_to_mentions_only and self.ambient_mode):
-            return False
-        if not self._is_thread_reply(event):
-            return False
-        return await is_ambient_thread(client, event.get("channel", ""), event.get("thread_ts", ""), bot_user_id)
-
     async def resolve_context(self, data: dict) -> Optional[EventContext]:
         event = data["event"]
         client = self._client()
-        bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
+        authorizations = data.get("authorizations") or [{}]
+        bot_user_id = authorizations[0].get("user_id")
 
-        is_ambient = await self._check_ambient(event, client, bot_user_id)
+        # 1. Determine if this is an ambient thread reply
+        thread_ts = event.get("thread_ts")
+        is_thread_reply = thread_ts and thread_ts != event.get("ts")
+        is_ambient = False
+        if self.ambient_mode and self.reply_to_mentions_only and is_thread_reply:
+            is_ambient = await is_ambient_thread(client, event.get("channel", ""), thread_ts, bot_user_id)
+
+        # 2. Early exit if we shouldn't respond
         if not should_respond(event, self.reply_to_mentions_only, is_ambient):
             return None
 
+        # 3. Extract and transform message context
         raw_ctx = extract_event_context(event)
         bot_name = await self.bot_name_resolver.resolve(client, bot_user_id) if bot_user_id else None
         message_text = strip_bot_mention(raw_ctx["message_text"], bot_user_id, bot_name)
 
-        session_id = f"{self.entity_id}:{raw_ctx['thread_id']}"
-        team_id = data.get("team_id") or event.get("team")
-
+        # 4. Resolve user identity if configured
         resolved_user_id = raw_ctx["user"]
         display_name = None
         if self.resolve_user_identity:
@@ -104,13 +100,14 @@ class SlackEventHandler:
 
         channel_name = await resolve_channel_name(client, raw_ctx["channel_id"])
 
+        # 5. Build and return context
         return EventContext(
             channel_id=raw_ctx["channel_id"],
             thread_id=raw_ctx["thread_id"],
             user=raw_ctx["user"],
             message_text=message_text,
-            session_id=session_id,
-            team_id=team_id,
+            session_id=f"{self.entity_id}:{raw_ctx['thread_id']}",
+            team_id=data.get("team_id") or event.get("team"),
             resolved_user_id=resolved_user_id,
             display_name=display_name,
             channel_name=channel_name,
