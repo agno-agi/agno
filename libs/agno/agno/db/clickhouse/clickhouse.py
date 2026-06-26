@@ -214,6 +214,8 @@ class ClickhouseDb(BaseDb):
                 "type": "clickhouse",
                 "host": self.host,
                 "port": self.port,
+                "username": self.username,
+                "password": self.password,
                 "database": self.database,
                 "secure": self.secure,
             }
@@ -280,12 +282,10 @@ class ClickhouseDb(BaseDb):
     # ---------------------------------------------------------------- traces
 
     def upsert_trace(self, trace: "Trace") -> None:
-        """Insert (or replace via ReplacingMergeTree) a trace row.
+        """Append a (possibly partial) trace row.
 
-        ``ReplacingMergeTree`` deduplicates rows with the same sort key
-        (``start_time, trace_id``) at merge time, keeping the row with the
-        highest ``version`` value. We compute ``version`` server-side via the
-        column DEFAULT, so the latest insert always wins.
+        ClickHouse has no row-level upsert, so the exporter's per-batch upserts are
+        appended and reconciled into one logical trace at read time.
         """
         try:
             if self._get_table("traces", create_table_if_not_found=True) is None:
@@ -313,6 +313,7 @@ class ClickhouseDb(BaseDb):
             if qualified is None:
                 return None
             cols = ", ".join(trace_columns())
+            merged = self._merged_traces_sql(qualified)
             where: List[str] = []
             params: Dict[str, Any] = {}
             if trace_id:
@@ -334,7 +335,7 @@ class ClickhouseDb(BaseDb):
                 log_debug("get_trace called without filters")
                 return None
 
-            sql = f"SELECT {cols} FROM {qualified} FINAL WHERE {' AND '.join(where)} ORDER BY start_time DESC LIMIT 1"
+            sql = f"SELECT {cols} FROM ({merged}) AS t WHERE {' AND '.join(where)} ORDER BY start_time DESC LIMIT 1"
             res = self._client.query(sql, parameters=params)
             if not res.result_rows:
                 return None
@@ -367,6 +368,7 @@ class ClickhouseDb(BaseDb):
             if qualified is None:
                 return [], 0
             cols = ", ".join(trace_columns())
+            merged = self._merged_traces_sql(qualified)
             where: List[str] = []
             params: Dict[str, Any] = {}
             for col, val in (
@@ -400,11 +402,11 @@ class ClickhouseDb(BaseDb):
             limit_n = max(1, int(limit or 20))
             offset_n = max(0, ((int(page or 1)) - 1) * limit_n)
 
-            count_sql = f"SELECT count() FROM {qualified} FINAL {where_sql}"
+            count_sql = f"SELECT count() FROM ({merged}) AS t {where_sql}"
             total = int(self._client.query(count_sql, parameters=params).result_rows[0][0])
 
             page_sql = (
-                f"SELECT {cols} FROM {qualified} FINAL "
+                f"SELECT {cols} FROM ({merged}) AS t "
                 f"{where_sql} ORDER BY start_time DESC LIMIT {limit_n} OFFSET {offset_n}"
             )
             res = self._client.query(page_sql, parameters=params)
@@ -478,15 +480,15 @@ class ClickhouseDb(BaseDb):
             limit_n = max(1, int(limit or 20))
             offset_n = max(0, ((int(page or 1)) - 1) * limit_n)
 
-            base_from = f"(SELECT * FROM {qualified} FINAL) AS t"
+            base_from = f"({self._merged_traces_sql(qualified)}) AS t"
 
             count_sql = f"SELECT count(DISTINCT t.session_id) FROM {base_from} WHERE {where_sql}"
             total = int(self._client.query(count_sql, parameters=params).result_rows[0][0])
 
             page_sql = (
                 f"SELECT t.session_id AS session_id, "
-                f"any(t.user_id) AS user_id, any(t.agent_id) AS agent_id, "
-                f"any(t.team_id) AS team_id, any(t.workflow_id) AS workflow_id, "
+                f"max(t.user_id) AS user_id, max(t.agent_id) AS agent_id, "
+                f"max(t.team_id) AS team_id, max(t.workflow_id) AS workflow_id, "
                 f"count(DISTINCT t.trace_id) AS total_traces, "
                 f"min(t.created_at) AS first_trace_at, max(t.created_at) AS last_trace_at "
                 f"FROM {base_from} WHERE {where_sql} "
@@ -579,6 +581,41 @@ class ClickhouseDb(BaseDb):
             return []
 
     # ------------------------------------------------------- internal helpers
+
+    def _merged_traces_sql(self, qualified: str) -> str:
+        """Collapse the per-batch partial rows for each trace_id into one trace.
+
+        Read-time counterpart to the write-time merge PostgresDb does on conflict:
+        earliest start, latest end, non-null context (max over Nullable skips
+        NULLs), and name/status from the highest-level root span. Tie-breaking
+        differs from Postgres (max() instead of COALESCE, ERROR-priority status),
+        but the per-trace_id outcome is equivalent for non-conflicting partials.
+        """
+        # Rank each partial row by component level (workflow > team > agent > child)
+        # so the root span's name/status win the argMax below. A row is a root only
+        # if it has the id and a .run/.arun name.
+        is_root_name = "(position(name, '.run') > 0 OR position(name, '.arun') > 0)"
+        level = (
+            f"multiIf(isNotNull(workflow_id) AND {is_root_name}, 3, "
+            f"isNotNull(team_id) AND {is_root_name}, 2, "
+            f"isNotNull(agent_id) AND {is_root_name}, 1, 0)"
+        )
+        # _level lives in an inner projection; aggregate inputs are qualified with
+        # s. so raw columns aren't read as the like-named output aliases.
+        inner = f"SELECT *, {level} AS _level FROM {qualified}"
+        return (
+            "SELECT s.trace_id AS trace_id, "
+            "argMax(s.name, s._level) AS name, "
+            "if(countIf(s.status = 'ERROR') > 0, 'ERROR', argMax(s.status, s._level)) AS status, "
+            "min(s.start_time) AS start_time, "
+            "max(s.end_time) AS end_time, "
+            "toInt64((toUnixTimestamp64Micro(max(s.end_time)) - toUnixTimestamp64Micro(min(s.start_time))) / 1000) "
+            "AS duration_ms, "
+            "max(s.run_id) AS run_id, max(s.session_id) AS session_id, max(s.user_id) AS user_id, "
+            "max(s.agent_id) AS agent_id, max(s.team_id) AS team_id, max(s.workflow_id) AS workflow_id, "
+            "min(s.created_at) AS created_at "
+            f"FROM ({inner}) AS s GROUP BY s.trace_id"
+        )
 
     def _span_counts_for(self, trace_ids: List[str]) -> Dict[str, Tuple[int, int]]:
         """Compute (total_spans, error_count) per trace_id in a single query.

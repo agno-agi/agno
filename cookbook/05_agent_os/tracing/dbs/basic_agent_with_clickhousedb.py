@@ -59,7 +59,7 @@ setup_tracing(
 
 agent = Agent(
     name="HackerNews Agent",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[HackerNewsTools()],
     instructions="You are a hacker news agent. Answer questions concisely.",
     markdown=True,

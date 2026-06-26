@@ -7,11 +7,11 @@ the trace/span tables; everything else on ``BaseDb`` raises ``NotImplementedErro
 
 Engine choice:
 
-* ``traces`` uses ``ReplacingMergeTree(version)`` so the same ``trace_id`` can
-  be re-ingested as more spans arrive. ``version`` is a unix nanosecond
-  timestamp; the latest write wins after a background merge. Reads use
-  ``FINAL`` to materialize the merged row at query time.
-* ``spans`` uses plain ``MergeTree`` — spans are immutable and append-only.
+* ``traces`` uses ``MergeTree``. The exporter ingests a trace as several
+  partial rows (one per span batch), reconciled into one row per ``trace_id`` at
+  read time. ``MergeTree`` never drops rows, so every partial survives background
+  merges.
+* ``spans`` uses ``MergeTree`` — spans are immutable and append-only.
 
 Partitioning is by month on ``start_time`` so retention can be enforced with a
 single ``ALTER TABLE ... DROP PARTITION`` if desired.
@@ -31,10 +31,9 @@ CREATE TABLE IF NOT EXISTS {db}.{table} (
     agent_id        Nullable(String),
     team_id         Nullable(String),
     workflow_id     Nullable(String),
-    created_at      DateTime64(6, 'UTC'),
-    version         UInt64 DEFAULT toUnixTimestamp64Nano(now64(6))
+    created_at      DateTime64(6, 'UTC')
 )
-ENGINE = ReplacingMergeTree(version)
+ENGINE = MergeTree
 PARTITION BY toYYYYMM(start_time)
 ORDER BY (start_time, trace_id)
 """
