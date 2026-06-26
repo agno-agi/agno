@@ -24,7 +24,21 @@ def block_to_dict(block: Any) -> Dict[str, Any]:
     return block if isinstance(block, dict) else {}
 
 
-# --- Context dataclasses for interaction handlers ---
+# --- Context dataclasses for event/interaction handlers ---
+
+
+@dataclass
+class EventContext:
+    channel_id: str
+    thread_id: str
+    user: str
+    message_text: str
+    session_id: str
+    team_id: Optional[str] = None
+    resolved_user_id: str = ""
+    display_name: Optional[str] = None
+    channel_name: Optional[str] = None
+    action_token: Optional[str] = None
 
 
 @dataclass

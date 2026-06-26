@@ -24,7 +24,7 @@ from agno.os.interfaces.slack.helpers import (
 )
 from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
-from agno.os.interfaces.slack.types import tool_name
+from agno.os.interfaces.slack.types import EventContext, tool_name
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error
@@ -33,20 +33,6 @@ from agno.workflow import RemoteWorkflow, Workflow
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 _STREAM_CHAR_LIMIT = 39000
 _STREAM_CARD_LIMIT = 45
-
-
-@dataclass
-class EventContext:
-    channel_id: str
-    thread_id: str
-    user: str
-    message_text: str
-    session_id: str
-    team_id: Optional[str] = None
-    resolved_user_id: str = ""
-    display_name: Optional[str] = None
-    channel_name: Optional[str] = None
-    action_token: Optional[str] = None
 
 
 @dataclass
@@ -76,23 +62,20 @@ class SlackEventHandler:
         authorizations = data.get("authorizations") or [{}]
         bot_user_id = authorizations[0].get("user_id")
 
-        # 1. Determine if this is an ambient thread reply
+        # Ambient mode: respond to thread replies where bot was mentioned in first message
         thread_ts = event.get("thread_ts")
         is_thread_reply = thread_ts and thread_ts != event.get("ts")
         is_ambient = False
         if self.ambient_mode and self.reply_to_mentions_only and is_thread_reply:
             is_ambient = await is_ambient_thread(client, event.get("channel", ""), thread_ts, bot_user_id)
 
-        # 2. Early exit if we shouldn't respond
         if not should_respond(event, self.reply_to_mentions_only, is_ambient):
             return None
 
-        # 3. Extract and transform message context
         raw_ctx = extract_event_context(event)
         bot_name = await self.bot_name_resolver.resolve(client, bot_user_id) if bot_user_id else None
         message_text = strip_bot_mention(raw_ctx["message_text"], bot_user_id, bot_name)
 
-        # 4. Resolve user identity if configured
         resolved_user_id = raw_ctx["user"]
         display_name = None
         if self.resolve_user_identity:
@@ -100,7 +83,6 @@ class SlackEventHandler:
 
         channel_name = await resolve_channel_name(client, raw_ctx["channel_id"])
 
-        # 5. Build and return context
         return EventContext(
             channel_id=raw_ctx["channel_id"],
             thread_id=raw_ctx["thread_id"],
