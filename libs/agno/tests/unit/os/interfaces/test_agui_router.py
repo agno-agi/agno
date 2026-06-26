@@ -8,13 +8,14 @@ from agno.os.interfaces.agui.router import run_entity
 
 
 class FakeRunInput:
-    def __init__(self, *, context=None, state=None):
+    def __init__(self, *, context=None, state=None, tools=None):
         self.messages = [MagicMock(role="user", content="test")]
         self.thread_id = "test-thread"
         self.run_id = "test-run"
         self.forwarded_props = None
         self.state = state
         self.context = context
+        self.tools = tools
 
 
 class CaptureKwargsEntity:
