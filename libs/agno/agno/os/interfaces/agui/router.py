@@ -39,7 +39,7 @@ async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
 ) -> AsyncIterator[BaseEvent]:
-    """Shared handler for running an Agent or Team with AG-UI input/output mapping."""
+    # Run an Agent or Team with AG-UI input/output mapping
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
@@ -121,16 +121,7 @@ async def _resume_paused_run(
     session_state: Optional[dict],
     run_kwargs: dict,
 ):
-    """Resume a paused run by loading stored requirements and filling in tool results.
-
-    The paused run's requirements are stored in DB with full ToolExecution objects
-    (tool_call_id, tool_name, tool_args, external_execution_required=True).
-    We load them, match by tool_call_id, fill in results from ToolMessages,
-    and call acontinue_run.
-
-    Requires the entity to have a db configured for session storage.
-    """
-    # Check if entity has DB configured
+    # Load paused run from DB, merge tool results, and call acontinue_run
     if not getattr(entity, "db", None):
         raise ValueError(
             "Frontend tool resume requires a database to be configured on the agent. "
