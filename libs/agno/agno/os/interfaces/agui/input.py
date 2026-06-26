@@ -39,6 +39,7 @@ def extract_media(
     videos: List[Video] = []
     files: List[File] = []
 
+    # 1. Find the last user message
     for msg in reversed(messages):
         if msg.role != "user" or msg.content is None:
             continue
@@ -46,10 +47,12 @@ def extract_media(
         if isinstance(msg.content, str):
             return images, audio, videos, files
 
+        # 2. Process each content part
         for part in msg.content:
             if not hasattr(part, "type"):
                 continue
 
+            # 3. Extract content bytes and MIME type
             content: Optional[bytes] = None
             url: Optional[str] = None
             mime: Optional[str] = None
@@ -75,6 +78,7 @@ def extract_media(
                     elif source.type == "data" and value:
                         content = _decode_base64(value)
 
+            # 4. Create Agno media object
             # Route by part.type first, fall back to MIME for binary content
             if url or content:
                 if part.type == "image" or (mime and mime.startswith("image/")):
@@ -94,6 +98,7 @@ def extract_media(
 
 
 def validate_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
+    """Validate the given AGUI state is of the expected type (dict)."""
     if state is None:
         return None
 
