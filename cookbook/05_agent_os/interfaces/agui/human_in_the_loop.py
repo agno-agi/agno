@@ -20,7 +20,9 @@ from pydantic import BaseModel, Field
 
 class TaskStep(BaseModel):
     description: str = Field(description="Description of the step")
-    status: str = Field(default="enabled", description="Status: enabled, disabled, or executing")
+    status: str = Field(
+        default="enabled", description="Status: enabled, disabled, or executing"
+    )
 
 
 @tool(requires_confirmation=True)
@@ -31,7 +33,9 @@ def generate_task_steps(steps: List[TaskStep]) -> str:
     User can enable/disable steps before confirming execution.
     """
     enabled_steps = [s for s in steps if s.status == "enabled"]
-    return f"Executing {len(enabled_steps)} steps: " + ", ".join(s.description for s in enabled_steps)
+    return f"Executing {len(enabled_steps)} steps: " + ", ".join(
+        s.description for s in enabled_steps
+    )
 
 
 hitl_agent = Agent(

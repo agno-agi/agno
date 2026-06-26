@@ -2,7 +2,7 @@
 
 from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPServerConfig.include_tags`` / ``exclude_tags`` without reading
@@ -244,15 +244,6 @@ class ChatConfig(BaseModel):
 
     quick_prompts: dict[str, list[str]]
 
-    # Limit the number of quick prompts to 3 (per agent/team/workflow)
-    @field_validator("quick_prompts")
-    @classmethod
-    def limit_lists(cls, v):
-        for key, lst in v.items():
-            if len(lst) > 3:
-                raise ValueError(f"Too many quick prompts for '{key}', maximum allowed is 3")
-        return v
-
 
 class Manifest(BaseModel):
     """OS-level UI metadata for an agent/team/workflow.
@@ -263,19 +254,12 @@ class Manifest(BaseModel):
 
     Rendering surfaces:
     - ``description``, ``labels``: home/landing card
-    - ``quick_prompts``: chat page (max 3)
+    - ``quick_prompts``: chat page
     """
 
     description: Optional[str] = None
     labels: Optional[List[str]] = None
     quick_prompts: Optional[List[str]] = None
-
-    @field_validator("quick_prompts")
-    @classmethod
-    def _limit_quick_prompts(cls, v):
-        if v is not None and len(v) > 3:
-            raise ValueError("Too many quick prompts, maximum allowed is 3")
-        return v
 
 
 class AgentOSConfig(BaseModel):
