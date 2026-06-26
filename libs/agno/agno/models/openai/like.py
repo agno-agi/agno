@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from agno.models.base import Model
 from agno.models.openai.chat import OpenAIChat
 
 
@@ -25,3 +26,6 @@ class OpenAILike(OpenAIChat):
         "assistant": "assistant",
         "tool": "tool",
     }
+
+    def get_provider(self) -> str:
+        return Model.get_provider(self)
