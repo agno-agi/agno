@@ -290,6 +290,7 @@ class Model(AgnoModel):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        **kwargs: Any,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -395,6 +396,7 @@ class Model(AgnoModel):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        **kwargs: Any,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -710,6 +712,7 @@ class Model(AgnoModel):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        **kwargs: Any,
     ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate a streaming response from the model.
@@ -850,6 +853,7 @@ class Model(AgnoModel):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
+        **kwargs: Any,
     ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate an asynchronous streaming response from the model.
