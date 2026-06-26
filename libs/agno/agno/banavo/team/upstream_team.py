@@ -89,6 +89,12 @@ class Team(_UpstreamTeam):
     """Upstream Team with banavo V1 init/arun keyword compatibility."""
 
     def __init__(self, members: List[Union[Agent, "Team"]], **kwargs: Any) -> None:
+        # Forked teams skip built-in member delegation and use custom_transfer_tools only.
+        # Upstream always injects delegate_task_* when members is non-empty; clear members to match.
+        disable_built_in = kwargs.pop("disable_built_in_transfer_tools", False)
+        if disable_built_in:
+            members = []
+
         if "team_id" in kwargs and "id" not in kwargs:
             kwargs["id"] = kwargs.pop("team_id")
         if "storage" in kwargs and "db" not in kwargs:
