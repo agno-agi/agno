@@ -1353,9 +1353,9 @@ class ToolResult(BaseModel):
     """Result from a tool that can include media artifacts."""
 
     content: str
+    # Holds extra MCP tool data, stored as "meta" and "structured_content". Can be used for any other provider's extra data.
     metadata: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
-    structured_content: Optional[Dict[str, Any]] = None

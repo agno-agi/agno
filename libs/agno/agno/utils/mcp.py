@@ -1,6 +1,6 @@
 import json
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_exception
@@ -67,8 +67,7 @@ def get_entrypoint_for_tool(
             if result.isError:
                 return ToolResult(
                     content=f"Error from MCP tool '{tool_name}': {result.content}",
-                    metadata=result.meta,
-                    structured_content=getattr(result, "structuredContent", None),
+                    metadata=_build_mcp_metadata(result),
                 )
 
             # Process the result content
@@ -149,9 +148,8 @@ def get_entrypoint_for_tool(
 
             return ToolResult(
                 content=response_str.strip(),
-                metadata=result.meta,
+                metadata=_build_mcp_metadata(result),
                 images=images if images else None,
-                structured_content=getattr(result, "structuredContent", None),
             )
 
         # Execute the MCP tool call
@@ -196,6 +194,24 @@ def get_entrypoint_for_tool(
             return ToolResult(content=f"Error: {e}")
 
     return partial(call_tool, tool_name=tool.name)
+
+
+def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
+    """Collect a tool result's extra MCP data into a single ToolResult.metadata dict.
+
+    Protocol `_meta` and the tool's `structuredContent` are stored as the reserved keys
+    `meta` and `structured_content` rather than as separate ToolResult fields, so future MCP
+    additions become new keys here instead of new attributes. `getattr` guards both: older MCP
+    servers (mcp < 1.10.0) expose no `structuredContent`, so the key is simply omitted. Returns
+    None when there is nothing to preserve.
+    """
+    metadata: Dict[str, Any] = {}
+    if getattr(result, "meta", None) is not None:
+        metadata["meta"] = result.meta
+    structured_content = getattr(result, "structuredContent", None)
+    if structured_content is not None:
+        metadata["structured_content"] = structured_content
+    return metadata or None
 
 
 def prepare_command(command: str) -> list[str]:
