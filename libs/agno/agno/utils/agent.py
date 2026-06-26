@@ -558,8 +558,37 @@ def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRu
         run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
 
 
+def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+    """Give ``run_response`` its own shallow copies of the collections that media
+    scrubbing mutates in place (Message objects and RunInput).
+
+    ``scrub_media_from_run_output`` (store_media=False) reassigns attributes on
+    Message and RunInput objects. A shallow ``copy.copy`` of a RunOutput shares
+    those nested objects with the source, so scrubbing a *storage copy* on a
+    mid-run checkpoint would strip media off the still-running live run. Call
+    this on the storage copy before scrubbing on the in-flight (checkpoint) path.
+
+    Shallow per-element copies are enough — the scrub only reassigns attributes,
+    it does not mutate nested structures — and they avoid duplicating the media
+    payloads themselves (the copies share the payload refs until they are nulled).
+    """
+    import copy
+
+    if run_response.messages is not None:
+        run_response.messages = [copy.copy(message) for message in run_response.messages]
+    if run_response.additional_input is not None:
+        run_response.additional_input = [copy.copy(message) for message in run_response.additional_input]
+    if run_response.reasoning_messages is not None:
+        run_response.reasoning_messages = [copy.copy(message) for message in run_response.reasoning_messages]
+    if run_response.input is not None:
+        run_response.input = copy.copy(run_response.input)
+
+
 def get_run_output_util(
-    entity: Union["Agent", "Team"], run_id: str, session_id: Optional[str] = None
+    entity: Union["Agent", "Team"],
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[
     Union[
         RunOutput,
@@ -572,12 +601,13 @@ def get_run_output_util(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if session_id is not None:
         if _has_async_db(entity):
             raise ValueError("Async database not supported for sync functions")
 
-        session = entity.get_session(session_id=session_id)
+        session = entity.get_session(session_id=session_id, user_id=user_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
             if run_response is not None:
@@ -595,7 +625,10 @@ def get_run_output_util(
 
 
 async def aget_run_output_util(
-    entity: Union["Agent", "Team"], run_id: str, session_id: Optional[str] = None
+    entity: Union["Agent", "Team"],
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[RunOutput, TeamRunOutput]]:
     """
     Get a RunOutput from the database.
@@ -603,9 +636,10 @@ async def aget_run_output_util(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if session_id is not None:
-        session = await entity.aget_session(session_id=session_id)
+        session = await entity.aget_session(session_id=session_id, user_id=user_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
             if run_response is not None:
@@ -622,6 +656,28 @@ async def aget_run_output_util(
     return None
 
 
+def _ensure_entity_id(entity: Union["Agent", "Team"]) -> None:
+    """Auto-derive ``entity.id`` from ``entity.name`` when it is not set.
+
+    Mirrors what ``arun()`` / ``initialize_*()`` do during a run. Uses
+    ``isinstance`` rather than class-name comparison so the right ``set_id``
+    is picked even for subclasses, and so mypy can narrow the argument type.
+    Imports are local because ``Agent`` / ``Team`` would cause a circular
+    import at module load time.
+    """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    if isinstance(entity, Team):
+        from agno.team._init import set_id as set_team_id
+
+        set_team_id(entity)
+    elif isinstance(entity, Agent):
+        from agno.agent._init import set_id as set_agent_id
+
+        set_agent_id(entity)
+
+
 def get_last_run_output_util(
     entity: Union["Agent", "Team"], session_id: Optional[str] = None
 ) -> Optional[Union[RunOutput, TeamRunOutput]]:
@@ -634,6 +690,8 @@ def get_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
+    _ensure_entity_id(entity)
+
     if session_id is not None:
         if _has_async_db(entity):
             raise ValueError("Async database not supported for sync functions")
@@ -677,6 +735,8 @@ async def aget_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
+    _ensure_entity_id(entity)
+
     if session_id is not None:
         session = await entity.aget_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:

@@ -11,8 +11,8 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.config import (
     AgentOSConfig,
-    ChatConfig,
     DatabaseConfig,
+    Manifest,
     MemoryConfig,
     MemoryDomainConfig,
 )
@@ -68,15 +68,17 @@ agent_os = AgentOS(
     workflows=[basic_workflow],
     # Configuration for the AgentOS
     config=AgentOSConfig(
-        chat=ChatConfig(
-            quick_prompts={
-                "marketing-agent": [
+        manifest={
+            "marketing-agent": Manifest(
+                description="Plans, runs and reports on marketing campaigns.",
+                labels=["beta", "marketing"],
+                quick_prompts=[
                     "What can you do?",
                     "How is our latest post working?",
                     "Tell me about our active marketing campaigns",
                 ],
-            },
-        ),
+            ),
+        },
         memory=MemoryConfig(
             dbs=[
                 DatabaseConfig(

@@ -3,9 +3,11 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     RouterExecutionCompletedEvent,
@@ -752,6 +754,8 @@ class Router:
                     current_step_input, step_output, router_step_outputs
                 )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} failed")
@@ -847,6 +851,8 @@ class Router:
         router_step_outputs = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                raise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_outputs_for_step = []
                 # Stream step execution
@@ -914,6 +920,8 @@ class Router:
                             current_step_input, step_outputs_for_step, router_step_outputs
                         )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} streaming failed")
@@ -1065,6 +1073,8 @@ class Router:
                     current_step_input, step_output, router_step_outputs
                 )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} async failed")
@@ -1161,6 +1171,8 @@ class Router:
         router_step_outputs = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                await araise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_outputs_for_step = []
 
@@ -1229,6 +1241,8 @@ class Router:
                             current_step_input, step_outputs_for_step, router_step_outputs
                         )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Router step {step_name} async streaming failed")

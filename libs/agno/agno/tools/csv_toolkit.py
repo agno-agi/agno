@@ -79,7 +79,7 @@ class CsvTools(Toolkit):
             # Read the csv file
             csv_data = []
             _row_limit = row_limit or self.row_limit
-            with open(str(file_path), newline="") as csvfile:
+            with open(str(file_path), encoding="utf-8-sig", newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 if _row_limit is not None:
                     csv_data = [row for row in reader][:_row_limit]
@@ -107,7 +107,7 @@ class CsvTools(Toolkit):
             file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
 
             # Get the columns of the csv file
-            with open(str(file_path), newline="") as csvfile:
+            with open(str(file_path), encoding="utf-8-sig", newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 columns = reader.fieldnames
 

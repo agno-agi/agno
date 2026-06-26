@@ -6,15 +6,13 @@ import json
 import re
 from enum import Enum
 from os import getenv
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
 
-import jwt
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SERVICE_SCOPES
+from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
     get_accessible_resource_ids,
@@ -22,6 +20,9 @@ from agno.os.scopes import (
     has_required_scopes,
 )
 from agno.utils.log import log_debug, log_warning
+
+if TYPE_CHECKING:
+    from jwt import PyJWK
 
 
 class TokenSource(str, Enum):
@@ -109,8 +110,8 @@ class JWTValidator:
         if env_key and env_key not in self.verification_keys:
             self.verification_keys.append(env_key)
 
-        # JWKS configuration - load keys from JWKS file or environment variable
-        self.jwks_keys: Dict[str, PyJWK] = {}  # kid -> PyJWK mapping
+        # JWKS configuration - load keys from JWKS file or environment variable.
+        self.jwks_keys: "Dict[str, PyJWK]" = {}
 
         # Try jwks_file parameter first
         if jwks_file:
@@ -153,6 +154,8 @@ class JWTValidator:
         Args:
             jwks_data: Parsed JWKS dictionary with "keys" array
         """
+        from jwt import PyJWK
+
         keys = jwks_data.get("keys", [])
         if not keys:
             log_warning("JWKS contains no keys")
@@ -188,6 +191,8 @@ class JWTValidator:
             jwt.ExpiredSignatureError: If token has expired
             jwt.InvalidTokenError: If token is invalid
         """
+        import jwt
+
         decode_options: Dict[str, Any] = {}
         decode_kwargs: Dict[str, Any] = {
             "algorithms": [self.algorithm],
@@ -322,7 +327,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
     7. Returns 401 for invalid tokens, 403 for insufficient scopes
 
     RBAC is opt-in: Only enabled when authorization=True or scope_mappings are provided.
-    Without authorization enabled, the middleware only extracts and validates JWT tokens.
+    Without authorization enabled, the middleware only extracts and validates JWT tokens —
+    endpoints return 200 regardless of scopes. Pass `authorization=True` (or set it via
+    AgentOS(authorization=True)) to enforce the default scope map.
 
     Audience Verification:
     - The `aud` claim in JWT tokens should contain the AgentOS ID
@@ -407,6 +414,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         scope_mappings: Optional[Dict[str, List[str]]] = None,
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
+        user_isolation: bool = False,
     ):
         """
         Initialize the JWT middleware.
@@ -448,6 +456,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
                            Format: {"POST /agents/*/runs": ["agents:run"], "GET /public": []}
             excluded_route_paths: List of route paths to exclude from JWT/RBAC checks
             admin_scope: The scope that grants admin access (default: "agent_os:admin")
+            user_isolation: Opt in to per-user data isolation (default False).
+                When True, route handlers wrap the DB in a per-request scoped
+                adapter and enforce session/run ownership on non-admin callers.
+                When False (the default) JWT and RBAC still apply but
+                ownership/scoping gates stay dormant — preserves backwards
+                compatibility with deployments that handle isolation in their
+                own application layer.
 
         Note:
             - At least one verification key or JWKS file must be provided if validate=True
@@ -515,6 +530,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             excluded_route_paths if excluded_route_paths is not None else self._get_default_excluded_routes()
         )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
+        self.user_isolation = user_isolation
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
@@ -638,8 +654,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
         detail: str,
         origin: Optional[str] = None,
         cors_allowed_origins: Optional[List[str]] = None,
+        required_scopes: Optional[List[str]] = None,
     ) -> JSONResponse:
         """Create an error response with CORS headers."""
+        if required_scopes:
+            detail = build_insufficient_permissions_detail(required_scopes)
         response = JSONResponse(status_code=status_code, content={"detail": detail})
 
         # Add CORS headers to the error response
@@ -663,6 +682,26 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
+        import jwt
+
+        # Ensure the JWT auth config is accessible on app.state for WebSocket
+        # endpoints (which don't flow through this middleware) and any other
+        # components that need it outside the middleware chain. This handles
+        # both built-in (AgentOS authorization=True) and manual
+        # (app.add_middleware(JWTMiddleware, ...)) setup paths.
+        #
+        # All these values must be cached together: resolve_ws_jwt_config
+        # returns early once it sees ``jwt_validator``, so without the
+        # companion fields a manual-setup WebSocket connection arriving after
+        # the first HTTP request would silently drop verify_audience, the
+        # custom admin scope, and the user_isolation flag.
+        if not getattr(request.app.state, "jwt_validator", None):
+            request.app.state.jwt_validator = self.validator
+            request.app.state.jwt_verify_audience = self.verify_audience
+            request.app.state.jwt_audience = self.audience
+            request.app.state.admin_scope = self.admin_scope
+            request.app.state.user_isolation_enabled = self.user_isolation
+
         path = request.url.path
         method = request.method
 
@@ -696,6 +735,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
             request.state.authorization_enabled = self.authorization or False
+            request.state.admin_scope = self.admin_scope
+            request.state.user_isolation_enabled = self.user_isolation
 
             # Enforce RBAC for internal token (do not skip scope checks)
             if self.authorization:
@@ -711,7 +752,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
                             f"Required: {required_scopes}, Token has: {internal_scopes}"
                         )
                         return self._create_error_response(
-                            403, "Insufficient permissions", origin, cors_allowed_origins
+                            403,
+                            "Insufficient permissions",
+                            origin,
+                            cors_allowed_origins,
+                            required_scopes=required_scopes,
                         )
 
             return await call_next(request)
@@ -743,6 +788,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
+            # Expose admin scope so downstream helpers (e.g. get_scoped_user_id)
+            # honour custom admin scopes configured via JWTMiddleware(admin_scope=...).
+            request.state.admin_scope = self.admin_scope
+            # Per-user isolation is opt-in. get_scoped_user_id short-circuits
+            # to None when this is False, so the DB wrapper and route-level
+            # ownership gates stay dormant.
+            request.state.user_isolation_enabled = self.user_isolation
 
             # Extract dependencies claims
             dependencies = {}
@@ -783,6 +835,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     resource_id = self._extract_resource_id_from_path(path, resource_type)
 
                 required_scopes = self._get_required_scopes(method, path)
+                request.state.required_scopes = required_scopes
 
                 # Empty list [] means no scopes required (allow access)
                 if required_scopes:
@@ -798,9 +851,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     # Special handling for listing endpoints (no resource_id)
                     if not has_access and not resource_id and resource_type:
                         # For listing endpoints, always allow access but store accessible IDs for filtering
-                        # This allows endpoints to return filtered results (including empty list) instead of 403
+                        # This allows endpoints to return filtered results (including empty list) instead of 403.
+                        # Pass the action from required_scopes (e.g. "read" for "agents:read") so the cached
+                        # IDs only include resources the user is authorised for under that action — otherwise
+                        # a user with only `agents:run` would leak through `GET /agents`.
+                        required_action: Optional[str] = None
+                        first_required = required_scopes[0]
+                        if ":" in first_required:
+                            required_action = first_required.rsplit(":", 1)[1]
                         accessible_ids = get_accessible_resource_ids(
-                            scopes, resource_type, admin_scope=self.admin_scope
+                            scopes, resource_type, admin_scope=self.admin_scope, action=required_action
                         )
                         has_access = True  # Always allow listing endpoints
                         request.state.accessible_resource_ids = accessible_ids
@@ -815,7 +875,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
                             f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
                         )
                         return self._create_error_response(
-                            403, "Insufficient permissions", origin, cors_allowed_origins
+                            403,
+                            "Insufficient permissions",
+                            origin,
+                            cors_allowed_origins,
+                            required_scopes=required_scopes,
                         )
 
                     log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")

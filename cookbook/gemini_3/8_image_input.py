@@ -40,7 +40,7 @@ and provide relevant context.
 image_agent = Agent(
     name="Image Analyst",
     # search=True lets the agent look up context about what it sees
-    model=Gemini(id="gemini-3-flash-preview", search=True),
+    model=Gemini(id="gemini-3.5-flash", search=True),
     instructions=instructions,
     markdown=True,
 )

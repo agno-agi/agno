@@ -427,9 +427,7 @@ class MultiMCPTools(Toolkit):
 
         if force:
             # Clean up the session and context so we force a new connection
-            self._sessions = []
-            self._successful_connections = 0
-            self._initialized = False
+            await self._safe_cleanup()
             self._connection_task = None
 
         if self._initialized:
@@ -437,8 +435,9 @@ class MultiMCPTools(Toolkit):
 
         try:
             await self._connect()
-        except (RuntimeError, BaseException):
-            log_error(f"Failed to connect to {str(self)}")
+        except Exception as e:
+            log_error(f"Failed to connect to {str(self)}: {e}")
+            await self._safe_cleanup()
 
     @classmethod
     async def create_and_connect(
@@ -473,8 +472,42 @@ class MultiMCPTools(Toolkit):
             **kwargs,
         )
 
-        await instance._connect()
+        try:
+            await instance._connect()
+        except Exception:
+            await instance._safe_cleanup()
+            raise
         return instance
+
+    async def _safe_cleanup(self) -> None:
+        """Close partially initialized MCP server contexts and reset local state."""
+        for run_id, server_idx in list(self._run_sessions.keys()):
+            await self.cleanup_run_session(run_id, server_idx)
+
+        try:
+            await self._async_exit_stack.aclose()
+        except BaseException:
+            pass
+
+        self._async_exit_stack = AsyncExitStack()
+        self._sessions = []
+        self._session_to_server_idx = {}
+        self._successful_connections = 0
+        self._initialized = False
+
+    async def _enter_context(self, context: Any) -> Any:
+        """Enter a context through the shared stack, closing it if entry fails."""
+        try:
+            return await self._async_exit_stack.enter_async_context(context)
+        except BaseException:
+            try:
+                await context.aclose()
+            except BaseException:
+                try:
+                    await context.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+            raise
 
     async def _connect(self) -> None:
         """Connects to the MCP servers and initializes the tools"""
@@ -494,9 +527,9 @@ class MultiMCPTools(Toolkit):
             try:
                 # Handle stdio connections
                 if isinstance(server_params, StdioServerParameters):
-                    stdio_transport = await self._async_exit_stack.enter_async_context(stdio_client(server_params))
+                    stdio_transport = await self._enter_context(stdio_client(server_params))
                     read, write = stdio_transport
-                    session = await self._async_exit_stack.enter_async_context(
+                    session = await self._enter_context(
                         ClientSession(read, write, read_timeout_seconds=timedelta(seconds=self.timeout_seconds))
                     )
                     await self.initialize(session, server_idx)
@@ -508,9 +541,9 @@ class MultiMCPTools(Toolkit):
                     if init_headers:
                         existing_headers = sse_params.get("headers") or {}
                         sse_params["headers"] = {**existing_headers, **init_headers}
-                    client_connection = await self._async_exit_stack.enter_async_context(sse_client(**sse_params))
+                    client_connection = await self._enter_context(sse_client(**sse_params))
                     read, write = client_connection
-                    session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+                    session = await self._enter_context(ClientSession(read, write))
                     await self.initialize(session, server_idx)
                     self._successful_connections += 1
 
@@ -520,11 +553,9 @@ class MultiMCPTools(Toolkit):
                     if init_headers:
                         existing_headers = streamable_http_params.get("headers") or {}
                         streamable_http_params["headers"] = {**existing_headers, **init_headers}
-                    client_connection = await self._async_exit_stack.enter_async_context(
-                        streamablehttp_client(**streamable_http_params)
-                    )
+                    client_connection = await self._enter_context(streamablehttp_client(**streamable_http_params))
                     read, write = client_connection[0:2]
-                    session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
+                    session = await self._enter_context(ClientSession(read, write))
                     await self.initialize(session, server_idx)
                     self._successful_connections += 1
 
@@ -577,8 +608,9 @@ class MultiMCPTools(Toolkit):
         """Enter the async context manager."""
         try:
             await self._connect()
-        except (RuntimeError, BaseException):
-            log_error(f"Failed to connect to {str(self)}")
+        except Exception as e:
+            log_error(f"Failed to connect to {str(self)}: {e}")
+            await self._safe_cleanup()
         return self
 
     async def __aexit__(

@@ -371,7 +371,7 @@ class EntityMemoryConfig:
 
 
 # =============================================================================
-# Phase 2 Configurations (Placeholders)
+# Decision Log Configuration
 # =============================================================================
 
 
@@ -383,8 +383,6 @@ class DecisionLogConfig:
     and context. Useful for auditing and learning from past decisions.
 
     Scope: AGENT (fixed) - Stored and retrieved by agent_id.
-
-    Note: Deferred to Phase 2.
     """
 
     # Required fields
@@ -407,6 +405,11 @@ class DecisionLogConfig:
 
     def __repr__(self) -> str:
         return f"DecisionLogConfig(mode={self.mode.value})"
+
+
+# =============================================================================
+# Placeholder Configurations (Not yet implemented)
+# =============================================================================
 
 
 @dataclass

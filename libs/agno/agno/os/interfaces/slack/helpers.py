@@ -6,6 +6,17 @@ from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error, log_warning
 
 
+def slack_error_code(exc: BaseException) -> Optional[str]:
+    # Extracts Slack API error code from exception for logging/handling
+    resp = getattr(exc, "response", None)
+    data = getattr(resp, "data", None) if resp else None
+    if isinstance(data, dict):
+        code = data.get("error")
+        if isinstance(code, str):
+            return code
+    return None
+
+
 def task_id(agent_name: Optional[str], base_id: str) -> str:
     # Prefix card IDs per agent so concurrent tool calls from different
     # team members don't collide in the Slack stream
@@ -231,6 +242,25 @@ async def upload_response_media_async(async_client: Any, response: Any, channel_
                     )
                 except Exception as e:
                     log_error(f"Failed to upload {attr.rstrip('s')}: {str(e)}")
+
+
+async def open_chat_stream(
+    client: Any,
+    channel: str,
+    thread_ts: str,
+    recipient_user_id: str,
+    recipient_team_id: Optional[str],
+    task_display_mode: str,
+    buffer_size: int,
+) -> Any:
+    return await client.chat_stream(
+        channel=channel,
+        thread_ts=thread_ts,
+        recipient_team_id=recipient_team_id,
+        recipient_user_id=recipient_user_id,
+        task_display_mode=task_display_mode,
+        buffer_size=buffer_size,
+    )
 
 
 async def send_slack_message_async(

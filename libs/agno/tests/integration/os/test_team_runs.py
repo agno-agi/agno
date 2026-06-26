@@ -3,6 +3,7 @@
 import json
 from unittest.mock import AsyncMock, patch
 
+from agno.os.utils import flatten_routes
 from agno.run import RunContext
 from agno.team.team import Team
 
@@ -151,7 +152,7 @@ def test_create_team_run_with_kwargs(test_os_client, test_team: Team):
 def test_continue_team_run_route_requires_approval_resolution_dependency(test_os_client):
     route = next(
         route
-        for route in test_os_client.app.routes
+        for route in flatten_routes(test_os_client.app.routes)
         if getattr(route, "path", None) == "/teams/{team_id}/runs/{run_id}/continue"
     )
 
@@ -167,7 +168,7 @@ def test_continue_team_run_requires_session_id_for_local_teams(test_os_client, t
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "session_id is required to continue a run"
+    assert response.json()["detail"] == "session_id is required for this action"
 
 
 def test_continue_team_run_allows_empty_requirements_payload(test_os_client, test_team: Team):

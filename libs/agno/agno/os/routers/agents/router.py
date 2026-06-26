@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -21,7 +21,7 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -30,7 +30,16 @@ from agno.os.auth import (
     require_approval_resolved,
     require_resource_access,
 )
+from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.managers import event_buffer, sse_subscriber_manager
+from agno.os.middleware.user_scope import (
+    SESSION_ID_REQUIRED,
+    assert_session_matches_component,
+    get_scoped_user_id,
+    run_matches_component,
+    verify_run_in_session,
+    verify_run_in_session_via_db,
+)
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -41,6 +50,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    classify_upload_file,
     find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
@@ -199,26 +209,43 @@ async def agent_continue_response_streamer(
     agent: Union[Agent, RemoteAgent, AgentProtocol],
     run_id: str,
     updated_tools: Optional[List] = None,
+    input: Optional[str] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
+    fork: bool = False,
+    regenerate: bool = False,
+    replace_original: Optional[bool] = None,
+    additional_instructions: Optional[str] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
     try:
-        extra_kwargs: dict = {}
         if auth_token and isinstance(agent, RemoteAgent):
-            extra_kwargs["auth_token"] = auth_token
+            kwargs["auth_token"] = auth_token
+
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
 
         continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
             updated_tools=updated_tools,
+            input=input,
+            continue_from=continue_from,
+            fork=fork,
+            regenerate=regenerate,
+            replace_original=replace_original,
+            additional_instructions=additional_instructions,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             background_tasks=background_tasks,
-            **extra_kwargs,
+            **kwargs,
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
@@ -249,10 +276,17 @@ async def agent_resumable_continue_response_streamer(
     agent: Union[Agent, RemoteAgent],
     run_id: str,
     updated_tools: Optional[List] = None,
+    input: Optional[str] = None,
+    continue_from: Union[int, Literal["end", "last_user"]] = "end",
+    fork: bool = False,
+    regenerate: bool = False,
+    replace_original: Optional[bool] = None,
+    additional_instructions: Optional[str] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     """Resumable SSE generator for continue_run with background=True, stream=True.
 
@@ -262,23 +296,33 @@ async def agent_resumable_continue_response_streamer(
     - Publishing to SSE subscribers for resumed clients
     - Yielding SSE-formatted strings via a queue
     """
-    extra_kwargs: dict = {}
     if auth_token and isinstance(agent, RemoteAgent):
-        extra_kwargs["auth_token"] = auth_token
+        kwargs["auth_token"] = auth_token
 
     if background_tasks is not None:
-        extra_kwargs["background_tasks"] = background_tasks
+        kwargs["background_tasks"] = background_tasks
+
+    if "stream_events" in kwargs:
+        stream_events = kwargs.pop("stream_events")
+    else:
+        stream_events = True
 
     try:
         async for sse_data in agent.acontinue_run(
             run_id=run_id,
             updated_tools=updated_tools,
+            input=input,
+            continue_from=continue_from,
+            fork=fork,
+            regenerate=regenerate,
+            replace_original=replace_original,
+            additional_instructions=additional_instructions,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             background=True,
-            **extra_kwargs,
+            **kwargs,
         ):
             yield sse_data
     except (InputCheckError, OutputCheckError) as e:
@@ -306,6 +350,7 @@ async def _resume_stream_generator(
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
+    user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     """SSE generator for the /resume endpoint.
 
@@ -320,7 +365,7 @@ async def _resume_stream_generator(
         # PATH 3: Not in buffer -- fall back to database
         if session_id and not isinstance(agent, RemoteAgent):
             try:
-                run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+                run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
             except Exception as e:
                 error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
                 yield f"event: error\ndata: {json.dumps(error)}\n\n"
@@ -563,7 +608,12 @@ def get_agent_router(
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+        # Scoped non-admin callers always get their JWT sub as user_id.
+        # Admins and unscoped callers fall through to middleware/form values.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            user_id = scoped_user_id
+        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
@@ -610,36 +660,15 @@ def get_agent_router(
 
         if files:
             for file in files:
-                if file.content_type in [
-                    "image/png",
-                    "image/jpeg",
-                    "image/jpg",
-                    "image/gif",
-                    "image/webp",
-                    "image/bmp",
-                    "image/tiff",
-                    "image/tif",
-                    "image/avif",
-                    "image/heic",
-                    "image/heif",
-                ]:
+                file_category = classify_upload_file(file)
+                if file_category == "image":
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {str(e)}")
                         continue
-                elif file.content_type in [
-                    "audio/wav",
-                    "audio/wave",
-                    "audio/mp3",
-                    "audio/mpeg",
-                    "audio/ogg",
-                    "audio/mp4",
-                    "audio/m4a",
-                    "audio/aac",
-                    "audio/flac",
-                ]:
+                elif file_category == "audio":
                     try:
                         audio = process_audio(file)
                         base64_audios.append(audio)
@@ -648,42 +677,14 @@ def get_agent_router(
                             f"Error processing audio {file.filename} with content type {file.content_type}: {str(e)}"
                         )
                         continue
-                elif file.content_type in [
-                    "video/x-flv",
-                    "video/quicktime",
-                    "video/mpeg",
-                    "video/mpegs",
-                    "video/mpgs",
-                    "video/mpg",
-                    "video/mpg",
-                    "video/mp4",
-                    "video/webm",
-                    "video/wmv",
-                    "video/3gpp",
-                ]:
+                elif file_category == "video":
                     try:
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
                     except Exception as e:
                         log_error(f"Error processing video {file.filename}: {str(e)}")
                         continue
-                elif file.content_type in [
-                    "application/pdf",
-                    "application/json",
-                    "application/x-javascript",
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "application/vnd.ms-outlook",
-                    "text/javascript",
-                    "application/x-python",
-                    "text/x-python",
-                    "text/plain",
-                    "text/html",
-                    "text/css",
-                    "text/markdown",
-                    "text/csv",
-                    "text/xml",
-                    "text/rtf",
-                ]:
+                elif file_category == "document":
                     # Process document files
                     try:
                         input_file = process_document(file)
@@ -815,13 +816,36 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def cancel_agent_run(
+        request: Request,
         agent_id: str,
         run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
     ):
-        # Factory agents: cancel is static, no agent instance needed
+        # Factory agents: cancel is static, no agent instance needed.
+        # Non-admin callers must still prove session ownership before we apply
+        # a global cancellation intent keyed solely on run_id.
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             from agno.agent._run import acancel_run
+
+            scoped_user_id = get_scoped_user_id(request)
+            if scoped_user_id is not None:
+                if not session_id:
+                    raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+                # Prefer factory.db when present; only fall back to os.db when
+                # the factory shares the OS db.
+                check_db = getattr(factory, "db", None) or os.db
+                await verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="agents",
+                    component_id=agent_id,
+                )
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -838,6 +862,21 @@ def get_agent_router(
 
         _require_capability(agent, "acancel_run", "cancel_run")
 
+        # Ownership check: non-admin JWT callers must supply a session_id and the
+        # run must live in a session they own. Admins / unauthenticated bypass.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
+
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
         await agent.acancel_run(run_id=run_id)  # type: ignore[union-attr]
@@ -850,14 +889,18 @@ def get_agent_router(
         response_model_exclude_none=True,
         summary="Continue Agent Run",
         description=(
-            "Continue a paused or incomplete agent run with updated tool results.\n\n"
-            "**Use Cases:**\n"
-            "- Resume execution after tool approval/rejection\n"
-            "- Provide manual tool execution results\n"
-            "- Resume after admin approval (tools can be empty; resolution fetched from DB)\n\n"
+            "Advance a persisted agent run from its current state. Dispatches on the body "
+            "shape and the persisted run state (see ADR-003 in "
+            "specs/agno/features/checkpointing/decisions.md).\n\n"
+            "**Variants:**\n"
+            "- PAUSED + tools provided → apply HITL tool results, resume\n"
+            "- PAUSED + resolved admin approval (empty tools) → apply resolution, resume\n"
+            "- RUNNING / ERROR (no unresolved HITL requirements) → resume from "
+            "last persisted state\n"
+            "- COMPLETED + new tools → continue with appended messages\n\n"
             "**Tools Parameter:**\n"
-            "JSON string containing array of tool execution objects with results.\n"
-            "Can be empty when an admin-required approval has been resolved."
+            "JSON string containing array of tool execution objects with results. Optional — "
+            "only required when the persisted run has unresolved HITL requirements."
         ),
         responses={
             200: {
@@ -871,9 +914,6 @@ def get_agent_router(
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Agent not found", "model": NotFoundResponse},
-            409: {
-                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
-            },
         },
         dependencies=[
             Depends(require_resource_access("agents", "run", "agent_id")),
@@ -888,6 +928,52 @@ def get_agent_router(
         tools: str = Form(
             "", description="JSON string of tool call results to continue the paused run"
         ),  # optional when admin approval resolved
+        input: Optional[str] = Form(
+            None,
+            description=(
+                "Optional new user-message text to append to the run before resuming. "
+                "Use for continuing a COMPLETED run with a follow-up, or adding context "
+                "to a RUNNING/ERROR resume."
+            ),
+        ),
+        continue_from: str = Form(
+            "end",
+            description=("Continuation boundary. Use 'end', 'last_user', or a numeric message index."),
+        ),
+        fork: bool = Form(
+            False,
+            description=(
+                "When true, clone the run with a new ``run_id`` before resuming. The "
+                "original is untouched; the clone becomes a sibling within the same "
+                "session, with ``forked_from_run_id`` set."
+            ),
+        ),
+        regenerate: bool = Form(
+            False,
+            description=(
+                "Sugar: regenerate the last response of this run. Auto-computes "
+                "``continue_from='last_user'`` to land just after the last user message. Pair with "
+                "``additional_instructions`` to steer the new output. By default the original "
+                "response is hidden from history (replaced); pass ``replace_original=false`` to keep "
+                "both the original and the regenerated response visible side by side."
+            ),
+        ),
+        replace_original: Optional[bool] = Form(
+            None,
+            description=(
+                "Only valid with ``regenerate=true``. Controls history visibility of the original "
+                "response; the original run is always retained in storage. Defaults to true: the "
+                "original is marked REGENERATED and hidden from history so the new response replaces "
+                "it. Pass false to keep both the original and regenerated responses visible."
+            ),
+        ),
+        additional_instructions: Optional[str] = Form(
+            None,
+            description=(
+                "Only valid with ``regenerate=true``: extra guidance appended as a user "
+                "message before re-generation. Friendly alias for ``input``."
+            ),
+        ),
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
@@ -896,10 +982,22 @@ def get_agent_router(
             description="Run continue in background (survives client disconnect). Requires database. Use /resume to reconnect.",
         ),
     ):
+        kwargs = await get_request_kwargs(request, continue_agent_run)
+
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             session_id = request.state.session_id
+        if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
+            dependencies = request.state.dependencies
+            if "dependencies" in kwargs:
+                log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
+            kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata") and request.state.metadata is not None:
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         # Parse the JSON string manually
         try:
@@ -935,35 +1033,24 @@ def get_agent_router(
         if (session_id is None or session_id == "") and not isinstance(agent, RemoteAgent):
             raise HTTPException(
                 status_code=400,
-                detail="session_id is required to continue a run",
+                detail=SESSION_ID_REQUIRED,
             )
 
-        # Fetch existing run once for validation and potential approval resolution
-        existing_run = None
-        if session_id and not isinstance(agent, RemoteAgent):
-            if hasattr(agent, "aget_run_output"):
-                existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
-
-        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
-        if existing_run is not None:
-            is_paused = getattr(existing_run, "is_paused", False)
-            if not is_paused:
-                status = getattr(existing_run, "status", None)
-                _status_to_detail = {
-                    RunStatus.running: "run is already running",
-                    RunStatus.completed: "run is already continued",
-                    RunStatus.error: "run is already errored",
-                    RunStatus.cancelled: "run is already cancelled",
-                    RunStatus.pending: "run is already pending",
-                }
-                detail = _status_to_detail.get(
-                    status,  # type: ignore[arg-type]
-                    f"run is not paused (status={getattr(status, 'value', status)})",
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=detail,
-                )
+        # Ownership check: a non-admin caller must own the session AND the run
+        # must belong to this agent (per-resource RBAC). Without this, status
+        # validation below leaks run existence/state across users and across
+        # agents within the same user.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and not isinstance(agent, RemoteAgent):
+            assert session_id  # required above
+            await verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
 
         # Convert tools dict to ToolExecution objects if provided
         updated_tools = None
@@ -977,6 +1064,19 @@ def get_agent_router(
 
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
+        stripped_continue_from = continue_from.strip()
+        continue_from_value: Union[int, Literal["end", "last_user"]]
+        if stripped_continue_from.lstrip("-").isdigit():
+            continue_from_value = int(stripped_continue_from)
+        elif stripped_continue_from == "end":
+            continue_from_value = "end"
+        elif stripped_continue_from == "last_user":
+            continue_from_value = "last_user"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid continue_from. Use 'end', 'last_user', or a numeric message index.",
+            )
 
         if stream and background:
             # background=True, stream=True: resumable SSE streaming
@@ -989,10 +1089,17 @@ def get_agent_router(
                     agent,  # type: ignore[arg-type]
                     run_id=run_id,
                     updated_tools=updated_tools,
+                    input=input,
+                    continue_from=continue_from_value,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -1002,10 +1109,17 @@ def get_agent_router(
                     agent,
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,
+                    input=input,
+                    continue_from=continue_from_value,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -1021,17 +1135,82 @@ def get_agent_router(
                     await agent.acontinue_run(  # type: ignore
                         run_id=run_id,  # run_id from path
                         updated_tools=updated_tools,
+                        input=input,
+                        continue_from=continue_from_value,
+                        fork=fork,
+                        regenerate=regenerate,
+                        replace_original=replace_original,
+                        additional_instructions=additional_instructions,
                         session_id=session_id,
                         user_id=user_id,
                         stream=False,
                         background_tasks=background_tasks,
                         **extra_kwargs,
+                        **kwargs,
                     ),
                 )
                 return run_response_obj.to_dict()
 
-            except InputCheckError as e:
+            except RunNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except RunNotContinuableError as e:
+                raise HTTPException(status_code=409, detail=str(e))
+            except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
+
+    @router.post(
+        "/agents/{agent_id}/sessions/{session_id}/fork",
+        tags=["Agents"],
+        operation_id="fork_agent_session",
+        summary="Fork Agent Session",
+        description=(
+            "Deep-copy a session into a new independent session. Every run is copied with a "
+            "fresh ``run_id``; the new session has a fresh ``session_id``. The original is "
+            "untouched. Use to explore alternative conversation paths without mutating the "
+            "source.\n\n"
+            "Distinct from ``/continue?fork=true``: that creates a sibling **run** inside the "
+            "**same** session. This creates a sibling **session**."
+        ),
+        responses={
+            200: {"description": "Session forked successfully"},
+            400: {"description": "Source session is empty or missing", "model": BadRequestResponse},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def fork_agent_session(
+        agent_id: str,
+        session_id: str,
+        request: Request,
+        user_id: Optional[str] = None,
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Scope source-session read to the caller's user_id to prevent
+        # cross-user forking.
+        scoped_user_id = get_scoped_user_id(request)
+        effective_user_id = scoped_user_id or user_id
+
+        try:
+            new_session_id = await agent.afork_session(  # type: ignore[union-attr]
+                source_session_id=session_id,
+                user_id=effective_user_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {"session_id": new_session_id, "forked_from_session_id": session_id}
 
     @router.get(
         "/agents",
@@ -1075,12 +1254,20 @@ def get_agent_router(
         """Return the list of all Agents present in the contextual OS"""
         # Filter agents based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+            from agno.os.auth import (
+                build_insufficient_permissions_detail,
+                filter_resources_by_access,
+                get_accessible_resources,
+            )
 
             # Check if user has any agent scopes at all
             accessible_ids = get_accessible_resources(request, "agents")
             if not accessible_ids:
-                raise HTTPException(status_code=403, detail="Insufficient permissions")
+                required_scopes = getattr(request.state, "required_scopes", None)
+                raise HTTPException(
+                    status_code=403,
+                    detail=build_insufficient_permissions_detail(required_scopes),
+                )
 
             # Limit results based on the user's access/scopes
             accessible_agents = filter_resources_by_access(request, os.agents or [], "agents")
@@ -1121,6 +1308,9 @@ def get_agent_router(
             exclude_ids = registry.get_agent_ids() if registry else None
             db_agents = get_agents(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
             if db_agents:
+                # Apply the same RBAC filtering to DB-loaded agents
+                if getattr(request.state, "authorization_enabled", False):
+                    db_agents = filter_resources_by_access(request, db_agents, "agents")
                 for db_agent in db_agents:
                     agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
                     agents.append(agent_response)
@@ -1211,6 +1401,7 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def get_agent_run(
+        request: Request,
         agent_id: str,
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
@@ -1237,11 +1428,150 @@ def get_agent_router(
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
-        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
+        user_id = get_scoped_user_id(request)
+
+        # Verify session belongs to this agent BEFORE loading the run.
+        # Without this, a WorkflowSession or TeamSession containing a nested
+        # agent run would be reachable through /agents/{agent_id}/... even
+        # though the session itself doesn't belong to that agent.
+        if hasattr(agent, "aget_session"):
+            session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
+
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
+        # Per-resource RBAC: the run must explicitly belong to the path agent.
+        # Fail closed if agent_id is missing — nested member runs inside
+        # team/workflow sessions may have ambiguous attribution and should
+        # never be returned through an agent route they don't belong to.
+        if not run_matches_component(run_output, "agents", agent_id):
+            raise HTTPException(status_code=404, detail="Run not found")
+
         return run_output.to_dict()
+
+    @router.get(
+        "/agents/{agent_id}/runs/{run_id}/checkpoints",
+        tags=["Agents"],
+        operation_id="list_agent_run_checkpoints",
+        summary="List Agent Run Checkpoints",
+        description=(
+            "List FE-friendly continuation boundaries derived from the current stored run. "
+            "No separate checkpoint table is used; entries are inferred from message-level "
+            "checkpoint markers and the terminal end of the transcript."
+        ),
+        responses={
+            200: {"description": "Run checkpoints retrieved successfully"},
+            404: {"description": "Agent or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def list_agent_run_checkpoints(
+        request: Request,
+        agent_id: str,
+        run_id: str,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Checkpoint listing is not supported for remote agents")
+
+        user_id = get_scoped_user_id(request)
+        if hasattr(agent, "aget_session"):
+            session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
+
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+        if run_output is None or not run_matches_component(run_output, "agents", agent_id):
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        return {
+            "run_id": run_id,
+            "session_id": session_id,
+            "checkpoints": list_run_checkpoints(run_output),
+        }
+
+    @router.get(
+        "/agents/{agent_id}/runs/{run_id}/checkpoints/{message_index}",
+        tags=["Agents"],
+        operation_id="get_agent_run_checkpoint_snapshot",
+        summary="Get Agent Run Checkpoint Snapshot",
+        description=(
+            "Return a derived run snapshot truncated at a message boundary. "
+            "Use the returned message_index as `continue_from` when continuing this run."
+        ),
+        responses={
+            200: {"description": "Run checkpoint snapshot retrieved successfully"},
+            400: {"description": "Invalid checkpoint message index", "model": BadRequestResponse},
+            404: {"description": "Agent or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def get_agent_run_checkpoint_snapshot(
+        request: Request,
+        agent_id: str,
+        run_id: str,
+        message_index: int,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Checkpoint snapshots are not supported for remote agents")
+
+        user_id = get_scoped_user_id(request)
+        if hasattr(agent, "aget_session"):
+            session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
+
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+        if run_output is None or not run_matches_component(run_output, "agents", agent_id):
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        try:
+            return build_run_checkpoint_snapshot(run_output, message_index)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/resume",
@@ -1271,19 +1601,64 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def resume_agent_run_stream(
+        request: Request,
         agent_id: str,
         run_id: str,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
+        # Ownership check up-front: the buffer and DB fallback paths inside
+        # _resume_stream_generator are both keyed on run_id alone, so a
+        # non-admin with the right scope must prove session ownership before
+        # any events are replayed/streamed.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+
+        # Factory agents: skip entity resolution (no factory_input on resume)
+        # and verify ownership directly via the OS db.
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            if scoped_user_id is not None:
+                # session_id required above
+                assert session_id is not None
+                check_db = getattr(factory, "db", None) or os.db
+                await verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="agents",
+                    component_id=agent_id,
+                )
+            # Without a concrete agent, we can only serve buffer events for
+            # this run; the DB fallback path inside the generator requires an
+            # entity, so signal early if the buffer doesn't have it.
+            raise HTTPException(
+                status_code=400,
+                detail="Stream resumption is not supported for factory agents",
+            )
+
         agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote agents")
 
+        if scoped_user_id is not None:
+            assert session_id is not None
+            await verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
+
         return StreamingResponse(
-            _resume_stream_generator(agent, run_id, last_event_index, session_id),  # type: ignore[arg-type]
+            _resume_stream_generator(agent, run_id, last_event_index, session_id, user_id=scoped_user_id),  # type: ignore[arg-type]
             media_type="text/event-stream",
         )
 
@@ -1303,6 +1678,7 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def list_agent_runs(
+        request: Request,
         agent_id: str,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
@@ -1331,20 +1707,33 @@ def get_agent_router(
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
 
-        # Load session: native Agent uses the storage helper, external adapters have their own method.
-        if isinstance(agent, Agent):
-            from agno.agent._storage import aread_or_create_session
-
-            session = await aread_or_create_session(agent, session_id=session_id)
-        elif hasattr(agent, "aread_or_create_session"):
-            session = await agent.aread_or_create_session(session_id=session_id)
+        # Read-only session lookup so we don't manufacture a session for a
+        # user/agent that shouldn't own it (the previous read-or-create path
+        # bypassed component-level RBAC for sessions not yet on disk).
+        user_id = get_scoped_user_id(request)
+        if hasattr(agent, "aget_session"):
+            session = await agent.aget_session(session_id=session_id, user_id=user_id)
         else:
             raise HTTPException(status_code=501, detail="This agent does not support run listing")
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Per-resource RBAC: the session must explicitly belong to this agent.
+        # Fail closed when agent_id is missing — a WorkflowSession or
+        # TeamSession can contain nested agent runs but doesn't have its own
+        # agent_id, and must not be reachable through an agent route.
+        assert_session_matches_component(session, "agents", agent_id)
+
         runs = session.runs or []
 
-        # Convert to dicts and optionally filter by status
+        # Convert to dicts and optionally filter by status. Filter out any
+        # nested member runs that don't belong to this agent (fail closed when
+        # the run lacks an agent_id — team/workflow sessions can carry nested
+        # runs whose attribution is ambiguous).
         result = []
         for run in runs:
+            if not run_matches_component(run, "agents", agent_id):
+                continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:
                 continue
