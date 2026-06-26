@@ -53,7 +53,7 @@ audio_agent = Agent(
     name="Audio Understanding Agent",
     id="audio-understanding-agent",
     role="Answer questions about audio files",
-    model=OpenAIChat(id="gpt-4o-audio-preview"),
+    model=OpenAIChat(id="gpt-audio"),
     db=db,
     update_memory_on_run=True,
     add_history_to_context=True,
