@@ -16,7 +16,7 @@ from agno.utils.log import log_warning
 
 
 def extract_user_input(messages: List[AGUIMessage]) -> str:
-    # AG-UI sends full history; we only need the last user message
+    """Extract the last user message content from AG-UI messages."""
     for msg in reversed(messages):
         if msg.role == "user" and msg.content is not None:
             if isinstance(msg.content, str):
@@ -34,7 +34,7 @@ def extract_user_input(messages: List[AGUIMessage]) -> str:
 def extract_media(
     messages: List[AGUIMessage],
 ) -> Tuple[List[Image], List[Audio], List[Video], List[File]]:
-    # Extract media (images, audio, videos, files) from the last user message
+    """Extract media from the last user message."""
     images: List[Image] = []
     audio: List[Audio] = []
     videos: List[Video] = []
@@ -70,7 +70,7 @@ def extract_media(
                     content = _decode_base64(data)
 
             elif part.type in ("image", "audio", "video", "document"):
-                # ImageInputContent, AudioInputContent, etc: nested source
+                # AG-UI wraps media in a source object with type (url/data) and value
                 source = getattr(part, "source", None)
                 if source and hasattr(source, "type"):
                     mime = getattr(source, "mime_type", None)
@@ -80,8 +80,6 @@ def extract_media(
                     elif source.type == "data" and value:
                         content = _decode_base64(value)
 
-            # 4. Create Agno media object
-            # Route by part.type first, fall back to MIME for binary content
             if url or content:
                 if part.type == "image" or (mime and mime.startswith("image/")):
                     images.append(Image(url=url, content=content, mime_type=mime))
@@ -132,7 +130,7 @@ def validate_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
 
 
 def extract_context(context: Optional[List[Any]]) -> Optional[Dict[str, Any]]:
-    # Convert AG-UI context list to Agno dependencies dict
+    """Convert AG-UI context list to a dependencies dict."""
     if not context:
         return None
 
@@ -150,8 +148,8 @@ def extract_context(context: Optional[List[Any]]) -> Optional[Dict[str, Any]]:
 
 
 def _decode_base64(value: str) -> Optional[bytes]:
+    """Decode base64 string to bytes. Handles data: URLs and raw base64."""
     try:
-        # data: URLs handled by urllib
         if value.startswith("data:"):
             return urllib.request.urlopen(value).read()
         return base64.b64decode(value, validate=True)
