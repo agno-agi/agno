@@ -545,6 +545,7 @@ module = [
   "playwright.sync_api.*",
   "psycopg.*",
   "pyarrow.*",
+  "pyatr.*",
   "pycountry.*",
   "pymongo.*",
   "pypdf.*",
