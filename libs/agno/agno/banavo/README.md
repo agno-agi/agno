@@ -14,6 +14,7 @@ dependency instead of vendoring `agno_custom` locally.
 | `memory/`, `utils/`, `run/team.py`, `base/` | **Delta** | V1 `RunResponse` orchestration helpers |
 | `tools/` | **Thin** | Re-exports `agno.tools` (no forked copy) |
 | `agent/`, `team/` | **Legacy** | V1-runtime `Agent`/`Team` (pending migration — see below) |
+| `team/upstream_team.py` | **PoC** | Upstream `agno.team.Team` adapter with banavo kwarg aliases |
 
 ## Thinning roadmap
 
@@ -22,7 +23,15 @@ dependency instead of vendoring `agno_custom` locally.
 - PR 2: Move extensions from banavo-agent-os into `agno.banavo`
 - Tools re-export from upstream `agno.tools`
 
-### Next (Agent / Team)
+### PoC (upstream Team)
+```python
+from agno.banavo.team.upstream_team import Agent, Team  # upstream 2.6.x + banavo kw aliases
+```
+
+```bash
+uv run python scripts/poc_upstream_team.py --dry-run
+uv run python scripts/poc_upstream_team.py --live   # needs OPENAI_API_KEY
+```
 Forked `agent/agent.py` and `team/team.py` (~12k lines) implement the **agno 1.x
 `RunResponse` / `RunResponseEvent` runtime**. Upstream 2.6.x uses `RunOutput` /
 `RunOutputEvent` instead.
