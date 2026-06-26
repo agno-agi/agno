@@ -97,6 +97,8 @@ class TestRoundTrip:
 
         assert restored.host == "h"
         assert restored.port == 8443
+        assert restored.username == "u"
+        assert restored.password == "p"
         assert restored.database == "d"
         assert restored.secure is True
         assert restored.trace_table_name == "t"
@@ -107,6 +109,20 @@ class TestRoundTrip:
     def test_to_dict_includes_type_marker(self):
         db = ClickhouseDb(host="h", port=1, username="u", password="p", database="d", create_schema=False)
         assert db.to_dict()["type"] == "clickhouse"
+
+    def test_round_trip_through_db_from_dict(self):
+        """The generic loader must reconstruct a ClickhouseDb (with credentials)."""
+        from agno.db.utils import db_from_dict
+
+        original = ClickhouseDb(
+            host="h", port=8443, username="u", password="p", database="d", secure=True, create_schema=False
+        )
+        restored = db_from_dict(original.to_dict())
+        assert isinstance(restored, ClickhouseDb)
+        assert restored.username == "u"
+        assert restored.password == "p"
+        assert restored.host == "h"
+        assert restored.secure is True
 
 
 # --------------------------------------------------------------------------- #

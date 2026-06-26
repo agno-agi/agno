@@ -75,7 +75,7 @@ traces_db = ClickhouseDb(
 setup_tracing(db=traces_db, batch_processing=True)
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=primary_db,           # sessions, memories, etc.
     instructions="...",
 )
@@ -111,7 +111,7 @@ traces_db = ClickhouseDb(client=client, database="agno_traces")
 
 Two tables are created on first use:
 
-### `agno_traces` — `ReplacingMergeTree(version)`
+### `agno_traces` — `MergeTree`
 
 | column        | type                          | notes                              |
 |---------------|-------------------------------|------------------------------------|
@@ -128,16 +128,15 @@ Two tables are created on first use:
 | `team_id`     | `Nullable(String)`            |                                    |
 | `workflow_id` | `Nullable(String)`            |                                    |
 | `created_at`  | `DateTime64(6, 'UTC')`        |                                    |
-| `version`     | `UInt64`                      | server-defaulted insert sequence   |
 
 `PARTITION BY toYYYYMM(start_time)` — drop a month with one
 `ALTER TABLE ... DROP PARTITION` for retention.
 
 `ORDER BY (start_time, trace_id)` — fast time-range scans.
 
-`ReplacingMergeTree(version)` — re-ingesting the same `trace_id` (which
-happens whenever a later span batch arrives) is safe; the latest `version`
-wins after a background merge. Reads use `FINAL` for correctness.
+`MergeTree` keeps every row. A trace arrives as several **partial** rows (one
+per span batch), so reads reconcile all rows for a `trace_id` into one trace
+with a read-time `GROUP BY`. Background merges never drop rows.
 
 ### `agno_spans` — `MergeTree`
 
@@ -156,7 +155,7 @@ wins after a background merge. Reads use `FINAL` for correctness.
 | `attributes`      | `String`                      | JSON-encoded                       |
 | `created_at`      | `DateTime64(6, 'UTC')`        |                                    |
 
-Spans are immutable, so a plain `MergeTree` is enough.
+Spans are immutable, so a `MergeTree` is enough.
 
 `attributes` is stored as JSON-in-`String` rather than the experimental
 ClickHouse `JSON` column type, to avoid coupling the schema to a specific
@@ -217,10 +216,9 @@ DB was passed to `setup_tracing`; agent state flows through `agent.db`.
 
 - **Retention:** `PARTITION BY toYYYYMM(start_time)` lets you expire old
   traces with a single `ALTER TABLE agno_traces DROP PARTITION '202602'`.
-- **Mutations:** `ReplacingMergeTree` deduplicates on the sort key during
-  background merges. Reads use `FINAL` so freshly-inserted duplicates are
-  collapsed at query time. If query latency is critical, consider running
-  `OPTIMIZE TABLE agno_traces FINAL` on a schedule.
+- **Mutations:** none. Partial rows for a `trace_id` are reconciled at read
+  time (`GROUP BY`), so background merges never drop rows and no
+  `OPTIMIZE ... FINAL` schedule is needed.
 - **Aggregations:** `total_spans` and `error_count` on a `Trace` are computed
   at read time from the spans table, mirroring the Postgres adapter. This
   avoids a write-time fan-out and lets the OLAP engine do what it's good at.
