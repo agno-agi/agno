@@ -24,7 +24,7 @@ def block_to_dict(block: Any) -> Dict[str, Any]:
     return block if isinstance(block, dict) else {}
 
 
-# --- Context dataclasses for event/interaction handlers ---
+# --- Context dataclasses for interaction handlers ---
 
 
 @dataclass
