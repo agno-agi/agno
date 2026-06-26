@@ -34,6 +34,7 @@ def extract_user_input(messages: List[AGUIMessage]) -> str:
 def extract_media(
     messages: List[AGUIMessage],
 ) -> Tuple[List[Image], List[Audio], List[Video], List[File]]:
+    # Extract media (images, audio, videos, files) from the last user message
     images: List[Image] = []
     audio: List[Audio] = []
     videos: List[Video] = []
@@ -44,6 +45,7 @@ def extract_media(
         if msg.role != "user" or msg.content is None:
             continue
 
+        # String content has no media
         if isinstance(msg.content, str):
             return images, audio, videos, files
 
@@ -52,14 +54,14 @@ def extract_media(
             if not hasattr(part, "type"):
                 continue
 
-            # 3. Extract content bytes and MIME type
+            # 3. Extract content bytes and MIME type based on part structure
             content: Optional[bytes] = None
             url: Optional[str] = None
             mime: Optional[str] = None
             filename: Optional[str] = None
 
             if part.type == "binary":
-                # BinaryInputContent: flat structure
+                # BinaryInputContent: flat structure (deprecated but still used)
                 mime = getattr(part, "mime_type", None)
                 filename = getattr(part, "filename", None)
                 url = getattr(part, "url", None)
