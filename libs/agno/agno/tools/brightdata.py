@@ -347,6 +347,7 @@ class BrightDataTools(Toolkit):
                         f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}",
                         params={"format": "json"},
                         headers=self.headers,
+                        # Per-poll cap; self.timeout via max_attempts controls total polling budget
                         timeout=30,
                     )
 
