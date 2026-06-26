@@ -2,15 +2,16 @@ import asyncio
 import inspect
 import time
 import weakref
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import timedelta
+from os import getenv
 from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
+from agno.utils.mcp import build_mcp_auth_headers, get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -53,6 +54,8 @@ class MCPTools(Toolkit):
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
+        api_key: Optional[str] = None,
+        headers: Optional[dict[str, str]] = None,
         **kwargs,
     ):
         """
@@ -74,6 +77,10 @@ class MCPTools(Toolkit):
             header_provider: Optional function to generate dynamic HTTP headers.
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Creates a new session per agent run with dynamic headers merged into connection config.
+            api_key: Optional API key for HTTP MCP servers. Defaults to ``AGNO_API_KEY`` from the
+                environment. Managed Agno keys are sent as ``x-agno-api-key``; other keys use
+                ``Authorization: Bearer``.
+            headers: Optional static HTTP headers merged into the MCP connection config.
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -155,6 +162,8 @@ class MCPTools(Toolkit):
             server_params
         )
         self.url = url
+        self.api_key = api_key
+        self.headers = headers
 
         # Merge provided env with system env
         if env is not None:
@@ -170,6 +179,8 @@ class MCPTools(Toolkit):
             cmd = parts[0]
             arguments = parts[1:] if len(parts) > 1 else []
             self.server_params = StdioServerParameters(command=cmd, args=arguments, env=env)
+
+        self._apply_http_headers()
 
         self._client = client
 
@@ -197,6 +208,41 @@ class MCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    def _get_http_auth_headers(self) -> dict[str, str]:
+        """Resolve static auth headers for HTTP MCP connections."""
+        resolved: dict[str, str] = {}
+        key = self.api_key or getenv("AGNO_API_KEY")
+        if key:
+            resolved.update(build_mcp_auth_headers(key))
+        if self.headers:
+            resolved.update(self.headers)
+        return resolved
+
+    def _apply_http_headers(self) -> None:
+        """Attach static auth/HTTP headers to SSE or Streamable HTTP server params."""
+        if self.transport not in ["sse", "streamable-http"]:
+            return
+
+        http_headers = self._get_http_auth_headers()
+        if not http_headers:
+            return
+
+        if self.server_params is None:
+            if self.url is None:
+                return
+            if self.transport == "sse":
+                self.server_params = SSEClientParams(url=self.url, headers=http_headers)
+            else:
+                self.server_params = StreamableHTTPClientParams(url=self.url, headers=http_headers)
+            return
+
+        if isinstance(self.server_params, SSEClientParams):
+            existing_headers = self.server_params.headers or {}
+            self.server_params = replace(self.server_params, headers={**existing_headers, **http_headers})
+        elif isinstance(self.server_params, StreamableHTTPClientParams):
+            existing_headers = self.server_params.headers or {}
+            self.server_params = replace(self.server_params, headers={**existing_headers, **http_headers})
 
     @property
     def _session_creation_lock(self) -> asyncio.Lock:
