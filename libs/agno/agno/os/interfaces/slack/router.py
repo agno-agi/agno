@@ -56,7 +56,7 @@ def attach_routes(
     team: Optional[Union[Team, RemoteTeam]] = None,
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     reply_to_mentions_only: bool = True,
-    ambient_mode: bool = True,
+    ambient_mode: bool = False,
     token: Optional[str] = None,
     user_token: Optional[str] = None,
     signing_secret: Optional[str] = None,
