@@ -572,6 +572,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
     if agent.tool_call_limit is not None:
         config["tool_call_limit"] = agent.tool_call_limit
+    if agent.add_tool_result_boundaries:
+        config["add_tool_result_boundaries"] = agent.add_tool_result_boundaries
+    if agent.tool_result_max_length is not None:
+        config["tool_result_max_length"] = agent.tool_result_max_length
     if agent.tool_choice is not None:
         config["tool_choice"] = agent.tool_choice
 
@@ -917,6 +921,8 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         # --- Tools ---
         tools=config.get("tools"),
         tool_call_limit=config.get("tool_call_limit"),
+        add_tool_result_boundaries=config.get("add_tool_result_boundaries", False),
+        tool_result_max_length=config.get("tool_result_max_length"),
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
         reasoning=config.get("reasoning", False),

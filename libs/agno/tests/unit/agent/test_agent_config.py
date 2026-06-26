@@ -159,6 +159,8 @@ class TestAgentToDict:
         assert "retries" not in config  # defaults to 0
         assert "add_history_to_context" not in config  # defaults to False
         assert "store_history_messages" not in config  # defaults to False
+        assert "add_tool_result_boundaries" not in config  # defaults to False
+        assert "tool_result_max_length" not in config  # defaults to None
 
     def test_to_dict_includes_store_history_messages_when_true(self):
         """Test that store_history_messages=True is serialized."""
@@ -167,6 +169,18 @@ class TestAgentToDict:
 
         assert "store_history_messages" in config
         assert config["store_history_messages"] is True
+
+    def test_to_dict_includes_tool_result_bounds_when_set(self):
+        """Tool result bounds are serialized only when explicitly configured."""
+        agent = Agent(
+            id="tool-result-agent",
+            add_tool_result_boundaries=True,
+            tool_result_max_length=1024,
+        )
+        config = agent.to_dict()
+
+        assert config["add_tool_result_boundaries"] is True
+        assert config["tool_result_max_length"] == 1024
 
     def test_to_dict_with_db(self, basic_agent, mock_db):
         """Test to_dict includes database configuration."""
@@ -267,6 +281,8 @@ class TestAgentFromDict:
             "debug_mode": True,
             "retries": 3,
             "tool_call_limit": 10,
+            "add_tool_result_boundaries": True,
+            "tool_result_max_length": 1024,
             "num_history_runs": 5,
             "add_history_to_context": True,
             "add_datetime_to_context": True,
@@ -277,6 +293,8 @@ class TestAgentFromDict:
         assert agent.debug_mode is True
         assert agent.retries == 3
         assert agent.tool_call_limit == 10
+        assert agent.add_tool_result_boundaries is True
+        assert agent.tool_result_max_length == 1024
         assert agent.num_history_runs == 5
         assert agent.add_history_to_context is True
         assert agent.add_datetime_to_context is True
