@@ -30,7 +30,7 @@ from agno.utils.timer import Timer
 from pydantic import BaseModel
 
 from agno.banavo.events.stream_events import BaseBanavoStreamEvent
-from agno.banavo.run.compat import is_content_event
+from agno.banavo.run.compat import is_content_event, team_run_output_to_banavo_response
 from agno.banavo.run.response import RunResponseEvent
 from agno.banavo.run.team import TeamRunResponseEvent
 from agno.banavo.tools import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -294,6 +294,33 @@ class Model(AgnoModel):
                 formatted.append(tool)
         return formatted
 
+    def _build_functions_registry(
+        self,
+        tools: Optional[List[Any]],
+        functions: Optional[Dict[str, Function]] = None,
+    ) -> Dict[str, Function]:
+        """Build name → Function map from tool list (upstream Team passes Function objects)."""
+        registry: Dict[str, Function] = dict(functions) if functions else {}
+        if tools:
+            for tool in tools:
+                if isinstance(tool, Function) and tool.name not in registry:
+                    registry[tool.name] = tool
+        return registry
+
+    def _attach_run_response_to_functions(
+        self,
+        functions: Optional[Dict[str, Function]],
+        run_output: Any,
+    ) -> None:
+        """Expose forked ``agent.run_response`` on upstream Team during tool execution."""
+        if not functions or run_output is None:
+            return
+        banavo_response = team_run_output_to_banavo_response(run_output)
+        for func in functions.values():
+            for host in (func._agent, func._team):
+                if host is not None:
+                    host.run_response = banavo_response
+
     def response(
         self,
         messages: List[Message],
@@ -307,6 +334,7 @@ class Model(AgnoModel):
         """
         Generate a response from the model.
         """
+        _functions = self._build_functions_registry(tools, functions)
         tools = self._format_tools(tools)
 
         log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
@@ -330,12 +358,13 @@ class Model(AgnoModel):
 
             # Handle tool calls if present
             if has_tool_calls:
+                self._attach_run_response_to_functions(_functions, kwargs.get("run_response"))
                 # Prepare function calls
                 function_calls_to_run = self._prepare_function_calls(
                     assistant_message=assistant_message,
                     messages=messages,
                     model_response=model_response,
-                    functions=functions,
+                    functions=_functions,
                 )
                 function_call_results: List[Message] = []
 
@@ -414,6 +443,7 @@ class Model(AgnoModel):
         """
         Generate an asynchronous response from the model.
         """
+        _functions = self._build_functions_registry(tools, functions)
         tools = self._format_tools(tools)
 
         log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
@@ -443,12 +473,13 @@ class Model(AgnoModel):
 
             # Handle tool calls if present
             if assistant_message.tool_calls:
+                self._attach_run_response_to_functions(_functions, kwargs.get("run_response"))
                 # Prepare function calls
                 function_calls_to_run = self._prepare_function_calls(
                     assistant_message=assistant_message,
                     messages=messages,
                     model_response=model_response,
-                    functions=functions,
+                    functions=_functions,
                 )
                 function_call_results: List[Message] = []
 
@@ -731,6 +762,7 @@ class Model(AgnoModel):
         """
         Generate a streaming response from the model.
         """
+        _functions = self._build_functions_registry(tools, functions)
         tools = self._format_tools(tools)
 
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
@@ -781,9 +813,10 @@ class Model(AgnoModel):
 
             # Handle tool calls if present
             if assistant_message.tool_calls is not None:
+                self._attach_run_response_to_functions(_functions, kwargs.get("run_response"))
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message, messages, functions
+                    assistant_message, messages, _functions
                 )
                 function_call_results: List[Message] = []
 
@@ -873,6 +906,7 @@ class Model(AgnoModel):
         """
         Generate an asynchronous streaming response from the model.
         """
+        _functions = self._build_functions_registry(tools, functions)
         tools = self._format_tools(tools)
 
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
@@ -931,9 +965,10 @@ class Model(AgnoModel):
 
             # Handle tool calls if present
             if assistant_message.tool_calls is not None:
+                self._attach_run_response_to_functions(_functions, kwargs.get("run_response"))
                 # Prepare function calls
                 function_calls_to_run: List[FunctionCall] = self.get_function_calls_to_run(
-                    assistant_message, messages, functions
+                    assistant_message, messages, _functions
                 )
                 function_call_results: List[Message] = []
 

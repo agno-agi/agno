@@ -101,6 +101,7 @@ class Team(_UpstreamTeam):
             kwargs["db"] = kwargs.pop("storage")
         kwargs = _map_init_kwargs(kwargs)
         super().__init__(members=members, **kwargs)
+        self.run_response = None  # forked Team compat; set during tool execution
 
     @property
     def team_session_state(self) -> Optional[dict[str, Any]]:

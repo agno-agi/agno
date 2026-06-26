@@ -360,6 +360,7 @@ def _determine_tools_for_model(
                 _func = _func.model_copy(deep=True)
 
                 _func._team = team
+                _func._agent = team
                 # Respect the function's explicit strict setting if set
                 effective_strict = strict if _func.strict is None else _func.strict
                 _func.process_entrypoint(strict=effective_strict)
@@ -389,6 +390,7 @@ def _determine_tools_for_model(
             _function_names.append(tool.name)
             tool = tool.model_copy(deep=True)
             tool._team = team
+            tool._agent = team  # banavo custom transfer tools expect agent.run_response
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
             tool.process_entrypoint(strict=effective_strict)
@@ -418,6 +420,7 @@ def _determine_tools_for_model(
                 _function_names.append(_func.name)
 
                 _func._team = team
+                _func._agent = team
                 if strict:
                     _func.strict = True
                 if team.tool_hooks:

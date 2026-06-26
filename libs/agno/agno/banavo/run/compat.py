@@ -74,3 +74,24 @@ def should_forward_nested_event(event: Any) -> bool:
 def should_bubble_event(event: Any) -> bool:
     """Alias for :func:`should_forward_nested_event`."""
     return should_forward_nested_event(event)
+
+
+def team_run_output_to_banavo_response(run_output: Any, team: Any = None) -> Any:
+    """Map upstream ``TeamRunOutput`` to forked ``TeamRunResponse`` for transfer tools."""
+    from agno.banavo.run.team import TeamRunResponse
+
+    team_name = getattr(run_output, "team_name", None) or getattr(team, "name", None)
+    team_id = getattr(run_output, "team_id", None) or getattr(team, "id", None)
+    session_id = getattr(run_output, "session_id", None)
+
+    return TeamRunResponse(
+        run_id=getattr(run_output, "run_id", None),
+        team_id=team_id,
+        team_name=team_name,
+        session_id=session_id,
+        team_session_id=session_id,
+        content=getattr(run_output, "content", None),
+        tools=getattr(run_output, "tools", None),
+        messages=getattr(run_output, "messages", None),
+        metrics=getattr(run_output, "metrics", None),
+    )
