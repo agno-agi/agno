@@ -1313,7 +1313,6 @@ def run_dispatch(
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
-    client_tools: Optional[List[Any]] = None,
     **kwargs: Any,
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Run the Agent and return the response."""
@@ -1409,10 +1408,6 @@ def run_dispatch(
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
     )
-
-    # Set client_tools on run_context for per-run additive tools (e.g., AG-UI frontend tools)
-    if client_tools:
-        run_context.client_tools = client_tools
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -2765,7 +2760,6 @@ def arun_dispatch(  # type: ignore
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background: bool = False,
-    client_tools: Optional[List[Any]] = None,
     **kwargs: Any,
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
@@ -2865,10 +2859,6 @@ def arun_dispatch(  # type: ignore
         knowledge_filters_provided=knowledge_filters is not None,
         metadata_provided=metadata is not None,
     )
-
-    # Set client_tools on run_context for per-run additive tools (e.g., AG-UI frontend tools)
-    if client_tools:
-        run_context.client_tools = client_tools
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -4145,7 +4135,6 @@ def acontinue_run_dispatch(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background: bool = False,
-    client_tools: Optional[List[Any]] = None,
     **kwargs,
 ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
     """Continue a previous run.
@@ -4251,9 +4240,6 @@ def acontinue_run_dispatch(  # type: ignore
         metadata_provided=metadata is not None,
     )
 
-    # Set client_tools on run_context for per-run additive tools (e.g., AG-UI frontend tools)
-    if client_tools:
-        run_context.client_tools = client_tools
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
 
     if background:

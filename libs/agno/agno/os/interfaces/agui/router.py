@@ -31,6 +31,7 @@ from agno.os.interfaces.agui.input import (
     validate_state,
 )
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
+from agno.run.base import RunContext
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
@@ -62,21 +63,28 @@ async def run_entity(
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
         ui_deps = extract_context(run_input.context)
+
+        # 3. Build RunContext with client_tools
+        run_context = RunContext(
+            run_id=run_id,
+            session_id=run_input.thread_id,
+            user_id=user_id,
+            client_tools=client_tools,
+            dependencies=ui_deps,
+        )
+
         run_kwargs: dict = {}
         if ui_deps:
-            run_kwargs["dependencies"] = ui_deps
             run_kwargs["add_dependencies_to_context"] = True
 
-        # 3. Determine if this is a resume (trailing ToolMessages) or fresh run
+        # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
         if tool_messages:
             # Resume: frontend executed external tools and sent results back
             response_stream = await _resume_paused_run(
                 entity=entity,
-                run_id=run_id,
                 session_id=run_input.thread_id,
                 tool_messages=tool_messages,
-                client_tools=client_tools,
-                user_id=user_id,
+                run_context=run_context,
                 session_state=session_state,
                 run_kwargs=run_kwargs,
             )
@@ -84,17 +92,14 @@ async def run_entity(
             # Fresh run: new user input
             response_stream = entity.arun(  # type: ignore
                 input=user_input,
-                session_id=run_input.thread_id,
                 stream=True,
                 stream_events=True,
-                user_id=user_id,
                 images=images or None,
                 audio=audio or None,
                 videos=videos or None,
                 files=files or None,
                 session_state=session_state,
-                run_id=run_id,
-                client_tools=client_tools,
+                run_context=run_context,
                 **run_kwargs,
             )
 
@@ -113,11 +118,9 @@ async def run_entity(
 
 async def _resume_paused_run(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
-    run_id: str,
     session_id: str,
     tool_messages: list,
-    client_tools: Optional[list],
-    user_id: Optional[str],
+    run_context: RunContext,
     session_state: Optional[dict],
     run_kwargs: dict,
 ):
@@ -153,15 +156,16 @@ async def _resume_paused_run(
     requirements = merge_tool_results_into_requirements(paused_run.requirements, tool_messages)
 
     # Resume the run using the original paused run's ID
+    paused_run_id = paused_run.run_id or run_context.run_id
+    run_context.run_id = paused_run_id
     return entity.acontinue_run(  # type: ignore
-        run_id=paused_run.run_id,
+        run_id=paused_run_id,
         session_id=session_id,
         requirements=requirements,
         stream=True,
         stream_events=True,
-        user_id=user_id,
         session_state=session_state,
-        client_tools=client_tools,
+        run_context=run_context,
         **run_kwargs,
     )
 
