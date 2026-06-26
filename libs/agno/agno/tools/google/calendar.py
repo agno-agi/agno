@@ -213,7 +213,7 @@ class GoogleCalendarTools(GoogleToolkit):
                 .list(
                     calendarId=self.calendar_id,
                     timeMin=start_date,
-                    maxResults=limit,
+                    maxResults=min(limit, self._auth.max_results),
                     singleEvents=True,
                     orderBy="startTime",
                 )

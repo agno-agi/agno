@@ -397,7 +397,12 @@ class GmailTools(GoogleToolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", maxResults=count).execute()  # type: ignore
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", maxResults=min(count, self._auth.max_results))
+                .execute()
+            )  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -419,7 +424,12 @@ class GmailTools(GoogleToolkit):
         """
         try:
             query = f"from:{user}" if "@" in user else f"from:{user}*"
-            results = self.service.users().messages().list(userId="me", q=query, maxResults=count).execute()  # type: ignore
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", q=query, maxResults=min(count, self._auth.max_results))
+                .execute()
+            )  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -439,7 +449,12 @@ class GmailTools(GoogleToolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", q="is:unread", maxResults=count).execute()  # type: ignore
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", q="is:unread", maxResults=min(count, self._auth.max_results))
+                .execute()
+            )  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -480,7 +495,12 @@ class GmailTools(GoogleToolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", q="is:starred", maxResults=count).execute()  # type: ignore
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", q="is:starred", maxResults=min(count, self._auth.max_results))
+                .execute()
+            )  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -501,7 +521,12 @@ class GmailTools(GoogleToolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", q=context, maxResults=count).execute()  # type: ignore
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", q=context, maxResults=min(count, self._auth.max_results))
+                .execute()
+            )  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -534,7 +559,12 @@ class GmailTools(GoogleToolkit):
             else:
                 query = f"after:{start_date}"
 
-            results = self.service.users().messages().list(userId="me", q=query, maxResults=num_emails).execute()  # type: ignore
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", q=query, maxResults=min(num_emails or 10, self._auth.max_results))
+                .execute()
+            )  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -745,7 +775,12 @@ class GmailTools(GoogleToolkit):
             str: Formatted string containing email details
         """
         try:
-            results = self.service.users().messages().list(userId="me", q=query, maxResults=count).execute()  # type: ignore
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", q=query, maxResults=min(count, self._auth.max_results))
+                .execute()
+            )  # type: ignore
             emails = self._get_message_details(results.get("messages", []))
             return self._format_emails(emails)
         except HttpError as error:
@@ -901,7 +936,12 @@ class GmailTools(GoogleToolkit):
         """
         try:
             # Fetch messages matching context
-            results = self.service.users().messages().list(userId="me", q=context, maxResults=count).execute()  # type: ignore
+            results = (
+                self.service.users()
+                .messages()
+                .list(userId="me", q=context, maxResults=min(count, self._auth.max_results))
+                .execute()
+            )  # type: ignore
 
             messages = results.get("messages", [])
             if not messages:
@@ -960,7 +1000,7 @@ class GmailTools(GoogleToolkit):
             results = (
                 self.service.users()  # type: ignore
                 .messages()
-                .list(userId="me", q=f"{context} label:{label_name}", maxResults=count)
+                .list(userId="me", q=f"{context} label:{label_name}", maxResults=min(count, self._auth.max_results))
                 .execute()
             )
 
@@ -1412,7 +1452,7 @@ class GmailTools(GoogleToolkit):
         """
         try:
             service = self.service
-            max_results = min(count, 500)
+            max_results = min(count, self._auth.max_results)
             results = service.users().threads().list(userId="me", q=query, maxResults=max_results).execute()  # type: ignore
             threads = results.get("threads", [])
             return json.dumps(
@@ -1527,7 +1567,7 @@ class GmailTools(GoogleToolkit):
         """
         try:
             service = self.service
-            max_results = min(count, 500)
+            max_results = min(count, self._auth.max_results)
             results = service.users().drafts().list(userId="me", maxResults=max_results).execute()  # type: ignore
             drafts = results.get("drafts", [])
             return json.dumps({"drafts": drafts, "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts))})

@@ -33,6 +33,9 @@ class AuthConfig:
     # --- HTTP timeout for API calls ---
     http_timeout: Optional[float] = None
 
+    # --- Pagination ---
+    max_results: int = 20
+
     # --- Scope aggregation (internal) ---
     _scopes: Set[str] = field(default_factory=set, repr=False)
     _creds: Any = field(default=None, repr=False)

@@ -29,6 +29,7 @@ class GoogleToolkit(Toolkit):
         delegated_user: Optional[str] = None,
         oauth_port: Optional[int] = 0,
         login_hint: Optional[str] = None,
+        max_results: Optional[int] = None,
         **kwargs: Any,
     ):
         # Validate: don't mix auth= with legacy params
@@ -65,6 +66,8 @@ class GoogleToolkit(Toolkit):
                 auth_kwargs["delegated_user"] = delegated_user
             if login_hint is not None:
                 auth_kwargs["login_hint"] = login_hint
+            if max_results is not None:
+                auth_kwargs["max_results"] = max_results
             self._auth = AuthConfig(**auth_kwargs)
         else:
             self._auth = auth
