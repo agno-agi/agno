@@ -70,20 +70,23 @@ class SlackEventHandler:
     def _client(self) -> AsyncWebClient:
         return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
 
+    def _is_thread_reply(self, event: dict) -> bool:
+        thread_ts = event.get("thread_ts")
+        return bool(thread_ts and thread_ts != event.get("ts"))
+
+    async def _check_ambient(self, event: dict, client: AsyncWebClient, bot_user_id: Optional[str]) -> bool:
+        if not (self.reply_to_mentions_only and self.ambient_mode):
+            return False
+        if not self._is_thread_reply(event):
+            return False
+        return await is_ambient_thread(client, event.get("channel", ""), event.get("thread_ts", ""), bot_user_id)
+
     async def resolve_context(self, data: dict) -> Optional[EventContext]:
         event = data["event"]
         client = self._client()
         bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
 
-        # Check ambient mode for thread replies when both flags are enabled
-        is_ambient = False
-        if self.reply_to_mentions_only and self.ambient_mode:
-            thread_ts = event.get("thread_ts")
-            channel_id = event.get("channel", "")
-            # Only check ambient for thread replies (thread_ts present and differs from ts)
-            if thread_ts and thread_ts != event.get("ts"):
-                is_ambient = await is_ambient_thread(client, channel_id, thread_ts, bot_user_id)
-
+        is_ambient = await self._check_ambient(event, client, bot_user_id)
         if not should_respond(event, self.reply_to_mentions_only, is_ambient):
             return None
 
