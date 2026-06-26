@@ -282,6 +282,18 @@ class Model(AgnoModel):
     def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
         return self.parse_provider_response_delta(response)
 
+    def _format_tools(self, tools: Optional[List[Any]]) -> Optional[List[Dict[str, Any]]]:
+        """Normalize upstream Function objects to OpenAI tool dicts."""
+        if tools is None:
+            return None
+        formatted: List[Dict[str, Any]] = []
+        for tool in tools:
+            if isinstance(tool, Function):
+                formatted.append({"type": "function", "function": tool.to_dict()})
+            else:
+                formatted.append(tool)
+        return formatted
+
     def response(
         self,
         messages: List[Message],
@@ -295,6 +307,7 @@ class Model(AgnoModel):
         """
         Generate a response from the model.
         """
+        tools = self._format_tools(tools)
 
         log_debug(f"{self.get_provider()} Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
@@ -401,6 +414,7 @@ class Model(AgnoModel):
         """
         Generate an asynchronous response from the model.
         """
+        tools = self._format_tools(tools)
 
         log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
@@ -717,6 +731,7 @@ class Model(AgnoModel):
         """
         Generate a streaming response from the model.
         """
+        tools = self._format_tools(tools)
 
         log_debug(f"{self.get_provider()} Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
@@ -858,6 +873,7 @@ class Model(AgnoModel):
         """
         Generate an asynchronous streaming response from the model.
         """
+        tools = self._format_tools(tools)
 
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
         log_debug(f"Model: {self.id}", center=True, symbol="-")
