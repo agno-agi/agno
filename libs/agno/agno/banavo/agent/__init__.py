@@ -1,3 +1,3 @@
-from agno.banavo.agent.agent import Agent
+from agno.banavo.team.upstream_team import Agent
 
-__all__ = ['Agent']
+__all__ = ["Agent"]

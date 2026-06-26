@@ -1,22 +1,22 @@
 """Upstream ``agno.team.Team`` with banavo-compatible parameter aliases.
 
-Use this module while migrating off the forked ``agno.banavo.team.team.Team``.
-Once migration completes, banavo code should import ``agno.team.Team`` directly.
+Banavo code should import ``Agent`` and ``Team`` from ``agno.banavo.agent`` / ``agno.banavo.team``
+(which re-export this module) until call sites migrate to ``agno.agent`` / ``agno.team`` directly.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from typing import Any, List, Optional, Union
 
 import agno.banavo.message_persistence  # noqa: F401
 from agno.agent import Agent as UpstreamAgent
+from agno.memory.team import TeamMemory as UpstreamTeamMemory
 from agno.team import Team as _UpstreamTeam
 
-# Banavo members built on upstream Agent during migration
 Agent = UpstreamAgent
+TeamMemory = UpstreamTeamMemory
 
-# kwargs accepted by forked Team but not upstream — dropped with optional warning in debug
+# kwargs accepted by forked Team but not upstream — dropped after explicit handling
 _BANAVO_ONLY_INIT_KEYS = frozenset(
     {
         "disable_built_in_transfer_tools",
@@ -24,8 +24,6 @@ _BANAVO_ONLY_INIT_KEYS = frozenset(
         "monitoring",
         "include_session_state_in_response",
         "team_session_state",
-        "memory",
-        "storage",
         "custom_transfer_system_prompt",
         "expose_members_to_parent",
         "success_criteria",
@@ -64,12 +62,72 @@ _BANAVO_ONLY_INIT_KEYS = frozenset(
 
 _INIT_ALIASES = {
     "team_id": "id",
-    "storage": "db",
     "add_history_to_messages": "add_history_to_context",
     "enable_team_history": "add_team_history_to_members",
-    "num_history_runs": "num_history_runs",  # same name, kept for clarity
+    "num_history_runs": "num_history_runs",
     "stream_intermediate_steps": "stream_events",
 }
+
+
+def _storage_to_postgres_db(storage: Any) -> Any:
+    """Map V1 ``PostgresStorage`` to upstream ``PostgresDb`` when possible."""
+    from agno.storage.postgres import PostgresStorage
+
+    if not isinstance(storage, PostgresStorage):
+        return storage
+
+    from agno.db.postgres import PostgresDb
+
+    return PostgresDb(
+        db_url=storage.db_url,
+        session_table=storage.table_name,
+    )
+
+
+def _resolve_db_and_memory(kwargs: dict[str, Any]) -> None:
+    """Convert banavo ``storage`` / ``memory`` kwargs to upstream ``db`` / ``memory_manager``."""
+    storage = kwargs.pop("storage", None)
+    memory = kwargs.pop("memory", None)
+
+    if kwargs.get("db") is not None:
+        if memory is not None:
+            from agno.banavo.memory.memory import Memory as BanavoMemory
+
+            if isinstance(memory, BanavoMemory) and memory.memory_manager is not None:
+                kwargs.setdefault("memory_manager", memory.memory_manager)
+        return
+
+    db_url: str | None = None
+    session_table = "agent_sessions"
+    memory_table = "memories"
+
+    if storage is not None:
+        converted = _storage_to_postgres_db(storage)
+        if converted is not storage:
+            kwargs["db"] = converted
+            return
+        db_url = getattr(storage, "db_url", None)
+        session_table = getattr(storage, "table_name", session_table)
+
+    if memory is not None:
+        from agno.banavo.memory.memory import Memory as BanavoMemory
+
+        if isinstance(memory, BanavoMemory):
+            if memory.memory_manager is not None:
+                kwargs.setdefault("memory_manager", memory.memory_manager)
+            mem_db = memory.db
+            if mem_db is not None:
+                db_url = db_url or getattr(mem_db, "db_url", None)
+                memory_table = getattr(mem_db, "table_name", memory_table)
+
+    if db_url and "db" not in kwargs:
+        from agno.db.postgres import PostgresDb
+
+        kwargs["db"] = PostgresDb(
+            db_url=db_url,
+            session_table=session_table,
+            memory_table=memory_table,
+        )
 
 
 def _map_init_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -86,22 +144,20 @@ def _map_init_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 class Team(_UpstreamTeam):
-    """Upstream Team with banavo V1 init/arun keyword compatibility."""
+    """Upstream Team with banavo init/arun keyword compatibility."""
 
     def __init__(self, members: List[Union[Agent, "Team"]], **kwargs: Any) -> None:
-        # Forked teams skip built-in member delegation and use custom_transfer_tools only.
-        # Upstream always injects delegate_task_* when members is non-empty; clear members to match.
         disable_built_in = kwargs.pop("disable_built_in_transfer_tools", False)
         if disable_built_in:
             members = []
 
         if "team_id" in kwargs and "id" not in kwargs:
             kwargs["id"] = kwargs.pop("team_id")
-        if "storage" in kwargs and "db" not in kwargs:
-            kwargs["db"] = kwargs.pop("storage")
+
+        _resolve_db_and_memory(kwargs)
         kwargs = _map_init_kwargs(kwargs)
         super().__init__(members=members, **kwargs)
-        self.run_response = None  # forked Team compat; set during tool execution
+        self.run_response = None
 
     @property
     def team_session_state(self) -> Optional[dict[str, Any]]:
@@ -159,10 +215,3 @@ class Team(_UpstreamTeam):
             return result
 
         return await result
-
-
-class TeamMemory:
-    """Stub for forked TeamMemory references during migration."""
-
-    create_user_memories: bool = False
-    create_session_summary: bool = False

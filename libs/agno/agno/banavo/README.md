@@ -1,56 +1,37 @@
 # agno.banavo — Banavo extensions on upstream agno 2.6.x
 
-Banavo-specific code lives here so **banavo-agent-os** consumes a single `agno` git
-dependency instead of vendoring `agno_custom` locally.
+Small patches on upstream agno so **banavo-agent-os** consumes one `agno` git dependency
+without vendoring a forked V1 Agent/Team runtime.
 
 ## Layout
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| `message_persistence.py` | **Delta** | Patches `Message.to_dict` to persist `provider_data` (GPT-5 follow-up chat) |
-| `storage/`, `memory/v2/`, `run/response.py`, `run/compat.py` | **Delta** | V1 storage + V1/V2 run event bridge |
+| `agent/`, `team/` | **Upstream** | Re-export `agno.agent.Agent` and upstream `Team` via `team/upstream_team.py` |
+| `team/upstream_team.py` | **Shim** | Banavo kwarg aliases (`message`→`input`, `storage`→`PostgresDb`, etc.) |
+| `message_persistence.py` | **Delta** | `Message.to_dict` persists `provider_data` for GPT-5 follow-up chat |
+| `storage/`, `memory/v2/`, `run/response.py`, `run/compat.py` | **Delta** | V1 storage stubs + V2 event bridge (transitional) |
+| `models/` | **Delta** | GPT-5 Responses, Claude fixes — thin subclasses on upstream models |
+| `memory/memory.py` | **Transitional** | V1 `Memory` wrapper; migrate call sites to upstream `PostgresDb` |
+| `tools/` | **Thin** | Re-exports `agno.tools` |
 | `events/stream_events.py` | **Delta** | `BaseBanavoStreamEvent` for typed tool stream events |
-| `models/` | **Delta** | Banavo `Model` base, GPT-5 Responses, Claude tool-schema fixes |
-| `memory/`, `utils/`, `run/team.py`, `base/` | **Delta** | V1 `RunResponse` orchestration helpers |
-| `tools/` | **Thin** | Re-exports `agno.tools` (no forked copy) |
-| `agent/`, `team/` | **Legacy** | V1-runtime `Agent`/`Team` (pending migration — see below) |
-| `team/upstream_team.py` | **PoC** | Upstream `agno.team.Team` adapter with banavo kwarg aliases |
 
-## Thinning roadmap
-
-### Done
-- PR 1: PostgresStorage + V1 import stubs (~1.4k lines)
-- PR 2: Move extensions from banavo-agent-os into `agno.banavo`
-- Tools re-export from upstream `agno.tools`
-
-### PoC (upstream Team)
-```python
-from agno.banavo.team.upstream_team import Agent, Team  # upstream 2.6.x + banavo kw aliases
-```
-
-```bash
-uv run python scripts/poc_upstream_team.py --dry-run
-uv run python scripts/poc_upstream_team.py --live   # needs OPENAI_API_KEY
-```
-Forked `agent/agent.py` and `team/team.py` (~12k lines) implement the **agno 1.x
-`RunResponse` / `RunResponseEvent` runtime**. Upstream 2.6.x uses `RunOutput` /
-`RunOutputEvent` instead.
-
-Migration path:
-1. Migrate banavo streaming + members to V2 run events (`agno.run.agent.RunEvent`, etc.)
-2. Replace `agno.banavo.agent.Agent` with thin subclass of `agno.agent.Agent`
-3. Replace `agno.banavo.team.Team` with thin subclass of `agno.team.Team`
-4. Delete `base/orchestrator.py` shared V1 logic once unused
-
-Until step 1–2 complete, banavo-agent-os imports `Agent`/`Team` from `agno.banavo`
-(not `agno.agent`) intentionally.
-
-## Consumer imports (banavo-agent-os)
+## Imports (banavo-agent-os)
 
 ```python
-from agno.banavo.agent import Agent
-from agno.banavo.team import Team
-from agno.banavo.models import Model, OpenAIChat, Claude
-from agno.banavo.memory import Memory
+from agno.banavo.agent import Agent      # → agno.agent.Agent
+from agno.banavo.team import Team        # → upstream Team + banavo kw aliases
+from agno.banavo.models import OpenAIChat, Claude
 import agno.banavo.message_persistence  # noqa: F401
 ```
+
+Target end state:
+
+```python
+from agno.agent import Agent
+from agno.team import Team
+```
+
+## Deleted (legacy V1 runtime)
+
+- `agent/agent.py`, `team/team.py`, `base/orchestrator.py` — forked 1.x `RunResponse` runtime (~15k lines)
