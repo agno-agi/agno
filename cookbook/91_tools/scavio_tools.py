@@ -58,14 +58,19 @@ all_agent = Agent(tools=[ScavioTools(all=True)])
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     web_agent.print_response(
-        "Search Google for the latest news on AI agent frameworks", markdown=True
+        "Search Google for the latest news on AI agent frameworks",
+        markdown=True,
+        stream=True,
     )
 
     web_agent.print_response(
-        "What are people on Reddit saying about the Agno framework?", markdown=True
+        "What are people on Reddit saying about the Agno framework?",
+        markdown=True,
+        stream=True,
     )
 
     commerce_agent.print_response(
         "Compare prices for a 'mechanical keyboard' on Amazon and Walmart",
         markdown=True,
+        stream=True,
     )
