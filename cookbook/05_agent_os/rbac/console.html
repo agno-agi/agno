@@ -1,0 +1,708 @@
+<!doctype html>
+<!--
+  agno /authz console — a single-file test client for the /authz management API.
+
+  Use it against the cookbook server:
+    1. python manage_users_and_roles.py        (prints a dev admin bearer token)
+    2. open this file in your browser          (double-click / open console.html)
+    3. paste the printed token, hit "let's go"
+
+  No build, no dependencies, nothing to install. Works from file:// — the
+  cookbook server's CORS allows it. Everything it does is plain fetch() against
+  the endpoints, so it doubles as living documentation of the API:
+
+    GET/POST/PATCH/DELETE /authz/users        directory (search, sort, paginate)
+    POST   /authz/users/{id}/roles            set THE role (one per user, replaces)
+    GET    /authz/roles + /roles/{slug}/scopes role + permission management
+    GET    /authz/scopes                       the permission catalog
+    GET    /authz/audit, /authz/decisions      the two trails (search, sort, paginate)
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>agno · /authz console</title>
+<style>
+  /* agno design tokens (from agno-os globals.css) */
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap');
+  :root {
+    --bg: 255, 255, 255;
+    --bg2: 244, 244, 245;
+    --fg: 24, 24, 27;
+    --muted: 113, 113, 122;
+    --border: rgba(24, 24, 27, .1);
+    --brand: 255, 64, 23;          /* agno orange */
+    --brand-accent: 235, 110, 82;
+    --purple: 120, 47, 153;
+    --green: 70, 173, 140;
+    --cyan: 33, 206, 246;
+    --positive: 34, 197, 94;
+    --destructive: 229, 57, 53;
+    --radius: 0.625rem;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: rgb(var(--bg)); color: rgb(var(--fg));
+         font: 14px/1.5 Inter, system-ui, sans-serif; }
+  .mono { font-family: 'DM Mono', ui-monospace, monospace; }
+  header { display: flex; gap: 10px; align-items: center; padding: 14px 18px;
+           border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .wordmark { font-weight: 800; font-size: 18px; letter-spacing: -.03em; }
+  .wordmark em { color: rgb(var(--brand)); font-style: normal; }
+  .tagline { color: rgb(var(--muted)); font-size: 12px; margin-right: 8px; }
+  input, select, button, textarea {
+    background: rgb(var(--bg)); color: rgb(var(--fg)); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 7px 10px; font: inherit; font-size: 13px; }
+  input, textarea { font-family: 'DM Mono', ui-monospace, monospace; }
+  input:focus, select:focus { outline: 2px solid rgba(var(--brand), .45); border-color: transparent; }
+  button { cursor: pointer; font-weight: 600; }
+  button:hover { border-color: rgb(var(--brand-accent)); color: rgb(var(--brand)); }
+  button.primary { background: rgb(var(--brand)); border-color: rgb(var(--brand)); color: #fff; }
+  button.primary:hover { background: rgb(var(--brand-accent)); color: #fff; }
+  button.danger:hover { border-color: rgb(var(--destructive)); color: rgb(var(--destructive)); }
+  #token { flex: 1; min-width: 240px; }
+  nav { display: flex; gap: 2px; padding: 10px 18px 0; border-bottom: 1px solid var(--border); }
+  nav button { border: none; background: none; color: rgb(var(--muted)); font-weight: 600;
+               padding: 8px 12px; border-radius: var(--radius) var(--radius) 0 0;
+               border-bottom: 2px solid transparent; }
+  nav button:hover { color: rgb(var(--fg)); }
+  nav button.active { color: rgb(var(--brand)); border-bottom-color: rgb(var(--brand)); }
+  main { padding: 16px 18px; max-width: 1200px; }
+  section { display: none; }
+  section.active { display: block; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .bar .spacer { flex: 1; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; background: rgb(var(--bg));
+          border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border);
+           vertical-align: top; }
+  th { background: rgb(var(--bg2)); color: rgb(var(--muted)); font-weight: 600; font-size: 12px;
+       cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sorted { color: rgb(var(--brand)); }
+  tr:last-child td { border-bottom: none; }
+  td.id, td.dim-mono { font-family: 'DM Mono', ui-monospace, monospace; font-size: 13px; }
+  .chip { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px;
+          font-weight: 500; border: 1px solid var(--border); margin: 1px 3px 1px 0;
+          white-space: nowrap; font-family: 'DM Mono', ui-monospace, monospace; }
+  .chip.allow { color: rgb(var(--green)); border-color: rgba(var(--green), .5); background: rgba(var(--green), .07); }
+  .chip.deny { color: rgb(var(--destructive)); border-color: rgba(var(--destructive), .45); background: rgba(var(--destructive), .06); }
+  .chip.active { color: rgb(var(--positive)); border-color: rgba(var(--positive), .5); background: rgba(var(--positive), .07); }
+  .chip.disabled { color: rgb(var(--destructive)); border-color: rgba(var(--destructive), .45); background: rgba(var(--destructive), .06); }
+  .chip.x { cursor: pointer; }
+  .chip.x:hover { border-color: rgb(var(--destructive)); color: rgb(var(--destructive)); text-decoration: line-through; }
+  .dim { color: rgb(var(--muted)); }
+  .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; color: rgb(var(--muted)); font-size: 13px; }
+  #status { margin-left: auto; max-width: 46%; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; font-family: 'DM Mono', ui-monospace, monospace; font-size: 12px;
+            color: rgb(var(--muted)); }
+  #status.ok { color: rgb(var(--positive)); } #status.bad { color: rgb(var(--destructive)); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+  .card { background: rgb(var(--bg)); border: 1px solid var(--border); border-radius: var(--radius);
+          padding: 12px; border-top: 3px solid rgb(var(--brand)); }
+  .card:nth-child(4n+2) { border-top-color: rgb(var(--purple)); }
+  .card:nth-child(4n+3) { border-top-color: rgb(var(--green)); }
+  .card:nth-child(4n+0) { border-top-color: rgb(var(--cyan)); }
+  .card h4 { margin: 0 0 8px; font-size: 13px; font-family: 'DM Mono', ui-monospace, monospace; }
+  details { background: rgb(var(--bg)); border: 1px solid var(--border); border-radius: var(--radius);
+            padding: 10px 14px; margin-bottom: 10px; }
+  summary { cursor: pointer; }
+  summary b { font-family: 'DM Mono', ui-monospace, monospace; color: rgb(var(--brand)); }
+  .hint { color: rgb(var(--muted)); font-size: 12.5px; margin: 4px 0 14px; }
+  .empty { color: rgb(var(--muted)); padding: 18px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="wordmark"><em>agno</em> /authz console</span>
+  <span class="tagline">who can do what, with buttons</span>
+  <input id="base" class="mono" value="http://localhost:7777" size="20" title="AgentOS base URL" />
+  <input id="token" placeholder="paste the token the server printed at startup ✨" />
+  <button class="primary" onclick="connect()">let's go →</button>
+  <span id="status">not connected yet — run manage_users_and_roles.py first</span>
+</header>
+
+<nav>
+  <button data-tab="playground" class="active" onclick="show('playground')">🧪 Playground</button>
+  <button data-tab="heist" onclick="show('heist')">🏴 Heist</button>
+  <button data-tab="users" onclick="show('users')">👥 Users</button>
+  <button data-tab="roles" onclick="show('roles')">🎭 Roles</button>
+  <button data-tab="scopes" onclick="show('scopes')">🗺️ Scope catalog</button>
+  <button data-tab="audit" onclick="show('audit')">📜 Change audit</button>
+  <button data-tab="decisions" onclick="show('decisions')">🚦 Decisions</button>
+</nav>
+
+<main>
+  <section id="playground" class="active">
+    <div class="hint">Become somebody and rattle the gates. Your admin token mints
+      them a real end-user token (identity only, zero scopes) — everything they're
+      allowed to do comes from the role store. Change their role mid-session: the
+      token never changes, their powers do. That's the whole trick. 🪄</div>
+
+    <div class="bar" id="p-personas"></div>
+
+    <div id="p-stage" style="display:none">
+      <div class="bar">
+        <span id="p-banner"></span>
+        <select id="p-role" title="change their role (as admin) — their token stays the same"></select>
+        <span class="spacer"></span>
+        <span class="dim">now try:</span>
+        <button onclick="act('👀 look at the agent', 'GET', '/agents/research-agent')">👀 look at the agent</button>
+        <button onclick="act('📋 list the agents', 'GET', '/agents')">📋 list the agents</button>
+        <button onclick="act('🏃 run the agent', 'POST', '/agents/research-agent/runs', { message: 'hi!' })">🏃 run the agent</button>
+        <button onclick="act('🗑️ delete a session', 'DELETE', '/sessions/some-session')">🗑️ delete a session</button>
+        <button onclick="act('🕵️ peek at the OS config', 'GET', '/config')">🕵️ peek at the OS config</button>
+      </div>
+      <table id="p-log"></table>
+    </div>
+  </section>
+
+  <section id="heist">
+    <div class="hint">A heist played against the real authorization API. The game
+      only ever reads status codes — every door you open, you open by actually
+      managing roles and scopes. The other tabs aren't cheating; they're the toolbox.</div>
+    <div class="card" style="max-width:760px; border-top-color:rgb(var(--brand))">
+      <h4 id="h-title">🏴 THE VAULT HEIST</h4>
+      <div id="h-story" style="margin-bottom:10px"></div>
+      <div class="bar" id="h-actions"></div>
+    </div>
+    <table id="h-log" style="max-width:760px; margin-top:12px"></table>
+  </section>
+
+  <section id="users">
+    <div class="hint">One role per person — picking a new one swaps it out.
+      Disable someone and they're locked out on their very next request, valid token or not.</div>
+    <div class="bar">
+      <input id="u-search" placeholder="🔎 search id / email / name" size="26"
+             oninput="debounced(loadUsers)" />
+      <label><input type="checkbox" id="u-disabled" checked onchange="loadUsers()" /> show disabled folk</label>
+      <span class="spacer"></span>
+      <input id="u-new-id" placeholder="new user id (jwt sub)" size="16" />
+      <input id="u-new-email" placeholder="email" size="16" />
+      <button onclick="createUser()">+ add user</button>
+    </div>
+    <table id="u-table"></table>
+    <div class="pager" id="u-pager"></div>
+  </section>
+
+  <section id="roles">
+    <div class="hint">A role is a named bag of permissions. Deny beats allow.
+      Click a scope chip to take it away.</div>
+    <div class="bar">
+      <input id="r-new-slug" placeholder="new role slug" size="14" />
+      <input id="r-new-name" placeholder="display name" size="16" />
+      <button onclick="createRole()">+ create role</button>
+    </div>
+    <div id="r-list"></div>
+  </section>
+
+  <section id="scopes">
+    <div class="hint">Every permission this OS understands — generated from its own
+      route map, so it can't drift from what's actually enforced.</div>
+    <div class="grid" id="s-grid"></div>
+  </section>
+
+  <section id="audit">
+    <div class="hint">Who changed what, with before → after. The paper trail your
+      future self (and your auditor) will thank you for.</div>
+    <div class="bar">
+      <input id="a-search" placeholder="🔎 search actor / action / target" size="28"
+             oninput="debounced(loadAudit)" />
+    </div>
+    <table id="a-table"></table>
+    <div class="pager" id="a-pager"></div>
+  </section>
+
+  <section id="decisions">
+    <div class="hint">Every allow/deny at the gate, with the token reference (jti).
+      Green means in, red means computer says no.</div>
+    <div class="bar">
+      <input id="d-search" placeholder="🔎 search actor / action / METHOD /path" size="28"
+             oninput="debounced(loadDecisions)" />
+    </div>
+    <table id="d-table"></table>
+    <div class="pager" id="d-pager"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ---- state ------------------------------------------------------------
+const state = {
+  roles: [],                         // role slugs, for the per-user role <select>
+  users:     { page: 1, limit: 10, sort_by: "created_at", sort_order: "desc" },
+  audit:     { page: 1, limit: 10, sort_by: "created_at", sort_order: "desc" },
+  decisions: { page: 1, limit: 10, sort_by: "created_at", sort_order: "desc" },
+};
+
+// ---- transport ---------------------------------------------------------
+async function api(method, path, body) {
+  const url = $("base").value.replace(/\/$/, "") + path;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: "Bearer " + $("token").value.trim(),
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  status(res.ok, `${res.ok ? "✓" : "✗"} ${method} ${path} → ${res.status}`);
+  if (!res.ok) throw new Error(`${res.status} ${data?.detail ?? text}`);
+  return data;
+}
+function status(ok, msg) {
+  const el = $("status");
+  el.textContent = msg;
+  el.className = ok ? "ok" : "bad";
+}
+let timer;
+function debounced(fn) { clearTimeout(timer); timer = setTimeout(fn, 300); }
+
+// ---- shared render helpers ----------------------------------------------
+function pager(el, meta, st, reload) {
+  el.innerHTML = "";
+  const info = document.createElement("span");
+  info.textContent = `page ${meta.page}/${Math.max(meta.total_pages, 1)} · ${meta.total_count} total · ${meta.search_time_ms}ms`;
+  const prev = document.createElement("button");
+  const next = document.createElement("button");
+  prev.textContent = "‹ prev"; next.textContent = "next ›";
+  prev.disabled = meta.page <= 1;
+  next.disabled = meta.page >= meta.total_pages;
+  prev.onclick = () => { st.page--; reload(); };
+  next.onclick = () => { st.page++; reload(); };
+  el.append(prev, next, info);
+}
+// Sortable header row: click toggles the field / flips the direction.
+function headerRow(cols, st) {
+  return "<tr>" + cols.map(([key, label]) => {
+    if (!key) return `<th>${label}</th>`;
+    const sorted = st.sort_by === key;
+    const arrow = sorted ? (st.sort_order === "asc" ? " ↑" : " ↓") : "";
+    return `<th class="${sorted ? "sorted" : ""}" data-sort="${key}">${label}${arrow}</th>`;
+  }).join("") + "</tr>";
+}
+function bindSort(table, st, reload) {
+  table.querySelectorAll("th[data-sort]").forEach((th) => th.onclick = () => {
+    const key = th.dataset.sort;
+    st.sort_order = st.sort_by === key && st.sort_order === "desc" ? "asc" : "desc";
+    st.sort_by = key;
+    st.page = 1;
+    reload();
+  });
+}
+function emptyRow(table, span, msg) {
+  const row = table.insertRow();
+  row.innerHTML = `<td class="empty" colspan="${span}">${msg}</td>`;
+}
+const ts = (t) => t ? new Date(t * 1000).toLocaleString() : "";
+const listParams = (st, search) => new URLSearchParams({
+  page: st.page, limit: st.limit, sort_by: st.sort_by, sort_order: st.sort_order,
+  ...(search ? { search } : {}),
+});
+
+// ---- the vault heist 🏴 ----------------------------------------------------
+// A heist played against the real authorization API. Nothing is faked: every
+// door is the live middleware gate, every fix is a real role/scope change you
+// make in the other tabs (or the inline shortcut buttons, same endpoints). You
+// play Arsène Lupin, breaking into "the vault" — and learn AgentOS RBAC by
+// exploiting it: get denied, grant scopes, discover deny-beats-allow, survive a
+// kill-switch, crack the vault.
+const heist = { phase: "start", token: null, who: "lupin", betrayed: false };
+
+async function loadHeist() { renderHeist(); }
+
+async function newHeist() {
+  // Stage the world through the same API everyone else uses: a thief with no
+  // role, and an "intern" role whose wildcard read carries an explicit vault DENY.
+  await api("POST", "/authz/users", { id: heist.who, name: "Arsène Lupin" }).catch(() => {});
+  await api("PATCH", `/authz/users/${heist.who}`, { disabled: false });
+  await api("POST", "/authz/roles", { slug: "intern", name: "Intern" }).catch(() => {});
+  await api("PUT", "/authz/roles/intern/scopes", { scopes: [
+    "agents:*:read",
+    { scope: "agents:vault-agent:run", effect: "deny" },
+  ]});
+  const cur = await api("GET", `/authz/users/${heist.who}/roles`);
+  if (cur.role) await api("DELETE", `/authz/users/${heist.who}/roles/${cur.role}`);  // start role-less
+  heist.token = (await api("POST", "/dev/mint", { sub: heist.who })).token;
+  heist.phase = "nobody"; heist.betrayed = false;
+  $("h-log").innerHTML = "";
+  hlog("🌃", "midnight. you're <b>lupin</b>, token in hand, not a single permission to your name.");
+  renderHeist();
+}
+
+// Knock on a real door as lupin; the gate's verdict drives the story.
+async function door(label, method, path) {
+  const res = await fetch($("base").value.replace(/\/$/, "") + path, {
+    method, headers: { Authorization: "Bearer " + heist.token },
+    body: method === "POST" ? (() => { const f = new FormData(); f.append("message", "open up"); return f; })() : undefined,
+  });
+  const body = await res.json().catch(() => null);
+  const denied = res.status === 401 || res.status === 403;
+  hlog("🚪", `${label} → ` + (denied
+    ? `<span class="chip deny">✗ ${res.status}</span> <span class="dim">${esc(body?.detail ?? "")}</span>`
+    : `<span class="chip allow">✓ ${res.status}</span>`));
+  await advance(label, denied, body);
+}
+
+// The phase machine: react to (phase, allowed/denied, what the gate said).
+async function advance(label, denied, body) {
+  const p = heist.phase;
+  const disabledHit = denied && /disabled/i.test(JSON.stringify(body ?? ""));
+  if (p === "nobody" && !denied) {
+    heist.phase = "lookout";
+    hlog("🎉", "you're in the lobby — reads work now. but the research agent won't <i>run</i> for a lowly intern…");
+  } else if (p === "lookout" && !denied) {
+    heist.phase = "vault";
+    hlog("🎉", "warmed up. now the real prize: <b>the vault</b>. it has opinions about you.");
+  } else if (p === "vault" && denied && !disabledHit && !heist.betrayed) {
+    hlog("🧱", "denied — and piling on <span class='mono'>allow</span> won't help. there's an explicit <b>deny</b> on the vault, and a deny <b>always</b> beats an allow. tear it off the <b class='mono'>intern</b> role.");
+  } else if (p === "vault" && !denied && !heist.betrayed) {
+    heist.betrayed = true;
+    await api("PATCH", `/authz/users/${heist.who}`, { disabled: true });
+    heist.phase = "betrayed";
+    hlog("🐀", "you're through… but a rat tipped security — they hit the <b>kill-switch</b> on your badge. your token is still perfectly valid, and perfectly useless. try the door.");
+  } else if (p === "betrayed" && disabledHit) {
+    hlog("🚫", "cold. valid token, zero access — that's revocation the moment it matters. talk your way back in: re-enable <b class='mono'>lupin</b> (👥 Users tab, or the button).");
+  } else if (p === "betrayed" && !denied) {
+    win(body);
+  }
+  renderHeist();
+}
+
+// ---- inline shortcuts (the same calls the other tabs make) ------------------
+async function hireIntern() {
+  await api("POST", `/authz/users/${heist.who}/roles`, { role: "intern" });
+  hlog("🪪", "lupin is now an <b>intern</b>. go on, knock."); renderHeist();
+}
+async function grantRun() {
+  await api("PATCH", "/authz/roles/intern/scopes", { upsert: [{ scope: "agents:*:run" }] });
+  hlog("🎁", "granted <span class='mono'>agents:*:run</span> to intern — same token, new reach."); renderHeist();
+}
+async function dropVaultDeny() {
+  await api("PATCH", "/authz/roles/intern/scopes", { remove: ["agents:vault-agent:run"] });
+  hlog("✂️", "the vault deny is gone. allow finally wins."); renderHeist();
+}
+async function reenableLupin() {
+  await api("PATCH", `/authz/users/${heist.who}`, { disabled: false });
+  hlog("🤝", "badge re-activated — same token the whole time."); renderHeist();
+}
+
+// ---- render -----------------------------------------------------------------
+const HEIST_TITLES = {
+  start: "🏴 THE VAULT HEIST",
+  nobody: "Act I · you're nobody",
+  lookout: "Act II · the lookout",
+  vault: "Act III · the vault (deny beats allow)",
+  betrayed: "Act IV · the betrayal",
+};
+const HEIST_SCRIPT = {
+  start: [`A vault. A flag. A thief with zero permissions. Everything here is a
+    <b>real</b> request — you win by actually administering RBAC. Ready, Lupin?`,
+    [["🥷 start the heist", newHeist]]],
+  nobody: [`Every request 403s — you hold no role. Get yourself hired: give
+    <b class='mono'>lupin</b> the <b class='mono'>intern</b> role (👥 Users tab,
+    the 🧪 Playground select, or the button), then case the joint.`,
+    [["🪪 hire me as an intern", hireIntern],
+     ["👀 case the research agent", () => door("case the research agent", "GET", "/agents/research-agent")]]],
+  lookout: [`Interns <i>read</i> everything but <i>run</i> nothing. Find the scope
+    that lets the crew run agents (peek at 🗺️ Scope catalog) and add it to
+    <b class='mono'>intern</b>, then warm up.`,
+    [["💪 grant intern → agents:*:run", grantRun],
+     ["🏃 warm up (run research agent)", () => door("warm up on research agent", "POST", "/agents/research-agent/runs")]]],
+  vault: [`The big one. You can run anything now, so this should be easy — it
+    isn't. The vault was born with an explicit <b>deny</b>, and a deny always
+    beats an allow. Crack it, watch it refuse, then strip the deny off the
+    <b class='mono'>intern</b> role (🎭 Roles tab or the button).`,
+    [["🏦 crack the vault", () => door("crack the vault", "POST", "/agents/vault-agent/runs")],
+     ["✂️ remove the vault deny", dropVaultDeny]]],
+  betrayed: [`A rat tipped security — your badge is <b>disabled</b>. Token still
+    valid, still useless: revocation exactly when it matters. Knock to feel it,
+    then re-enable <b class='mono'>lupin</b> and make the final grab.`,
+    [["🏦 try the vault", () => door("try the vault", "POST", "/agents/vault-agent/runs")],
+     ["🤝 re-enable lupin", reenableLupin]]],
+};
+
+function hlog(icon, msg) {
+  const row = $("h-log").insertRow(0);
+  row.innerHTML = `<td class="dim" style="white-space:nowrap">${new Date().toLocaleTimeString()}</td><td>${icon} ${msg}</td>`;
+}
+function renderHeist() {
+  if (heist.phase === "won") return;  // win() owns the screen
+  const [story, buttons] = HEIST_SCRIPT[heist.phase] || HEIST_SCRIPT.start;
+  $("h-title").textContent = HEIST_TITLES[heist.phase] ?? HEIST_TITLES.start;
+  $("h-story").innerHTML = story;
+  $("h-actions").innerHTML = "";
+  for (const [label, fn] of buttons) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (/start|crack|vault/.test(label)) b.className = "primary";
+    b.onclick = () => fn().catch((e) => hlog("⚠️", esc(e.message)));
+    $("h-actions").append(b);
+  }
+  if (heist.phase !== "start") {
+    const sp = document.createElement("span"); sp.className = "spacer";
+    const r = document.createElement("button"); r.className = "danger"; r.textContent = "↻ start over"; r.onclick = newHeist;
+    $("h-actions").append(sp, r);
+  }
+}
+function win(body) {
+  heist.phase = "won";
+  const flag = JSON.stringify(body ?? "").match(/FLAG\{[^}]+\}/)?.[0] ?? "FLAG{deny_overrides_allow}";
+  $("h-title").textContent = "🎉 HEIST COMPLETE";
+  $("h-story").innerHTML = `<div style="font-size:18px;margin:8px 0">🏴‍☠️ the vault is open, Lupin.</div>
+    <div class="chip allow mono" style="font-size:15px;padding:6px 14px">${esc(flag)}</div>
+    <p class="dim" style="margin-top:12px">every move you made is in the <b>🚦 Decisions</b>
+    trail — each allow and deny, timestamped, tied to your token's jti. you broke in purely
+    by administering roles and scopes. that's the whole product, wearing a striped jumper. 🎩</p>`;
+  $("h-actions").innerHTML = "";
+  const ev = document.createElement("button"); ev.className = "primary"; ev.textContent = "🚦 read the evidence"; ev.onclick = () => show("decisions");
+  const again = document.createElement("button"); again.className = "danger"; again.textContent = "↻ heist again"; again.onclick = newHeist;
+  $("h-actions").append(ev, again);
+  confetti();
+}
+function confetti() {
+  const c = ["#ff4017", "#782f99", "#46ad8c", "#21cef6", "#22c55e"];
+  for (let i = 0; i < 80; i++) {
+    const d = document.createElement("div");
+    d.style.cssText = `position:fixed;top:-10px;left:${Math.random() * 100}vw;width:9px;height:9px;`
+      + `background:${c[i % c.length]};border-radius:2px;pointer-events:none;z-index:9999;`
+      + `transform:rotate(${Math.random() * 360}deg);transition:all ${1.5 + Math.random()}s ease-in;`;
+    document.body.append(d);
+    requestAnimationFrame(() => {
+      d.style.top = "105vh";
+      d.style.left = parseFloat(d.style.left) + (Math.random() * 30 - 15) + "vw";
+      d.style.opacity = "0";
+    });
+    setTimeout(() => d.remove(), 3000);
+  }
+}
+
+// ---- playground: act as an end user ---------------------------------------
+async function loadPlayground() {
+  const { data } = await api("GET", "/authz/users?limit=100");
+  $("p-personas").innerHTML = "<span class='dim'>become:</span>" + data.map((u) => `
+    <button data-sub="${esc(u.id)}" ${state.persona?.id === u.id ? "class='primary'" : ""}>
+      ${u.disabled ? "🚫" : "🧑"} ${esc(u.id)} <span class="dim">· ${esc(u.role ?? "no role")}</span>
+    </button>`).join("");
+  $("p-personas").querySelectorAll("button").forEach((b) => b.onclick = () =>
+    become(data.find((u) => u.id === b.dataset.sub)));
+}
+async function become(user) {
+  // The admin token buys a persona token: same signing key, sub = the user,
+  // NO scopes — so everything they can do comes from the role store.
+  const minted = await api("POST", "/dev/mint", { sub: user.id }).catch((e) => {
+    status(false, "✗ /dev/mint missing — playground needs the server in dev mode");
+    throw e;
+  });
+  state.persona = { id: user.id, token: minted.token };
+  $("p-stage").style.display = "block";
+  $("p-banner").innerHTML = `you are now <b class="mono" style="color:rgb(var(--brand))">${esc(user.id)}</b> 🎫`;
+  $("p-role").innerHTML = ["<option value=''>— no role —</option>",
+    ...state.roles.map((r) => `<option ${r === user.role ? "selected" : ""}>${esc(r)}</option>`)].join("");
+  $("p-role").onchange = async (e) => {
+    if (e.target.value) await api("POST", `/authz/users/${user.id}/roles`, { role: e.target.value });
+    else if (user.role) await api("DELETE", `/authz/users/${user.id}/roles/${user.role}`);
+    user.role = e.target.value || null;
+    plog("🎭", `${user.id} is now ${user.role ?? "role-less"} — same token, new powers`, "", "");
+    loadPlayground();
+  };
+  plog("🎫", `minted a token for ${user.id} — go rattle some gates`, "", "");
+  loadPlayground();
+}
+async function act(label, method, path, body) {
+  if (!state.persona) return;
+  const isForm = method === "POST" && path.includes("/runs");
+  let payload, headers = { Authorization: "Bearer " + state.persona.token };
+  if (body && isForm) { payload = new FormData(); Object.entries(body).forEach(([k, v]) => payload.append(k, v)); }
+  else if (body) { payload = JSON.stringify(body); headers["Content-Type"] = "application/json"; }
+  const res = await fetch($("base").value.replace(/\/$/, "") + path, { method, headers, body: payload });
+  const detail = await res.json().then((d) => d?.detail ?? "").catch(() => "");
+  const denied = res.status === 401 || res.status === 403;
+  const verdict = denied
+    ? `<span class="chip deny">✗ ${res.status} nope</span>`
+    : `<span class="chip allow">✓ ${res.status} the gate said yes</span>`;
+  const note = denied ? detail
+    : res.ok ? "" : `${esc(detail)} (not RBAC's problem — the gate let them through 🤷)`;
+  plog(state.persona.id, `${label} <span class="dim mono">${method} ${path}</span>`, verdict, note);
+  status(!denied, `${denied ? "✗" : "✓"} [as ${state.persona.id}] ${method} ${path} → ${res.status}`);
+}
+function plog(who, what, verdict, note) {
+  const row = $("p-log").insertRow(0);
+  row.innerHTML = `<td class="dim">${new Date().toLocaleTimeString()}</td>
+    <td class="id">${esc(who)}</td><td>${what}</td><td>${verdict}</td>
+    <td class="dim">${typeof note === "string" ? note : esc(JSON.stringify(note))}</td>`;
+}
+
+// ---- users ---------------------------------------------------------------
+async function loadUsers() {
+  const st = state.users;
+  const params = listParams(st, $("u-search").value.trim());
+  params.set("include_disabled", $("u-disabled").checked);
+  const { data, meta } = await api("GET", "/authz/users?" + params);
+  const table = $("u-table");
+  table.innerHTML = headerRow(
+    [["id", "id"], ["email", "email"], ["name", "name"], [null, "role"],
+     [null, "status"], ["created_at", "created"], [null, ""]], st);
+  if (!data.length) emptyRow(table, 7, "nobody here — add a user above 👆");
+  for (const u of data) {
+    const row = table.insertRow();
+    const options = ["<option value=''>— no role —</option>",
+      ...state.roles.map((r) =>
+        `<option ${r === u.role ? "selected" : ""}>${esc(r)}</option>`)].join("");
+    row.innerHTML = `
+      <td class="id">${esc(u.id)}</td><td class="dim dim-mono">${esc(u.email ?? "")}</td>
+      <td class="dim">${esc(u.name ?? "")}</td>
+      <td><select data-id="${esc(u.id)}">${options}</select></td>
+      <td><span class="chip ${u.status}">${u.status}</span></td>
+      <td class="dim">${ts(u.created_at)}</td>
+      <td>
+        <button data-act="toggle">${u.disabled ? "✓ let back in" : "✋ disable"}</button>
+        <button data-act="delete" class="danger">delete</button>
+      </td>`;
+    row.querySelector("select").onchange = (e) => setRole(u, e.target);
+    row.querySelector("[data-act=toggle]").onclick = () =>
+      api("PATCH", `/authz/users/${u.id}`, { disabled: !u.disabled }).then(loadUsers);
+    row.querySelector("[data-act=delete]").onclick = () =>
+      confirm(`really delete ${u.id}? (their role assignment stays in the store)`) &&
+      api("DELETE", `/authz/users/${u.id}`).then(loadUsers);
+  }
+  bindSort(table, st, loadUsers);
+  pager($("u-pager"), meta, st, loadUsers);
+}
+async function setRole(user, select) {
+  if (select.value) await api("POST", `/authz/users/${user.id}/roles`, { role: select.value });
+  else if (user.role) await api("DELETE", `/authz/users/${user.id}/roles/${user.role}`);
+  loadUsers();
+}
+async function createUser() {
+  const id = $("u-new-id").value.trim();
+  if (!id) return;
+  await api("POST", "/authz/users", { id, email: $("u-new-email").value.trim() || null });
+  $("u-new-id").value = $("u-new-email").value = "";
+  loadUsers();
+}
+
+// ---- roles ----------------------------------------------------------------
+async function loadRoles() {
+  const { data } = await api("GET", "/authz/roles?limit=100");
+  state.roles = data.map((r) => r.slug);
+  const catalog = await api("GET", "/authz/scopes");
+  const datalist = catalog.map((s) => `<option value="${esc(s.raw)}">`).join("");
+  $("r-list").innerHTML = data.map((role) => `
+    <details open>
+      <summary><b>${esc(role.slug)}</b>
+        <span class="dim">${esc(role.name)}${role.description ? " — " + esc(role.description) : ""}</span>
+        <button class="danger" style="float:right" data-del="${esc(role.slug)}">delete role</button>
+      </summary>
+      <div style="margin-top:10px">
+        ${role.scopes.map((s) =>
+          `<span class="chip x ${s.value}" title="click to remove"
+                 data-role="${esc(role.slug)}" data-scope="${esc(s.raw)}">${esc(s.raw)} · ${s.value}</span>`
+        ).join("") || '<span class="dim">no scopes yet — this role can\'t do a thing 🙈</span>'}
+      </div>
+      <div class="bar" style="margin-top:10px">
+        <input list="scope-catalog" placeholder="agents:*:run" size="24" data-add-scope="${esc(role.slug)}" />
+        <select data-add-effect="${esc(role.slug)}"><option>allow</option><option>deny</option></select>
+        <button data-add-btn="${esc(role.slug)}">+ add scope</button>
+      </div>
+    </details>`).join("") + `<datalist id="scope-catalog">${datalist}</datalist>`;
+
+  $("r-list").querySelectorAll(".chip.x").forEach((chip) => chip.onclick = () =>
+    api("PATCH", `/authz/roles/${chip.dataset.role}/scopes`,
+        { remove: [chip.dataset.scope] }).then(loadRoles));
+  $("r-list").querySelectorAll("[data-add-btn]").forEach((btn) => btn.onclick = () => {
+    const slug = btn.dataset.addBtn;
+    const scope = document.querySelector(`[data-add-scope="${slug}"]`).value.trim();
+    const effect = document.querySelector(`[data-add-effect="${slug}"]`).value;
+    if (scope) api("PATCH", `/authz/roles/${slug}/scopes`,
+                   { upsert: [{ scope, effect }] }).then(loadRoles);
+  });
+  $("r-list").querySelectorAll("[data-del]").forEach((btn) => btn.onclick = () =>
+    confirm(`delete role ${btn.dataset.del}? anyone holding it loses it`) &&
+    api("DELETE", `/authz/roles/${btn.dataset.del}`).then(loadRoles));
+}
+async function createRole() {
+  const slug = $("r-new-slug").value.trim();
+  if (!slug) return;
+  await api("POST", "/authz/roles", { slug, name: $("r-new-name").value.trim() || null });
+  $("r-new-slug").value = $("r-new-name").value = "";
+  loadRoles();
+}
+
+// ---- scope catalog -----------------------------------------------------------
+async function loadScopes() {
+  const catalog = await api("GET", "/authz/scopes");
+  const byNs = {};
+  for (const s of catalog) (byNs[s.namespace] ??= []).push(s);
+  $("s-grid").innerHTML = Object.entries(byNs).map(([ns, scopes]) => `
+    <div class="card"><h4>${esc(ns)}</h4>
+      ${scopes.map((s) => `<span class="chip">${esc(s.raw)}</span>`).join("")}
+    </div>`).join("");
+}
+
+// ---- trails -------------------------------------------------------------------
+async function loadAudit() {
+  const st = state.audit;
+  const { data, meta } = await api("GET",
+    "/authz/audit?" + listParams(st, $("a-search").value.trim()));
+  const table = $("a-table");
+  table.innerHTML = headerRow(
+    [["created_at", "when"], ["actor", "actor"], ["action", "action"], ["target", "target"], [null, "before → after"]], st);
+  if (!data.length) emptyRow(table, 5, "nothing yet — change something and it'll show up here ✍️");
+  for (const e of data) {
+    table.insertRow().innerHTML = `
+      <td class="dim">${ts(e.created_at)}</td><td class="id">${esc(e.actor ?? "system")}</td>
+      <td><span class="chip">${esc(e.action)}</span></td><td class="id">${esc(e.target)}</td>
+      <td class="dim dim-mono">${esc(JSON.stringify(e.before))} → ${esc(JSON.stringify(e.after))}</td>`;
+  }
+  bindSort(table, st, loadAudit);
+  pager($("a-pager"), meta, st, loadAudit);
+}
+async function loadDecisions() {
+  const st = state.decisions;
+  const { data, meta } = await api("GET",
+    "/authz/decisions?" + listParams(st, $("d-search").value.trim()));
+  const table = $("d-table");
+  table.innerHTML = headerRow(
+    [["created_at", "when"], ["actor", "actor"], ["action", "decision"], ["target", "request"], [null, "required"], [null, "token"]], st);
+  if (!data.length) emptyRow(table, 6, "no decisions recorded — make a request to the OS first 🚪");
+  for (const e of data) {
+    const allowed = e.action === "access.allowed";
+    table.insertRow().innerHTML = `
+      <td class="dim">${ts(e.created_at)}</td><td class="id">${esc(e.actor ?? "")}</td>
+      <td><span class="chip ${allowed ? "allow" : "deny"}">${allowed ? "✓ in" : "✗ nope"}</span></td>
+      <td class="id">${esc(e.target)}</td>
+      <td class="dim dim-mono">${esc((e.metadata?.required ?? []).join(", "))}</td>
+      <td class="dim dim-mono">${esc(e.metadata?.token ?? "")}</td>`;
+  }
+  bindSort(table, st, loadDecisions);
+  pager($("d-pager"), meta, st, loadDecisions);
+}
+
+// ---- shell -------------------------------------------------------------------
+const loaders = { playground: loadPlayground, heist: loadHeist, users: loadUsers,
+                  roles: loadRoles, scopes: loadScopes, audit: loadAudit, decisions: loadDecisions };
+function show(tab) {
+  document.querySelectorAll("section").forEach((s) => s.classList.toggle("active", s.id === tab));
+  document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  loaders[tab]().catch(() => {});
+}
+async function connect() {
+  localStorage.setItem("authz-console", JSON.stringify({ base: $("base").value, token: $("token").value }));
+  await loadRoles();  // roles first: feeds the user-row selects
+  show(document.querySelector("nav button.active").dataset.tab);
+}
+// restore last session
+try {
+  const saved = JSON.parse(localStorage.getItem("authz-console") ?? "{}");
+  if (saved.base) $("base").value = saved.base;
+  if (saved.token) { $("token").value = saved.token; connect(); }
+} catch { /* fresh start */ }
+</script>
+</body>
+</html>

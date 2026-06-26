@@ -393,22 +393,34 @@ New to authorization? Read them in this order — each is runnable on its own:
    service (WorkOS/Auth0/Okta): the role rides the token, you only enforce, via a
    ~30-line custom `AuthorizationProvider`. Adds JWKS verification + issuer/audience
    pinning. (Enforcement only — no user store needed.)
+6. `managed_users.py` — the user directory: list users, give roles, and disable
+   someone instantly (blocked on their next request, even with a valid token).
+7. `manage_users_and_roles.py` — runs a real AgentOS server that serves the
+   `/authz` user + role management API (admin-only, with audit) for a frontend/
+   admin UI, with CORS and a seeded admin + users. Prints a ready-to-use admin token.
+   Pair it with `console.html` — a single-file test client (no build, no deps):
+   start the server, open the file in a browser, paste the printed token, and
+   click around users / roles / scopes / both audit trails.
 
-This covers the ways a company runs authorization:
+### How a company runs this
 
-| Their situation | Tier | Who owns "who has which role" | Cookbook |
-|---|---|---|---|
-| Scopes are on the token already | 1 | the token issuer (scopes claim) | `symmetric/`, `asymmetric/` |
-| No login service; we define + assign roles | 2 | us, in the managed store | `managed_roles.py` |
-| They have a login service; we only enforce | 3 | the login service (role on the token) | `idp_workos_auth0.py` |
-| You want a custom decision model (ReBAC/ABAC/own engine) | 3 | you (your own `AuthorizationProvider`) | `custom_authorization_provider.py` (minimal), `idp_workos_auth0.py` (IdP-shaped) |
+This covers the ways a company runs authorization — whether or not they already
+have a login service (WorkOS/Okta/Auth0), and whether we also store the user
+directory or only enforce decisions:
 
-For symmetric/asymmetric JWT basics (the default scope tier, no roles) see
-`symmetric/` and `asymmetric/`. The **user directory** (storing users, the
-`/authz/users` admin API, the single-file admin console) and **ReBAC/FGA** are the
-next layer — see the directory and FGA PRs.
+| Their situation | Tier | Who owns "who has which role" | Do we store users? | Cookbook |
+|---|---|---|---|---|
+| Scopes are on the token already | 1 | the token issuer (scopes claim) | no | `symmetric/`, `asymmetric/` |
+| No login service; we define + assign roles | 2 | us, in the managed store | yes | `managed_roles.py` (+ user directory: `manage_users_and_roles.py` / `managed_users.py`) |
+| They have a login service; we only enforce | 3 | the login service (role on the token) | no | `idp_workos_auth0.py` |
+| You want a custom decision model (ReBAC/ABAC/own engine) | 3 | you (your own `AuthorizationProvider`) | optional | `custom_authorization_provider.py` |
 
-Install the optional extra for DB-backed persistence: `pip install "agno[roles]"`.
+A mix of the two is possible without a separate cookbook: a custom
+`AuthorizationProvider` that uses the token's role when present and falls back to
+the managed store for users who don't have one.
+
+The managed-roles cookbooks need the optional extra: `pip install "agno[roles]"`.
+The enforce-only / custom-provider path (`idp_workos_auth0.py`) needs nothing extra.
 
 ## Additional Resources
 

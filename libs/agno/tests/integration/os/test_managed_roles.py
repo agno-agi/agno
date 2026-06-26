@@ -203,6 +203,51 @@ def test_management_helpers():
     assert store.roles_of("bob") == []
 
 
+# --------------------------------------------------------- metadata + effects
+def test_role_metadata_is_tracked():
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("viewer", ["agents:*:read"], name="Viewer", description="read-only")
+
+    rec = store.get_role("viewer")
+    assert rec["slug"] == "viewer"
+    assert rec["name"] == "Viewer"
+    assert rec["description"] == "read-only"
+    assert rec["is_default"] is False
+    assert rec["created_at"] > 0 and rec["updated_at"] >= rec["created_at"]
+    assert rec["scopes"] == [{"scope": "agents:read", "effect": "allow"}]
+
+    # list_roles_detailed returns full records
+    slugs = {r["slug"] for r in store.list_roles_detailed()}
+    assert "viewer" in slugs
+
+    # get_role for an unknown role is None
+    assert store.get_role("ghost") is None
+
+
+def test_allow_deny_effect_overrides():
+    """A deny scope overrides an allow for the same action (deny-overrides)."""
+    store = ManagedRoleStore(db_url=_db_url())
+    # member can read any agent, but is explicitly denied reading the secret one
+    store.set_role_scopes(
+        "member",
+        ["agents:*:read", {"scope": "agents:secret-agent:read", "effect": "deny"}],
+    )
+    store.assign("bob", "member")
+    prov = store.provider
+
+    from agno.os.authz.provider import AuthorizationContext
+
+    ok = AuthorizationContext(principal_id="bob", resource_type="agents", resource_id="public-agent", action="read")
+    denied = AuthorizationContext(principal_id="bob", resource_type="agents", resource_id="secret-agent", action="read")
+    assert prov.check(ok) is True
+    assert prov.check(denied) is False  # deny wins
+
+    # the deny is reflected in the read-back entries, and excluded from accessible ids
+    entries = {(e["scope"], e["effect"]) for e in store.get_role_scope_entries("member")}
+    assert ("agents:read", "allow") in entries
+    assert ("agents:secret-agent:read", "deny") in entries
+
+
 def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
     """#4: AuthorizationConfig(role_store=...) wires the store's provider (no manual
     .provider). #3: a store with no DB of its own adopts the OS DB when AgentOS wires
@@ -228,7 +273,7 @@ def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
     client = TestClient(agent_os.get_app())  # adopts the OS DB -> store is now bound
 
     # configure after wiring (the store is bound to the OS DB now)
-    store.set_role_scopes("viewer", ["agents:*:read"])
+    store.set_role_scopes("viewer", ["agents:*:read"], name="Viewer", description="read-only")
     store.assign("bob", "viewer")
     assert store.is_bound is True
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
@@ -238,6 +283,9 @@ def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
     fresh = ManagedRoleStore(db=db)
     assert fresh.roles_of("bob") == ["viewer"]
     assert fresh.get_role_scopes("viewer") == ["agents:read"]
+    # role metadata persisted too, not just policy + assignments
+    rec = fresh.get_role("viewer")
+    assert rec is not None and rec["name"] == "Viewer" and rec["description"] == "read-only"
 
 
 def test_role_store_and_provider_are_mutually_exclusive():
@@ -247,7 +295,7 @@ def test_role_store_and_provider_are_mutually_exclusive():
         AuthorizationConfig(role_store=ManagedRoleStore(), authorization_provider=ScopeAuthorizationProvider())
 
 
-def test_role_store_without_any_db_fails_loud_at_wiring():
+def test_role_store_without_any_db_fails_loud_at_wiring(tmp_path):
     """A managed store with no DB, wired into an AgentOS that also has no SQL DB,
     must fail loudly rather than silently run an in-memory store that can't stay
     consistent across replicas."""

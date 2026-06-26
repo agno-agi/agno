@@ -37,12 +37,38 @@ Example::
     store.unassign("bob", "member")
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+import time
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
+from agno.os.authz._db import NO_DB_MESSAGE
+from agno.os.authz._db import engine_from_db as _engine_from_db
+from agno.os.authz._db import engine_from_url as _engine_from_url
+from agno.os.authz.audit import DEFAULT_AUDIT_SORT_FIELD, DEFAULT_AUDIT_SORT_ORDER
 from agno.os.authz.engine import EngineAuthorizationProvider, PolicyEngine, normalize_roles_claim
 
 if TYPE_CHECKING:
     from agno.os.authz.audit import AuditSink
+
+# A scope plus its effect. Inputs accept a bare string (= allow), a (scope, effect)
+# tuple, or a {"scope": ..., "effect"|"value": ...} dict.
+ScopeInput = Union[str, Tuple[str, str], Dict[str, str]]
+
+
+def _normalize_scope(entry: ScopeInput) -> Tuple[str, str]:
+    """Coerce a scope input into ``(scope, effect)`` with effect in {allow, deny}."""
+    if isinstance(entry, str):
+        scope, effect = entry, "allow"
+    elif isinstance(entry, dict):
+        scope = entry.get("scope") or entry.get("raw")  # type: ignore[assignment]
+        effect = entry.get("effect") or entry.get("value") or "allow"
+    else:  # tuple/list
+        scope, effect = entry[0], (entry[1] if len(entry) > 1 else "allow")
+    if not scope:
+        raise ValueError(f"Unrecognised scope entry: {entry!r}")
+    effect = str(effect).lower()
+    if effect not in ("allow", "deny"):
+        raise ValueError(f"scope effect must be 'allow' or 'deny', got {effect!r}")
+    return scope, effect
 
 
 class ManagedRoleStore:
@@ -77,11 +103,15 @@ class ManagedRoleStore:
             decision_log: when True, bump the ``agno.authz.engine`` logger to INFO
                 so every allow/deny decision is logged. Off by default so we don't
                 touch global logging behind your back.
-            db: an agno database (the same object you pass to ``AgentOS(db=...)``).
-                Its SQLAlchemy engine is reused, so roles live in the same database
-                as your agent data. Takes precedence over ``db_url``.
+            db: an agno database (the same object you pass to ``AgentOS(db=...)``,
+                e.g. ``SqliteDb``/``PostgresDb``). Its SQLAlchemy engine is reused,
+                so roles live in the same database as your agent data with one
+                connection pool — no second ``db_url`` to keep in sync. Takes
+                precedence over ``db_url``.
             engine: a custom :class:`~agno.os.authz.engine.PolicyEngine` backend.
-                Defaults to the native engine built from ``db``/``db_url``.
+                Defaults to the native engine built from ``db``/``db_url``. Supply
+                your own to swap the backend (OpenFGA/SpiceDB/...) without changing
+                anything else.
         """
         if engine is not None:
             self._engine: PolicyEngine = engine
@@ -92,6 +122,17 @@ class ManagedRoleStore:
         self._roles_claim = roles_claim
         self._audit = audit
 
+        # Role metadata (display name / description / is_default / timestamps).
+        # The policy engine only stores policies, so metadata needs its own table in
+        # the same DB. Like the engine, it requires a DB — it may arrive later via
+        # attach_db(), so it stays unbound (engine None) until then.
+        self._meta_engine: Any = None  # SQLAlchemy Engine once bound, else None
+        self._meta_table: Any = None  # SQLAlchemy Table for authz_roles metadata
+        if db is not None:
+            self._init_meta_table(_engine_from_db(db))
+        elif db_url is not None:
+            self._init_meta_table(_engine_from_url(db_url))
+
         if decision_log:
             import logging
 
@@ -101,8 +142,8 @@ class ManagedRoleStore:
         self,
         action: str,
         target: str,
-        before: Optional[List[str]],
-        after: Optional[List[str]],
+        before: Optional[List[Any]],
+        after: Optional[List[Any]],
         actor: Optional[str],
     ) -> None:
         """Record one change to the audit sink (no-op when no sink is configured)."""
@@ -123,24 +164,233 @@ class ManagedRoleStore:
             )
         )
 
+    # --------------------------------------------------------- role metadata
+    def _init_meta_table(self, engine: Any) -> None:
+        import sqlalchemy as sa
+
+        self._meta_engine = engine
+        metadata = sa.MetaData()
+        self._meta_table = sa.Table(
+            "authz_roles",
+            metadata,
+            sa.Column("slug", sa.String(255), primary_key=True),  # = the role id/name
+            sa.Column("name", sa.String(255)),  # human-readable display name
+            sa.Column("description", sa.Text),
+            sa.Column("is_default", sa.Boolean, nullable=False, default=False),
+            sa.Column("created_at", sa.Integer, nullable=False),
+            sa.Column("updated_at", sa.Integer, nullable=False),
+        )
+        metadata.create_all(self._meta_engine)
+
+    def _require_meta(self) -> None:
+        if self._meta_engine is None:
+            raise RuntimeError(NO_DB_MESSAGE)
+
+    def _meta_get(self, slug: str) -> Optional[dict]:
+        self._require_meta()
+        import sqlalchemy as sa
+
+        with self._meta_engine.connect() as conn:
+            r = conn.execute(sa.select(self._meta_table).where(self._meta_table.c.slug == slug)).mappings().first()
+        return dict(r) if r else None
+
+    def _meta_get_all(self) -> dict:
+        """All metadata rows as ``{slug: row}`` in a single read, so list views
+        don't do one SELECT per role (N+1)."""
+        self._require_meta()
+        import sqlalchemy as sa
+
+        with self._meta_engine.connect() as conn:
+            rows = conn.execute(sa.select(self._meta_table)).mappings().all()
+        return {r["slug"]: dict(r) for r in rows}
+
+    def _meta_upsert(
+        self,
+        slug: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+    ) -> dict:
+        existing = self._meta_get(slug)
+        now = int(time.time())
+        if existing is None:
+            row = {
+                "slug": slug,
+                "name": name or slug,
+                "description": description,
+                "is_default": bool(is_default) if is_default is not None else False,
+                "created_at": now,
+                "updated_at": now,
+            }
+        else:
+            row = dict(existing)
+            if name is not None:
+                row["name"] = name
+            if description is not None:
+                row["description"] = description
+            if is_default is not None:
+                row["is_default"] = bool(is_default)
+            row["updated_at"] = now
+        self._meta_write(row, insert=existing is None)
+        return row
+
+    def _meta_write(self, row: dict, insert: bool) -> None:
+        self._require_meta()
+        import sqlalchemy as sa
+
+        with self._meta_engine.begin() as conn:
+            if insert:
+                conn.execute(sa.insert(self._meta_table).values(**row))
+            else:
+                conn.execute(sa.update(self._meta_table).where(self._meta_table.c.slug == row["slug"]).values(**row))
+
+    def _meta_delete(self, slug: str) -> None:
+        self._require_meta()
+        import sqlalchemy as sa
+
+        with self._meta_engine.begin() as conn:
+            conn.execute(sa.delete(self._meta_table).where(self._meta_table.c.slug == slug))
+
+    def _meta_or_default(self, slug: str) -> dict:
+        """Metadata for a role, synthesising defaults for rows defined before
+        metadata existed (or via the raw enforcer)."""
+        meta = self._meta_get(slug)
+        if meta is not None:
+            return meta
+        return {"slug": slug, "name": slug, "description": None, "is_default": False, "created_at": 0, "updated_at": 0}
+
     # ------------------------------------------------------------------ roles
-    def set_role_scopes(self, role: str, scopes: List[str], actor: Optional[str] = None) -> None:
-        """Define (or replace) what a role can do, in agno scope terms."""
-        before = self.get_role_scopes(role) if self._audit else None
-        self._engine.set_role_scopes(role, [(scope, "allow") for scope in scopes])
-        self._emit("role.set_scopes", role, before, self.get_role_scopes(role) if self._audit else None, actor)
+    def set_role_scopes(
+        self,
+        role: str,
+        scopes: List[ScopeInput],
+        actor: Optional[str] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+    ) -> None:
+        """Define (or replace) what a role can do, in agno scope terms.
+
+        ``scopes`` items may be plain strings (granted/allow), ``(scope, effect)``
+        tuples, or ``{"scope": ..., "effect": "allow"|"deny"}`` dicts. Also creates
+        / updates the role's metadata (display ``name`` / ``description`` /
+        ``is_default``)."""
+        # Audit the full entries (scope + effect) so an allow<->deny flip is visible
+        # in the trail; plain scope strings would show no change.
+        before = self.get_role_scope_entries(role) if self._audit else None
+        self._engine.set_role_scopes(role, [_normalize_scope(e) for e in scopes])
+        self._meta_upsert(role, name=name, description=description, is_default=is_default)
+        self._emit("role.set_scopes", role, before, self.get_role_scope_entries(role) if self._audit else None, actor)
 
     def get_role_scopes(self, role: str) -> List[str]:
-        """Return a role's scopes in agno terms (best-effort read-back)."""
-        return sorted(scope for scope, _effect in self._engine.get_role_scopes(role))
+        """Return a role's scope strings (allow + deny), for display/read-back."""
+        return sorted(scope for scope, _ in self._engine.get_role_scopes(role))
+
+    def get_role_scope_entries(self, role: str) -> List[dict]:
+        """Return a role's scopes with effects: ``[{"scope": ..., "effect": ...}]``."""
+        entries = [{"scope": scope, "effect": effect} for scope, effect in self._engine.get_role_scopes(role)]
+        return sorted(entries, key=lambda e: (e["scope"], e["effect"]))
+
+    def create_role(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Create a role with metadata only — no scopes (add those via
+        set_role_scopes / patch_role_scopes). Raises FileExistsError if it exists."""
+        if self.get_role(role) is not None:
+            raise FileExistsError(role)
+        rec = self._meta_upsert(role, name=name, description=description, is_default=is_default)
+        self._emit("role.created", role, None, [self._meta_summary(rec)], actor)
+        return rec
+
+    def set_role_meta(
+        self,
+        role: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        is_default: Optional[bool] = None,
+        actor: Optional[str] = None,
+    ) -> dict:
+        """Update ONLY a role's metadata (display name / description / is_default),
+        leaving its scopes untouched. Raises KeyError if the role doesn't exist."""
+        if self.get_role(role) is None:
+            raise KeyError(role)
+        before = self._meta_or_default(role)
+        rec = self._meta_upsert(role, name=name, description=description, is_default=is_default)
+        self._emit("role.updated", role, [self._meta_summary(before)], [self._meta_summary(rec)], actor)
+        return rec
+
+    def patch_role_scopes(
+        self,
+        role: str,
+        upsert: Optional[List[ScopeInput]] = None,
+        remove: Optional[List[ScopeInput]] = None,
+        actor: Optional[str] = None,
+    ) -> None:
+        """Apply a scope diff: add/flip the ``upsert`` scopes and drop the ``remove``
+        scopes, leaving every other scope (and the metadata) intact."""
+        before = self.get_role_scope_entries(role) if self._audit else None
+        for entry in upsert or []:
+            scope, effect = _normalize_scope(entry)
+            self._engine.add_scope(role, scope, effect)
+        for entry in remove or []:
+            scope, _ = _normalize_scope(entry)
+            self._engine.remove_scope(role, scope)
+        self._meta_upsert(role)  # touch updated_at / ensure metadata row exists
+        self._emit("role.set_scopes", role, before, self.get_role_scope_entries(role) if self._audit else None, actor)
+
+    @staticmethod
+    def _meta_summary(rec: dict) -> str:
+        bits = [rec.get("name") or rec["slug"]]
+        if rec.get("description"):
+            bits.append(str(rec["description"]))
+        if rec.get("is_default"):
+            bits.append("default")
+        return " · ".join(bits)
+
+    def get_role(self, role: str) -> Optional[dict]:
+        """Full role record: metadata + scope entries, or None if the role has
+        neither policies nor metadata."""
+        scopes = self.get_role_scope_entries(role)
+        meta = self._meta_get(role)
+        if meta is None and not scopes and role not in self._engine.list_roles():
+            # No metadata, no scopes, and not even an assignment-only role -> absent.
+            return None
+        return {**self._meta_or_default(role), "scopes": scopes}
 
     def remove_role(self, role: str, actor: Optional[str] = None) -> None:
         before = self.get_role_scopes(role) if self._audit else None
         self._engine.remove_role(role)
+        self._meta_delete(role)
         self._emit("role.removed", role, before, None, actor)
 
     def list_roles(self) -> List[str]:
-        return sorted(self._engine.list_roles())
+        """All role slugs (those with policies and/or metadata)."""
+        slugs = set(self._engine.list_roles())
+        if self._meta_engine is not None:
+            import sqlalchemy as sa
+
+            with self._meta_engine.connect() as conn:
+                slugs |= {r[0] for r in conn.execute(sa.select(self._meta_table.c.slug))}
+        return sorted(slugs)
+
+    def list_roles_detailed(self) -> List[dict]:
+        """Every role as a full record (metadata + scope entries).
+
+        Metadata is fetched in one read (not one SELECT per role), and
+        assignment-only roles (a subject is assigned but no scopes/metadata exist
+        yet) are surfaced with an empty scope list rather than dropped."""
+        meta_all = self._meta_get_all()
+        default = {"name": None, "description": None, "is_default": False, "created_at": 0, "updated_at": 0}
+        out: List[dict] = []
+        for slug in self.list_roles():
+            meta = meta_all.get(slug) or {"slug": slug, **default, "name": slug}
+            out.append({**meta, "scopes": self.get_role_scope_entries(slug)})
+        return out
 
     # ------------------------------------------------------------- assignments
     def assign(self, subject: str, role: str, actor: Optional[str] = None) -> None:
@@ -148,8 +398,9 @@ class ManagedRoleStore:
 
         A subject holds at most ONE role at a time — assigning replaces any
         current role rather than accumulating. This mirrors the cloud RBAC model
-        (a membership has one role). No-op if the subject already holds exactly
-        this role.
+        (a membership has one role) so role management is a select, not a
+        multi-grant. Compose permissions in the role's scopes, not by stacking
+        roles on a user. No-op if the subject already holds exactly this role.
         """
         before = self.roles_of(subject)
         if before == [role]:
@@ -175,10 +426,13 @@ class ManagedRoleStore:
 
     @property
     def is_bound(self) -> bool:
-        """True once the store has a DB (passed directly or adopted via
-        :meth:`attach_db`). A custom ``engine=`` is assumed self-managed (bound)."""
+        """True once the store has a DB for both its policy engine and its role
+        metadata (passed directly or adopted via :meth:`attach_db`). A custom
+        ``engine=`` is assumed to manage its own persistence, but the store still
+        needs a DB for the metadata (authz_roles) it owns."""
         flag = getattr(self._engine, "is_bound", None)
-        return bool(flag) if flag is not None else True
+        engine_bound = bool(flag) if flag is not None else True
+        return engine_bound and self._meta_engine is not None
 
     def attach_db(self, db: Any) -> None:
         """Bind an agno ``Db`` to a store created without one, so managed roles
@@ -189,36 +443,57 @@ class ManagedRoleStore:
         if callable(attach):
             attach(db)
 
+        # Bind the metadata table (authz_roles) to the same DB, mirroring the
+        # engine's own attach so policy, assignments, and metadata all land together.
+        # No-op if metadata is already bound or the db isn't SQL-capable.
+        if self._meta_engine is None:
+            try:
+                self._init_meta_table(_engine_from_db(db))
+            except Exception:
+                return
+
     # ------------------------------------------------------------------ audit
-    def audit_log(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Recent change-audit events (newest first), if the audit sink supports
-        reading (e.g. ``DbAuditSink``). Returns ``[]`` when no readable sink is
-        configured (e.g. a logging-only sink, or no audit at all)."""
+    def audit_log(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: str = DEFAULT_AUDIT_SORT_FIELD,
+        order: str = DEFAULT_AUDIT_SORT_ORDER,
+    ) -> List[Dict[str, Any]]:
+        """A page of change-audit events (newest first by default), if the audit
+        sink supports reading (e.g. ``DbAuditSink``). ``search`` filters over
+        actor/action/target; ``sort_by`` is any of the sink's sortable fields.
+        Returns ``[]`` when no readable sink is configured (e.g. a logging-only
+        sink, or no audit at all)."""
         sink = self._audit
         if sink is not None and hasattr(sink, "read"):
-            return sink.read(limit)
+            return sink.read(limit, offset=offset, search=search, sort_by=sort_by, order=order)
         return []
+
+    def audit_count(self, search: Optional[str] = None) -> int:
+        """Total number of change-audit events (for pagination, honouring
+        ``search``); 0 when the sink isn't readable."""
+        sink = self._audit
+        if sink is not None and hasattr(sink, "count"):
+            return int(sink.count(search=search))
+        return 0
 
     # ----------------------------------------------------------------- gating
     def can_manage(self, principal_id: Optional[str], claims: Optional[Dict[str, Any]] = None) -> bool:
         """True if the caller may administer roles (i.e. satisfies ``agent_os:admin``).
 
-        An admin can be defined two ways, both handled here:
-          - by a role in this store, or
+        Admin can be defined two ways, both handled via the engine:
+          - by a role in this store (subject -> agent_os:admin), or
           - by a role carried on the token, when ``roles_claim`` is set.
-        Note this is intentionally NOT the generic provider ``check`` (which
-        defers non-resource decisions to route scope mappings and would let any
-        authenticated caller through).
+        Intentionally NOT the generic provider ``check`` (which defers non-resource
+        decisions and would let any authenticated caller through).
         """
         roles = normalize_roles_claim(claims, self._roles_claim)
-        if roles and self._engine.check_scope("agent_os:admin", roles=roles):
-            return True
-        if principal_id:
-            return self._engine.check_scope("agent_os:admin", subject=principal_id)
-        return False
+        return self._engine.check_scope("agent_os:admin", subject=principal_id, roles=roles)
 
     # --------------------------------------------------------------- provider
     @property
-    def provider(self) -> EngineAuthorizationProvider:
-        """The AuthorizationProvider to plug into AuthorizationConfig."""
+    def provider(self):
+        """The AuthorizationProvider to plug into AuthorizationConfig (engine-backed)."""
         return EngineAuthorizationProvider(self._engine, roles_claim=self._roles_claim)
