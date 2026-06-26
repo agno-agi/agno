@@ -4278,7 +4278,8 @@ class Team(AgentTeamBase):
 
             elif isinstance(tool, Toolkit):
                 # For each function in the toolkit and process entrypoint
-                for name, func in tool.functions.items():
+                # Banavo toolkits register async methods in async_functions; merge both dicts.
+                for name, func in tool.get_async_functions().items():
                     # If the function does not exist in self.functions
                     if name not in self._functions_for_model:
                         func._agent = self
@@ -4355,7 +4356,7 @@ class Team(AgentTeamBase):
                     system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
-                            for _func in _tool.functions.values():
+                            for _func in _tool.get_async_functions().values():
                                 if _func.entrypoint:
                                     system_message_content += f"{indent * ' '}    - {_func.name}\n"
                         elif isinstance(_tool, Function) and _tool.entrypoint:
