@@ -1053,7 +1053,7 @@ async def test_mcp_tool_result_preserves_structured_content():
     entrypoint = get_entrypoint_for_tool(mock_tool, session)
     result = await entrypoint()
 
-    assert result.structured_content == {"id": "u1", "name": "Ada"}
+    assert result.metadata["structured_content"] == {"id": "u1", "name": "Ada"}
 
 
 @pytest.mark.asyncio
@@ -1075,7 +1075,7 @@ async def test_mcp_tool_error_result_preserves_structured_content():
     result = await entrypoint()
 
     assert "Error from MCP tool 'get_data'" in result.content
-    assert result.structured_content == {"error_details": {"code": 42}}
+    assert result.metadata["structured_content"] == {"error_details": {"code": 42}}
 
 
 @pytest.mark.asyncio
@@ -1099,14 +1099,15 @@ async def test_mcp_tool_result_handles_missing_structured_content_attr():
     result = await entrypoint()
 
     assert result.content == "hello"
-    assert result.structured_content is None
+    # No _meta and no structuredContent -> the envelope collapses to None.
+    assert result.metadata is None
 
 
 def test_tool_result_model_dump_roundtrip_preserves_structured_content():
-    tool_result = ToolResult(content="hello", structured_content={"key": "value", "list": [1, 2, 3]})
+    tool_result = ToolResult(content="hello", metadata={"structured_content": {"key": "value", "list": [1, 2, 3]}})
     payload = tool_result.model_dump()
     restored = ToolResult.model_validate(payload)
-    assert restored.structured_content == {"key": "value", "list": [1, 2, 3]}
+    assert restored.metadata["structured_content"] == {"key": "value", "list": [1, 2, 3]}
 
 
 @pytest.mark.asyncio
@@ -1128,7 +1129,7 @@ async def test_mcp_tool_result_preserves_meta():
     result = await entrypoint()
 
     assert result.content == "hello"
-    assert result.metadata == {"trace_id": "abc-123"}
+    assert result.metadata == {"meta": {"trace_id": "abc-123"}}
 
 
 @pytest.mark.asyncio
@@ -1150,7 +1151,30 @@ async def test_mcp_tool_error_result_preserves_meta():
     result = await entrypoint()
 
     assert "Error from MCP tool 'get_data'" in result.content
-    assert result.metadata == {"trace_id": "err-456"}
+    assert result.metadata == {"meta": {"trace_id": "err-456"}}
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_result_preserves_meta_and_structured_content():
+    mock_tool = MagicMock()
+    mock_tool.name = "get_data"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[TextContent(type="text", text="hello")],
+            isError=False,
+            _meta={"trace_id": "abc-123"},
+            structuredContent={"id": "u1", "name": "Ada"},
+        )
+    )
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    # Both sidecar values coexist under reserved keys in the single metadata envelope.
+    assert result.metadata == {"meta": {"trace_id": "abc-123"}, "structured_content": {"id": "u1", "name": "Ada"}}
 
 
 def test_tool_result_model_dump_roundtrip_preserves_metadata():
