@@ -71,6 +71,6 @@ if __name__ == "__main__":
 
     commerce_agent.print_response(
         "Compare prices for a 'mechanical keyboard' on Amazon and Walmart",
-        markdown=True,
+        markdown=True, stream=True
         stream=True,
     )
