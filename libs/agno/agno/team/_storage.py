@@ -564,6 +564,10 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["tool_choice"] = team.tool_choice
     if team.tool_call_limit is not None:
         config["tool_call_limit"] = team.tool_call_limit
+    if team.add_tool_result_boundaries:
+        config["add_tool_result_boundaries"] = team.add_tool_result_boundaries
+    if team.tool_result_max_length is not None:
+        config["tool_result_max_length"] = team.tool_result_max_length
     if team.get_member_information_tool:
         config["get_member_information_tool"] = team.get_member_information_tool
 
@@ -940,6 +944,8 @@ def from_dict(
             # --- Tools ---
             tools=config.get("tools"),
             tool_call_limit=config.get("tool_call_limit"),
+            add_tool_result_boundaries=config.get("add_tool_result_boundaries", False),
+            tool_result_max_length=config.get("tool_result_max_length"),
             tool_choice=config.get("tool_choice"),
             get_member_information_tool=config.get("get_member_information_tool", False),
             # --- Schema settings ---

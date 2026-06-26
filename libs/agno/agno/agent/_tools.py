@@ -18,7 +18,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.models.base import Model
+from agno.models.base import Model, format_tool_result_content
 from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -533,7 +533,12 @@ def handle_external_execution_update(agent: Agent, run_messages: RunMessages, to
             run_messages.messages.append(
                 Message(
                     role=agent.model.tool_message_role,
-                    content=tool.result,
+                    content=format_tool_result_content(
+                        content=tool.result,
+                        tool_name=tool.tool_name or "",
+                        add_tool_result_boundaries=agent.add_tool_result_boundaries,
+                        tool_result_max_length=agent.tool_result_max_length,
+                    ),
                     tool_call_id=tool.tool_call_id,
                     tool_name=tool.tool_name,
                     tool_args=tool.tool_args,
@@ -660,6 +665,8 @@ def run_tool(
     for call_result in agent.model.run_function_call(
         function_call=function_call,
         function_call_results=function_call_results,
+        add_tool_result_boundaries=agent.add_tool_result_boundaries,
+        tool_result_max_length=agent.tool_result_max_length,
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
@@ -775,6 +782,8 @@ async def arun_tool(
         function_calls=[function_call],
         function_call_results=function_call_results,
         skip_pause_check=True,
+        add_tool_result_boundaries=agent.add_tool_result_boundaries,
+        tool_result_max_length=agent.tool_result_max_length,
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:

@@ -131,6 +131,8 @@ def __init__(
     skills: Optional[Skills] = None,
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
     tool_call_limit: Optional[int] = None,
+    add_tool_result_boundaries: bool = False,
+    tool_result_max_length: Optional[int] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     tool_hooks: Optional[List[Callable]] = None,
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
@@ -312,6 +314,8 @@ def __init__(
         team.tools = list(tools) if tools else []  # type: ignore[arg-type]
     team.tool_choice = tool_choice
     team.tool_call_limit = tool_call_limit
+    team.add_tool_result_boundaries = add_tool_result_boundaries
+    team.tool_result_max_length = tool_result_max_length
     team.tool_hooks = tool_hooks
 
     # Initialize hooks

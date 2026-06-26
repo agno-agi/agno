@@ -194,6 +194,21 @@ class TestTeamToDict:
         assert "debug_mode" not in config  # defaults to False
         assert "retries" not in config  # defaults to 0
         assert "respond_directly" not in config  # defaults to False
+        assert "add_tool_result_boundaries" not in config  # defaults to False
+        assert "tool_result_max_length" not in config  # defaults to None
+
+    def test_to_dict_includes_tool_result_bounds_when_set(self):
+        """Test to_dict includes tool result boundary settings when configured."""
+        team = Team(
+            id="tool-result-team",
+            members=[],
+            add_tool_result_boundaries=True,
+            tool_result_max_length=1024,
+        )
+        config = team.to_dict()
+
+        assert config["add_tool_result_boundaries"] is True
+        assert config["tool_result_max_length"] == 1024
 
     def test_store_history_messages_default_is_false(self):
         """Test store_history_messages defaults to False and is omitted from config."""
@@ -335,6 +350,8 @@ class TestTeamFromDict:
             "respond_directly": True,
             "delegate_to_all_members": True,
             "add_datetime_to_context": True,
+            "add_tool_result_boundaries": True,
+            "tool_result_max_length": 1024,
         }
 
         team = Team.from_dict(config)
@@ -344,6 +361,8 @@ class TestTeamFromDict:
         assert team.respond_directly is True
         assert team.delegate_to_all_members is True
         assert team.add_datetime_to_context is True
+        assert team.add_tool_result_boundaries is True
+        assert team.tool_result_max_length == 1024
 
     def test_from_dict_with_db_postgres(self):
         """Test from_dict reconstructs PostgresDb."""

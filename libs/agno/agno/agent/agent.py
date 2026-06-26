@@ -175,6 +175,10 @@ class Agent:
 
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
+    # When True, escape string tool results and wrap them in <tool_output> markers.
+    add_tool_result_boundaries: bool = False
+    # Optional max length (chars) for a string tool result; longer results are truncated.
+    tool_result_max_length: Optional[int] = None
     # Controls which (if any) tool is called by the model.
     # "none" means the model will not call a tool and instead generates a message.
     # "auto" means the model can pick between generating a message or calling a tool.
@@ -433,6 +437,8 @@ class Agent:
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
@@ -602,6 +608,8 @@ class Agent:
         else:
             self.tools = list(tools)  # type: ignore[arg-type]
         self.tool_call_limit = tool_call_limit
+        self.add_tool_result_boundaries = add_tool_result_boundaries
+        self.tool_result_max_length = tool_result_max_length
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
 
