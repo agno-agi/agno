@@ -208,12 +208,13 @@ class GoogleCalendarTools(GoogleToolkit):
 
         try:
             service = cast(Resource, self.service)
+            max_results = min(limit, self._auth.max_results)
             events_result = (
                 service.events()
                 .list(
                     calendarId=self.calendar_id,
                     timeMin=start_date,
-                    maxResults=limit,
+                    maxResults=max_results,
                     singleEvents=True,
                     orderBy="startTime",
                 )

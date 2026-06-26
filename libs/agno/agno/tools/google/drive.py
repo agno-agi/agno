@@ -473,9 +473,10 @@ class GoogleDriveTools(GoogleToolkit):
                 effective_query = f"({query}) and trashed=false"
             else:
                 effective_query = "trashed=false"
+            page_size = min(max_results, self._auth.max_results)
             list_kwargs: dict = {
                 "q": effective_query,
-                "pageSize": max_results,
+                "pageSize": page_size,
                 "orderBy": "modifiedTime desc",
                 "fields": self.SEARCH_FIELDS,
                 "corpora": self.corpora,
