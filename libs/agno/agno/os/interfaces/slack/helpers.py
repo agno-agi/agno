@@ -35,20 +35,52 @@ def member_name(chunk: Any, entity_name: str) -> Optional[str]:
     return None
 
 
-def should_respond(event: dict, reply_to_mentions_only: bool) -> bool:
+def should_respond(event: dict, reply_to_mentions_only: bool, is_ambient: bool = False) -> bool:
     event_type = event.get("type")
     if event_type not in ("app_mention", "message"):
         return False
     channel_type = event.get("channel_type", "")
     is_dm = channel_type == "im"
-    if reply_to_mentions_only and event_type == "message" and not is_dm:
+
+    # DMs always get a response
+    if is_dm:
+        return True
+
+    # Ambient mode: thread where bot was mentioned in first message
+    if is_ambient and event_type == "message":
+        return True
+
+    if reply_to_mentions_only and event_type == "message":
         return False
     # When responding to all messages, skip app_mention to avoid duplicates.
     # Slack fires both app_mention and message for the same @mention — the
     # message event already covers it.
-    if not reply_to_mentions_only and event_type == "app_mention" and not is_dm:
+    if not reply_to_mentions_only and event_type == "app_mention":
         return False
     return True
+
+
+async def is_ambient_thread(async_client: Any, channel: str, thread_ts: str, bot_user_id: Optional[str]) -> bool:
+    """Check if thread's first message mentions the bot (ambient mode).
+
+    Fetches the first message of the thread and checks for bot mention.
+    Returns False for non-threaded messages or if bot wasn't mentioned.
+    """
+    if not thread_ts or not bot_user_id:
+        return False
+
+    try:
+        resp = await async_client.conversations_replies(channel=channel, ts=thread_ts, limit=1)
+        messages = resp.get("messages", [])
+        if not messages:
+            return False
+
+        first_message = messages[0]
+        text = first_message.get("text", "")
+        return f"<@{bot_user_id}>" in text
+    except Exception as e:
+        log_warning(f"Failed to check ambient thread status: {e}")
+        return False
 
 
 def build_run_metadata(

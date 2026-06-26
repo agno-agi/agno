@@ -13,6 +13,7 @@ from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
     download_event_files_async,
     extract_event_context,
+    is_ambient_thread,
     open_chat_stream,
     resolve_channel_name,
     resolve_slack_user,
@@ -58,6 +59,7 @@ class SlackEventHandler:
     entity_type: Literal["agent", "team", "workflow"]
     bot_name_resolver: BotNameResolver
     reply_to_mentions_only: bool
+    ambient_mode: bool
     resolve_user_identity: bool
     loading_text: str
     loading_messages: Optional[List[str]]
@@ -70,13 +72,22 @@ class SlackEventHandler:
 
     async def resolve_context(self, data: dict) -> Optional[EventContext]:
         event = data["event"]
-        if not should_respond(event, self.reply_to_mentions_only):
+        client = self._client()
+        bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
+
+        # Check ambient mode for thread replies when both flags are enabled
+        is_ambient = False
+        if self.reply_to_mentions_only and self.ambient_mode:
+            thread_ts = event.get("thread_ts")
+            channel_id = event.get("channel", "")
+            # Only check ambient for thread replies (thread_ts present and differs from ts)
+            if thread_ts and thread_ts != event.get("ts"):
+                is_ambient = await is_ambient_thread(client, channel_id, thread_ts, bot_user_id)
+
+        if not should_respond(event, self.reply_to_mentions_only, is_ambient):
             return None
 
-        client = self._client()
         raw_ctx = extract_event_context(event)
-
-        bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
         bot_name = await self.bot_name_resolver.resolve(client, bot_user_id) if bot_user_id else None
         message_text = strip_bot_mention(raw_ctx["message_text"], bot_user_id, bot_name)
 
