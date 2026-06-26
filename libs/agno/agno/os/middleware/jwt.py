@@ -68,6 +68,7 @@ class JWTValidator:
         self,
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
+        jwks_url: Optional[str] = None,
         algorithm: str = "RS256",
         validate: bool = True,
         scopes_claim: str = "scopes",
@@ -84,6 +85,7 @@ class JWTValidator:
                               For asymmetric algorithms (RS256, ES256), these should be public keys.
                               For symmetric algorithms (HS256), these are shared secrets.
             jwks_file: Path to a static JWKS (JSON Web Key Set) file containing public keys.
+            jwks_url: URL of a JWKS endpoint to fetch public keys from (e.g. an identity provider's JWKS).
             algorithm: JWT algorithm (default: RS256).
             validate: Whether to validate the JWT token (default: True).
             scopes_claim: JWT claim name for scopes (default: "scopes").
@@ -110,7 +112,7 @@ class JWTValidator:
         if env_key and env_key not in self.verification_keys:
             self.verification_keys.append(env_key)
 
-        # JWKS configuration - load keys from JWKS file or environment variable.
+        # JWKS configuration - load keys from a JWKS file, a JWKS URL, or environment variables.
         self.jwks_keys: "Dict[str, PyJWK]" = {}
 
         # Try jwks_file parameter first
@@ -122,12 +124,21 @@ class JWTValidator:
             if jwks_file_env:
                 self._load_jwks_file(jwks_file_env)
 
+        # Try jwks_url parameter, then JWT_JWKS_URL env var (URL to fetch keys from)
+        if jwks_url:
+            self._load_jwks_url(jwks_url)
+        else:
+            jwks_url_env = getenv("JWT_JWKS_URL", "")
+            if jwks_url_env:
+                self._load_jwks_url(jwks_url_env)
+
         # Validate that at least one key source is provided if validate=True
         if self.validate and not self.verification_keys and not self.jwks_keys:
             raise ValueError(
-                "At least one JWT verification key or JWKS file is required when validate=True. "
+                "At least one JWT verification key, JWKS file, or JWKS URL is required when validate=True. "
                 "Set via verification_keys parameter, JWT_VERIFICATION_KEY environment variable, "
-                "jwks_file parameter or JWT_JWKS_FILE environment variable."
+                "jwks_file parameter, JWT_JWKS_FILE environment variable, "
+                "jwks_url parameter or JWT_JWKS_URL environment variable."
             )
 
     def _load_jwks_file(self, file_path: str) -> None:
@@ -147,6 +158,26 @@ class JWTValidator:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in JWKS file {file_path}: {e}")
 
+    def _load_jwks_url(self, url: str) -> None:
+        """
+        Fetch keys from a remote JWKS endpoint.
+
+        Args:
+            url: URL of the JWKS (JSON Web Key Set) endpoint
+        """
+        import httpx
+
+        try:
+            response = httpx.get(url, timeout=10.0)
+            response.raise_for_status()
+            jwks_data = response.json()
+            self._parse_jwks_data(jwks_data)
+            log_debug(f"Loaded {len(self.jwks_keys)} key(s) from JWKS URL: {url}")
+        except httpx.HTTPError as e:
+            raise ValueError(f"Failed to fetch JWKS from {url}: {e}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in JWKS from {url}: {e}")
+
     def _parse_jwks_data(self, jwks_data: Dict[str, Any]) -> None:
         """
         Parse JWKS data and populate self.jwks_keys.
@@ -155,6 +186,10 @@ class JWTValidator:
             jwks_data: Parsed JWKS dictionary with "keys" array
         """
         from jwt import PyJWK
+
+        # Reject a non-dict body
+        if not isinstance(jwks_data, dict):
+            raise ValueError("JWKS must be a JSON object containing a 'keys' array")
 
         keys = jwks_data.get("keys", [])
         if not keys:
@@ -396,6 +431,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         app,
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
+        jwks_url: Optional[str] = None,
         secret_key: Optional[str] = None,  # Deprecated: Use verification_keys instead
         algorithm: str = "RS256",
         validate: bool = True,
@@ -432,6 +468,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
                       Keys are looked up by the "kid" (key ID) claim in the JWT header.
                       If not provided, will check JWT_JWKS_FILE env var for a file path,
                       or JWT_JWKS env var for inline JWKS JSON content.
+            jwks_url: URL of a JWKS endpoint to fetch public keys from (e.g. an identity provider's
+                      JWKS). Fetched once at startup. If not provided, will check the JWT_JWKS_URL env var.
             secret_key: (deprecated) Use verification_keys instead. If provided, will be added to verification_keys.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
             validate: Whether to validate the JWT signature (default: True). If False, tokens are decoded
@@ -484,6 +522,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.validator = JWTValidator(
             verification_keys=all_verification_keys if all_verification_keys else None,
             jwks_file=jwks_file,
+            jwks_url=jwks_url,
             algorithm=algorithm,
             validate=validate,
             scopes_claim=scopes_claim,
