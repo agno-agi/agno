@@ -61,11 +61,6 @@ def should_respond(event: dict, reply_to_mentions_only: bool, is_ambient: bool =
 
 
 async def is_ambient_thread(async_client: Any, channel: str, thread_ts: str, bot_user_id: Optional[str]) -> bool:
-    """Check if thread's first message mentions the bot (ambient mode).
-
-    Fetches the first message of the thread and checks for bot mention.
-    Returns False for non-threaded messages or if bot wasn't mentioned.
-    """
     if not thread_ts or not bot_user_id:
         return False
 
