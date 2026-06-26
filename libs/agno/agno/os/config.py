@@ -2,7 +2,7 @@
 
 from typing import Generic, List, Optional, TypeVar
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 
 class AuthorizationConfig(BaseModel):
@@ -132,15 +132,6 @@ class ChatConfig(BaseModel):
     """Configuration for the Chat page of the AgentOS"""
 
     quick_prompts: dict[str, list[str]]
-
-    # Limit the number of quick prompts to 3 (per agent/team/workflow)
-    @field_validator("quick_prompts")
-    @classmethod
-    def limit_lists(cls, v):
-        for key, lst in v.items():
-            if len(lst) > 3:
-                raise ValueError(f"Too many quick prompts for '{key}', maximum allowed is 3")
-        return v
 
 
 class AgentOSConfig(BaseModel):
