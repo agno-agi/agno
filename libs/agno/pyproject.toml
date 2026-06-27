@@ -149,6 +149,7 @@ todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
+yolo = ["ultralytics>=8.3.0"]
 youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
 daytona = ["daytona"]
@@ -279,6 +280,7 @@ tools = [
   "agno[scrapegraph]",
   "agno[valyu]",
   "agno[yfinance]",
+  "agno[yolo]",
   "agno[confluence]",
   "agno[docling]",
   "agno[notion]",
