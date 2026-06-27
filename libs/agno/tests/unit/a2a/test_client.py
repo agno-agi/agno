@@ -231,6 +231,29 @@ class TestParseStreamEvent:
         assert event.event_type == "completed"
         assert event.is_final
 
+    def test_parse_task_event_with_wrapped_text_part(self):
+        """Test parsing final task events with wrapped text parts."""
+        client = A2AClient("http://localhost:7777")
+        data = {
+            "result": {
+                "kind": "task",
+                "id": "task-123",
+                "contextId": "ctx-456",
+                "history": [
+                    {
+                        "role": "agent",
+                        "parts": [{"root": {"kind": "text", "text": "Wrapped final content"}}],
+                    }
+                ],
+            },
+        }
+
+        event = client._parse_stream_event(data)
+
+        assert event.event_type == "task"
+        assert event.content == "Wrapped final content"
+        assert event.is_final
+
 
 class TestSendMessage:
     """Test send_message method."""
