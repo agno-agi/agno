@@ -170,6 +170,9 @@ class TeamSession:
             filtered_runs = []
             seen_run_ids: set[str] = set()
 
+            def _matches_member_id(run: Union[TeamRunOutput, RunOutput]) -> bool:
+                return getattr(run, "agent_id", None) in member_ids or getattr(run, "team_id", None) in member_ids
+
             def _add_if_unseen(run: Union[TeamRunOutput, RunOutput]) -> None:
                 run_id = getattr(run, "run_id", None)
                 if run_id and run_id in seen_run_ids:
@@ -178,13 +181,16 @@ class TeamSession:
                     seen_run_ids.add(run_id)
                 filtered_runs.append(run)
 
+            def _add_matching_member_responses(run: Union[TeamRunOutput, RunOutput]) -> None:
+                for member_run in getattr(run, "member_responses", []) or []:
+                    if _matches_member_id(member_run):
+                        _add_if_unseen(member_run)
+                    _add_matching_member_responses(member_run)
+
             for run in session_runs:
-                if hasattr(run, "agent_id") and run.agent_id in member_ids:  # type: ignore
+                if _matches_member_id(run):
                     _add_if_unseen(run)
-                elif hasattr(run, "member_responses"):
-                    for member_run in run.member_responses:
-                        if hasattr(member_run, "agent_id") and member_run.agent_id in member_ids:  # type: ignore
-                            _add_if_unseen(member_run)
+                _add_matching_member_responses(run)
             session_runs = filtered_runs
 
         if skip_member_messages:

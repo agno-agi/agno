@@ -36,7 +36,7 @@ def _make_member_run(agent_id: str, run_id: str) -> RunOutput:
     )
 
 
-def _make_team_run(team_id: str, run_id: str, member_runs: list[RunOutput]) -> TeamRunOutput:
+def _make_team_run(team_id: str, run_id: str, member_runs: list[RunOutput | TeamRunOutput]) -> TeamRunOutput:
     """Create a TeamRunOutput containing member_responses."""
     return TeamRunOutput(
         run_id=run_id,
@@ -178,6 +178,29 @@ class TestGetMessagesMemberDedup:
 
         messages = session.get_messages(member_ids=["agent-001"], skip_member_messages=False)
         assert len(messages) == 4
+
+    def test_nested_team_member_responses_filter_by_team_id(self):
+        """Nested TeamRunOutput members should be selectable with member_ids."""
+        child_team_run = TeamRunOutput(
+            run_id="run-child-team-001",
+            team_id="child-team-001",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="Analyze this document"),
+                Message(role="assistant", content="Child team analysis complete."),
+            ],
+        )
+        parent_team_run = _make_team_run("parent-team-001", "run-parent-team-001", [child_team_run])
+
+        session = TeamSession(session_id="test-session")
+        session.runs = [parent_team_run]  # type: ignore
+
+        messages = session.get_messages(member_ids=["child-team-001"], skip_member_messages=False)
+
+        assert [message.content for message in messages] == [
+            "Analyze this document",
+            "Child team analysis complete.",
+        ]
 
     def test_multiple_delegation_turns_deduped(self):
         """Simulate two delegation turns to the same member: each turn should appear once."""
