@@ -1,5 +1,5 @@
 import csv
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 try:
     import psycopg
@@ -10,21 +10,38 @@ except ImportError:
     raise ImportError("`psycopg` not installed. Please install using `pip install 'psycopg-binary'`.")
 
 from agno.tools import Toolkit
+from agno.tools._security import assert_read_only_sql, redact_password, unwrap_secret
 from agno.utils.log import log_debug, log_error
+
+if TYPE_CHECKING:
+    from pydantic import SecretStr
 
 
 class PostgresTools(Toolkit):
-    """
-    A toolkit for interacting with PostgreSQL databases.
+    """A toolkit for interacting with PostgreSQL databases.
+
+    Security notes (hardened build):
+
+    * The managed connection is opened with ``read_only = True`` at
+      the server level, and :meth:`run_query` / :meth:`inspect_query`
+      additionally reject anything that is not a single ``SELECT`` /
+      ``WITH`` statement.
+    * ``password`` accepts either a plain string or a
+      ``pydantic.SecretStr`` and is redacted from ``__repr__``.
+    * Identifiers used by :meth:`summarize_table` and
+      :meth:`export_table_to_path` are wrapped with
+      :class:`psycopg.sql.Identifier` so they are safely quoted.
 
     Args:
-        connection (Optional[PgConnection[DictRow]]): Existing database connection to reuse.
-        db_name (Optional[str]): Database name to connect to.
-        user (Optional[str]): Username for authentication.
-        password (Optional[str]): Password for authentication.
-        host (Optional[str]): PostgreSQL server hostname.
-        port (Optional[int]): PostgreSQL server port number.
-        table_schema (str): Default schema for table operations. Default is "public".
+        connection: Existing database connection to reuse.
+        db_name: Database name to connect to.
+        user: Username for authentication.
+        password: Password for authentication. Accepts
+            :class:`pydantic.SecretStr`.
+        host: PostgreSQL server hostname.
+        port: PostgreSQL server port number.
+        table_schema: Default schema for table operations. Default
+            is ``"public"``.
     """
 
     _requires_connect: bool = True
@@ -34,7 +51,7 @@ class PostgresTools(Toolkit):
         connection: Optional[PgConnection[DictRow]] = None,
         db_name: Optional[str] = None,
         user: Optional[str] = None,
-        password: Optional[str] = None,
+        password: Optional[Union[str, "SecretStr"]] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
         table_schema: str = "public",
@@ -43,7 +60,7 @@ class PostgresTools(Toolkit):
         self._connection: Optional[PgConnection[DictRow]] = connection
         self.db_name: Optional[str] = db_name
         self.user: Optional[str] = user
-        self.password: Optional[str] = password
+        self.password: Optional[str] = unwrap_secret(password)
         self.host: Optional[str] = host
         self.port: Optional[int] = port
         self.table_schema: str = table_schema
@@ -251,7 +268,11 @@ class PostgresTools(Toolkit):
         :param query: The SQL query to inspect.
         :return: The query's execution plan.
         """
-        return self._execute_query(f"EXPLAIN {query}")
+        try:
+            safe_q = assert_read_only_sql(query)
+        except ValueError as e:
+            return f"Error: {e}"
+        return self._execute_query("EXPLAIN " + safe_q)
 
     def export_table_to_path(self, table: str, path: str) -> str:
         """
@@ -294,4 +315,15 @@ class PostgresTools(Toolkit):
         :param query: The SQL query to run.
         :return: The query result as a formatted string.
         """
-        return self._execute_query(query)
+        try:
+            safe_q = assert_read_only_sql(query)
+        except ValueError as e:
+            return f"Error: {e}"
+        return self._execute_query(safe_q)
+
+    def __repr__(self) -> str:
+        return (
+            f"PostgresTools(db_name={self.db_name!r}, user={self.user!r}, "
+            f"host={self.host!r}, port={self.port!r}, "
+            f"password={redact_password(self.password)!r})"
+        )

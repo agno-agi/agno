@@ -5,6 +5,7 @@ from typing import Any, List, Optional, Tuple
 
 from agno.tools import Toolkit
 from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, path_matches_exclude
+from agno.tools._security import resolve_within, validate_glob_pattern
 from agno.utils.log import log_debug, log_error
 
 TEXT_EXTENSIONS = {
@@ -300,9 +301,25 @@ class FileTools(Toolkit):
         try:
             if not pattern or not pattern.strip():
                 return "Error: Pattern cannot be empty"
+            try:
+                validate_glob_pattern(pattern)
+            except ValueError as e:
+                log_error(f"Invalid glob pattern {pattern!r}: {e}")
+                return f"Error: {e}"
 
             log_debug(f"Searching files in {self.base_dir} with pattern {pattern}")
-            matching_files = [p for p in self.base_dir.glob(pattern) if not self._is_excluded(p)]
+            raw_matches = self.base_dir.glob(pattern)
+            # Filter out any path that resolves outside base_dir (symlink
+            # escape). ``resolve_within`` also handles ``..`` remnants.
+            matching_files = []
+            for p in raw_matches:
+                if self._is_excluded(p):
+                    continue
+                ok, _ = resolve_within(str(p), self.base_dir)
+                if not ok:
+                    log_error(f"Dropping glob match outside base_dir: {p}")
+                    continue
+                matching_files.append(p)
             result = None
             if self.expose_base_directory:
                 file_paths = [str(file_path) for file_path in matching_files]
