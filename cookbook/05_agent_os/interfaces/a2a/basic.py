@@ -36,14 +36,15 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS with A2A interface.
+    """Run your AgentOS with the A2A 1.0 interface.
 
-    You can run the Agent via A2A protocol:
-    POST http://localhost:7777/agents/{id}/v1/message:send
-    For streaming responses:
-    POST http://localhost:7777/agents/{id}/v1/message:stream
-    Retrieve the agent card at:
-    GET  http://localhost:7777/agents/{id}/.well-known/agent-card.json
+    Endpoints (A2A 1.0, JSON-RPC 2.0 envelope, flat Part with mediaType):
+        GET  http://localhost:7777/a2a/agents/{id}/.well-known/agent-card.json
+        POST http://localhost:7777/a2a/agents/{id}/v1                 (JSON-RPC: SendMessage / SendStreamingMessage — what the a2a-sdk Client targets)
+        POST http://localhost:7777/a2a/agents/{id}/v1/message:send    (legacy URL-style, kept for back-compat)
+        POST http://localhost:7777/a2a/agents/{id}/v1/message:stream  (legacy URL-style, kept for back-compat)
 
+    Test with the official a2a-sdk client (see README.md for a runnable snippet)
+    or with the a2a-inspector at https://github.com/a2aproject/a2a-inspector.
     """
     agent_os.serve(app="basic:app", reload=True, port=7777)

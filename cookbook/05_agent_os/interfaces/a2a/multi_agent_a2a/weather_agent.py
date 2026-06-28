@@ -48,12 +48,14 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-    You can run the Agent via A2A protocol:
-    POST http://localhost:7770/agents/{id}/v1/message:send
-    For streaming responses:
-    POST http://localhost:7770/agents/{id}/v1/message:stream
-    Retrieve the agent card at:
-    GET  http://localhost:7770/agents/{id}/.well-known/agent-card.json
+    """Run your AgentOS with the A2A 1.0 interface.
+
+    Endpoints (A2A 1.0, JSON-RPC 2.0 envelope, flat Part with mediaType):
+        GET  http://localhost:7770/a2a/agents/weather-reporter-agent/.well-known/agent-card.json
+        POST http://localhost:7770/a2a/agents/weather-reporter-agent/v1                 (JSON-RPC: SendMessage / SendStreamingMessage)
+        POST http://localhost:7770/a2a/agents/weather-reporter-agent/v1/message:send    (legacy URL-style)
+        POST http://localhost:7770/a2a/agents/weather-reporter-agent/v1/message:stream  (legacy URL-style)
+
+    Targeted by `streaming_client_demo.py` and `agent_card_demo.py`.
     """
     agent_os.serve(app="weather_agent:app", port=7770, reload=True)
