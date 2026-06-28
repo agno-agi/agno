@@ -22,14 +22,14 @@ class StreamableHTTPClientParams:
     timeout: Optional[timedelta] = timedelta(seconds=30)
     sse_read_timeout: Optional[timedelta] = timedelta(seconds=60 * 5)
     terminate_on_close: Optional[bool] = None
-    http_client: Optional[Any] = None
+    httpx_client_factory: Optional[Any] = None
 
 
 def streamable_http_client_kwargs(
     server_params: Optional[StreamableHTTPClientParams] = None,
     *,
     url: Optional[str] = None,
-    http_client: Any = None,
+    httpx_client_factory: Any = None,
 ) -> dict[str, Any]:
     """Build kwargs for ``streamablehttp_client`` without copying values."""
     kwargs: dict[str, Any] = {}
@@ -37,13 +37,13 @@ def streamable_http_client_kwargs(
     if server_params is not None:
         for field in fields(StreamableHTTPClientParams):
             value = getattr(server_params, field.name)
-            if field.name == "http_client" and value is None:
+            if field.name == "httpx_client_factory" and value is None:
                 continue
             kwargs[field.name] = value
     elif url is not None:
         kwargs["url"] = url
 
-    if http_client is not None and "http_client" not in kwargs:
-        kwargs["http_client"] = http_client
+    if httpx_client_factory is not None and "httpx_client_factory" not in kwargs:
+        kwargs["httpx_client_factory"] = httpx_client_factory
 
     return kwargs

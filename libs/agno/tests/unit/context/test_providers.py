@@ -909,19 +909,19 @@ def test_mcp_kwargs_escape_hatch_forwards_to_mcptools():
     assert tools.tool_name_prefix == "srv_"
 
 
-def test_mcp_kwargs_http_client_passes_through_unchanged():
-    client = MagicMock()
+def test_mcp_kwargs_httpx_client_factory_passes_through_unchanged():
+    client_factory = MagicMock()
     p = MCPContextProvider(
         "srv",
         transport="streamable-http",
         url="https://example.com/mcp",
-        mcp_kwargs={"http_client": client},
+        mcp_kwargs={"httpx_client_factory": client_factory},
     )
 
     with patch("agno.context.mcp.provider.MCPTools") as mock_mcptools:
         p._build_tools_instance()
 
-    assert mock_mcptools.call_args.kwargs["http_client"] is client
+    assert mock_mcptools.call_args.kwargs["httpx_client_factory"] is client_factory
 
 
 @pytest.mark.asyncio

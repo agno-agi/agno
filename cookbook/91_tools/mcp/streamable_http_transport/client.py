@@ -39,21 +39,25 @@ async def run_agent(message: str) -> None:
 
 async def run_agent_with_custom_http_client(message: str) -> None:
     # Swap verify=False for verify="/path/to/ca.pem" when you need a custom CA bundle.
-    async with httpx.AsyncClient(verify=False) as http_client:
-        mcp_tools = MCPTools(
-            transport="streamable-http",
-            url=server_url,
-            http_client=http_client,
-            refresh_connection=True,
-        )
-        await mcp_tools.connect()
+    def httpx_client_factory(
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.AsyncClient:
+        return httpx.AsyncClient(headers=headers, timeout=timeout, auth=auth, verify=False)
+
+    async with MCPTools(
+        transport="streamable-http",
+        url=server_url,
+        httpx_client_factory=httpx_client_factory,
+        refresh_connection=True,
+    ) as mcp_tools:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
             tools=[mcp_tools],
             markdown=True,
         )
         await agent.aprint_response(input=message, stream=True, markdown=True)
-        await mcp_tools.close()
 
 
 # Using MultiMCPTools, we can connect to multiple MCP servers at once, even if they use different transports.

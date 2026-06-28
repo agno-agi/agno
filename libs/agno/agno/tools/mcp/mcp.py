@@ -49,7 +49,7 @@ class MCPTools(Toolkit):
         session: Optional[ClientSession] = None,
         timeout_seconds: int = 10,
         client=None,
-        http_client=None,
+        httpx_client_factory=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
@@ -67,7 +67,7 @@ class MCPTools(Toolkit):
             url: The URL endpoint for SSE or Streamable HTTP connection when transport is "sse" or "streamable-http".
             env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
-            http_client: The underlying HTTP client for streamable-http transport.
+            httpx_client_factory: Factory for a customized streamable-http transport client.
             timeout_seconds: Read timeout in seconds for the MCP client
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
@@ -158,7 +158,7 @@ class MCPTools(Toolkit):
             server_params
         )
         self.url = url
-        self._http_client = http_client
+        self._httpx_client_factory = httpx_client_factory
 
         # Merge provided env with system env
         if env is not None:
@@ -330,7 +330,7 @@ class MCPTools(Toolkit):
             streamable_http_params = streamable_http_client_kwargs(
                 self.server_params if isinstance(self.server_params, StreamableHTTPClientParams) else None,
                 url=self.url,
-                http_client=self._http_client,
+                httpx_client_factory=self._httpx_client_factory,
             )
             existing_headers = streamable_http_params.get("headers") or {}
             streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
@@ -441,7 +441,7 @@ class MCPTools(Toolkit):
                 streamable_http_params = streamable_http_client_kwargs(
                     self.server_params if isinstance(self.server_params, StreamableHTTPClientParams) else None,
                     url=self.url,
-                    http_client=self._http_client,
+                    httpx_client_factory=self._httpx_client_factory,
                 )
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
@@ -612,7 +612,7 @@ class MCPTools(Toolkit):
             streamable_http_params = streamable_http_client_kwargs(
                 self.server_params if isinstance(self.server_params, StreamableHTTPClientParams) else None,
                 url=self.url,
-                http_client=self._http_client,
+                httpx_client_factory=self._httpx_client_factory,
             )
             if init_headers:
                 existing_headers = streamable_http_params.get("headers") or {}

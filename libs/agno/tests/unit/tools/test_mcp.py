@@ -202,8 +202,8 @@ def test_call_header_provider_with_team():
 
 
 def test_streamable_http_client_kwargs_preserves_identity_and_fallback_order():
-    params_client = object()
-    fallback_client = object()
+    params_factory = object()
+    fallback_factory = object()
     headers = {"X-Test": "value"}
     timeout = timedelta(seconds=37)
     sse_read_timeout = timedelta(seconds=91)
@@ -213,17 +213,17 @@ def test_streamable_http_client_kwargs_preserves_identity_and_fallback_order():
         timeout=timeout,
         sse_read_timeout=sse_read_timeout,
         terminate_on_close=True,
-        http_client=params_client,
+        httpx_client_factory=params_factory,
     )
 
-    kwargs = streamable_http_client_kwargs(params, http_client=fallback_client)
+    kwargs = streamable_http_client_kwargs(params, httpx_client_factory=fallback_factory)
 
     assert kwargs["url"] == "http://localhost:8080/mcp"
     assert kwargs["headers"] is headers
     assert kwargs["timeout"] is timeout
     assert kwargs["sse_read_timeout"] is sse_read_timeout
     assert kwargs["terminate_on_close"] is True
-    assert kwargs["http_client"] is params_client
+    assert kwargs["httpx_client_factory"] is params_factory
 
     fallback_params = StreamableHTTPClientParams(
         url="http://localhost:8080/mcp",
@@ -231,11 +231,11 @@ def test_streamable_http_client_kwargs_preserves_identity_and_fallback_order():
         timeout=timeout,
         sse_read_timeout=sse_read_timeout,
     )
-    fallback_kwargs = streamable_http_client_kwargs(fallback_params, http_client=fallback_client)
-    assert fallback_kwargs["http_client"] is fallback_client
+    fallback_kwargs = streamable_http_client_kwargs(fallback_params, httpx_client_factory=fallback_factory)
+    assert fallback_kwargs["httpx_client_factory"] is fallback_factory
 
 
-def test_streamable_http_client_kwargs_default_shape_omits_http_client():
+def test_streamable_http_client_kwargs_default_shape_omits_httpx_client_factory():
     headers = {"X-Test": "value"}
     timeout = timedelta(seconds=30)
     sse_read_timeout = timedelta(seconds=300)
@@ -252,7 +252,7 @@ def test_streamable_http_client_kwargs_default_shape_omits_http_client():
     assert kwargs["headers"] is headers
     assert kwargs["timeout"] is timeout
     assert kwargs["sse_read_timeout"] is sse_read_timeout
-    assert "http_client" not in kwargs
+    assert "httpx_client_factory" not in kwargs
 
 
 @pytest.mark.asyncio
@@ -433,13 +433,15 @@ async def test_get_session_for_run_merges_headers_when_streamable_http_headers_d
 
 
 @pytest.mark.asyncio
-async def test_connect_forwards_params_level_http_client_before_constructor_fallback():
-    params_client = object()
-    fallback_client = object()
+async def test_connect_forwards_params_level_httpx_client_factory_before_constructor_fallback():
+    params_factory = object()
+    fallback_factory = object()
     tools = MCPTools(
-        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp", http_client=params_client),
+        server_params=StreamableHTTPClientParams(
+            url="http://localhost:8080/mcp", httpx_client_factory=params_factory
+        ),
         transport="streamable-http",
-        http_client=fallback_client,
+        httpx_client_factory=fallback_factory,
     )
 
     with (
@@ -450,17 +452,17 @@ async def test_connect_forwards_params_level_http_client_before_constructor_fall
     ):
         await tools._connect()
 
-    assert streamable_mock.call_args.kwargs["http_client"] is params_client
-    assert "http_client" in streamable_mock.call_args.kwargs
+    assert streamable_mock.call_args.kwargs["httpx_client_factory"] is params_factory
+    assert "httpx_client_factory" in streamable_mock.call_args.kwargs
 
 
 @pytest.mark.asyncio
-async def test_connect_forwards_constructor_http_client_when_params_client_missing():
-    constructor_client = object()
+async def test_connect_forwards_constructor_httpx_client_factory_when_params_factory_missing():
+    constructor_factory = object()
     tools = MCPTools(
         url="http://localhost:8080/mcp",
         transport="streamable-http",
-        http_client=constructor_client,
+        httpx_client_factory=constructor_factory,
     )
 
     with (
@@ -471,18 +473,18 @@ async def test_connect_forwards_constructor_http_client_when_params_client_missi
     ):
         await tools._connect()
 
-    assert streamable_mock.call_args.kwargs["http_client"] is constructor_client
+    assert streamable_mock.call_args.kwargs["httpx_client_factory"] is constructor_factory
     assert streamable_mock.call_args.kwargs["url"] == "http://localhost:8080/mcp"
 
 
 @pytest.mark.asyncio
-async def test_multimcp_forwards_per_server_http_client():
-    first_client = object()
-    second_client = object()
+async def test_multimcp_forwards_per_server_httpx_client_factory():
+    first_factory = object()
+    second_factory = object()
     tools = MultiMCPTools(
         server_params_list=[
-            StreamableHTTPClientParams(url="http://localhost:8080/mcp", http_client=first_client),
-            StreamableHTTPClientParams(url="http://localhost:8081/mcp", http_client=second_client),
+            StreamableHTTPClientParams(url="http://localhost:8080/mcp", httpx_client_factory=first_factory),
+            StreamableHTTPClientParams(url="http://localhost:8081/mcp", httpx_client_factory=second_factory),
         ],
     )
     tools._async_exit_stack = _AsyncExitStackStub()
@@ -498,8 +500,8 @@ async def test_multimcp_forwards_per_server_http_client():
     ):
         await tools._connect()
 
-    assert streamable_mock.call_args_list[0].kwargs["http_client"] is first_client
-    assert streamable_mock.call_args_list[1].kwargs["http_client"] is second_client
+    assert streamable_mock.call_args_list[0].kwargs["httpx_client_factory"] is first_factory
+    assert streamable_mock.call_args_list[1].kwargs["httpx_client_factory"] is second_factory
 
 
 # =============================================================================
