@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optiona
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
+from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams, streamable_http_client_kwargs
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
 
@@ -49,6 +49,7 @@ class MCPTools(Toolkit):
         session: Optional[ClientSession] = None,
         timeout_seconds: int = 10,
         client=None,
+        http_client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
@@ -66,6 +67,7 @@ class MCPTools(Toolkit):
             url: The URL endpoint for SSE or Streamable HTTP connection when transport is "sse" or "streamable-http".
             env: The environment variables to pass to the server. Should be used in conjunction with command.
             client: The underlying MCP client (optional, used to prevent garbage collection)
+            http_client: The underlying HTTP client for streamable-http transport.
             timeout_seconds: Read timeout in seconds for the MCP client
             include_tools: Optional list of tool names to include (if None, includes all)
             exclude_tools: Optional list of tool names to exclude (if None, excludes none)
@@ -156,6 +158,7 @@ class MCPTools(Toolkit):
             server_params
         )
         self.url = url
+        self._http_client = http_client
 
         # Merge provided env with system env
         if env is not None:
@@ -324,9 +327,11 @@ class MCPTools(Toolkit):
             context = sse_client(**sse_params)  # type: ignore
             client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
         elif self.transport == "streamable-http":
-            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in streamable_http_params:
-                streamable_http_params["url"] = self.url
+            streamable_http_params = streamable_http_client_kwargs(
+                self.server_params if isinstance(self.server_params, StreamableHTTPClientParams) else None,
+                url=self.url,
+                http_client=self._http_client,
+            )
             existing_headers = streamable_http_params.get("headers") or {}
             streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
             context = streamablehttp_client(**streamable_http_params)  # type: ignore
@@ -433,11 +438,11 @@ class MCPTools(Toolkit):
                 client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
 
             elif self.transport == "streamable-http":
-                streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-                if "url" not in streamable_http_params:
-                    streamable_http_params["url"] = self.url
-
-                # Merge dynamic headers into existing headers
+                streamable_http_params = streamable_http_client_kwargs(
+                    self.server_params if isinstance(self.server_params, StreamableHTTPClientParams) else None,
+                    url=self.url,
+                    http_client=self._http_client,
+                )
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
 
@@ -604,9 +609,11 @@ class MCPTools(Toolkit):
 
         # Create a new streamable HTTP session
         elif self.transport == "streamable-http":
-            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
-            if "url" not in streamable_http_params:
-                streamable_http_params["url"] = self.url
+            streamable_http_params = streamable_http_client_kwargs(
+                self.server_params if isinstance(self.server_params, StreamableHTTPClientParams) else None,
+                url=self.url,
+                http_client=self._http_client,
+            )
             if init_headers:
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **init_headers}

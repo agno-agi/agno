@@ -1,11 +1,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import timedelta
 
 import pytest
 from mcp.types import CallToolResult, TextContent
 
 from agno.tools.function import Function, FunctionCall, ToolResult
 from agno.tools.mcp import MCPTools, MultiMCPTools
-from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
+from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams, streamable_http_client_kwargs
 from agno.utils.mcp import get_entrypoint_for_tool
 
 
@@ -200,6 +201,95 @@ def test_call_header_provider_with_team():
     assert result == {"X-Agent": "member-agent", "X-Team": "test-team"}
 
 
+def test_streamable_http_client_kwargs_preserves_identity_and_fallback_order():
+    params_client = object()
+    fallback_client = object()
+    headers = {"X-Test": "value"}
+    timeout = timedelta(seconds=37)
+    sse_read_timeout = timedelta(seconds=91)
+    params = StreamableHTTPClientParams(
+        url="http://localhost:8080/mcp",
+        headers=headers,
+        timeout=timeout,
+        sse_read_timeout=sse_read_timeout,
+        terminate_on_close=True,
+        http_client=params_client,
+    )
+
+    kwargs = streamable_http_client_kwargs(params, http_client=fallback_client)
+
+    assert kwargs["url"] == "http://localhost:8080/mcp"
+    assert kwargs["headers"] is headers
+    assert kwargs["timeout"] is timeout
+    assert kwargs["sse_read_timeout"] is sse_read_timeout
+    assert kwargs["terminate_on_close"] is True
+    assert kwargs["http_client"] is params_client
+
+    fallback_params = StreamableHTTPClientParams(
+        url="http://localhost:8080/mcp",
+        headers=headers,
+        timeout=timeout,
+        sse_read_timeout=sse_read_timeout,
+    )
+    fallback_kwargs = streamable_http_client_kwargs(fallback_params, http_client=fallback_client)
+    assert fallback_kwargs["http_client"] is fallback_client
+
+
+def test_streamable_http_client_kwargs_default_shape_omits_http_client():
+    headers = {"X-Test": "value"}
+    timeout = timedelta(seconds=30)
+    sse_read_timeout = timedelta(seconds=300)
+    params = StreamableHTTPClientParams(
+        url="http://localhost:8080/mcp",
+        headers=headers,
+        timeout=timeout,
+        sse_read_timeout=sse_read_timeout,
+    )
+
+    kwargs = streamable_http_client_kwargs(params)
+
+    assert set(kwargs) == {"url", "headers", "timeout", "sse_read_timeout", "terminate_on_close"}
+    assert kwargs["headers"] is headers
+    assert kwargs["timeout"] is timeout
+    assert kwargs["sse_read_timeout"] is sse_read_timeout
+    assert "http_client" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_call_sites_route_through_shared_helper():
+    helper_return = {"url": "http://localhost:8080/mcp", "headers": {}}
+
+    mcp_tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+    )
+    multimcp_tools = MultiMCPTools(
+        server_params_list=[StreamableHTTPClientParams(url="http://localhost:8081/mcp")],
+    )
+    multimcp_tools._async_exit_stack = _AsyncExitStackStub()
+
+    with (
+        patch("agno.tools.mcp.mcp.streamable_http_client_kwargs", return_value=helper_return) as mcp_helper_mock,
+        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write"))) as mcp_client_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+        patch("agno.tools.mcp.multi_mcp.streamable_http_client_kwargs", return_value=helper_return) as multi_helper_mock,
+        patch("agno.tools.mcp.multi_mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write"))) as multi_client_mock,
+        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
+        patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
+    ):
+        await mcp_tools._connect()
+        await multimcp_tools._connect()
+
+    assert mcp_helper_mock.called
+    assert multi_helper_mock.called
+    assert mcp_client_mock.call_args.args == ()
+    assert mcp_client_mock.call_args.kwargs == helper_return
+    assert multi_client_mock.call_args.args == ()
+    assert multi_client_mock.call_args.kwargs == helper_return
+
+
 @pytest.mark.asyncio
 async def test_connect_merges_init_headers_when_streamable_http_headers_default_to_none():
     tools = MCPTools(
@@ -340,6 +430,76 @@ async def test_get_session_for_run_merges_headers_when_streamable_http_headers_d
 
     assert streamable_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
     assert session is mock_session
+
+
+@pytest.mark.asyncio
+async def test_connect_forwards_params_level_http_client_before_constructor_fallback():
+    params_client = object()
+    fallback_client = object()
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp", http_client=params_client),
+        transport="streamable-http",
+        http_client=fallback_client,
+    )
+
+    with (
+        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write")))
+        as streamable_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert streamable_mock.call_args.kwargs["http_client"] is params_client
+    assert "http_client" in streamable_mock.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_connect_forwards_constructor_http_client_when_params_client_missing():
+    constructor_client = object()
+    tools = MCPTools(
+        url="http://localhost:8080/mcp",
+        transport="streamable-http",
+        http_client=constructor_client,
+    )
+
+    with (
+        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write")))
+        as streamable_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert streamable_mock.call_args.kwargs["http_client"] is constructor_client
+    assert streamable_mock.call_args.kwargs["url"] == "http://localhost:8080/mcp"
+
+
+@pytest.mark.asyncio
+async def test_multimcp_forwards_per_server_http_client():
+    first_client = object()
+    second_client = object()
+    tools = MultiMCPTools(
+        server_params_list=[
+            StreamableHTTPClientParams(url="http://localhost:8080/mcp", http_client=first_client),
+            StreamableHTTPClientParams(url="http://localhost:8081/mcp", http_client=second_client),
+        ],
+    )
+    tools._async_exit_stack = _AsyncExitStackStub()
+
+    with (
+        patch(
+            "agno.tools.mcp.multi_mcp.streamablehttp_client",
+            side_effect=lambda **kwargs: _AsyncContextManager(("read", "write")),
+        ) as streamable_mock,
+        patch("agno.tools.mcp.multi_mcp.ClientSession", side_effect=lambda *args, **kwargs: _AsyncContextManager(MagicMock())),
+        patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
+        patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert streamable_mock.call_args_list[0].kwargs["http_client"] is first_client
+    assert streamable_mock.call_args_list[1].kwargs["http_client"] is second_client
 
 
 # =============================================================================

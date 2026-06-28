@@ -6,6 +6,8 @@ Check the README.md file for instructions on how to run these examples.
 
 import asyncio
 
+import httpx
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools, MultiMCPTools
@@ -33,6 +35,25 @@ async def run_agent(message: str) -> None:
     )
     await agent.aprint_response(input=message, stream=True, markdown=True)
     await mcp_tools.close()
+
+
+async def run_agent_with_custom_http_client(message: str) -> None:
+    # Swap verify=False for verify="/path/to/ca.pem" when you need a custom CA bundle.
+    async with httpx.AsyncClient(verify=False) as http_client:
+        mcp_tools = MCPTools(
+            transport="streamable-http",
+            url=server_url,
+            http_client=http_client,
+            refresh_connection=True,
+        )
+        await mcp_tools.connect()
+        agent = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            tools=[mcp_tools],
+            markdown=True,
+        )
+        await agent.aprint_response(input=message, stream=True, markdown=True)
+        await mcp_tools.close()
 
 
 # Using MultiMCPTools, we can connect to multiple MCP servers at once, even if they use different transports.
