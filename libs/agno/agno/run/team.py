@@ -11,7 +11,7 @@ from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus, deserialize_run_status
 from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 from agno.utils.media import (
@@ -1003,6 +1003,8 @@ class TeamRunOutput:
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+        if "status" in filtered_data:
+            filtered_data["status"] = deserialize_run_status(filtered_data["status"])
 
         return cls(
             messages=messages,

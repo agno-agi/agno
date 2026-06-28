@@ -335,3 +335,16 @@ class RunStatus(str, Enum):
     # history-builders can skip it when rebuilding context. Pass replace_original=false
     # to keep the original COMPLETED and visible instead.
     regenerated = "REGENERATED"
+
+
+def deserialize_run_status(status: Any) -> Any:
+    if status is None or isinstance(status, RunStatus):
+        return status
+
+    if isinstance(status, str):
+        try:
+            return RunStatus(status)
+        except ValueError:
+            return status
+
+    return status

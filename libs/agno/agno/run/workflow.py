@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.base import BaseRunOutputEvent, RunStatus, deserialize_run_status
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.log import log_warning
 from agno.utils.media import (
@@ -1032,6 +1032,8 @@ class WorkflowRunOutput:
 
         supported_fields = {f.name for f in fields(cls)}
         filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+        if "status" in filtered_data:
+            filtered_data["status"] = deserialize_run_status(filtered_data["status"])
 
         result = cls(
             step_results=parsed_step_results,
