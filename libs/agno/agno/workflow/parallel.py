@@ -6,10 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ParallelExecutionCompletedEvent,
@@ -163,6 +165,15 @@ class Parallel:
 
     def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
         """Aggregate multiple step outputs into a single StepOutput"""
+        # Check for executor HITL pauses - not supported in parallel steps
+        for output in step_outputs:
+            if getattr(output, "is_paused", False):
+                raise ValueError(
+                    f"Executor HITL inside Parallel steps is not supported. "
+                    f"Step '{output.step_name}' has a paused agent/team. "
+                    f"Move HITL tools to non-parallel steps or use step-level HITL."
+                )
+
         if not step_outputs:
             return StepOutput(
                 step_name=self.name or "Parallel",
@@ -335,6 +346,8 @@ class Parallel:
                     add_session_state_to_context=add_session_state_to_context,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
+            except RunCancelledException:
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 log_error(f"Parallel step {parallel_step_name} failed: {exc}")
@@ -370,6 +383,8 @@ class Parallel:
                     modified_session_states.append(modified_session_state)
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
                     log_debug(f"Parallel step {step_name} completed")
+                except RunCancelledException:
+                    raise
                 except Exception as e:
                     index = future_to_index[future]
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
@@ -430,6 +445,8 @@ class Parallel:
         add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
+        if workflow_run_response and workflow_run_response.run_id:
+            raise_if_cancelled(workflow_run_response.run_id)
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         parallel_step_id = str(uuid4())
@@ -516,6 +533,8 @@ class Parallel:
                 # Signal completion for this step
                 event_queue.put(("complete", idx, step_outputs, step_session_state))
                 return idx, step_outputs, step_session_state
+            except RunCancelledException:
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 log_error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
@@ -576,6 +595,8 @@ class Parallel:
             for future in futures:
                 try:
                     future.result()
+                except RunCancelledException:
+                    raise
                 except Exception:
                     logger.exception("Future completion error")
 
@@ -673,6 +694,8 @@ class Parallel:
                     add_session_state_to_context=add_session_state_to_context,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
+            except RunCancelledException:
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 log_error(f"Parallel step {parallel_step_name} failed: {exc}")
@@ -768,6 +791,8 @@ class Parallel:
         add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
+        if workflow_run_response and workflow_run_response.run_id:
+            await araise_if_cancelled(workflow_run_response.run_id)
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
 
         parallel_step_id = str(uuid4())
@@ -854,6 +879,8 @@ class Parallel:
                 # Signal completion for this step
                 await event_queue.put(("complete", idx, step_outputs, step_session_state))
                 return idx, step_outputs, step_session_state
+            except RunCancelledException:
+                raise
             except Exception as e:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.exception(f"Parallel step {parallel_step_name} async streaming failed")

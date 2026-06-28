@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import json
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -2152,13 +2153,67 @@ class Knowledge(RemoteKnowledge):
     # PRIVATE - CONVERSION & DATA METHODS
     # ==========================================
 
+    @staticmethod
+    def _build_remote_content_identity(remote_content: Optional["RemoteContent"]) -> Optional[str]:
+        """Return a stable identity string for a remote content reference.
+
+        The reference's source scope (bucket, repo, site, container) plus its
+        in-scope path must be included in the content hash so that the same
+        filename pulled from two different sources does not collide.
+        """
+        if remote_content is None:
+            return None
+
+        from agno.knowledge.remote_content.remote_content import (
+            AzureBlobContent,
+            GCSContent,
+            GitHubContent,
+            S3Content,
+            SharePointContent,
+        )
+
+        if isinstance(remote_content, GitHubContent):
+            scope = remote_content.repo or ""
+            in_scope = remote_content.file_path or remote_content.folder_path or ""
+            branch = remote_content.branch or ""
+            return f"github:{scope}@{branch}:{in_scope}"
+
+        elif isinstance(remote_content, S3Content):
+            scope = remote_content.bucket_name or (
+                remote_content.bucket.name if remote_content.bucket is not None else ""
+            )
+            in_scope = (
+                remote_content.key
+                or remote_content.prefix
+                or (remote_content.object.name if remote_content.object is not None else "")
+            )
+            return f"s3:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, GCSContent):
+            scope = remote_content.bucket_name or (
+                remote_content.bucket.name if remote_content.bucket is not None else ""
+            )
+            in_scope = remote_content.blob_name or remote_content.prefix or ""
+            return f"gcs:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, SharePointContent):
+            scope = f"{remote_content.site_path or ''}/{remote_content.drive_id or ''}"
+            in_scope = remote_content.file_path or remote_content.folder_path or ""
+            return f"sharepoint:{remote_content.config_id}:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, AzureBlobContent):
+            in_scope = remote_content.blob_name or remote_content.prefix or ""
+            return f"azureblob:{remote_content.config_id}:{in_scope}"
+
+        return None
+
     def _build_content_hash(self, content: Content) -> str:
         """
         Build the content hash from the content.
 
-        For URLs and paths, includes the name and description in the hash if provided
-        to ensure unique content with the same URL/path but different names/descriptions
-        get different hashes.
+        For URLs and paths, includes the name, description and metadata in the hash if
+        provided to ensure unique content with the same URL/path but different
+        names/descriptions/metadata get different hashes.
 
         Hash format:
         - URL with name and description: hash("{name}:{description}:{url}")
@@ -2166,12 +2221,22 @@ class Knowledge(RemoteKnowledge):
         - URL with description only: hash("{description}:{url}")
         - URL without name/description: hash("{url}") (backward compatible)
         - Same logic applies to paths
+        - When metadata is provided, a deterministic representation of it is appended
+          so the same content inserted with different metadata produces distinct hashes
+          (this allows `upsert=False` inserts of the same document with different
+          metadata to coexist instead of collapsing onto each other).
         """
         hash_parts = []
         if content.name:
             hash_parts.append(content.name)
         if content.description:
             hash_parts.append(content.description)
+        if content.metadata:
+            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
+
+        remote_identity = self._build_remote_content_identity(content.remote_content)
+        if remote_identity:
+            hash_parts.append(remote_identity)
 
         if content.path:
             hash_parts.append(str(content.path))
@@ -2235,6 +2300,8 @@ class Knowledge(RemoteKnowledge):
             hash_parts.append(content.name)
         if content.description:
             hash_parts.append(content.description)
+        if content.metadata:
+            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
 
         # Use document's own URL if available (set by WebsiteReader)
         doc_url = document.meta_data.get("url") if document.meta_data else None

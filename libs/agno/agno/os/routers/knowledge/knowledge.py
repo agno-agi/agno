@@ -248,6 +248,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         background_tasks: BackgroundTasks,
         config_id: str = Form(..., description="ID of the configured remote content source (from /knowledge/config)"),
         path: str = Form(..., description="Path to file or folder in the remote source"),
+        source_params: Optional[str] = Form(
+            None,
+            description=(
+                "JSON object of per-request parameters forwarded to the source's factory. "
+                "Used for provider-specific routing that shouldn't be baked into the config. "
+                "Currently supported keys: GitHub accepts 'repo' ('owner/repo'), letting one "
+                "configured GitHub source serve multiple repositories the credentials can access."
+            ),
+        ),
         name: Optional[str] = Form(None, description="Content name (auto-generated if not provided)"),
         description: Optional[str] = Form(None, description="Content description"),
         metadata: Optional[str] = Form(None, description="JSON metadata object"),
@@ -280,17 +289,63 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             except json.JSONDecodeError:
                 parsed_metadata = {"value": metadata}
 
+        # Parse and validate source_params. Keys are allowlisted per provider
+        # so we never spread raw user input into a config's factory method.
+        from agno.knowledge.remote_content.github import GitHubConfig
+
+        allowed_source_params: Dict[type, set] = {
+            GitHubConfig: {"repo"},
+        }
+
+        parsed_source_params: Dict[str, Any] = {}
+        if source_params:
+            try:
+                decoded = json.loads(source_params)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="source_params must be a valid JSON object")
+            if not isinstance(decoded, dict):
+                raise HTTPException(status_code=400, detail="source_params must be a JSON object")
+            parsed_source_params = decoded
+
+        allowed = allowed_source_params.get(type(config), set())
+        if parsed_source_params:
+            if not allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Source type '{type(config).__name__}' does not accept source_params.",
+                )
+            unknown = set(parsed_source_params) - allowed
+            if unknown:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unknown source_params for {type(config).__name__}: {sorted(unknown)}. "
+                        f"Allowed: {sorted(allowed)}."
+                    ),
+                )
+
+        # GitHub requires an effective repo: either on the config or in source_params.
+        if isinstance(config, GitHubConfig) and config.repo is None and "repo" not in parsed_source_params:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"GitHub config '{config_id}' has no 'repo' set. "
+                    'Provide source_params={"repo": "owner/repo"} with the request, '
+                    "or configure a default on the source."
+                ),
+            )
+
         # Use the config's factory methods to create the remote content object
         # If path ends with '/', treat as folder, otherwise treat as file
         is_folder = path.endswith("/")
         if is_folder:
             if hasattr(config, "folder"):
-                remote_content = config.folder(path.rstrip("/"))
+                remote_content = config.folder(path.rstrip("/"), **parsed_source_params)
             else:
                 raise HTTPException(status_code=400, detail=f"Config {config_id} does not support folder uploads")
         else:
             if hasattr(config, "file"):
-                remote_content = config.file(path)
+                remote_content = config.file(path, **parsed_source_params)
             else:
                 raise HTTPException(status_code=400, detail=f"Config {config_id} does not support file uploads")
 

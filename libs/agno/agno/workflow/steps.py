@@ -2,9 +2,11 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     StepsExecutionCompletedEvent,
@@ -272,6 +274,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    raise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -294,6 +298,18 @@ class Steps:
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
+                    # Check for executor HITL pause in list results
+                    if step_output and getattr(step_output[-1], "is_paused", False):
+                        all_results.extend(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
@@ -302,6 +318,18 @@ class Steps:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
 
@@ -327,6 +355,8 @@ class Steps:
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
         except Exception as e:
             logger.exception("Steps execution failed")
             return StepOutput(
@@ -388,6 +418,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    raise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -426,6 +458,18 @@ class Steps:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
+
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=steps_id,
+                        step_type=StepType.STEPS,
+                        content=f"Steps {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
 
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
@@ -479,6 +523,8 @@ class Steps:
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
         except Exception as e:
             logger.exception("Steps streaming failed")
             error_result = StepOutput(
@@ -522,6 +568,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    await araise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -544,6 +592,18 @@ class Steps:
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
+                    # Check for executor HITL pause in list results
+                    if step_output and getattr(step_output[-1], "is_paused", False):
+                        all_results.extend(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.extend(step_output)
                     if step_output:
                         steps_step_outputs[step_name] = step_output[-1]
@@ -552,6 +612,18 @@ class Steps:
                             logger.info(f"Early termination requested by step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=steps_id,
+                            step_type=StepType.STEPS,
+                            content=f"Steps {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     steps_step_outputs[step_name] = step_output
 
@@ -576,6 +648,8 @@ class Steps:
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
         except Exception as e:
             logger.exception("Async steps execution failed")
             return StepOutput(
@@ -637,6 +711,8 @@ class Steps:
 
         try:
             for i, step in enumerate(self.steps):
+                if workflow_run_response and workflow_run_response.run_id:
+                    await araise_if_cancelled(workflow_run_response.run_id)
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
@@ -675,6 +751,18 @@ class Steps:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
+
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=steps_id,
+                        step_type=StepType.STEPS,
+                        content=f"Steps {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
 
                 # Update step outputs tracking and prepare input for next step
                 if step_outputs_for_step:
@@ -727,6 +815,8 @@ class Steps:
                 steps=all_results,
             )
 
+        except RunCancelledException:
+            raise
         except Exception as e:
             logger.exception("Async steps streaming failed")
             error_result = StepOutput(

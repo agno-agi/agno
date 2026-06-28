@@ -19,7 +19,7 @@ from PIL import Image as PILImage
 # No system message should be provided (Gemini requires only the image)
 agent = Agent(
     model=Gemini(
-        id="gemini-3-flash-preview",
+        id="gemini-3.5-flash",
         response_modalities=["Text", "Image"],
     )
 )

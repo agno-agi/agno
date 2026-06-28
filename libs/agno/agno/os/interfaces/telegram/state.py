@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, List, Literal, NamedTuple, Optional, Type, Union
@@ -15,7 +16,7 @@ from agno.os.interfaces.telegram.helpers import (
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_info, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 
 if TYPE_CHECKING:
     from telebot.async_telebot import AsyncTeleBot
@@ -23,10 +24,8 @@ if TYPE_CHECKING:
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
-import re as _re
-
 # Matches any HTML tag (opening, closing, self-closing)
-_TAG_RE = _re.compile(r"<[^>]+>")
+_TAG_RE = re.compile(r"<[^>]+>")
 
 TG_STREAM_EDIT_INTERVAL = 1.0
 
@@ -170,6 +169,15 @@ class StreamState:
         self.videos: list[Video] = []
         self.audio: list[Audio] = []
         self.files: list[File] = []
+        self._rate_limited_until: float = 0.0
+
+    def _set_rate_limit(self, exc: Exception) -> bool:
+        if getattr(exc, "error_code", None) != 429:
+            return False
+        retry_after = getattr(exc, "result_json")["parameters"]["retry_after"]
+        self._rate_limited_until = time.monotonic() + retry_after
+        log_debug(f"Rate limited by Telegram, pausing edits for {retry_after}s")
+        return True
 
     def add_status(self, line: str) -> None:
         self.status_lines.append(line)
@@ -212,18 +220,24 @@ class StreamState:
         return "\n".join(parts)
 
     async def _send_new(self, html: str) -> Any:
-        return await self.bot.send_message(
-            self.chat_id,
-            html,
-            parse_mode="HTML",
-            reply_to_message_id=self.reply_to,
-            message_thread_id=self.message_thread_id,
-        )
+        try:
+            return await self.bot.send_message(
+                self.chat_id,
+                html,
+                parse_mode="HTML",
+                reply_to_message_id=self.reply_to,
+                message_thread_id=self.message_thread_id,
+            )
+        except Exception as e:
+            self._set_rate_limit(e)
+            raise
 
     async def _edit(self, html: str) -> None:
         try:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
+            if self._set_rate_limit(e):
+                return
             if "message is not modified" not in str(e):
                 log_warning(f"Failed to edit message: {str(e)}")
 
@@ -252,10 +266,15 @@ class StreamState:
     async def send_or_edit(self, html: str) -> None:
         if not html or not html.strip():
             return
+        if time.monotonic() < self._rate_limited_until:
+            return
         display = self._truncate_html(html)
         if self.sent_message_id is None:
-            msg = await self._send_new(display)
-            self.sent_message_id = msg.message_id
+            try:
+                msg = await self._send_new(display)
+                self.sent_message_id = msg.message_id
+            except Exception:
+                return
         else:
             await self._edit(display)
         self.last_edit_time = time.monotonic()
@@ -272,10 +291,16 @@ class StreamState:
         if not final_html:
             return
 
+        # Wait out any active rate-limit hold — finalize is the last chance to deliver
+        delay = self._rate_limited_until - time.monotonic()
+        if delay > 0:
+            log_debug(f"Waiting {delay:.0f}s for Telegram rate limit to expire before finalizing")
+            await asyncio.sleep(delay)
+
         try:
             await self._finalize_inner(final_html)
         except Exception as e:
-            log_warning(f"Finalize failed (), falling back to plain text: {str(e)}")
+            log_warning(f"Finalize failed, falling back to plain text: {str(e)}")
             await self._finalize_plaintext()
 
     async def _finalize_inner(self, final_html: str) -> None:

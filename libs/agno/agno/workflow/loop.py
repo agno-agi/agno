@@ -6,6 +6,7 @@ from uuid import uuid4
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     LoopExecutionCompletedEvent,
@@ -453,11 +454,15 @@ class Loop:
         # Prepare steps first
         self._prepare_steps()
 
+        loop_step_id = str(uuid4())
+
         all_results: List[List[StepOutput]] = list(previous_iteration_results) if previous_iteration_results else []
         iteration = resume_from_iteration
         early_termination = False
 
         while iteration < self.max_iterations:
+            if workflow_run_response and workflow_run_response.run_id:
+                raise_if_cancelled(workflow_run_response.run_id)
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results: List[StepOutput] = []
             current_step_input = step_input
@@ -479,6 +484,22 @@ class Loop:
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                 )
+
+                # Check if inner step is paused (HITL propagation)
+                if getattr(step_output, "is_paused", False):
+                    iteration_results.append(step_output)
+                    all_results.append(iteration_results)
+                    flattened = []
+                    for ir in all_results:
+                        flattened.extend(ir)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=loop_step_id,
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} paused at inner step",
+                        steps=flattened,
+                        is_paused=True,
+                    )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
                 if isinstance(step_output, list):
@@ -552,7 +573,7 @@ class Loop:
 
         return StepOutput(
             step_name=self.name,
-            step_id=str(uuid4()),
+            step_id=loop_step_id,
             step_type=StepType.LOOP,
             content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
@@ -607,6 +628,8 @@ class Loop:
         early_termination = False
 
         while iteration < self.max_iterations:
+            if workflow_run_response and workflow_run_response.run_id:
+                raise_if_cancelled(workflow_run_response.run_id)
             log_debug(f"Loop iteration {iteration + 1}/{self.max_iterations}")
 
             if stream_events and workflow_run_response:
@@ -666,6 +689,22 @@ class Loop:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
+
+                # Check if inner step is paused (HITL propagation)
+                if step_outputs_for_iteration and getattr(step_outputs_for_iteration[-1], "is_paused", False):
+                    all_results.append(iteration_results)
+                    flattened = []
+                    for ir in all_results:
+                        flattened.extend(ir)
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=loop_step_id,
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} paused at inner step",
+                        steps=flattened,
+                        is_paused=True,
+                    )
+                    return
 
                 # Update loop_step_outputs with this step's output
                 if step_outputs_for_iteration:
@@ -816,6 +855,8 @@ class Loop:
         early_termination = False
 
         while iteration < self.max_iterations:
+            if workflow_run_response and workflow_run_response.run_id:
+                await araise_if_cancelled(workflow_run_response.run_id)
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results: List[StepOutput] = []
             current_step_input = step_input
@@ -837,6 +878,22 @@ class Loop:
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                 )
+
+                # Check if inner step is paused (HITL propagation)
+                if getattr(step_output, "is_paused", False):
+                    iteration_results.append(step_output)
+                    all_results.append(iteration_results)
+                    flattened = []
+                    for ir in all_results:
+                        flattened.extend(ir)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=loop_step_id,
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} paused at inner step",
+                        steps=flattened,
+                        is_paused=True,
+                    )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
                 if isinstance(step_output, list):
@@ -964,6 +1021,8 @@ class Loop:
         early_termination = False
 
         while iteration < self.max_iterations:
+            if workflow_run_response and workflow_run_response.run_id:
+                await araise_if_cancelled(workflow_run_response.run_id)
             log_debug(f"Async loop iteration {iteration + 1}/{self.max_iterations}")
 
             if stream_events and workflow_run_response:
@@ -1023,6 +1082,22 @@ class Loop:
                     else:
                         # Yield other events (streaming content, step events, etc.)
                         yield event
+
+                # Check if inner step is paused (HITL propagation)
+                if step_outputs_for_iteration and getattr(step_outputs_for_iteration[-1], "is_paused", False):
+                    all_results.append(iteration_results)
+                    flattened = []
+                    for ir in all_results:
+                        flattened.extend(ir)
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=loop_step_id,
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} paused at inner step",
+                        steps=flattened,
+                        is_paused=True,
+                    )
+                    return
 
                 # Update loop_step_outputs with this step's output
                 if step_outputs_for_iteration:

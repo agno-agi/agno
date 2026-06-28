@@ -8,6 +8,7 @@ defined in a separate remote server container.
 import os
 
 from agno.agent import Agent, RemoteAgent
+from agno.client.os import AgentOSClient
 from agno.db.postgres import AsyncPostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -18,6 +19,7 @@ from agno.os.interfaces.a2a import A2A
 from agno.os.interfaces.agui import AGUI
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.telegram import Telegram
+from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team
 from agno.vectordb.pgvector.pgvector import PgVector
 from agno.workflow import RemoteWorkflow, Workflow
@@ -113,6 +115,13 @@ remote_team = RemoteTeam(base_url=REMOTE_SERVER_URL, team_id="research-team")
 
 # Remote workflow for interface testing
 remote_workflow = RemoteWorkflow(base_url=REMOTE_SERVER_URL, workflow_id="qa-workflow")
+
+# Remote knowledge - proxies the remote server's "remote-db" knowledge through the gateway
+remote_os_client = AgentOSClient(base_url=REMOTE_SERVER_URL)
+remote_knowledge = RemoteKnowledge(
+    client=remote_os_client,
+    contents_db=RemoteDb(id="remote-db", client=remote_os_client),
+)
 
 # ADK Remote agent (A2A protocol)
 adk_facts_agent = RemoteAgent(
@@ -219,6 +228,7 @@ agent_os = AgentOS(
     ],
     tracing=True,
     db=db,
+    knowledge=[remote_knowledge],
     enable_mcp_server=True,
     authorization=ENABLE_AUTHORIZATION,
     authorization_config=AuthorizationConfig(

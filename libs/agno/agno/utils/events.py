@@ -123,6 +123,7 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -149,6 +150,7 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
+        files=from_run_response.files,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
@@ -230,6 +232,7 @@ def create_team_run_cancelled_event(from_run_response: TeamRunOutput, reason: st
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+        content=from_run_response.content or reason,
     )
 
 
@@ -265,6 +268,7 @@ def create_run_cancelled_event(from_run_response: RunOutput, reason: str) -> Run
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
+        content=from_run_response.content or reason,
     )
 
 
@@ -595,6 +599,7 @@ def create_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 
@@ -611,6 +616,7 @@ def create_team_tool_call_completed_event(
         images=from_run_response.images,
         videos=from_run_response.videos,
         audio=from_run_response.audio,
+        files=from_run_response.files,
     )
 
 

@@ -43,8 +43,9 @@ def book_flight(destination: str, date: str, passenger_name: str) -> str:
 booking_agent = Agent(
     name="Booking Agent",
     role="Books travel arrangements",
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     tools=[book_flight],
+    instructions="You MUST call the book_flight tool immediately with whatever information you have. Do NOT ask clarifying questions - the tool will pause and request any missing information from the user.",
     db=db,
 )
 
@@ -55,7 +56,8 @@ booking_agent = Agent(
 team = Team(
     name="Travel Team",
     members=[booking_agent],
-    model=OpenAIResponses(id="gpt-5-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
+    instructions="Delegate all booking requests to the Booking Agent immediately.",
     db=db,
 )
 
@@ -65,10 +67,10 @@ team = Team(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     for run_event in team.run("Book a flight to Tokyo for next Friday", stream=True):
-        # Use isinstance to check for team's pause event (not the member agent's)
         if isinstance(run_event, TeamRunPausedEvent):
-            print("Team paused - requires user input")
             for req in run_event.active_requirements:
+                print(f"  needs_user_input: {req.needs_user_input}")
+                print(f"  needs_confirmation: {req.needs_confirmation}")
                 if req.needs_user_input:
                     print(f"  Tool: {req.tool_execution.tool_name}")
                     for field in req.user_input_schema or []:
@@ -76,6 +78,7 @@ if __name__ == "__main__":
 
                     req.provide_user_input({"passenger_name": "John Smith"})
 
+            print("Continuing run...")
             response = team.continue_run(
                 run_id=run_event.run_id,
                 session_id=run_event.session_id,

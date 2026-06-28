@@ -2,9 +2,9 @@
 Tests for httpx client caching and resource leak prevention.
 
 This test suite verifies that:
-1. Global httpx clients are singletons and reused across non-OpenAI models
-2. OpenAI models do NOT use the global httpx client (they use the SDK's own HTTP/1.1 default)
-3. OpenAI clients are cached per model instance to prevent resource leaks
+1. Global httpx clients are singletons
+2. No model provider uses the global shared httpx client (each SDK manages its own)
+3. Clients are cached per model instance to prevent resource leaks
 4. Custom http_client is respected when explicitly provided
 """
 
@@ -13,9 +13,11 @@ import os
 import httpx
 import pytest
 
-# Set test API key to avoid env var lookup errors
+# Set test API keys to avoid env var lookup errors
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-for-testing")
 
+from agno.models.anthropic.claude import Claude
 from agno.models.openai.chat import OpenAIChat
 from agno.models.openai.responses import OpenAIResponses
 from agno.utils.http import (
@@ -199,6 +201,83 @@ class TestOpenAIResponsesClientCaching:
         assert async_openai._client is not global_async_client
 
 
+class TestClaudeClientCaching:
+    """Test suite for Claude (Anthropic) client caching.
+
+    Verifies that Anthropic models do NOT use the shared global httpx client,
+    preventing HTTP/2 stream saturation when multiple model instances
+    (main agent, MemoryManager, etc.) run concurrently.
+    """
+
+    def teardown_method(self):
+        """Clean up global clients after each test."""
+        close_sync_client()
+
+    def test_sync_client_is_cached(self):
+        """Verify that Claude caches the sync client."""
+        model = Claude(id="claude-sonnet-4-20250514")
+
+        client1 = model.get_client()
+        client2 = model.get_client()
+
+        assert client1 is client2, "Claude sync clients should be cached"
+        assert model.client is not None
+        assert model.client is client1
+
+    def test_async_client_is_cached(self):
+        """Verify that Claude caches the async client."""
+        model = Claude(id="claude-sonnet-4-20250514")
+
+        client1 = model.get_async_client()
+        client2 = model.get_async_client()
+
+        assert client1 is client2, "Claude async clients should be cached"
+        assert model.async_client is not None
+        assert model.async_client is client1
+
+    def test_sync_client_does_not_use_global_httpx_client(self):
+        """Verify that Claude does NOT use the global shared httpx client.
+
+        Each model instance should get its own HTTP connection to prevent
+        HTTP/2 stream saturation under concurrent load.
+        """
+        global_sync_client = get_default_sync_client()
+        model = Claude(id="claude-sonnet-4-20250514")
+
+        anthropic_client = model.get_client()
+
+        assert anthropic_client._client is not global_sync_client
+
+    def test_async_client_does_not_use_global_httpx_client(self):
+        """Verify that Claude does NOT use the global shared httpx client for async.
+
+        Under concurrent load, a shared HTTP/2 connection hits the 100-stream limit
+        causing cascading failures. Each model instance needs its own connection.
+        """
+        global_async_client = get_default_async_client()
+        model = Claude(id="claude-sonnet-4-20250514")
+
+        anthropic_client = model.get_async_client()
+
+        assert anthropic_client._client is not global_async_client
+
+    def test_each_model_instance_has_own_cached_client(self):
+        """Verify that each Claude instance caches its own client independently.
+
+        This is critical for the HTTP/2 fix: the main agent and MemoryManager
+        each get their own connection with their own 100-stream budget.
+        """
+        model1 = Claude(id="claude-sonnet-4-20250514")
+        model2 = Claude(id="claude-haiku-4-20250414")
+
+        client1 = model1.get_client()
+        client2 = model2.get_client()
+
+        assert model1.client is client1
+        assert model2.client is client2
+        assert client1 is not client2
+
+
 class TestCustomHttpClient:
     """Test suite for custom httpx client support."""
 
@@ -284,9 +363,10 @@ class TestAsyncCleanup:
 class TestSetGlobalClients:
     """Test suite for setting custom global clients.
 
-    Note: set_default_sync_client/set_default_async_client affect non-OpenAI providers
-    (Anthropic, Groq, etc.) that use the global shared httpx client. OpenAI models
-    do not use the global client, so these settings do not affect them.
+    Note: No model providers use the global shared httpx client by default.
+    Each provider SDK manages its own HTTP client to prevent HTTP/2 stream
+    saturation under concurrent load. The global client utilities remain
+    available for explicit customization via set_default_sync_client/set_default_async_client.
     """
 
     def teardown_method(self):
@@ -384,7 +464,7 @@ class TestResourceLeakPrevention:
             assert model.get_async_client() is first_async
 
     def test_global_httpx_client_singleton_unchanged(self):
-        """Verify the global httpx client remains a singleton for non-OpenAI providers."""
+        """Verify the global httpx client remains a singleton when accessed directly."""
         global_client = get_default_sync_client()
 
         # Multiple retrievals return the same instance

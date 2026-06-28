@@ -1,19 +1,13 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_info, log_warning
 
-try:
-    from anthropic.types import (
-        TextBlock,
-        ToolUseBlock,
-    )
-except ImportError:
-    raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
-
+if TYPE_CHECKING:
+    from agno.models.anthropic.claude import SystemPromptBlock
 
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
@@ -91,6 +85,43 @@ ROLE_MAP = {
     "assistant": "assistant",
     "tool": "user",
 }
+
+
+def _anthropic_block_identity(block: Any) -> Optional[Tuple[str, str]]:
+    """Return a stable identity key for an Anthropic content block, or None if untrackable.
+
+    Server tool blocks pair a ``server_tool_use`` (carrying ``id``) with a result block
+    (carrying ``tool_use_id`` referencing that id). The (type, id-or-tool_use_id) tuple
+    lets us dedupe across provider_data["server_tool_blocks"] and list-shaped message.content
+    without dropping blocks that exist in only one source.
+    """
+    if not isinstance(block, dict):
+        return None
+    block_type = block.get("type")
+    if not block_type:
+        return None
+    block_id = block.get("id") or block.get("tool_use_id")
+    if not isinstance(block_id, str):
+        return None
+    return (block_type, block_id)
+
+
+def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
+    """Normalize a stored message content item into an Anthropic Messages API block dict."""
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        return item if item.get("type") else None
+    model_dump = getattr(item, "model_dump", None)
+    if callable(model_dump):
+        try:
+            block_dict = model_dump(exclude_none=True)
+        except Exception as e:
+            log_warning(f"Failed to serialize Anthropic content block of type {type(item).__name__}: {e}")
+            return None
+        if isinstance(block_dict, dict) and block_dict.get("type"):
+            return block_dict
+    return None
 
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
@@ -201,10 +232,29 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
+def _format_file_for_message(file: File, enable_citations: bool = True) -> Optional[Dict[str, Any]]:
     """
     Add a document url or base64 encoded content to a message.
+
+    Args:
+        file: The file to format.
+        enable_citations: Caller-level ceiling. When False, citations are suppressed
+            regardless of ``File.citations``. When True, ``File.citations`` may opt an
+            individual file out.
     """
+    if not enable_citations:
+        citations_on = False
+        if file.citations is True:
+            identifier = (
+                file.filename or file.url or (str(file.filepath) if file.filepath else None) or file.id or "<unnamed>"
+            )
+            log_warning(
+                f"File.citations=True ignored for {identifier}: request-level citations are "
+                "disabled for this call (structured output is active and Anthropic rejects "
+                "citations alongside output_format)."
+            )
+    else:
+        citations_on = file.citations if file.citations is not None else True
 
     mime_mapping: dict[str, str] = {
         "application/pdf": "base64",
@@ -233,15 +283,16 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
             },
         }
 
+    document: Optional[Dict[str, Any]] = None
+
     # Case 1: Document is a URL
     if file.url is not None:
-        return {
+        document = {
             "type": "document",
             "source": {
                 "type": "url",
                 "url": file.url,
             },
-            "citations": {"enabled": True},
         }
     # Case 2: Document is a local file path
     elif file.filepath is not None:
@@ -263,24 +314,24 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
             source_type = mime_mapping.get(media_type, "base64")
 
             if source_type == "text":
-                return {
+                document = {
                     "type": "document",
                     "source": {
                         "type": "text",
-                        "media_type": media_type,
+                        # Anthropic's text document source only accepts "text/plain". Other
+                        # text/* subtypes (markdown, csv, html, ...) are sent as plain text.
+                        "media_type": "text/plain",
                         "data": raw_bytes.decode("utf-8", errors="replace"),
                     },
-                    "citations": {"enabled": True},
                 }
             else:
-                return {
+                document = {
                     "type": "document",
                     "source": {
                         "type": "base64",
                         "media_type": media_type,
                         "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
                     },
-                    "citations": {"enabled": True},
                 }
         else:
             log_error(f"Document file not found: {file}")
@@ -292,28 +343,109 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         source_type = mime_mapping.get(media_type, "base64")
 
         if source_type == "text":
-            return {
+            document = {
                 "type": "document",
                 "source": {
                     "type": "text",
-                    "media_type": media_type,
+                    # Anthropic's text document source only accepts "text/plain". Other
+                    # text/* subtypes (markdown, csv, html, ...) are sent as plain text.
+                    "media_type": "text/plain",
                     "data": file.content.decode("utf-8", errors="replace"),
                 },
-                "citations": {"enabled": True},
             }
         else:
             import base64
 
-            return {
+            document = {
                 "type": "document",
                 "source": {
                     "type": "base64",
                     "media_type": media_type,
                     "data": base64.standard_b64encode(file.content).decode("utf-8"),
                 },
-                "citations": {"enabled": True},
             }
-    return None
+
+    if document is not None and citations_on:
+        document["citations"] = {"enabled": True}
+    return document
+
+
+def build_system_blocks(
+    system_message: Union[str, List["SystemPromptBlock"]],
+    cache_system_prompt: bool,
+    extended_cache_time: bool = False,
+) -> List[Dict[str, Any]]:
+    """Build the system parameter blocks for the Anthropic API.
+
+    Converts either a plain string or a list of SystemPromptBlock into the
+    list-of-dicts format the Anthropic API expects for the ``system`` field.
+
+    Caching semantics are asymmetric by design:
+    - For a string (the agent-built system message), ``cache_system_prompt``
+      decides whether it gets ``cache_control``. That flag is the single
+      switch for the agent-built block.
+    - For a list of ``SystemPromptBlock`` (user-supplied), each block's own
+      ``block.cache`` field decides. This is independent of
+      ``cache_system_prompt`` so that you can leave the agent-built block
+      uncached while still caching selected user blocks (or vice versa).
+
+    TTL resolution for each cached block:
+    - Explicit ``block.ttl`` wins: ``"5m"`` => plain ephemeral (5m is the
+      default), ``"1h"`` => ephemeral with ttl key.
+    - ``block.ttl is None`` => falls back to model-level ``extended_cache_time``.
+    """
+    if isinstance(system_message, str):
+        entry: Dict[str, Any] = {"text": system_message, "type": "text"}
+        if cache_system_prompt:
+            cc: Dict[str, str] = {"type": "ephemeral"}
+            if extended_cache_time:
+                cc["ttl"] = "1h"
+            entry["cache_control"] = cc
+        return [entry]
+
+    result: List[Dict[str, Any]] = []
+    for block in system_message:
+        b: Dict[str, Any] = {"text": block.text, "type": "text"}
+        if block.cache:
+            # Explicit block-level ttl wins; None falls back to model-level extended_cache_time.
+            # Deliberately independent of cache_system_prompt — that flag only gates the
+            # agent-built block, so users can cache custom blocks without also caching
+            # the agent-built one (and vice versa).
+            effective_ttl = block.ttl if block.ttl is not None else ("1h" if extended_cache_time else "5m")
+            cc = {"type": "ephemeral"}
+            if effective_ttl == "1h":
+                cc["ttl"] = "1h"
+            b["cache_control"] = cc
+        result.append(b)
+    return result
+
+
+def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
+    """Validate that no 5m-cached block appears before a 1h-cached block.
+
+    Anthropic's prompt caching rejects requests where a longer-TTL cache entry
+    follows a shorter-TTL one in the cached prefix. Catch this at assembly
+    time with an actionable error rather than letting the API reject it.
+    """
+    seen_5m = False
+    for block in blocks:
+        cc = block.get("cache_control")
+        if cc is None:
+            continue
+        if cc.get("ttl") == "1h":
+            if seen_5m:
+                raise ValueError(
+                    "Invalid Anthropic cache TTL ordering: a 1h cached block cannot "
+                    "follow a 5m cached block. This usually means cache_system_prompt=True "
+                    "(so the agent-built block is cached at 5m by default) together with "
+                    "a SystemPromptBlock(ttl='1h'). Fix with one of:\n"
+                    "  - Claude(extended_cache_time=True) so the agent-built block is 1h too\n"
+                    "  - Change your block ttl to '5m' or None\n"
+                    "  - Set cache_system_prompt=False to leave the agent-built block "
+                    "uncached (custom blocks still cache per their own block.cache field)"
+                )
+        else:
+            seen_5m = True
 
 
 def format_messages(
@@ -321,6 +453,7 @@ def format_messages(
     compress_tool_results: bool = False,
     append_trailing_user_message: Optional[bool] = False,
     trailing_user_message_content: str = "continue",
+    enable_citations: bool = True,
 ) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
@@ -331,6 +464,7 @@ def format_messages(
         append_trailing_user_message: If True, append a dummy user message when the conversation
             ends with an assistant turn. Required for models that do not support assistant prefill.
         trailing_user_message_content: The text content of the injected trailing user message.
+        enable_citations: Default for document citation attachment.
 
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
@@ -362,7 +496,7 @@ def format_messages(
 
             if message.files is not None:
                 for file in message.files:
-                    file_content = _format_file_for_message(file)
+                    file_content = _format_file_for_message(file, enable_citations=enable_citations)
                     if file_content:
                         content.append(file_content)
 
@@ -373,6 +507,8 @@ def format_messages(
                 log_warning("Video input is currently unsupported.")
 
         elif message.role == "assistant":
+            from anthropic.types import TextBlock, ToolUseBlock
+
             content = []
 
             if message.reasoning_content is not None and message.provider_data is not None:
@@ -389,17 +525,38 @@ def format_messages(
             if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(
-                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
-                )
+                content.append(RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_thinking"))
 
-            # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data
-            # Inserted between thinking and text blocks to match Anthropic's native ordering
+            # Extract structured blocks from list-shaped content (used when callers persist and
+            # rehydrate full assistant turns rather than the text-only + provider_data split).
+            structured_from_list: List[Any] = []
+            list_block_identities: set = set()
+            if isinstance(message.content, list):
+                for item in message.content:
+                    blk = _anthropic_coerce_content_block(item)
+                    if blk is None:
+                        continue
+                    block_type = blk.get("type") if isinstance(blk, dict) else None
+                    if block_type == "tool_use" and message.tool_calls:
+                        continue
+                    identity = _anthropic_block_identity(blk)
+                    if identity is not None:
+                        list_block_identities.add(identity)
+                    structured_from_list.append(blk)
+
+            # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data.
+            # Merge by identity (type, id-or-tool_use_id) so blocks already present in list-content
+            # aren't duplicated, but blocks that exist only in provider_data are still emitted.
             if message.provider_data and message.provider_data.get("server_tool_blocks"):
                 for block_dict in message.provider_data["server_tool_blocks"]:
+                    identity = _anthropic_block_identity(block_dict)
+                    if identity is not None and identity in list_block_identities:
+                        continue
                     content.append(block_dict)
 
-            if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
+            if structured_from_list:
+                content.extend(structured_from_list)
+            elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:
@@ -419,11 +576,25 @@ def format_messages(
 
             # Use compressed content for tool messages if compression is active
             tool_result = message.get_content(use_compressed_content=compress_tool_results)
+            if isinstance(tool_result, list):
+                normalized_blocks: List[Any] = []
+                for item in tool_result:
+                    coerced = _anthropic_coerce_content_block(item)
+                    if coerced is not None:
+                        normalized_blocks.append(coerced)
+                    else:
+                        # Fall back to a text block so unknown items still reach the model rather
+                        # than being silently dropped or breaking the request shape.
+                        log_warning(f"Coercing non-block tool_result item of type {type(item).__name__} to text")
+                        normalized_blocks.append({"type": "text", "text": str(item)})
+                tool_payload: Union[str, List[Any]] = normalized_blocks
+            else:
+                tool_payload = str(tool_result)
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(tool_result),
+                    "content": tool_payload,
                 }
             )
 
@@ -439,7 +610,7 @@ def format_messages(
     merged_messages: List[Dict[str, Union[str, list]]] = []
     for msg in chat_messages:
         if merged_messages and merged_messages[-1]["role"] == msg["role"]:
-            # Same role as previous → merge contents
+            # Same role as previous, merge contents
             prev_content = merged_messages[-1]["content"]
             curr_content = msg["content"]
 
@@ -452,7 +623,7 @@ def format_messages(
                 curr_content.insert(0, {"type": "text", "text": str(prev_content)})
                 merged_messages[-1]["content"] = curr_content
             else:
-                # Both strings → convert in list
+                # Both strings, convert to list
                 merged_messages[-1]["content"] = [
                     {"type": "text", "text": str(prev_content)},
                     {"type": "text", "text": str(curr_content)},

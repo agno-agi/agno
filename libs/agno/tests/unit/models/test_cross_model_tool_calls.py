@@ -358,6 +358,130 @@ class TestClaudeFormatMessages:
         assert formatted[1]["role"] == "assistant"
         assert formatted[2]["role"] == "user"
 
+    def test_assistant_list_content_preserves_server_tool_blocks(self):
+        """server_tool_use and code-execution blocks on list-shaped assistant content round-trip."""
+        from agno.utils.models.claude import format_messages
+
+        server_use = {"type": "server_tool_use", "id": "srvtoolu_01", "name": "code_execution", "input": {}}
+        bash_result = {
+            "type": "bash_code_execution_tool_result",
+            "tool_use_id": "srvtoolu_01",
+            "content": {"type": "bash_code_execution_result", "stderr": "", "stdout": ""},
+        }
+        msgs = [
+            Message(role="user", content="Run code"),
+            Message(
+                role="assistant",
+                content=[
+                    server_use,
+                    {"type": "text", "text": "Executed."},
+                    bash_result,
+                ],
+            ),
+        ]
+        formatted, _ = format_messages(msgs)
+        assert formatted[1]["role"] == "assistant"
+        blocks = formatted[1]["content"]
+        types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", None) for b in blocks]
+        assert types == ["server_tool_use", "text", "bash_code_execution_tool_result"]
+
+    def test_tool_result_preserves_list_payload(self):
+        """Structured tool_result content lists must not be collapsed with str()."""
+        from agno.utils.models.claude import format_messages
+
+        tc = _make_tool_call("toolu_ce01", name="code_execution")
+        inner = {"type": "text", "text": "stdout"}
+        msgs = [
+            Message(role="user", content="Hi"),
+            _assistant_msg([tc]),
+            Message(role="tool", tool_call_id="toolu_ce01", tool_name="code_execution", content=[inner]),
+        ]
+        formatted, _ = format_messages(msgs)
+        tool_result = formatted[2]["content"][0]
+        assert tool_result["type"] == "tool_result"
+        assert isinstance(tool_result["content"], list)
+        assert tool_result["content"][0]["type"] == "text"
+
+    def test_server_tool_blocks_not_duplicated_across_sources(self):
+        """When list-content and provider_data both carry the same block, emit once."""
+        from agno.utils.models.claude import format_messages
+
+        server_use = {"type": "server_tool_use", "id": "srvtoolu_dup", "name": "web_search", "input": {}}
+        msg = Message(
+            role="assistant",
+            content=[server_use, {"type": "text", "text": "done"}],
+            provider_data={"server_tool_blocks": [server_use]},
+        )
+        formatted, _ = format_messages([Message(role="user", content="hi"), msg])
+        blocks = formatted[1]["content"]
+        types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", None) for b in blocks]
+        assert types.count("server_tool_use") == 1
+        assert "text" in types
+
+    def test_server_tool_blocks_merged_by_identity(self):
+        """Partial overlap: provider_data blocks not present in list-content must still be emitted.
+
+        Regression guard: a previous version flipped a binary list_has_server_blocks flag and
+        dropped all provider_data blocks whenever list-content carried any server block,
+        silently losing blocks that existed only in provider_data.
+        """
+        from agno.utils.models.claude import format_messages
+
+        shared = {"type": "server_tool_use", "id": "srvtoolu_A", "name": "web_search", "input": {}}
+        only_in_provider = {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_B",
+            "content": [],
+        }
+        msg = Message(
+            role="assistant",
+            content=[shared, {"type": "text", "text": "done"}],
+            provider_data={"server_tool_blocks": [shared, only_in_provider]},
+        )
+        formatted, _ = format_messages([Message(role="user", content="hi"), msg])
+        blocks = formatted[1]["content"]
+        ids = [b.get("id") or b.get("tool_use_id") if isinstance(b, dict) else None for b in blocks]
+        types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", None) for b in blocks]
+        assert types.count("server_tool_use") == 1
+        assert "web_search_tool_result" in types
+        assert "srvtoolu_A" in ids
+        assert "srvtoolu_B" in ids
+
+    def test_tool_result_non_block_item_coerced_to_text(self):
+        """Tool result list items that aren't valid blocks should be coerced to text, not passed through."""
+        from agno.utils.models.claude import format_messages
+
+        tc = _make_tool_call("toolu_nb01", name="code_execution")
+        msgs = [
+            Message(role="user", content="Hi"),
+            _assistant_msg([tc]),
+            Message(
+                role="tool",
+                tool_call_id="toolu_nb01",
+                tool_name="code_execution",
+                content=[12345, {"type": "text", "text": "ok"}],
+            ),
+        ]
+        formatted, _ = format_messages(msgs)
+        tool_result = formatted[2]["content"][0]
+        assert tool_result["type"] == "tool_result"
+        assert isinstance(tool_result["content"], list)
+        assert tool_result["content"][0] == {"type": "text", "text": "12345"}
+        assert tool_result["content"][1]["type"] == "text"
+
+    def test_redacted_thinking_block_uses_canonical_type(self):
+        """RedactedThinkingBlock must be constructed with the Anthropic SDK's literal type."""
+        from agno.utils.models.claude import format_messages
+
+        msgs = [
+            Message(role="user", content="hi"),
+            Message(role="assistant", content="hello", redacted_reasoning_content="opaque-bytes"),
+        ]
+        formatted, _ = format_messages(msgs)
+        blocks = formatted[1]["content"]
+        types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", None) for b in blocks]
+        assert "redacted_thinking" in types
+
 
 # ---------------------------------------------------------------------------
 # Gemini format — individual tool messages

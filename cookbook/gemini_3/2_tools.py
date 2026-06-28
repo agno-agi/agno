@@ -44,7 +44,7 @@ You are a finance research agent. You find and analyze current financial news.
 # ---------------------------------------------------------------------------
 finance_agent = Agent(
     name="Finance Agent",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     tools=[WebSearchTools()],
     # Adds current date/time to the system message so the agent knows "today"

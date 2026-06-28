@@ -70,7 +70,7 @@ computes key ratios, and produces concise, decision-ready insights.
 # ---------------------------------------------------------------------------
 agent_with_storage = Agent(
     name="Agent with Storage",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     tools=[YFinanceTools(all=True)],
     db=agent_db,

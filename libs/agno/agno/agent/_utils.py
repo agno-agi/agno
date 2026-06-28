@@ -64,7 +64,7 @@ def convert_documents_to_string(agent: Agent, docs: List[Union[Dict[str, Any], s
     if agent.references_format == "yaml":
         import yaml
 
-        return yaml.dump(docs)
+        return yaml.dump(docs, allow_unicode=True)
 
     return json.dumps(docs, indent=2, ensure_ascii=False)
 
@@ -83,7 +83,7 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
         return ""
 
     try:
-        return json.dumps(context, indent=2, default=str)
+        return json.dumps(context, indent=2, default=str, ensure_ascii=False)
     except (TypeError, ValueError, OverflowError) as e:
         log_warning(f"Failed to convert context to JSON: {str(e)}")
         # Attempt a fallback conversion for non-serializable objects
@@ -98,7 +98,7 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
                 sanitized_context[key] = str(value)
 
         try:
-            return json.dumps(sanitized_context, indent=2)
+            return json.dumps(sanitized_context, indent=2, ensure_ascii=False)
         except Exception as e:
             log_error(f"Failed to convert sanitized context to JSON: {str(e)}")
             return str(context)
@@ -165,8 +165,16 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
     if field_name == "reasoning_agent":
         return field_value.deep_copy()  # type: ignore
 
-    # For tools, share MCP tools but copy others
+    # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
+        from agno.tools import Toolkit
+        from agno.tools.function import Function
+        from agno.utils.callables import is_callable_factory
+
+        # Callable-factory tools are shared by reference and resolved per-run
+        if is_callable_factory(field_value, excluded_types=(Toolkit, Function)):
+            return field_value
+
         try:
             copied_tools = []
             for tool in field_value:  # type: ignore

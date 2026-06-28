@@ -849,6 +849,208 @@ async def test_async_nested_depth_tracking(shared_db):
 
 
 # ============================================================================
+# PARENT_STEP_ID TESTS
+# ============================================================================
+
+
+def test_parent_step_id_two_level_nesting(shared_db):
+    """Test that inner workflow events have parent_step_id pointing to the outer step."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Step(name="inner_step_a", executor=step_a),
+            Step(name="inner_step_b", executor=step_b),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="final", executor=step_c),
+        ],
+    )
+
+    tracked = (WorkflowStartedEvent, WorkflowCompletedEvent, StepStartedEvent, StepCompletedEvent)
+    events = [e for e in outer.run(input="test", stream=True, stream_events=True) if isinstance(e, tracked)]
+
+    # Find the outer step_id for "nested"
+    outer_nested_step_id = None
+    for ev in events:
+        if isinstance(ev, StepStartedEvent) and ev.step_name == "nested" and ev.nested_depth == 0:
+            outer_nested_step_id = ev.step_id
+            break
+    assert outer_nested_step_id is not None, "Should find outer 'nested' step"
+
+    # All inner events (depth > 0) should have parent_step_id pointing to outer's nested step
+    inner_events = [e for e in events if getattr(e, "nested_depth", 0) > 0]
+    assert len(inner_events) > 0
+
+    for ev in inner_events:
+        assert ev.parent_step_id == outer_nested_step_id, (
+            f"Inner event {type(ev).__name__} (step={ev.step_name}) should have parent_step_id={outer_nested_step_id}, "
+            f"got {ev.parent_step_id}"
+        )
+
+    # Outer events should have parent_step_id = None
+    outer_events = [e for e in events if getattr(e, "nested_depth", 0) == 0]
+    for ev in outer_events:
+        assert ev.parent_step_id is None, (
+            f"Outer event {type(ev).__name__} should have parent_step_id=None, got {ev.parent_step_id}"
+        )
+
+
+def test_parent_step_id_three_level_nesting(shared_db):
+    """Test that parent_step_id is preserved through 3 levels of nesting.
+
+    Level 3 events should have parent_step_id pointing to the Level 2 step
+    that directly contains them — NOT the Level 1 step.
+    """
+    level3 = Workflow(
+        name="Level 3",
+        steps=[
+            Step(name="l3_step_a", executor=step_a),
+            Step(name="l3_step_b", executor=step_b),
+        ],
+    )
+
+    level2 = Workflow(
+        name="Level 2",
+        steps=[
+            Step(name="l2_nested_l3", workflow=level3),
+            Step(name="l2_step", executor=step_b),
+        ],
+    )
+
+    level1 = Workflow(
+        name="Level 1",
+        db=shared_db,
+        steps=[
+            Step(name="l1_nested_l2", workflow=level2),
+            Step(name="l1_step", executor=step_c),
+        ],
+    )
+
+    tracked = (WorkflowStartedEvent, WorkflowCompletedEvent, StepStartedEvent, StepCompletedEvent)
+    events = [e for e in level1.run(input="test", stream=True, stream_events=True) if isinstance(e, tracked)]
+
+    # Find step_ids for the container steps
+    l1_nested_step_id = None
+    l2_nested_step_id = None
+    for ev in events:
+        if isinstance(ev, StepStartedEvent) and ev.step_name == "l1_nested_l2" and ev.nested_depth == 0:
+            l1_nested_step_id = ev.step_id
+        if isinstance(ev, StepStartedEvent) and ev.step_name == "l2_nested_l3" and ev.nested_depth == 1:
+            l2_nested_step_id = ev.step_id
+    assert l1_nested_step_id is not None, "Should find l1_nested_l2 step"
+    assert l2_nested_step_id is not None, "Should find l2_nested_l3 step"
+
+    # Level 2 events (depth=1) should have parent_step_id = l1_nested_step_id
+    l2_events = [e for e in events if getattr(e, "nested_depth", 0) == 1]
+    assert len(l2_events) > 0
+    for ev in l2_events:
+        assert ev.parent_step_id == l1_nested_step_id, (
+            f"Level 2 event {type(ev).__name__} (step={ev.step_name}) should have "
+            f"parent_step_id={l1_nested_step_id[:8]}, got {ev.parent_step_id[:8] if ev.parent_step_id else None}"
+        )
+
+    # Level 3 events (depth=2) should have parent_step_id = l2_nested_step_id (NOT l1_nested_step_id)
+    l3_events = [e for e in events if getattr(e, "nested_depth", 0) == 2]
+    assert len(l3_events) > 0
+    for ev in l3_events:
+        assert ev.parent_step_id == l2_nested_step_id, (
+            f"Level 3 event {type(ev).__name__} (step={ev.step_name}) should have "
+            f"parent_step_id={l2_nested_step_id[:8]} (Level 2), "
+            f"got {ev.parent_step_id[:8] if ev.parent_step_id else None}"
+        )
+        # Make sure it's NOT the Level 1 step
+        assert ev.parent_step_id != l1_nested_step_id, (
+            "Level 3 event should NOT have parent_step_id pointing to Level 1 step"
+        )
+
+
+def test_parent_step_id_inner_steps_have_own_step_id(shared_db):
+    """Test that inner workflow steps have their own step_id, not the outer step's."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Step(name="inner_a", executor=step_a),
+            Step(name="inner_b", executor=step_b),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[Step(name="nested", workflow=inner)],
+    )
+
+    tracked = (StepStartedEvent, StepCompletedEvent)
+    events = [e for e in outer.run(input="test", stream=True, stream_events=True) if isinstance(e, tracked)]
+
+    # Outer step
+    outer_step_id = None
+    for ev in events:
+        if ev.step_name == "nested" and ev.nested_depth == 0:
+            outer_step_id = ev.step_id
+            break
+
+    # Inner step events should have their own unique step_ids
+    inner_step_events = [e for e in events if getattr(e, "nested_depth", 0) > 0 and isinstance(e, StepStartedEvent)]
+    assert len(inner_step_events) >= 2, "Should have at least 2 inner StepStartedEvents"
+
+    inner_step_ids = set()
+    for ev in inner_step_events:
+        assert ev.step_id is not None, f"Inner step {ev.step_name} should have a step_id"
+        assert ev.step_id != outer_step_id, (
+            f"Inner step {ev.step_name} should have its own step_id, not the outer step's"
+        )
+        inner_step_ids.add(ev.step_id)
+
+    # inner_a and inner_b should have different step_ids
+    assert len(inner_step_ids) == 2, "inner_a and inner_b should have distinct step_ids"
+
+
+@pytest.mark.asyncio
+async def test_async_parent_step_id_preserved(shared_db):
+    """Test parent_step_id preservation in async streaming mode."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="inner_step", executor=async_step_a)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="final", executor=async_step_b),
+        ],
+    )
+
+    tracked = (WorkflowStartedEvent, WorkflowCompletedEvent, StepStartedEvent, StepCompletedEvent)
+    events = []
+    async for event in outer.arun(input="test", stream=True, stream_events=True):
+        if isinstance(event, tracked):
+            events.append(event)
+
+    # Find outer step_id
+    outer_step_id = None
+    for ev in events:
+        if isinstance(ev, StepStartedEvent) and ev.step_name == "nested" and ev.nested_depth == 0:
+            outer_step_id = ev.step_id
+            break
+    assert outer_step_id is not None
+
+    # Inner events should have parent_step_id = outer step
+    inner_events = [e for e in events if getattr(e, "nested_depth", 0) > 0]
+    assert len(inner_events) > 0
+    for ev in inner_events:
+        assert ev.parent_step_id == outer_step_id
+
+
+# ============================================================================
 # ASYNC TESTS
 # ============================================================================
 

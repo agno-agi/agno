@@ -62,9 +62,9 @@ def _convert_documents_to_string(team: Team, docs: List[Union[Dict[str, Any], st
     if team.references_format == "yaml":
         import yaml
 
-        return yaml.dump(docs)
+        return yaml.dump(docs, allow_unicode=True)
 
-    return json.dumps(docs, indent=2)
+    return json.dumps(docs, indent=2, ensure_ascii=False)
 
 
 def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
@@ -81,7 +81,7 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
         return ""
 
     try:
-        return json.dumps(context, indent=2, default=str)
+        return json.dumps(context, indent=2, default=str, ensure_ascii=False)
     except (TypeError, ValueError, OverflowError) as e:
         log_warning(f"Failed to convert context to JSON: {str(e)}")
         # Attempt a fallback conversion for non-serializable objects
@@ -97,7 +97,7 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
                 sanitized_context[key] = str(value)
 
         try:
-            return json.dumps(sanitized_context, indent=2)
+            return json.dumps(sanitized_context, indent=2, ensure_ascii=False)
         except Exception as e:
             log_error(f"Failed to convert sanitized context to JSON: {str(e)}")
             return str(context)
@@ -163,9 +163,12 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
 
     from pydantic import BaseModel
 
+    from agno.utils.callables import is_callable_factory
+
     # For members, return callable factories by reference; deep copy static lists
     if field_name == "members" and field_value is not None:
-        if callable(field_value) and not isinstance(field_value, list):
+        # No excluded_types: Agent and Team instances are not callable
+        if is_callable_factory(field_value):
             return field_value
         copied_members = []
         for member in field_value:
@@ -177,7 +180,11 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
 
     # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
-        if callable(field_value) and not isinstance(field_value, list):
+        from agno.tools import Toolkit
+        from agno.tools.function import Function
+
+        # Callable-factory tools are shared by reference and resolved per-run
+        if is_callable_factory(field_value, excluded_types=(Toolkit, Function)):
             return field_value
         try:
             copied_tools = []

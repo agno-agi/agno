@@ -584,3 +584,178 @@ def test_document_content_hash_fallback_to_content_hash():
     assert hash1 != hash2
     # Same content should produce same hash
     assert hash1 == hash3
+
+
+def test_github_same_path_different_repos_produces_different_hashes():
+    """Two GitHub uploads with the same file path but different repos must not collide."""
+    from agno.knowledge.remote_content.github import GitHubConfig
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    cfg = GitHubConfig(id="gh", name="GH", branch="main")
+
+    content_a = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgA/x"))
+    content_b = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgB/y"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_github_same_repo_same_path_produces_same_hash():
+    """Deduplication still works when the full source identity matches."""
+    from agno.knowledge.remote_content.github import GitHubConfig
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    cfg = GitHubConfig(id="gh", name="GH", branch="main")
+
+    content_a = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgA/x"))
+    content_b = Content(name="README.md", remote_content=cfg.file("README.md", repo="orgA/x"))
+
+    assert knowledge._build_content_hash(content_a) == knowledge._build_content_hash(content_b)
+
+
+def test_github_different_branches_produces_different_hashes():
+    """A branch override is part of the source identity and must affect the hash."""
+    from agno.knowledge.remote_content.github import GitHubConfig
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    cfg = GitHubConfig(id="gh", name="GH", repo="orgA/x")
+
+    content_a = Content(name="README.md", remote_content=cfg.file("README.md", branch="main"))
+    content_b = Content(name="README.md", remote_content=cfg.file("README.md", branch="dev"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_s3_same_key_different_buckets_produces_different_hashes():
+    """Same S3 key pulled from two different buckets must not collide."""
+    from agno.knowledge.remote_content.remote_content import S3Content
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(name="report.pdf", remote_content=S3Content(bucket_name="bucket-a", key="report.pdf"))
+    content_b = Content(name="report.pdf", remote_content=S3Content(bucket_name="bucket-b", key="report.pdf"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_gcs_same_blob_different_buckets_produces_different_hashes():
+    """Same GCS blob name pulled from two different buckets must not collide."""
+    from agno.knowledge.remote_content.remote_content import GCSContent
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(name="data.csv", remote_content=GCSContent(bucket_name="bucket-a", blob_name="data.csv"))
+    content_b = Content(name="data.csv", remote_content=GCSContent(bucket_name="bucket-b", blob_name="data.csv"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_azure_blob_same_blob_different_configs_produces_different_hashes():
+    """Same Azure blob name from two different configs (different containers) must not collide."""
+    from agno.knowledge.remote_content.remote_content import AzureBlobContent
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(name="file.txt", remote_content=AzureBlobContent(config_id="az-a", blob_name="file.txt"))
+    content_b = Content(name="file.txt", remote_content=AzureBlobContent(config_id="az-b", blob_name="file.txt"))
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_sharepoint_same_path_different_sites_produces_different_hashes():
+    """Same SharePoint file path from two different sites must not collide."""
+    from agno.knowledge.remote_content.remote_content import SharePointContent
+
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(
+        name="spec.docx",
+        remote_content=SharePointContent(config_id="sp", site_path="/sites/a", file_path="spec.docx"),
+    )
+    content_b = Content(
+        name="spec.docx",
+        remote_content=SharePointContent(config_id="sp", site_path="/sites/b", file_path="spec.docx"),
+    )
+
+    assert knowledge._build_content_hash(content_a) != knowledge._build_content_hash(content_b)
+
+
+def test_non_remote_content_hash_unchanged():
+    """Pure URL / path content (no remote_content) retains its prior hash — backward compat."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_a = Content(url="https://example.com/doc.pdf", name="Doc")
+    content_b = Content(url="https://example.com/doc.pdf", name="Doc")
+
+    # Identical (no remote_content on either) → identical hash, preserves dedup behavior.
+    assert knowledge._build_content_hash(content_a) == knowledge._build_content_hash(content_b)
+
+
+def test_same_path_different_metadata_produces_different_hashes():
+    """Inserting the same document with different metadata and
+    upsert=False must not collapse onto the same content identity
+    """
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content1 = Content(path="./demo.pdf", metadata={"doc_id": 1, "collection_id": 1, "server_id": "10"})
+    content2 = Content(path="./demo.pdf", metadata={"doc_id": 1, "collection_id": 1, "server_id": "11"})
+
+    hash1 = knowledge._build_content_hash(content1)
+    hash2 = knowledge._build_content_hash(content2)
+
+    assert hash1 != hash2
+
+
+def test_same_path_same_metadata_produces_same_hash():
+    """Identical content + identical metadata must still dedup."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    metadata = {"doc_id": 1, "collection_id": 1, "server_id": "10"}
+    content1 = Content(path="./demo.pdf", metadata=dict(metadata))
+    content2 = Content(path="./demo.pdf", metadata=dict(metadata))
+
+    assert knowledge._build_content_hash(content1) == knowledge._build_content_hash(content2)
+
+
+def test_metadata_hash_independent_of_key_order():
+    """The same metadata declared in a different key order must hash identically."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content1 = Content(path="./demo.pdf", metadata={"doc_id": 1, "server_id": "10", "collection_id": 1})
+    content2 = Content(path="./demo.pdf", metadata={"server_id": "10", "collection_id": 1, "doc_id": 1})
+
+    assert knowledge._build_content_hash(content1) == knowledge._build_content_hash(content2)
+
+
+def test_path_hash_without_metadata_backward_compatible():
+    """A path with no metadata must hash the same as when no metadata segment is added."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_no_meta = Content(path="./demo.pdf")
+    content_empty_meta = Content(path="./demo.pdf", metadata={})
+
+    assert knowledge._build_content_hash(content_no_meta) == knowledge._build_content_hash(content_empty_meta)
+
+
+def test_url_hash_with_metadata_differs_from_without():
+    """Adding metadata to otherwise-identical URL content changes the hash."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content_no_meta = Content(url="https://example.com/doc.pdf", name="Doc")
+    content_with_meta = Content(url="https://example.com/doc.pdf", name="Doc", metadata={"tenant": "a"})
+
+    assert knowledge._build_content_hash(content_no_meta) != knowledge._build_content_hash(content_with_meta)
+
+
+def test_document_content_hash_includes_metadata():
+    """Multi-page document hash also incorporates content metadata for uniqueness."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    content1 = Content(url="https://example.com", metadata={"server_id": "10"})
+    content2 = Content(url="https://example.com", metadata={"server_id": "11"})
+
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    hash1 = knowledge._build_document_content_hash(doc, content1)
+    hash2 = knowledge._build_document_content_hash(doc, content2)
+
+    assert hash1 != hash2

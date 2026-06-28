@@ -1,6 +1,6 @@
 import json
 from functools import partial
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_exception
@@ -45,32 +45,16 @@ def get_entrypoint_for_tool(
 
     async def call_tool(
         tool_name: str,
-        run_context: Optional["RunContext"] = None,
-        agent: Optional["Agent"] = None,
-        team: Optional["Team"] = None,
+        _agno_run_context: Optional["RunContext"] = None,
+        _agno_agent: Optional["Agent"] = None,
+        _agno_team: Optional["Team"] = None,
         **kwargs,
     ) -> ToolResult:
-        # Execute the MCP tool call
-        try:
-            # Get the appropriate session for this run
-            # If mcp_tools_instance has header_provider and run_context is provided,
-            # this will create/reuse a session with dynamic headers
-            if mcp_tools_instance and hasattr(mcp_tools_instance, "get_session_for_run"):
-                # Import here to avoid circular imports
-                from agno.tools.mcp.multi_mcp import MultiMCPTools
+        # Framework-injected params use the `_agno_` prefix so they cannot
+        # collide with MCP tool arguments named "run_context", "agent" and
+        # "team".
 
-                # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context
-                if isinstance(mcp_tools_instance, MultiMCPTools):
-                    active_session = await mcp_tools_instance.get_session_for_run(
-                        run_context=run_context, server_idx=server_idx, agent=agent, team=team
-                    )
-                else:
-                    active_session = await mcp_tools_instance.get_session_for_run(
-                        run_context=run_context, agent=agent, team=team
-                    )
-            else:
-                active_session = session
-
+        async def _call_with_session(active_session: ClientSession) -> ToolResult:
             try:
                 await active_session.send_ping()
             except Exception as e:
@@ -81,7 +65,10 @@ def get_entrypoint_for_tool(
 
             # Return an error if the tool call failed
             if result.isError:
-                return ToolResult(content=f"Error from MCP tool '{tool_name}': {result.content}")
+                return ToolResult(
+                    content=f"Error from MCP tool '{tool_name}': {result.content}",
+                    metadata=_build_mcp_metadata(result),
+                )
 
             # Process the result content
             response_str = ""
@@ -108,6 +95,7 @@ def get_entrypoint_for_tool(
                             if image_data and isinstance(image_data, str):
                                 import base64
 
+                                image_bytes: Optional[bytes]
                                 try:
                                     image_bytes = base64.b64decode(image_data)
                                 except Exception as e:
@@ -160,13 +148,70 @@ def get_entrypoint_for_tool(
 
             return ToolResult(
                 content=response_str.strip(),
+                metadata=_build_mcp_metadata(result),
                 images=images if images else None,
             )
+
+        # Execute the MCP tool call
+        try:
+            # Get the appropriate session for this run.
+            # If mcp_tools_instance has header_provider and run_context is provided,
+            # this will create/reuse a session with dynamic headers.
+            if mcp_tools_instance and hasattr(mcp_tools_instance, "get_session_for_run"):
+                # Import here to avoid circular imports
+                from agno.tools.mcp.multi_mcp import MultiMCPTools
+
+                # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context.
+                if isinstance(mcp_tools_instance, MultiMCPTools):
+                    active_session = await mcp_tools_instance.get_session_for_run(
+                        run_context=_agno_run_context,
+                        server_idx=server_idx,
+                        agent=_agno_agent,
+                        team=_agno_team,
+                    )
+                    return await _call_with_session(active_session)
+
+                if (
+                    hasattr(mcp_tools_instance, "should_use_temporary_run_session")
+                    and mcp_tools_instance.should_use_temporary_run_session(_agno_run_context)
+                    and hasattr(mcp_tools_instance, "get_temporary_session_for_run")
+                ):
+                    async with mcp_tools_instance.get_temporary_session_for_run(
+                        run_context=_agno_run_context,
+                        agent=_agno_agent,
+                        team=_agno_team,
+                    ) as active_session:
+                        return await _call_with_session(active_session)
+
+                active_session = await mcp_tools_instance.get_session_for_run(
+                    run_context=_agno_run_context, agent=_agno_agent, team=_agno_team
+                )
+                return await _call_with_session(active_session)
+
+            return await _call_with_session(session)
         except Exception as e:
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
             return ToolResult(content=f"Error: {e}")
 
     return partial(call_tool, tool_name=tool.name)
+
+
+def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
+    """Collect a tool result's extra MCP data into a single ToolResult.metadata dict.
+
+    Protocol `_meta` and the tool's `structuredContent` are stored as the reserved keys
+    `meta` and `structured_content` rather than as separate ToolResult fields, so future MCP
+    additions become new keys here instead of new attributes. `getattr` guards both: older MCP
+    servers (mcp < 1.10.0) expose no `structuredContent`, so the key is simply omitted. Returns
+    None when there is nothing to preserve.
+    """
+    metadata: Dict[str, Any] = {}
+    if getattr(result, "meta", None) is not None:
+        metadata["meta"] = result.meta
+    structured_content = getattr(result, "structuredContent", None)
+    if structured_content is not None:
+        metadata["structured_content"] = structured_content
+    return metadata or None
 
 
 def prepare_command(command: str) -> list[str]:
