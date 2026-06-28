@@ -1529,8 +1529,10 @@ def handle_model_response_chunk(
                     create_run_output_content_event(
                         from_run_response=run_response,
                         content=model_response_event.content,
-                        reasoning_content=model_response_event.reasoning_content,
-                        redacted_reasoning_content=model_response_event.redacted_reasoning_content,
+                        reasoning_content=(model_response_event.reasoning_content if not stream_events else None),
+                        redacted_reasoning_content=(
+                            model_response_event.redacted_reasoning_content if not stream_events else None
+                        ),
                         citations=model_response_event.citations,
                         model_provider_data=model_response_event.provider_data,
                     ),

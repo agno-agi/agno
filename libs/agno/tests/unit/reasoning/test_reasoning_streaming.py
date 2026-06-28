@@ -211,6 +211,47 @@ def test_agent_stream_emits_reasoning_events_for_model_reasoning_content():
     assert final_event.reasoning_content == "The user asked a question."
 
 
+def test_agent_stream_preserves_content_when_reasoning_and_content_share_chunk():
+    """Test mixed reasoning/content chunks emit both event types without duplication."""
+
+    class MixedReasoningContentModel(Model):
+        id: str = "mixed-reasoning-content-model"
+        name: str = "MixedReasoningContentModel"
+
+        def invoke(self, *args, **kwargs):
+            return ModelResponse(content="Done")
+
+        async def ainvoke(self, *args, **kwargs):
+            return ModelResponse(content="Done")
+
+        def invoke_stream(self, *args, **kwargs):
+            yield ModelResponse(reasoning_content="Think first. ", content="Done")
+
+        async def ainvoke_stream(self, *args, **kwargs):
+            yield ModelResponse(reasoning_content="Think first. ", content="Done")
+
+        def _parse_provider_response(self, response, **kwargs):
+            return ModelResponse(content=response)
+
+        def _parse_provider_response_delta(self, response):
+            return ModelResponse(content=response)
+
+    agent = Agent(
+        model=MixedReasoningContentModel(id="mixed-reasoning-content-model", name="MixedReasoningContentModel")
+    )
+
+    events = list(agent.run("Hi", stream=True, stream_events=True))
+    reasoning_deltas = [event for event in events if event.event == RunEvent.reasoning_content_delta]
+    run_content_events = [event for event in events if event.event == RunEvent.run_content]
+    final_event = events[-1]
+
+    assert [event.reasoning_content for event in reasoning_deltas] == ["Think first. "]
+    assert [event.content for event in run_content_events] == ["Done"]
+    assert all(not event.reasoning_content for event in run_content_events)
+    assert final_event.content == "Done"
+    assert final_event.reasoning_content == "Think first. "
+
+
 # ============================================================================
 # Mock-based streaming tests
 # ============================================================================
