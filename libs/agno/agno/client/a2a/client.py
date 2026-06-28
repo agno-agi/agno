@@ -258,8 +258,9 @@ class A2AClient:
             for msg in result.get("history", []):
                 if msg.get("role") == "agent":
                     for part in msg.get("parts", []):
-                        if part.get("kind") == "text" or "text" in part:
-                            content = part.get("text", "")
+                        part_data = part.get("root", part)
+                        if part_data.get("kind") == "text" or "text" in part_data:
+                            content = part_data.get("text", "")
                             break
 
         elif kind == "status-update":
