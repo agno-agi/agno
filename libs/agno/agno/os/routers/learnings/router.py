@@ -1,0 +1,548 @@
+"""Learnings API router -- CRUD over the agno_learnings table."""
+
+import logging
+from typing import Optional, Union, cast
+from uuid import uuid4
+
+from fastapi import Depends, HTTPException, Path, Query, Request
+from fastapi.routing import APIRouter
+
+from agno.db.base import AsyncBaseDb, BaseDb
+from agno.learn.utils import IDENTITY_KEYED_LEARNING_TYPES, build_learning_id
+from agno.os.auth import get_authentication_dependency
+from agno.os.middleware.user_scope import get_scoped_user_id
+from agno.os.routers.learnings.schema import LearningCreate, LearningResponse, LearningUpdate, LearningUserStats
+from agno.os.schema import (
+    BadRequestResponse,
+    InternalServerErrorResponse,
+    NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
+    SortOrder,
+    UnauthenticatedResponse,
+    ValidationErrorResponse,
+)
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_db
+from agno.remote.base import RemoteDb
+
+logger = logging.getLogger(__name__)
+
+
+def get_learnings_router(
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    settings: AgnoAPISettings = AgnoAPISettings(),
+    **kwargs,
+) -> APIRouter:
+    """Factory that creates and returns the learnings router."""
+    router = APIRouter(
+        dependencies=[Depends(get_authentication_dependency(settings))],
+        tags=["Learnings"],
+        responses={
+            400: {"description": "Bad Request", "model": BadRequestResponse},
+            401: {"description": "Unauthorized", "model": UnauthenticatedResponse},
+            404: {"description": "Not Found", "model": NotFoundResponse},
+            422: {"description": "Validation Error", "model": ValidationErrorResponse},
+            500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+        },
+    )
+    return _attach_routes(router=router, dbs=dbs)
+
+
+def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
+    @router.get(
+        "/learnings",
+        response_model=PaginatedResponse[LearningResponse],
+        operation_id="list_learnings",
+        summary="List Learnings",
+        description=(
+            "List learning records with pagination and optional filters. For a scoped (non-admin) "
+            "caller with user isolation enabled, results are bound to that user and also include "
+            "records with no owner (`user_id IS NULL`) — this covers global, agent, team, session, "
+            "and entity-scoped learnings; passing a `user_id` that differs from the caller is "
+            "rejected with 403. Admins and unscoped callers see all records (optionally filtered by "
+            "`user_id`)."
+        ),
+    )
+    async def list_learnings(
+        request: Request,
+        learning_type: Optional[str] = Query(None, description="Filter by learning type"),
+        user_id: Optional[str] = Query(None, description="Filter by user ID"),
+        agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+        team_id: Optional[str] = Query(None, description="Filter by team ID"),
+        session_id: Optional[str] = Query(None, description="Filter by session ID"),
+        namespace: Optional[str] = Query(None, description="Filter by namespace"),
+        entity_id: Optional[str] = Query(None, description="Filter by entity ID"),
+        entity_type: Optional[str] = Query(None, description="Filter by entity type"),
+        limit: int = Query(100, ge=1, le=1000, description="Page size"),
+        page: int = Query(1, ge=1, description="1-indexed page number"),
+        sort_by: Optional[str] = Query(
+            None,
+            description=(
+                "Field to sort by, e.g. `created_at` or `updated_at` (the default). "
+                "An unrecognised field is ignored (the default ordering is used)."
+            ),
+        ),
+        sort_order: Optional[SortOrder] = Query(SortOrder.DESC, description="Sort order (asc or desc)"),
+        db_id: Optional[str] = Query(None, description="Database ID to query"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
+    ) -> PaginatedResponse[LearningResponse]:
+        # Scoping note: this router calls get_scoped_user_id + get_db directly rather than the
+        # shared resolve_db_and_scope helper. That helper returns the user_id to *silently* thread
+        # onto a read; these endpoints instead enforce a stricter contract -- an explicit user_id
+        # that mismatches the caller is rejected with 403 (list/create/users), single records leak
+        # nothing via 404 (get/patch/delete), and list adds include_global -- none of which the
+        # helper expresses. Keeping the calls explicit here is intentional.
+        include_global = False
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if user_id is not None and user_id != scoped_user_id:
+                raise HTTPException(status_code=403, detail="Cannot list learnings for another user")
+            user_id = scoped_user_id
+            include_global = True
+
+        db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                records, total_count = await db.list_learnings(
+                    learning_type=learning_type,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    session_id=session_id,
+                    namespace=namespace,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    include_global=include_global,
+                    limit=limit,
+                    page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
+                )
+            else:
+                records, total_count = cast(BaseDb, db).list_learnings(
+                    learning_type=learning_type,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    team_id=team_id,
+                    session_id=session_id,
+                    namespace=namespace,
+                    entity_id=entity_id,
+                    entity_type=entity_type,
+                    include_global=include_global,
+                    limit=limit,
+                    page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
+                )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to list learnings: {e}")
+
+        total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+        return PaginatedResponse(
+            data=[LearningResponse.model_validate(r) for r in records],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
+
+    @router.post(
+        "/learnings",
+        response_model=LearningResponse,
+        status_code=201,
+        operation_id="create_learning",
+        summary="Create Learning",
+        description=(
+            "Create a new learning record. For the identity-keyed learning types (`user_profile`, "
+            "`user_memory`, `session_context`, `entity_memory`) the record id is derived "
+            "deterministically from the identity fields so it reconciles with what the agent "
+            "reads/writes — provide those fields (else 422), and if a record already exists the "
+            "request is rejected with 409 (use PATCH to update it). Other types get a generated id. "
+            "For a scoped (non-admin) caller, the body's `user_id` must be omitted/null or match the "
+            "caller (mismatch → 403); admins and unscoped callers may set any `user_id`."
+        ),
+    )
+    async def create_learning(
+        request: Request,
+        body: LearningCreate,
+        db_id: Optional[str] = Query(None, description="Database ID to use"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
+    ) -> LearningResponse:
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and body.user_id is not None and body.user_id != scoped_user_id:
+            raise HTTPException(status_code=403, detail="Cannot create learnings for another user")
+
+        db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
+
+        # The learning stores key their records by a deterministic id derived from the identity
+        # fields, not a random uuid. A POST must use that same id, otherwise the record is
+        # invisible to the agent (which reads/writes the deterministic id) and a duplicate row
+        # appears on the agent's next write. Derive it for the identity-keyed types; fall back to
+        # a uuid only for types that genuinely use generated ids (e.g. decision_log).
+        deterministic_id = build_learning_id(
+            body.learning_type,
+            user_id=body.user_id,
+            session_id=body.session_id,
+            entity_id=body.entity_id,
+            entity_type=body.entity_type,
+            namespace=body.namespace,
+        )
+        if body.learning_type in IDENTITY_KEYED_LEARNING_TYPES and deterministic_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"learning_type '{body.learning_type}' is keyed by its identity fields; provide the "
+                    "required field(s) (user_id, session_id, or entity_id + entity_type) so the record "
+                    "reconciles with the agent's store."
+                ),
+            )
+        learning_id = deterministic_id or str(uuid4())
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                # Identity-keyed record already exists -> don't silently overwrite agent-curated
+                # data; steer the caller to PATCH.
+                if deterministic_id is not None and await db.get_learning_by_id(learning_id) is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"A '{body.learning_type}' learning already exists for this identity "
+                            f"(id '{learning_id}'). Use PATCH /learnings/{learning_id} to update it."
+                        ),
+                    )
+                await db.upsert_learning(
+                    id=learning_id,
+                    learning_type=body.learning_type,
+                    content=body.content,
+                    user_id=body.user_id,
+                    agent_id=body.agent_id,
+                    team_id=body.team_id,
+                    session_id=body.session_id,
+                    namespace=body.namespace,
+                    entity_id=body.entity_id,
+                    entity_type=body.entity_type,
+                    metadata=body.metadata,
+                )
+                created = await db.get_learning_by_id(learning_id)
+            else:
+                sync_db = cast(BaseDb, db)
+                if deterministic_id is not None and sync_db.get_learning_by_id(learning_id) is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"A '{body.learning_type}' learning already exists for this identity "
+                            f"(id '{learning_id}'). Use PATCH /learnings/{learning_id} to update it."
+                        ),
+                    )
+                sync_db.upsert_learning(
+                    id=learning_id,
+                    learning_type=body.learning_type,
+                    content=body.content,
+                    user_id=body.user_id,
+                    agent_id=body.agent_id,
+                    team_id=body.team_id,
+                    session_id=body.session_id,
+                    namespace=body.namespace,
+                    entity_id=body.entity_id,
+                    entity_type=body.entity_type,
+                    metadata=body.metadata,
+                )
+                created = sync_db.get_learning_by_id(learning_id)
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except HTTPException:
+            raise  # e.g. the 409 conflict above
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to create learning: {e}")
+
+        if created is None:
+            raise HTTPException(status_code=500, detail="Failed to create learning")
+        return LearningResponse.model_validate(created)
+
+    @router.get(
+        "/learnings/users",
+        response_model=PaginatedResponse[LearningUserStats],
+        operation_id="list_learning_users",
+        summary="List Learning Users",
+        description=(
+            "List the users that own learning records, with a per-user count and last-updated "
+            "timestamp. Intended as the entry point for a per-user view: list users here, then "
+            "drill into a single user's learnings via `GET /learnings?user_id=...`. Records with "
+            "no owner (`user_id IS NULL`) are excluded. Pass `learning_type` to restrict the "
+            "grouping to a single store (e.g. `user_profile` or `user_memory`). For a scoped "
+            "(non-admin) caller results are bound to that user; an explicit `user_id` that differs "
+            "is rejected with 403. Admins and unscoped callers list all users. Sortable by "
+            "`user_id` or `last_learning_updated_at` (the default)."
+        ),
+    )
+    async def list_learning_users(
+        request: Request,
+        learning_type: Optional[str] = Query(None, description="Restrict the grouping to a single learning type"),
+        user_id: Optional[str] = Query(None, description="Restrict the result to a single user"),
+        limit: int = Query(20, ge=1, le=1000, description="Page size"),
+        page: int = Query(1, ge=1, description="1-indexed page number"),
+        sort_by: Optional[str] = Query(
+            None,
+            description="Field to sort by: user_id or last_learning_updated_at (the default)",
+        ),
+        sort_order: Optional[SortOrder] = Query(SortOrder.DESC, description="Sort order (asc or desc)"),
+        db_id: Optional[str] = Query(None, description="Database ID to query"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
+    ) -> PaginatedResponse[LearningUserStats]:
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if user_id is not None and user_id != scoped_user_id:
+                raise HTTPException(status_code=403, detail="Cannot list learning users for another user")
+            user_id = scoped_user_id
+
+        db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                records, total_count = await db.get_learnings_user_stats(
+                    learning_type=learning_type,
+                    user_id=user_id,
+                    limit=limit,
+                    page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
+                )
+            else:
+                records, total_count = cast(BaseDb, db).get_learnings_user_stats(
+                    learning_type=learning_type,
+                    user_id=user_id,
+                    limit=limit,
+                    page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
+                )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to get learning users: {e}")
+
+        total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+        return PaginatedResponse(
+            data=[LearningUserStats.model_validate(r) for r in records],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
+
+    @router.delete(
+        "/learnings/users/{user_id}",
+        status_code=204,
+        operation_id="delete_learning_user",
+        summary="Delete Learning User",
+        description=(
+            "Delete the learning records owned by a user. By default removes every learning type "
+            "backed by the agno_learnings table (user_profile, user_memory, and any user-scoped "
+            "entity records); pass `learning_type` to restrict deletion to a single store. Records "
+            "with no owner (`user_id IS NULL`) are not affected. For a scoped (non-admin) caller, "
+            "only their own learnings may be deleted; a different `user_id` is rejected with 403. "
+            "Admins and unscoped callers may delete any user's learnings. Returns 204 even if the "
+            "user had no matching records."
+        ),
+    )
+    async def delete_learning_user(
+        request: Request,
+        user_id: str = Path(description="The user whose learnings should be deleted"),
+        learning_type: Optional[str] = Query(
+            None, description="Restrict deletion to a single learning type; omit to delete all of the user's learnings"
+        ),
+        db_id: Optional[str] = Query(None, description="Database ID to use"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
+    ) -> None:
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and user_id != scoped_user_id:
+            raise HTTPException(status_code=403, detail="Cannot delete learnings for another user")
+
+        db = await get_db(dbs, db_id, table)
+
+        if isinstance(db, RemoteDb):
+            raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                await db.delete_user_learnings(user_id, learning_type=learning_type)
+            else:
+                cast(BaseDb, db).delete_user_learnings(user_id, learning_type=learning_type)
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except Exception as e:
+            # Don't report a destructive bulk delete as a success (204) when it failed.
+            raise HTTPException(status_code=500, detail=f"Failed to delete user learnings: {e}")
+
+    @router.get(
+        "/learnings/{learning_id}",
+        response_model=LearningResponse,
+        operation_id="get_learning",
+        summary="Get Learning",
+        description="Retrieve a single learning record by its ID.",
+    )
+    async def get_learning(
+        request: Request,
+        learning_id: str = Path(description="The learning ID"),
+        db_id: Optional[str] = Query(None, description="Database ID to query"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
+    ) -> LearningResponse:
+        db = await get_db(dbs, db_id, table)
+        record = await _fetch_learning(db, learning_id)
+        _enforce_user_scope(request, record)
+        return LearningResponse.model_validate(record)
+
+    @router.patch(
+        "/learnings/{learning_id}",
+        response_model=LearningResponse,
+        operation_id="update_learning",
+        summary="Update Learning",
+        description=(
+            "Update a learning record. Only `content` and `metadata` may be modified; "
+            "identity fields (user_id, agent_id, team_id, etc.) are immutable. "
+            "Provided fields fully replace the existing values. Records with no owner "
+            "(`user_id IS NULL` — shared agent/team/session/entity learnings) are readable by "
+            "any caller but may only be modified by an admin."
+        ),
+    )
+    async def update_learning(
+        request: Request,
+        body: LearningUpdate,
+        learning_id: str = Path(description="The learning ID"),
+        db_id: Optional[str] = Query(None, description="Database ID to use"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
+    ) -> LearningResponse:
+        db = await get_db(dbs, db_id, table)
+        existing = await _fetch_learning(db, learning_id)
+        _enforce_user_scope(request, existing, mutating=True)
+
+        updates = body.model_dump(exclude_unset=True)
+        if not updates:
+            return LearningResponse.model_validate(existing)
+
+        if "content" in updates and updates["content"] is None:
+            raise HTTPException(
+                status_code=422,
+                detail="content cannot be null; omit the field to leave it unchanged",
+            )
+
+        new_content = updates["content"] if "content" in updates else existing.get("content") or {}
+        new_metadata = updates["metadata"] if "metadata" in updates else existing.get("metadata")
+
+        # Update-only (never insert). The learning stores key records by a deterministic id
+        # shared with this endpoint, so the agent is a live concurrent writer to the same row.
+        # An upsert here would silently re-create a row the agent just deleted (and an old TOCTOU
+        # guard "rolled that back" by deleting the row, destroying the agent's and the caller's
+        # writes). A plain UPDATE avoids all of that: a vanished row simply isn't matched -> 404,
+        # and a concurrent agent re-create resolves as last-write-wins, never data loss.
+        try:
+            if isinstance(db, AsyncBaseDb):
+                matched = await db.update_learning(learning_id, content=new_content, metadata=new_metadata)
+            else:
+                matched = cast(BaseDb, db).update_learning(learning_id, content=new_content, metadata=new_metadata)
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to update learning: {e}")
+
+        if not matched:
+            raise HTTPException(status_code=404, detail="Learning not found")
+
+        updated = await _fetch_learning(db, learning_id)  # re-read for the response
+        return LearningResponse.model_validate(updated)
+
+    @router.delete(
+        "/learnings/{learning_id}",
+        status_code=204,
+        operation_id="delete_learning",
+        summary="Delete Learning",
+        description=(
+            "Permanently delete a learning record by its ID. Records with no owner "
+            "(`user_id IS NULL` — shared agent/team/session/entity learnings) may only be "
+            "deleted by an admin."
+        ),
+    )
+    async def delete_learning(
+        request: Request,
+        learning_id: str = Path(description="The learning ID"),
+        db_id: Optional[str] = Query(None, description="Database ID to use"),
+        table: Optional[str] = Query(None, description="The database table to use (requires db_id)"),
+    ) -> None:
+        db = await get_db(dbs, db_id, table)
+        existing = await _fetch_learning(db, learning_id)
+        _enforce_user_scope(request, existing, mutating=True)
+
+        try:
+            if isinstance(db, AsyncBaseDb):
+                deleted = await db.delete_learning(learning_id)
+            else:
+                deleted = cast(BaseDb, db).delete_learning(learning_id)
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+
+        if not deleted:
+            raise HTTPException(status_code=500, detail="Failed to delete learning")
+
+    return router
+
+
+async def _fetch_learning(db: Union[BaseDb, AsyncBaseDb, RemoteDb], learning_id: str) -> dict:
+    if isinstance(db, RemoteDb):
+        raise HTTPException(status_code=501, detail="Learnings endpoints not supported on remote DBs")
+    try:
+        if isinstance(db, AsyncBaseDb):
+            record = await db.get_learning_by_id(learning_id)
+        else:
+            record = cast(BaseDb, db).get_learning_by_id(learning_id)
+    except NotImplementedError:
+        raise HTTPException(status_code=501, detail="Learnings not supported by the configured database")
+    except Exception as e:
+        # A DB error is not "not found" -- surface it rather than emit a misleading 404.
+        raise HTTPException(status_code=500, detail=f"Failed to fetch learning: {e}")
+    if record is None:
+        raise HTTPException(status_code=404, detail="Learning not found")
+    return record
+
+
+def _enforce_user_scope(request: Request, record: dict, *, mutating: bool = False) -> None:
+    """Block cross-user access without leaking existence.
+
+    Scoping is the framework's opt-in ``user_isolation`` contract: admins and callers
+    running with isolation disabled get ``None`` from ``get_scoped_user_id`` and have full
+    access. For a scoped (non-admin) caller:
+
+    - Records with ``user_id IS NULL`` are non-user-scoped (global, agent, team, session, or
+      entity learnings, often produced during *other* users' activity). They remain readable
+      to any authenticated caller, but mutating them (``mutating=True``, i.e. PATCH/DELETE) is
+      admin-only -- a regular user must not overwrite or delete shared rows it doesn't own.
+    - A record owned by a different user returns 404 (not 403) to avoid leaking which IDs exist.
+    """
+    scoped_user_id = get_scoped_user_id(request)
+    if scoped_user_id is None:
+        return
+    record_user_id = record.get("user_id")
+    if record_user_id is None:
+        if mutating:
+            raise HTTPException(
+                status_code=403, detail="Only admins can modify learnings that have no owner (user_id is null)"
+            )
+        return
+    if record_user_id != scoped_user_id:
+        raise HTTPException(status_code=404, detail="Learning not found")

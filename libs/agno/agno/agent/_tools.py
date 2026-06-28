@@ -355,6 +355,7 @@ def parse_tools(
     strict = False
     if (
         output_schema is not None
+        and agent.parser_model is None
         and (agent.structured_outputs or (not agent.use_json_mode))
         and model.supports_native_structured_outputs
     ):
@@ -567,7 +568,7 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=f"User inputs retrieved: {json.dumps(user_input_result)}",
+            content=f"User inputs retrieved: {json.dumps(user_input_result, ensure_ascii=False)}",
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
@@ -588,7 +589,7 @@ def handle_ask_user_tool_update(agent: Agent, run_messages: RunMessages, tool: T
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=f"User feedback received: {json.dumps(feedback_result)}",
+            content=f"User feedback received: {json.dumps(feedback_result, ensure_ascii=False)}",
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,

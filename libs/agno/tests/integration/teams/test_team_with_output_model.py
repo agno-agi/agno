@@ -5,7 +5,7 @@ from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 from agno.team import Team
 
 agent = Agent(
-    model=Claude(id="claude-sonnet-4-20250514"),
+    model=Claude(id="claude-sonnet-4-5-20250929"),
     description="You are an expert on national parks and provide concise guides.",
     output_model=OpenAIChat(id="gpt-4o"),
     telemetry=False,

@@ -1,8 +1,107 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Generic, List, Optional, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
+# the valid values for ``MCPServerConfig.include_tags`` / ``exclude_tags`` without reading
+# ``agno/os/mcp.py``. Keep in sync with the ``tags={...}`` argument on each
+# ``@register_builtin_tool(...)`` in that module.
+MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "memory"})
+
+# Type alias for ``include_tags`` / ``exclude_tags`` -- gives IDE autocomplete on the
+# string values while keeping the API stringly-typed (callers still pass ``{"core"}``).
+MCPBuiltinTag = Literal["core", "session", "memory"]
+
+
+class MCPServerConfig(BaseModel):
+    """Configuration for the AgentOS MCP server (served at ``/mcp``).
+
+    Pair this with ``AgentOS(enable_mcp_server=True, mcp_config=...)`` to register
+    your own tools, scope the built-in tools, gate the server, and add middleware.
+    With no ``mcp_config`` provided the MCP server behaves exactly as before: all
+    built-in tools are registered and no extra gate or middleware is added.
+
+    The built-in tools are tagged so they can be scoped as a group. See
+    ``MCP_BUILTIN_TAGS`` for the canonical set; current values:
+      - ``"core"``    -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``
+      - ``"session"`` -> session CRUD tools
+      - ``"memory"``  -> memory CRUD tools
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # Custom tools to register on the MCP server. Each entry may be a plain callable
+    # (name/description inferred from ``__name__``/docstring) or an Agno tool/``Function``
+    # (name/description taken from the tool, entrypoint used as the callable).
+    #
+    # Identity: a custom tool may declare a ``user_id`` parameter. AgentOS fills it with
+    # the authenticated caller's id (the JWT subject) and hides it from the client-facing
+    # schema, so clients cannot spoof it. Tools that need the full request can declare a
+    # FastMCP ``Context`` parameter, which FastMCP injects natively.
+    tools: Optional[List[Any]] = None
+
+    # Master switch for the ~19 built-in tools. Set to False to ship ONLY your own tools.
+    enable_builtin_tools: bool = True
+
+    # Finer scoping over the built-ins via their tags (see ``MCP_BUILTIN_TAGS``).
+    # When ``include_tags`` is set, only built-ins carrying one of those tags are registered.
+    # ``exclude_tags`` is then subtracted. Both are ignored when ``enable_builtin_tools`` is False.
+    # Typed as ``MCPBuiltinTag`` (a ``Literal``) so the IDE autocompletes the values and pydantic
+    # rejects typos at construction with a message like "Input should be 'core', 'session' or
+    # 'memory'" -- otherwise an unknown tag would silently produce an empty server.
+    include_tags: Optional[Set[MCPBuiltinTag]] = None
+    exclude_tags: Optional[Set[MCPBuiltinTag]] = None
+
+    # Per-call gate for the MCP server. Given the authenticated caller's user_id, return True
+    # to allow the request and False to reject it with 401 -- before any tool or model runs.
+    # Runs after JWT verification.
+    #
+    # ``user_id`` is the verified JWT subject when ``AgentOS(authorization=True, ...)`` is set,
+    # and ``None`` otherwise -- including local dev where no JWT layer is configured. ``authorize``
+    # is therefore the only thing standing between an unauthenticated caller and the MCP surface
+    # in that mode; you MUST decide what ``None`` means for your app. Common choices: ``return
+    # False`` (refuse anonymous), or ``return not is_prd()`` (allow only in dev). A bare
+    # ``user_id in OWNER_IDS`` returns False on None, which is also fine. Pair this with
+    # ``allowed_hosts`` to keep an always-on local server from being driven by a web page.
+    #
+    # Example: ``authorize=lambda user_id: user_id in OWNER_IDS`` for an owner-only server.
+    authorize: Optional[Callable[[Optional[str]], bool]] = None
+
+    # Built-in DNS-rebinding protection. When ``allowed_hosts`` is set (even to an empty list),
+    # AgentOS validates the request Host -- and the Origin when one is present -- against these
+    # values plus localhost defaults, rejecting anything else with 400. This is what an always-on
+    # local MCP server needs so a malicious web page can't drive it via a rebound DNS name; you
+    # list only your deploy/tunnel host, localhost works out of the box. Left as None (default),
+    # no host validation is added -- unchanged behavior.
+    allowed_hosts: Optional[List[str]] = None
+    # Extra exact origins to allow (advanced). An Origin whose host is already in ``allowed_hosts``
+    # (or a localhost default) is allowed without listing it here; use this only to allow an Origin
+    # served from a different host.
+    allowed_origins: Optional[List[str]] = None
+
+    # Extra ASGI/Starlette middleware to add to the MCP app, for anything not covered above.
+    # Provide ``starlette.middleware.Middleware`` instances; they run ahead of the JWT and
+    # ``authorize`` layers, in the order listed.
+    middleware: Optional[List[Any]] = None
+
+    @model_validator(mode="after")
+    def _check_has_tools(self) -> "MCPServerConfig":
+        """Refuse a config that would mount an MCP server with zero tools.
+
+        ``enable_builtin_tools=False`` plus no ``tools`` is almost always a mistake -- the
+        user disabled the built-ins intending to ship their own and forgot to register them,
+        and ends up with a working ``/mcp`` endpoint that lists nothing. Fail fast at
+        construction with an actionable message instead of booting a useless server.
+        """
+        if not self.enable_builtin_tools and not self.tools:
+            raise ValueError(
+                "MCPServerConfig would register zero tools: enable_builtin_tools=False and "
+                "tools is empty. Pass tools=[...] to register custom tools, or leave "
+                "enable_builtin_tools=True (the default) to ship the built-in tools."
+            )
+        return self
 
 
 class AuthorizationConfig(BaseModel):
@@ -66,6 +165,12 @@ class MemoryDomainConfig(BaseModel):
     display_name: Optional[str] = None
 
 
+class LearningDomainConfig(BaseModel):
+    """Configuration for the Learning domain of the AgentOS"""
+
+    display_name: Optional[str] = None
+
+
 class TracesDomainConfig(BaseModel):
     """Configuration for the Traces domain of the AgentOS"""
 
@@ -101,6 +206,12 @@ class MemoryConfig(MemoryDomainConfig):
     dbs: Optional[List[DatabaseConfig[MemoryDomainConfig]]] = None
 
 
+class LearningConfig(LearningDomainConfig):
+    """Configuration for the Learning domain of the AgentOS"""
+
+    dbs: Optional[List[DatabaseConfig[LearningDomainConfig]]] = None
+
+
 class KnowledgeDatabaseConfig(BaseModel):
     """Configuration for a knowledge database with its tables"""
 
@@ -133,14 +244,22 @@ class ChatConfig(BaseModel):
 
     quick_prompts: dict[str, list[str]]
 
-    # Limit the number of quick prompts to 3 (per agent/team/workflow)
-    @field_validator("quick_prompts")
-    @classmethod
-    def limit_lists(cls, v):
-        for key, lst in v.items():
-            if len(lst) > 3:
-                raise ValueError(f"Too many quick prompts for '{key}', maximum allowed is 3")
-        return v
+
+class Manifest(BaseModel):
+    """OS-level UI metadata for an agent/team/workflow.
+
+    Fields here are AgentOS UI metadata only. ``description`` is unrelated to
+    ``Agent.description`` / ``Team.description`` / ``Workflow.description``,
+    which are sent to the model.
+
+    Rendering surfaces:
+    - ``description``, ``labels``: home/landing card
+    - ``quick_prompts``: chat page
+    """
+
+    description: Optional[str] = None
+    labels: Optional[List[str]] = None
+    quick_prompts: Optional[List[str]] = None
 
 
 class AgentOSConfig(BaseModel):
@@ -148,9 +267,14 @@ class AgentOSConfig(BaseModel):
 
     available_models: Optional[List[str]] = None
     chat: Optional[ChatConfig] = None
+    manifest: Optional[Dict[str, Manifest]] = Field(
+        default=None,
+        description="Per-entity UI metadata keyed by agent/team/workflow id",
+    )
     evals: Optional[EvalsConfig] = None
     knowledge: Optional[KnowledgeConfig] = None
     memory: Optional[MemoryConfig] = None
+    learning: Optional[LearningConfig] = None
     session: Optional[SessionConfig] = None
     metrics: Optional[MetricsConfig] = None
     traces: Optional[TracesConfig] = None

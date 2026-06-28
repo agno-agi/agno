@@ -461,6 +461,67 @@ async def test_async_upsert(mock_pgvector):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enable_batch", [False, True])
+async def test_async_upsert_429_no_write(mock_pgvector, enable_batch):
+    """On 429 during embedding, async upsert should raise and write nothing (batch and non-batch)."""
+
+    docs = [
+        Document(id="doc_0", content="rate limited doc 0", name="d0"),
+        Document(id="doc_1", content="rate limited doc 1", name="d1"),
+    ]
+
+    async def _raise_429(*args, **kwargs):
+        raise Exception("Error code: 429")
+
+    if enable_batch:
+
+        class RateLimitedEmbedder:
+            enable_batch = True
+
+            async def async_get_embeddings_batch_and_usage(self, texts):
+                raise Exception("Error code: 429")
+
+        mock_pgvector.embedder = RateLimitedEmbedder()
+        embedder_patcher = None
+    else:
+
+        class RateLimitedEmbedder:
+            enable_batch = False
+
+        mock_pgvector.embedder = RateLimitedEmbedder()
+        embedder_patcher = patch("agno.knowledge.document.Document.async_embed", new=_raise_429)
+
+    sess = MagicMock()
+    cm = MagicMock()
+    cm.__enter__.return_value = sess
+    mock_pgvector.Session.return_value = cm
+
+    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert:
+        if embedder_patcher is not None:
+            with embedder_patcher:
+                with pytest.raises(Exception, match="429"):
+                    await mock_pgvector._async_upsert(
+                        content_hash="h",
+                        documents=docs,
+                        filters=None,
+                        batch_size=100,
+                    )
+        else:
+            with pytest.raises(Exception, match="429"):
+                await mock_pgvector._async_upsert(
+                    content_hash="h",
+                    documents=docs,
+                    filters=None,
+                    batch_size=100,
+                )
+
+        assert not mock_insert.called
+        assert not sess.execute.called
+        assert not sess.commit.called
+        assert sess.rollback.called
+
+
+@pytest.mark.asyncio
 async def test_async_search(mock_pgvector):
     """Test async_search method."""
     expected_results = [Document(id="test", content="Test document")]

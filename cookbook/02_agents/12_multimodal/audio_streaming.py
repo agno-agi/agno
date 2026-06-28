@@ -23,7 +23,7 @@ SAMPLE_WIDTH = 2  # Bytes (16 bits)
 # ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIChat(
-        id="gpt-4o-audio-preview",
+        id="gpt-audio",
         modalities=["text", "audio"],
         audio={
             "voice": "alloy",

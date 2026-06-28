@@ -60,21 +60,15 @@ async def main():
     print(f"   Updated memory: {updated.memory}")
     print(f"   Updated topics: {updated.topics}")
 
-    # Get memory topics (optional - may fail if not supported)
+    # Get memory topics
     print("\n5. Getting all memory topics...")
-    try:
-        topics = await client.get_memory_topics()
-        print(f"   Topics: {topics}")
-    except Exception as e:
-        print(f"   Skipped (endpoint may not be available): {type(e).__name__}")
+    topics = await client.get_memory_topics()
+    print(f"   Topics: {topics}")
 
-    # Get user memory stats (optional - may fail if not supported)
+    # Get user memory stats
     print("\n6. Getting user memory stats...")
-    try:
-        stats = await client.get_user_memory_stats()
-        print(f"   Stats: {len(stats.data)} entries")
-    except Exception as e:
-        print(f"   Skipped (endpoint may not be available): {type(e).__name__}")
+    stats = await client.get_user_memory_stats()
+    print(f"   Stats: {len(stats.data)} entries")
 
     # Delete the memory
     print(f"\n7. Deleting memory {memory.memory_id}...")

@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -17,7 +17,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -26,6 +26,7 @@ from agno.os.auth import (
     require_approval_resolved,
     require_resource_access,
 )
+from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.managers import event_buffer, sse_subscriber_manager
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -969,6 +970,15 @@ def get_team_router(
         request: Request,
         background_tasks: BackgroundTasks,
         requirements: str = Form(""),  # optional when admin approval resolved
+        input: Optional[str] = Form(None),
+        continue_from: str = Form(
+            "end",
+            description=("Continuation boundary. Use 'end', 'last_user', or a numeric message index."),
+        ),
+        fork: bool = Form(False),
+        regenerate: bool = Form(False),
+        replace_original: Optional[bool] = Form(None),
+        additional_instructions: Optional[str] = Form(None),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
@@ -1039,31 +1049,6 @@ def get_team_router(
                 component_id=team_id,
             )
 
-        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
-        if session_id and not isinstance(team, RemoteTeam):
-            existing_run = await team.aget_run_output(
-                run_id=run_id, session_id=session_id, user_id=scoped_user_id or user_id
-            )
-            if existing_run is not None:
-                is_paused = getattr(existing_run, "is_paused", False)
-                if not is_paused:
-                    status = getattr(existing_run, "status", None)
-                    _status_to_detail = {
-                        RunStatus.running: "run is already running",
-                        RunStatus.completed: "run is already continued",
-                        RunStatus.error: "run is already errored",
-                        RunStatus.cancelled: "run is already cancelled",
-                        RunStatus.pending: "run is already pending",
-                    }
-                    detail = _status_to_detail.get(
-                        status,  # type: ignore[arg-type]
-                        f"run is not paused (status={getattr(status, 'value', status)})",
-                    )
-                    raise HTTPException(
-                        status_code=409,
-                        detail=detail,
-                    )
-
         # Convert requirements dict to RunRequirement objects if provided
         updated_requirements = None
         if requirements_data:
@@ -1076,6 +1061,19 @@ def get_team_router(
 
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)
+        stripped_continue_from = continue_from.strip()
+        continue_from_value: Union[int, Literal["end", "last_user"]]
+        if stripped_continue_from.lstrip("-").isdigit():
+            continue_from_value = int(stripped_continue_from)
+        elif stripped_continue_from == "end":
+            continue_from_value = "end"
+        elif stripped_continue_from == "last_user":
+            continue_from_value = "last_user"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid continue_from. Use 'end', 'last_user', or a numeric message index.",
+            )
 
         if stream and background:
             # background=True, stream=True: resumable SSE streaming
@@ -1088,6 +1086,12 @@ def get_team_router(
                     team,
                     run_id=run_id,
                     requirements=updated_requirements or [],
+                    input=input,
+                    continue_from=continue_from_value,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1102,6 +1106,12 @@ def get_team_router(
                     team,
                     run_id=run_id,
                     requirements=updated_requirements or [],
+                    input=input,
+                    continue_from=continue_from_value,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1120,6 +1130,12 @@ def get_team_router(
                 run_response_obj = await team.acontinue_run(  # type: ignore
                     run_id=run_id,
                     requirements=updated_requirements or [],
+                    input=input,
+                    continue_from=continue_from_value,
+                    fork=fork,
+                    regenerate=regenerate,
+                    replace_original=replace_original,
+                    additional_instructions=additional_instructions,
                     session_id=session_id,
                     user_id=user_id,
                     stream=False,
@@ -1129,8 +1145,64 @@ def get_team_router(
                 )
                 return run_response_obj.to_dict()
 
+            except RunNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e))
+            except RunNotContinuableError as e:
+                raise HTTPException(status_code=409, detail=str(e))
             except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
+
+    @router.post(
+        "/teams/{team_id}/sessions/{session_id}/fork",
+        tags=["Teams"],
+        operation_id="fork_team_session",
+        summary="Fork Team Session",
+        description=(
+            "Deep-copy a team session into a new independent session. Every run is copied with a "
+            "fresh ``run_id``; the new session has a fresh ``session_id``. The original is "
+            "untouched. Use to explore alternative conversation paths without mutating the "
+            "source.\n\n"
+            "Distinct from ``/continue?fork=true``: that creates a sibling **run** inside the "
+            "**same** session. This creates a sibling **session**."
+        ),
+        responses={
+            200: {"description": "Session forked successfully"},
+            400: {"description": "Source session is empty or missing", "model": BadRequestResponse},
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def fork_team_session(
+        team_id: str,
+        session_id: str,
+        request: Request,
+        user_id: Optional[str] = None,
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        try:
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        except Exception as e:
+            logger.error(f"Error resolving team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        # Scope source-session read to the caller's user_id to prevent
+        # cross-user forking.
+        scoped_user_id = get_scoped_user_id(request)
+        effective_user_id = scoped_user_id or user_id
+
+        try:
+            new_session_id = await team.afork_session(  # type: ignore[union-attr]
+                source_session_id=session_id,
+                user_id=effective_user_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return {"session_id": new_session_id, "forked_from_session_id": session_id}
 
     @router.get(
         "/teams",
@@ -1424,6 +1496,122 @@ def get_team_router(
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
+
+    @router.get(
+        "/teams/{team_id}/runs/{run_id}/checkpoints",
+        tags=["Teams"],
+        operation_id="list_team_run_checkpoints",
+        summary="List Team Run Checkpoints",
+        description=(
+            "List FE-friendly continuation boundaries derived from the current stored team run. "
+            "No separate checkpoint table is used; entries are inferred from message-level "
+            "checkpoint markers and the terminal end of the transcript."
+        ),
+        responses={
+            200: {"description": "Run checkpoints retrieved successfully"},
+            404: {"description": "Team or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def list_team_run_checkpoints(
+        request: Request,
+        team_id: str,
+        run_id: str,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            team = await resolve_team(  # type: ignore[assignment]
+                team_id,
+                os.teams,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except Exception as e:
+                logger.error(f"Error resolving team '{team_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            if team is None:
+                raise HTTPException(status_code=404, detail="Team not found")
+            if isinstance(team, RemoteTeam):
+                raise HTTPException(status_code=400, detail="Checkpoint listing is not supported for remote teams")
+
+        user_id = get_scoped_user_id(request)
+        if hasattr(team, "aget_session"):
+            session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "teams", team_id, not_found_detail="Run not found")
+
+        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+        if run_output is None or not run_matches_component(run_output, "teams", team_id):
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        return {
+            "run_id": run_id,
+            "session_id": session_id,
+            "checkpoints": list_run_checkpoints(run_output),
+        }
+
+    @router.get(
+        "/teams/{team_id}/runs/{run_id}/checkpoints/{message_index}",
+        tags=["Teams"],
+        operation_id="get_team_run_checkpoint_snapshot",
+        summary="Get Team Run Checkpoint Snapshot",
+        description=(
+            "Return a derived team run snapshot truncated at a message boundary. "
+            "Use the returned message_index as `continue_from` when continuing this run."
+        ),
+        responses={
+            200: {"description": "Run checkpoint snapshot retrieved successfully"},
+            400: {"description": "Invalid checkpoint message index", "model": BadRequestResponse},
+            404: {"description": "Team or run not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def get_team_run_checkpoint_snapshot(
+        request: Request,
+        team_id: str,
+        run_id: str,
+        message_index: int,
+        session_id: str = Query(..., description="Session ID for the run"),
+    ):
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            team = await resolve_team(  # type: ignore[assignment]
+                team_id,
+                os.teams,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except Exception as e:
+                logger.error(f"Error resolving team '{team_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            if team is None:
+                raise HTTPException(status_code=404, detail="Team not found")
+            if isinstance(team, RemoteTeam):
+                raise HTTPException(status_code=400, detail="Checkpoint snapshots are not supported for remote teams")
+
+        user_id = get_scoped_user_id(request)
+        if hasattr(team, "aget_session"):
+            session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "teams", team_id, not_found_detail="Run not found")
+
+        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+        if run_output is None or not run_matches_component(run_output, "teams", team_id):
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        try:
+            return build_run_checkpoint_snapshot(run_output, message_index)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     @router.get(
         "/teams/{team_id}/runs",

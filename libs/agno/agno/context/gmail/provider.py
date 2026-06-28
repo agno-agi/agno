@@ -39,6 +39,7 @@ from agno.tools.google.gmail import GmailTools
 
 if TYPE_CHECKING:
     from agno.models.base import Model
+    from agno.tools.google.auth import AuthConfig
 
 
 DEFAULT_READ_INSTRUCTIONS = """\
@@ -81,10 +82,12 @@ class GmailContextProvider(ContextProvider):
     def __init__(
         self,
         *,
-        # Service account auth
+        # Unified auth config (preferred — enables DB storage + scope aggregation)
+        auth: AuthConfig | None = None,
+        # Service account auth (legacy — use auth= instead)
         service_account_path: str | None = None,
         delegated_user: str | None = None,
-        # OAuth auth (browser flow)
+        # OAuth auth (browser flow, legacy — use auth= instead)
         credentials_path: str | None = None,  # OAuth client config (client_id/secret JSON)
         token_path: str | None = None,  # Cached user tokens after consent
         id: str = "gmail",
@@ -97,6 +100,9 @@ class GmailContextProvider(ContextProvider):
         write: bool = False,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+
+        # Store auth config for toolkit creation
+        self._auth = auth
 
         # Resolve auth at init — fail fast if misconfigured
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
@@ -126,6 +132,7 @@ class GmailContextProvider(ContextProvider):
             sa_path=self._sa_path,
             token_path=self._token_path,
             delegated_user=self._delegated_user,
+            auth=self._auth,
         )
 
     async def astatus(self) -> Status:
@@ -171,6 +178,12 @@ class GmailContextProvider(ContextProvider):
             self._write_toolkit = self._build_write_toolkit()
         return self._write_toolkit
 
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_read_agent()
+
+    async def _aget_update_agent(self, run_context):
+        return self._ensure_write_agent()
+
     def _ensure_read_agent(self) -> Agent:
         if self._read_agent is None:
             self._read_agent = Agent(
@@ -197,6 +210,7 @@ class GmailContextProvider(ContextProvider):
 
     def _build_read_toolkit(self) -> GmailTools:
         return GmailTools(
+            auth=self._auth,
             service_account_path=self._sa_path,
             delegated_user=self._delegated_user,
             credentials_path=self._credentials_path,
@@ -218,6 +232,7 @@ class GmailContextProvider(ContextProvider):
 
     def _build_write_toolkit(self) -> GmailTools:
         return GmailTools(
+            auth=self._auth,
             service_account_path=self._sa_path,
             delegated_user=self._delegated_user,
             credentials_path=self._credentials_path,

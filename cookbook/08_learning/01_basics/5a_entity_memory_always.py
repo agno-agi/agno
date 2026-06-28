@@ -26,7 +26,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # ALWAYS mode: Entities are extracted automatically after responses.
 # The agent doesn't see memory tools - extraction happens invisibly.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions="You're a sales assistant. Acknowledge notes briefly.",
     learning=LearningMachine(

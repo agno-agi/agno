@@ -371,6 +371,73 @@ class TestAgentFromDict:
 
 
 # =============================================================================
+# Knowledge serialization / deserialization Tests
+# =============================================================================
+
+
+class TestAgentKnowledgeRoundtrip:
+    """Tests for knowledge being stored as a registry reference and resolved on load."""
+
+    def _make_knowledge(self, name="Docs KB"):
+        from agno.knowledge.knowledge import Knowledge
+
+        # contents_db is required for the OS to treat it as a real instance,
+        # but for serialization we only need a name. vector_db is mocked.
+        return Knowledge(name=name, vector_db=MagicMock())
+
+    def test_to_dict_stores_knowledge_reference_by_name(self):
+        """to_dict serializes knowledge as a {'name': ...} reference, not the object."""
+        kb = self._make_knowledge("Docs KB")
+        agent = Agent(id="kb-agent", knowledge=kb)
+
+        config = agent.to_dict()
+
+        assert config["knowledge"] == {"name": "Docs KB"}
+
+    def test_to_dict_skips_knowledge_without_name(self):
+        """Knowledge without a name cannot be referenced and is not serialized."""
+        kb = self._make_knowledge(name=None)
+        agent = Agent(id="kb-agent", knowledge=kb)
+
+        config = agent.to_dict()
+
+        assert "knowledge" not in config
+
+    def test_from_dict_resolves_knowledge_from_registry(self):
+        """from_dict resolves the knowledge reference back to the registry instance."""
+        kb = self._make_knowledge("Docs KB")
+        agent = Agent(id="kb-agent", knowledge=kb, search_knowledge=True)
+        config = agent.to_dict()
+
+        registry = Registry(knowledge=[kb])
+        reconstructed = Agent.from_dict(config, registry=registry)
+
+        assert reconstructed.knowledge is kb
+        assert reconstructed.search_knowledge is True
+
+    def test_from_dict_without_registry_drops_knowledge(self):
+        """Without a registry, the knowledge reference is dropped (no crash)."""
+        kb = self._make_knowledge("Docs KB")
+        agent = Agent(id="kb-agent", knowledge=kb)
+        config = agent.to_dict()
+
+        reconstructed = Agent.from_dict(config, registry=None)
+
+        assert reconstructed.knowledge is None
+
+    def test_from_dict_unresolved_knowledge_drops_gracefully(self):
+        """A reference not present in the registry is dropped (no crash)."""
+        kb = self._make_knowledge("Docs KB")
+        agent = Agent(id="kb-agent", knowledge=kb)
+        config = agent.to_dict()
+
+        # Registry without the referenced knowledge
+        reconstructed = Agent.from_dict(config, registry=Registry())
+
+        assert reconstructed.knowledge is None
+
+
+# =============================================================================
 # save() Tests
 # =============================================================================
 
