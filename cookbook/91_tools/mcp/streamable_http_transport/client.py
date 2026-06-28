@@ -7,7 +7,6 @@ Check the README.md file for instructions on how to run these examples.
 import asyncio
 
 import httpx
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools, MultiMCPTools
@@ -44,7 +43,9 @@ async def run_agent_with_custom_http_client(message: str) -> None:
         timeout: httpx.Timeout | None = None,
         auth: httpx.Auth | None = None,
     ) -> httpx.AsyncClient:
-        return httpx.AsyncClient(headers=headers, timeout=timeout, auth=auth, verify=False)
+        return httpx.AsyncClient(
+            headers=headers, timeout=timeout, auth=auth, verify=False
+        )
 
     async with MCPTools(
         transport="streamable-http",

@@ -1,5 +1,5 @@
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from mcp.types import CallToolResult, TextContent
@@ -270,11 +270,17 @@ async def test_streamable_http_call_sites_route_through_shared_helper():
 
     with (
         patch("agno.tools.mcp.mcp.streamable_http_client_kwargs", return_value=helper_return) as mcp_helper_mock,
-        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write"))) as mcp_client_mock,
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write"))
+        ) as mcp_client_mock,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
-        patch("agno.tools.mcp.multi_mcp.streamable_http_client_kwargs", return_value=helper_return) as multi_helper_mock,
-        patch("agno.tools.mcp.multi_mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write"))) as multi_client_mock,
+        patch(
+            "agno.tools.mcp.multi_mcp.streamable_http_client_kwargs", return_value=helper_return
+        ) as multi_helper_mock,
+        patch(
+            "agno.tools.mcp.multi_mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write"))
+        ) as multi_client_mock,
         patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
         patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
@@ -472,16 +478,15 @@ async def test_connect_forwards_params_level_httpx_client_factory_before_constru
     params_factory = object()
     fallback_factory = object()
     tools = MCPTools(
-        server_params=StreamableHTTPClientParams(
-            url="http://localhost:8080/mcp", httpx_client_factory=params_factory
-        ),
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp", httpx_client_factory=params_factory),
         transport="streamable-http",
         httpx_client_factory=fallback_factory,
     )
 
     with (
-        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write")))
-        as streamable_mock,
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write"))
+        ) as streamable_mock,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
@@ -501,8 +506,9 @@ async def test_connect_forwards_constructor_httpx_client_factory_when_params_fac
     )
 
     with (
-        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write")))
-        as streamable_mock,
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client", return_value=_AsyncContextManager(("read", "write"))
+        ) as streamable_mock,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
@@ -529,7 +535,10 @@ async def test_multimcp_forwards_per_server_httpx_client_factory():
             "agno.tools.mcp.multi_mcp.streamablehttp_client",
             side_effect=lambda **kwargs: _AsyncContextManager(("read", "write")),
         ) as streamable_mock,
-        patch("agno.tools.mcp.multi_mcp.ClientSession", side_effect=lambda *args, **kwargs: _AsyncContextManager(MagicMock())),
+        patch(
+            "agno.tools.mcp.multi_mcp.ClientSession",
+            side_effect=lambda *args, **kwargs: _AsyncContextManager(MagicMock()),
+        ),
         patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
         patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
     ):
