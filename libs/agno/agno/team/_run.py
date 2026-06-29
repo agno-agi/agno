@@ -5399,16 +5399,18 @@ def _route_requirements_to_members(
     from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
-    # Group requirements by member
-    member_reqs: Dict[str, List[RunRequirement]] = {}
+    # Group requirements by (member_agent_id, member_run_id). The same member can have
+    # multiple paused child runs in one team run (batch delegation), and each child run
+    # must be resumed independently — grouping by agent_id alone would conflate them.
+    member_reqs: Dict[Tuple[str, Optional[str]], List[RunRequirement]] = {}
     for req in run_response.requirements or []:
         mid = getattr(req, "member_agent_id", None)
         if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
+            member_reqs.setdefault((mid, getattr(req, "member_run_id", None)), []).append(req)
 
     member_results: List[str] = []
 
-    for member_id, reqs in member_reqs.items():
+    for (member_id, _member_run_id), reqs in member_reqs.items():
         route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
@@ -5514,14 +5516,16 @@ def _route_requirements_to_members_stream(
     from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
-    # Group requirements by member
-    member_reqs: Dict[str, List[RunRequirement]] = {}
+    # Group requirements by (member_agent_id, member_run_id). The same member can have
+    # multiple paused child runs in one team run (batch delegation), and each child run
+    # must be resumed independently — grouping by agent_id alone would conflate them.
+    member_reqs: Dict[Tuple[str, Optional[str]], List[RunRequirement]] = {}
     for req in run_response.requirements or []:
         mid = getattr(req, "member_agent_id", None)
         if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
+            member_reqs.setdefault((mid, getattr(req, "member_run_id", None)), []).append(req)
 
-    for member_id, reqs in member_reqs.items():
+    for (member_id, _member_run_id), reqs in member_reqs.items():
         route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
@@ -5637,12 +5641,14 @@ async def _aroute_requirements_to_members(
     from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
-    # Group requirements by member
-    member_reqs: Dict[str, List[RunRequirement]] = {}
+    # Group requirements by (member_agent_id, member_run_id). The same member can have
+    # multiple paused child runs in one team run (batch delegation), and each child run
+    # must be resumed independently — grouping by agent_id alone would conflate them.
+    member_reqs: Dict[Tuple[str, Optional[str]], List[RunRequirement]] = {}
     for req in run_response.requirements or []:
         mid = getattr(req, "member_agent_id", None)
         if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
+            member_reqs.setdefault((mid, getattr(req, "member_run_id", None)), []).append(req)
 
     if not member_reqs:
         return []
@@ -5717,7 +5723,7 @@ async def _aroute_requirements_to_members(
             content = getattr(member_response, "content", None) or "Task completed"
             return f"[{member.name or member_id}]: {content}"
 
-    tasks = [_continue_member(mid, reqs) for mid, reqs in member_reqs.items()]
+    tasks = [_continue_member(agent_id, reqs) for (agent_id, _member_run_id), reqs in member_reqs.items()]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     member_results: List[str] = []
@@ -5757,14 +5763,16 @@ async def _aroute_requirements_to_members_stream(
     from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
-    # Group requirements by member
-    member_reqs: Dict[str, List[RunRequirement]] = {}
+    # Group requirements by (member_agent_id, member_run_id). The same member can have
+    # multiple paused child runs in one team run (batch delegation), and each child run
+    # must be resumed independently — grouping by agent_id alone would conflate them.
+    member_reqs: Dict[Tuple[str, Optional[str]], List[RunRequirement]] = {}
     for req in run_response.requirements or []:
         mid = getattr(req, "member_agent_id", None)
         if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
+            member_reqs.setdefault((mid, getattr(req, "member_run_id", None)), []).append(req)
 
-    for member_id, reqs in member_reqs.items():
+    for (member_id, _member_run_id), reqs in member_reqs.items():
         route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
@@ -6756,6 +6764,12 @@ def continue_run_dispatch(
             run_context=run_context,
         )
 
+        # Mixed case: when we resolved member HITL alongside team-level HITL, replace the
+        # "Member 'X' requires human input before continuing" placeholder with the actual
+        # member results so the team model sees the real outcome.
+        if member_results:
+            _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
         # Handle tool call updates (execute confirmed tools, etc.)
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
 
@@ -6978,6 +6992,11 @@ def _continue_run_dispatch_stream_with_member_events(
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
         )
+
+        # Mixed case: when we resolved member HITL alongside team-level HITL, replace the
+        # delegation placeholder with the actual member results.
+        if member_results:
+            _prepare_member_hitl_continuation(run_response, run_messages, member_results)
 
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
 
@@ -8115,6 +8134,11 @@ async def _acontinue_run(
                         run_context=run_context,
                     )
 
+                    # Mixed case: when we resolved member HITL alongside team-level HITL,
+                    # replace the delegation placeholder with the actual member results.
+                    if member_results:
+                        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+
                     await _ahandle_team_tool_call_updates(
                         team, run_response=run_response, run_messages=run_messages, tools=_tools
                     )
@@ -8553,6 +8577,11 @@ async def _acontinue_run_stream(
                         add_history_to_context=team.add_history_to_context,
                         run_context=run_context,
                     )
+
+                    # Mixed case: when we resolved member HITL alongside team-level HITL,
+                    # replace the delegation placeholder with the actual member results.
+                    if member_results:
+                        _prepare_member_hitl_continuation(run_response, run_messages, member_results)
 
                     run_response.status = RunStatus.running
                     run_response.content = None
