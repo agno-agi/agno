@@ -10,13 +10,8 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 
-def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
-    """Check if the model is a Gemini model with thinking support."""
-    is_gemini_class = reasoning_model.__class__.__name__ == "Gemini"
-    if not is_gemini_class:
-        return False
-
-    # Check if it's a Gemini model with thinking support
+def _gemini_fallback(reasoning_model: Model) -> bool:
+    """Substring + thinking-parameter check, used only when the models.get lookup fails."""
     # - Gemini 2.5+ models support thinking
     # - Gemini 3+ models support thinking (including DeepThink variants)
     model_id = reasoning_model.id.lower()
@@ -33,7 +28,30 @@ def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
     )
     has_include_thoughts = hasattr(reasoning_model, "include_thoughts") and reasoning_model.include_thoughts is not None
 
-    return is_gemini_class and (has_thinking_support or has_thinking_budget or has_include_thoughts)
+    return has_thinking_support or has_thinking_budget or has_include_thoughts
+
+
+def is_gemini_reasoning_model(reasoning_model: Model) -> bool:
+    """Check if the model is a Gemini model with thinking support.
+
+    Uses the Gemini API (models.get -> thinking) to detect thinking support, and falls back to a
+    version-substring + thinking-parameter check only if the API call fails.
+    """
+    if reasoning_model.__class__.__name__ != "Gemini":
+        return False
+
+    model_id = reasoning_model.id
+    try:
+        client = reasoning_model.get_client()  # type: ignore[attr-defined]
+        name = model_id if model_id.startswith("models/") else f"models/{model_id}"
+        model_info = client.models.get(model=name)
+        thinking = getattr(model_info, "thinking", None)
+        if thinking is not None:
+            return bool(thinking)
+    except Exception as e:
+        log_warning(f"Could not determine Gemini thinking capability via API, falling back to model id: {str(e)}")
+
+    return _gemini_fallback(reasoning_model)
 
 
 def get_gemini_reasoning(

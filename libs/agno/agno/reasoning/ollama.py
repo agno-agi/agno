@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
+import httpx
+
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import log_warning
@@ -10,13 +12,65 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 
+# Fallback substrings used only when the /api/show capability lookup fails (e.g. server unreachable).
+_OLLAMA_FALLBACK_SUBSTRINGS = (
+    "qwq",
+    "deepseek-r1",
+    "qwen3",
+    "gpt-oss",
+    "magistral",
+    "openthinker",
+    "phi4-reasoning",
+    "minimax-m",
+)
+
+
+def _ollama_fallback(model_id: str) -> bool:
+    return any(substring in model_id for substring in _OLLAMA_FALLBACK_SUBSTRINGS)
+
+
+def _fetch_ollama_capabilities(reasoning_model: Model) -> Optional[List[str]]:
+    """Fetch a model's capabilities from the raw Ollama /api/show endpoint.
+
+    The endpoint is queried directly (rather than via client.show()) because older versions of the
+    ollama python package drop the `capabilities` field when parsing the response. Returns None on
+    any failure so the caller can fall back to substring matching.
+    """
+    host = getattr(reasoning_model, "host", None)
+    api_key = getattr(reasoning_model, "api_key", None)
+    if not host:
+        # Mirror Ollama client defaults: cloud endpoint when an API key is set, else local.
+        host = "https://ollama.com" if api_key else "http://localhost:11434"
+
+    try:
+        headers = {"authorization": f"Bearer {api_key}"} if api_key else {}
+        response = httpx.post(
+            f"{host.rstrip('/')}/api/show",
+            json={"model": reasoning_model.id},
+            headers=headers,
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        return response.json().get("capabilities")
+    except Exception as e:
+        log_warning(f"Could not determine Ollama thinking capability via API, falling back to model id: {str(e)}")
+        return None
+
+
 def is_ollama_reasoning_model(reasoning_model: Model) -> bool:
-    return reasoning_model.__class__.__name__ == "Ollama" and (
-        "qwq" in reasoning_model.id
-        or "deepseek-r1" in reasoning_model.id
-        or "qwen2.5-coder" in reasoning_model.id
-        or "openthinker" in reasoning_model.id
-    )
+    """Check if an Ollama model supports thinking.
+
+    Uses the Ollama API (POST /api/show -> capabilities) to detect thinking support, and falls
+    back to a substring match on the model id only if the API call fails.
+    """
+    if reasoning_model.__class__.__name__ != "Ollama":
+        return False
+
+    capabilities = _fetch_ollama_capabilities(reasoning_model)
+    if capabilities is not None:
+        return "thinking" in capabilities
+
+    return _ollama_fallback(reasoning_model.id)
 
 
 def get_ollama_reasoning(

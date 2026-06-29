@@ -129,12 +129,16 @@ class ReasoningManager:
         from agno.reasoning.groq import is_groq_reasoning_model
         from agno.reasoning.ollama import is_ollama_reasoning_model
         from agno.reasoning.openai import is_openai_reasoning_model
+        from agno.reasoning.openrouter import is_openrouter_reasoning_model
         from agno.reasoning.vertexai import is_vertexai_reasoning_model
 
         if is_deepseek_reasoning_model(model):
             return "deepseek"
         if is_anthropic_reasoning_model(model):
             return "anthropic"
+        # OpenRouter is an OpenAILike subclass, so it must be checked before the OpenAI detector.
+        if is_openrouter_reasoning_model(model):
+            return "openrouter"
         if is_openai_reasoning_model(model):
             return "openai"
         if is_groq_reasoning_model(model):
@@ -218,7 +222,7 @@ class ReasoningManager:
                 log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
                 reasoning_message = get_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "openai":
+            elif model_type in ("openai", "openrouter"):
                 from agno.reasoning.openai import get_openai_reasoning
 
                 log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
@@ -294,7 +298,7 @@ class ReasoningManager:
                 log_debug("Starting Anthropic Claude Reasoning", center=True, symbol="=")
                 reasoning_message = await aget_anthropic_reasoning(reasoning_agent, messages, run_metrics=run_metrics)
 
-            elif model_type == "openai":
+            elif model_type in ("openai", "openrouter"):
                 from agno.reasoning.openai import aget_openai_reasoning
 
                 log_debug("Starting OpenAI Reasoning", center=True, symbol="=")
@@ -442,7 +446,7 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
-        elif model_type == "openai":
+        elif model_type in ("openai", "openrouter"):
             from agno.reasoning.openai import get_openai_reasoning_stream
 
             log_debug("Starting OpenAI Reasoning (streaming)", center=True, symbol="=")
@@ -658,7 +662,7 @@ class ReasoningManager:
             else:
                 yield (None, ReasoningResult(success=False, error="No reasoning content"))
 
-        elif model_type == "openai":
+        elif model_type in ("openai", "openrouter"):
             from agno.reasoning.openai import aget_openai_reasoning_stream
 
             log_debug("Starting OpenAI Reasoning (streaming)", center=True, symbol="=")
