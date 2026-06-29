@@ -9,6 +9,7 @@ import pytest
 import agno.team._default_tools as default_tools
 import agno.team._task_tools as task_tools
 from agno.agent import Agent
+from agno.models.message import Message
 from agno.run import RunContext
 from agno.run.agent import RunCompletedEvent, RunOutput
 from agno.run.team import TeamRunOutput
@@ -346,14 +347,17 @@ def test_run_member_sync_uses_arun_for_agents_with_callable_mcp_tools():
 
 def test_run_member_sync_uses_member_defaults_for_callable_mcp_tools_without_cache_poisoning():
     member = Agent(name="Worker", id="worker", metadata={"mode": "mcp"})
+    seen_messages: list[Any] = []
 
     def tool_factory(agent: Agent, run_context: RunContext) -> list[Any]:
+        seen_messages.append(run_context.messages)
         return [cast(Any, MCPTools())] if run_context.metadata == {"mode": "mcp"} else []
 
     member.tools = tool_factory
     run_mock = MagicMock(side_effect=RuntimeError("sync run path should not be used for this test"))
 
     async def fake_arun(*args: Any, **kwargs: Any) -> RunOutput:
+        assert kwargs["run_context"].messages is None
         return RunOutput(run_id="member-run", agent_id=member.id, agent_name=member.name, content="metadata via arun")
 
     arun_mock = MagicMock(side_effect=fake_arun)
@@ -363,7 +367,13 @@ def test_run_member_sync_uses_member_defaults_for_callable_mcp_tools_without_cac
     result = run_member_sync(
         member,
         input="delegate",
-        run_context=RunContext(run_id="team-run", session_id="team-session", session_state={}, metadata={}),
+        run_context=RunContext(
+            run_id="team-run",
+            session_id="team-session",
+            session_state={},
+            metadata={},
+            messages=[Message(role="user", content="parent")],
+        ),
         run_id="member-run",
         session_id="team-session",
         session_state={},
@@ -371,6 +381,7 @@ def test_run_member_sync_uses_member_defaults_for_callable_mcp_tools_without_cac
     )
 
     assert result.content == "metadata via arun"
+    assert seen_messages == [None]
     assert not getattr(member, "_callable_tools_cache", {})
     run_mock.assert_not_called()
     arun_mock.assert_called_once()
@@ -509,7 +520,12 @@ def test_run_member_sync_sanitizes_parent_run_context_for_non_mcp_agents():
     expected = RunOutput(run_id="member-run", agent_id=member.id, agent_name=member.name, content="via run")
     run_mock = MagicMock(return_value=expected)
     arun_mock = MagicMock(side_effect=RuntimeError("async path should not be used for non-MCP members"))
-    parent_context = RunContext(run_id="team-run", session_id="team-session", session_state={"leader": "value"})
+    parent_context = RunContext(
+        run_id="team-run",
+        session_id="team-session",
+        session_state={"leader": "value"},
+        messages=[Message(role="user", content="parent")],
+    )
     cast(Any, member).run = run_mock
     cast(Any, member).arun = arun_mock
 
@@ -528,6 +544,7 @@ def test_run_member_sync_sanitizes_parent_run_context_for_non_mcp_agents():
     assert forwarded_context.run_id == "member-run"
     assert forwarded_context.session_id == "member-session"
     assert forwarded_context.session_state == {"member": "value"}
+    assert forwarded_context.messages is None
     arun_mock.assert_not_called()
 
 
