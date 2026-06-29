@@ -6,6 +6,7 @@ import pytest
 
 from agno.knowledge.document import Document
 from agno.vectordb.qdrant import Qdrant
+from agno.vectordb.search import SearchType
 
 
 @pytest.fixture
@@ -453,6 +454,7 @@ def tracking_embedder():
         return mock_embedding
 
     mock.get_embedding = sync_get_embedding
+    mock.get_sparse_embedding = Mock(return_value=None)
 
     async def async_get_embedding(text: str):
         mock.async_call_count += 1
@@ -491,6 +493,9 @@ async def test_async_hybrid_search_uses_async_embedder(tracking_embedder):
     Verify async hybrid search uses async embedder, not sync.
     """
     db = Qdrant(embedder=tracking_embedder, collection="test_collection")
+
+    # Force fallback to sparse encoder
+    db.embedder.get_sparse_embedding = Mock(return_value=None)
 
     # Mock the sparse encoder
     mock_sparse_embedding = Mock()
@@ -540,3 +545,109 @@ async def test_concurrent_async_searches_no_blocking(tracking_embedder):
     # All should use async embedder
     assert tracking_embedder.async_call_count == 5, "async_get_embedding should be called 5 times"
     assert tracking_embedder.sync_call_count == 0, "sync get_embedding should NOT be called"
+
+
+def test_get_sparse_vector_returns_native_sparse_embedding(mock_embedder):
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+    native_sparse = {"indices": [1, 3], "values": [0.5, 0.8]}
+
+    mock_embedder.get_sparse_embedding = Mock(return_value=native_sparse)
+    db.sparse_encoder = Mock()
+
+    result = db._get_sparse_vector("hello world")
+
+    assert result == native_sparse
+    mock_embedder.get_sparse_embedding.assert_called_once_with("hello world")
+    db.sparse_encoder.embed.assert_not_called()
+
+
+def test_get_sparse_vector_falls_back_to_sparse_encoder_when_native_is_none(mock_embedder):
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+    mock_embedder.get_sparse_embedding = Mock(return_value=None)
+
+    sparse_obj = Mock()
+    db.sparse_encoder = Mock()
+    db.sparse_encoder.embed.return_value = iter([sparse_obj])
+
+    result = db._get_sparse_vector("hello world")
+
+    assert result == sparse_obj
+    mock_embedder.get_sparse_embedding.assert_called_once_with("hello world")
+    db.sparse_encoder.embed.assert_called_once_with(["hello world"])
+
+
+def test_get_sparse_vector_returns_none_for_empty_text(mock_embedder):
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+    mock_embedder.get_sparse_embedding = Mock()
+    db.sparse_encoder = Mock()
+
+    result = db._get_sparse_vector("")
+
+    assert result is None
+    mock_embedder.get_sparse_embedding.assert_not_called()
+    db.sparse_encoder.embed.assert_not_called()
+
+
+def test_run_keyword_search_sync_uses_sparse_helper(mock_embedder):
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+    db.search_type = SearchType.keyword
+    db.sparse_vector_name = "sparse"
+
+    sparse_obj = Mock()
+    sparse_obj.as_object.return_value = {"indices": [1], "values": [0.7]}
+
+    db._get_sparse_vector = Mock(return_value=sparse_obj)
+    db._client = Mock()
+
+    query_response = Mock()
+    query_response.points = []
+    db._client.query_points.return_value = query_response
+
+    results = db._run_keyword_search_sync("hello", limit=5, formatted_filters=None)
+
+    db._get_sparse_vector.assert_called_once_with("hello")
+    db._client.query_points.assert_called_once()
+    assert results == []
+
+
+def test_run_hybrid_search_sync_uses_sparse_helper(mock_embedder):
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+    db.search_type = SearchType.hybrid
+    db.sparse_vector_name = "sparse"
+    db.dense_vector_name = "dense"
+
+    mock_embedder.get_embedding = Mock(return_value=[0.1] * 1024)
+
+    sparse_obj = Mock()
+    sparse_obj.as_object.return_value = {"indices": [1], "values": [0.7]}
+
+    db._get_sparse_vector = Mock(return_value=sparse_obj)
+    db._client = Mock()
+
+    query_response = Mock()
+    query_response.points = []
+    db._client.query_points.return_value = query_response
+
+    results = db._run_hybrid_search_sync("hello", limit=5, formatted_filters=None)
+
+    mock_embedder.get_embedding.assert_called_once_with("hello")
+    db._get_sparse_vector.assert_called_once_with("hello")
+    db._client.query_points.assert_called_once()
+    assert results == []
+
+
+def test_run_keyword_search_sync_raises_when_sparse_embedding_is_none(mock_embedder):
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+    db._get_sparse_vector = Mock(return_value=None)
+
+    with pytest.raises(ValueError, match="Sparse embedding could not be generated for keyword search."):
+        db._run_keyword_search_sync("hello", limit=5, formatted_filters=None)
+
+
+def test_run_hybrid_search_sync_raises_when_sparse_embedding_is_none(mock_embedder):
+    db = Qdrant(embedder=mock_embedder, collection="test_collection")
+    mock_embedder.get_embedding = Mock(return_value=[0.1] * 1024)
+    db._get_sparse_vector = Mock(return_value=None)
+
+    with pytest.raises(ValueError, match="Sparse embedding could not be generated for hybrid search."):
+        db._run_hybrid_search_sync("hello", limit=5, formatted_filters=None)
