@@ -101,9 +101,20 @@ def _make_member(*, with_mcp: bool, content: str, session_key: str = "path") -> 
     return MockedMember(member=member, run_mock=run_mock, arun_mock=arun_mock)
 
 
-def _make_subteam(*, with_mcp_member: bool, content: str, session_key: str = "subteam") -> MockedSubteam:
+def _make_subteam(
+    *,
+    with_mcp_member: bool,
+    with_team_mcp: bool = False,
+    content: str,
+    session_key: str = "subteam",
+) -> MockedSubteam:
     nested_member = _make_member(with_mcp=with_mcp_member, content=content, session_key=session_key).member
-    subteam = Team(name="Subteam", id="subteam", members=[nested_member])
+    subteam = Team(
+        name="Subteam",
+        id="subteam",
+        members=[nested_member],
+        tools=[cast(Any, MCPTools())] if with_team_mcp else [],
+    )
     run_mock = MagicMock(side_effect=RuntimeError("sync run path should not be used for this test"))
 
     def fake_arun(
@@ -262,6 +273,29 @@ def test_run_member_sync_uses_arun_for_subteams_with_mcp_members():
     mocked_subteam.arun_mock.assert_called_once()
 
 
+def test_run_member_sync_uses_arun_for_subteams_with_team_level_mcp_tools():
+    mocked_subteam = _make_subteam(
+        with_mcp_member=False,
+        with_team_mcp=True,
+        content="team-level subteam via arun",
+        session_key="subteam_team_tools",
+    )
+
+    result = run_member_sync(
+        mocked_subteam.team,
+        input="delegate",
+        user_id="user-1",
+        session_id="team-session",
+        session_state={},
+        run_id="member-run",
+    )
+
+    assert result.content == "team-level subteam via arun"
+    assert result.run_id == "member-run"
+    mocked_subteam.run_mock.assert_not_called()
+    mocked_subteam.arun_mock.assert_called_once()
+
+
 def test_run_member_sync_keeps_non_mcp_agents_on_run():
     member = Agent(name="Worker", id="worker", tools=[])
     expected = RunOutput(run_id="member-run", agent_id=member.id, agent_name=member.name, content="via run")
@@ -371,6 +405,31 @@ def test_sync_default_delegation_routes_mcp_subteams_via_arun():
 
     assert results == ["subteam delegated"]
     assert run_context.session_state == {"delegate_subteam": "subteam delegated"}
+    mocked_subteam.run_mock.assert_not_called()
+    mocked_subteam.arun_mock.assert_called_once()
+
+
+def test_sync_default_delegation_routes_team_level_mcp_subteams_via_arun():
+    mocked_subteam = _make_subteam(
+        with_mcp_member=False,
+        with_team_mcp=True,
+        content="team-level subteam delegated",
+        session_key="delegate_subteam_team_tools",
+    )
+    team = _make_team(mocked_subteam.team)
+    run_response, run_context, session = _make_team_context()
+
+    delegate_tool = team._get_delegate_task_function(
+        run_response=run_response,
+        run_context=run_context,
+        session=session,
+        team_run_context={},
+    )
+
+    results = _call_tool(delegate_tool, member_id=mocked_subteam.team.id, task="Use MCP")
+
+    assert results == ["team-level subteam delegated"]
+    assert run_context.session_state == {"delegate_subteam_team_tools": "team-level subteam delegated"}
     mocked_subteam.run_mock.assert_not_called()
     mocked_subteam.arun_mock.assert_called_once()
 
