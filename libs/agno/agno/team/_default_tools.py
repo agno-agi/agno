@@ -68,6 +68,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
+from agno.team._member_execution import run_member_sync, stream_member_sync
 from agno.tools.function import Function
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
@@ -623,7 +624,8 @@ def _get_delegate_task_function(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_agent_run_response_stream = member_agent.run(
+                member_agent_run_response_stream = stream_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     # All members have the same session_id
@@ -684,7 +686,8 @@ def _get_delegate_task_function(
                 member_run_id = str(uuid4())
                 if run_response.run_id is not None:
                     register_member_run(run_response.run_id, member_run_id)
-                member_agent_run_response = member_agent.run(  # type: ignore
+                member_agent_run_response = run_member_sync(
+                    member_agent,
                     input=member_agent_task if not history else history,  # type: ignore
                     user_id=user_id,
                     # All members have the same session_id
@@ -980,7 +983,8 @@ def _get_delegate_task_function(
                     member_run_id = str(uuid4())
                     if run_response.run_id is not None:
                         register_member_run(run_response.run_id, member_run_id)
-                    member_agent_run_response_stream = member_agent.run(
+                    member_agent_run_response_stream = stream_member_sync(
+                        member_agent,
                         input=member_agent_task if not history else history,
                         user_id=user_id,
                         # All members have the same session_id
@@ -1044,7 +1048,8 @@ def _get_delegate_task_function(
                     member_run_id = str(uuid4())
                     if run_response.run_id is not None:
                         register_member_run(run_response.run_id, member_run_id)
-                    member_agent_run_response = member_agent.run(  # type: ignore
+                    member_agent_run_response = run_member_sync(
+                        member_agent,
                         input=member_agent_task if not history else history,
                         user_id=user_id,
                         # All members have the same session_id
