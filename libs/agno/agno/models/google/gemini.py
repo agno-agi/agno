@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model, RetryableModelProviderError
+from agno.models.finish_reason import map_gemini_finish_reason
 from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason, get_mime_type
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
@@ -1147,6 +1148,13 @@ class Gemini(Model):
                             original_error=f"Generation ended with finish reason: {candidate.finish_reason}",
                         )
 
+                # Normalize the finish reason (key off the enum member name) and preserve the raw value
+                finish_reason, native_finish_reason = map_gemini_finish_reason(candidate.finish_reason)
+                model_response.finish_reason = finish_reason
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["native_finish_reason"] = native_finish_reason
+
             if candidate.content:
                 response_message = candidate.content
 
@@ -1310,6 +1318,13 @@ class Gemini(Model):
                             retry_guidance_message=MALFORMED_FUNCTION_CALL_GUIDANCE,
                             original_error=f"Generation ended with finish reason: {candidate.finish_reason}",
                         )
+
+                # Normalize the finish reason (key off the enum member name) and preserve the raw value
+                finish_reason, native_finish_reason = map_gemini_finish_reason(candidate.finish_reason)
+                model_response.finish_reason = finish_reason
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["native_finish_reason"] = native_finish_reason
 
             response_message: Content = Content(role="model", parts=[])
             if candidate_content is not None:

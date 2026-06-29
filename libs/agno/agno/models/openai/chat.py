@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
 from agno.models.base import Model
+from agno.models.finish_reason import map_openai_finish_reason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -899,6 +900,13 @@ class OpenAIChat(Model):
         if response.model_extra:
             model_response.provider_data["model_extra"] = response.model_extra
 
+        # Normalize the finish reason and preserve the raw provider value
+        raw_finish_reason = getattr(response.choices[0], "finish_reason", None) if response.choices else None
+        if raw_finish_reason is not None:
+            finish_reason, native_finish_reason = map_openai_finish_reason(raw_finish_reason)
+            model_response.finish_reason = finish_reason
+            model_response.provider_data["native_finish_reason"] = native_finish_reason
+
         return model_response
 
     def _parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
@@ -997,6 +1005,17 @@ class OpenAIChat(Model):
                             )
                     except Exception as e:
                         log_warning(f"Error processing audio: {str(e)}")
+
+        # Normalize the finish reason from the final chunk and preserve the raw provider value
+        raw_finish_reason = (
+            getattr(response_delta.choices[0], "finish_reason", None) if response_delta.choices else None
+        )
+        if raw_finish_reason is not None:
+            finish_reason, native_finish_reason = map_openai_finish_reason(raw_finish_reason)
+            model_response.finish_reason = finish_reason
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["native_finish_reason"] = native_finish_reason
 
         # Add usage metrics if present
         if self._should_collect_metrics(response_delta) and response_delta.usage is not None:

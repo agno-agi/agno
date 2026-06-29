@@ -8,6 +8,7 @@ import httpx
 from pydantic import BaseModel
 
 from agno.models.base import Model
+from agno.models.finish_reason import map_cerebras_finish_reason
 from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -487,6 +488,15 @@ class Cerebras(Model):
         if response.usage:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        # Normalize the finish reason and preserve the raw provider value
+        raw_finish_reason = getattr(choice, "finish_reason", None)
+        if raw_finish_reason is not None:
+            finish_reason, native_finish_reason = map_cerebras_finish_reason(raw_finish_reason)
+            model_response.finish_reason = finish_reason
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["native_finish_reason"] = native_finish_reason
+
         return model_response
 
     def _parse_provider_response_delta(
@@ -527,6 +537,15 @@ class Cerebras(Model):
                         }
                         for idx, tool_call in enumerate(choice_delta.tool_calls)
                     ]
+
+            # Normalize the finish reason from the final chunk and preserve the raw provider value
+            raw_finish_reason = getattr(choice, "finish_reason", None)
+            if raw_finish_reason is not None:
+                finish_reason, native_finish_reason = map_cerebras_finish_reason(raw_finish_reason)
+                model_response.finish_reason = finish_reason
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["native_finish_reason"] = native_finish_reason
 
         # Add usage metrics
         if response.usage:

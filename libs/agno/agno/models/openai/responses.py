@@ -10,6 +10,7 @@ from typing_extensions import Literal
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
 from agno.models.base import Model
+from agno.models.finish_reason import map_openai_responses_finish_reason
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -1253,6 +1254,16 @@ class OpenAIResponses(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        # Normalize the finish reason from status / incomplete_details and preserve the raw value
+        status = getattr(response, "status", None)
+        if status is not None:
+            incomplete_reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+            finish_reason, native_finish_reason = map_openai_responses_finish_reason(status, incomplete_reason)
+            model_response.finish_reason = finish_reason
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["native_finish_reason"] = native_finish_reason
+
         return model_response
 
     def _parse_provider_response_delta(
@@ -1360,7 +1371,32 @@ class OpenAIResponses(Model):
             if stream_event.response.usage is not None:
                 model_response.response_usage = self._get_metrics(stream_event.response.usage)
 
+            # Normalize the finish reason and preserve the raw value
+            self._apply_responses_finish_reason(model_response, stream_event.response)
+
+        # 6. Truncated or content-filtered completion
+        elif stream_event.type == "response.incomplete":
+            model_response = ModelResponse()
+
+            incomplete_usage = getattr(stream_event.response, "usage", None)
+            if incomplete_usage is not None:
+                model_response.response_usage = self._get_metrics(incomplete_usage)
+
+            self._apply_responses_finish_reason(model_response, stream_event.response)
+
         return model_response, tool_use
+
+    def _apply_responses_finish_reason(self, model_response: ModelResponse, response: Any) -> None:
+        """Set the normalized finish reason (and raw value) on the model response from a Responses object."""
+        status = getattr(response, "status", None)
+        if status is None:
+            return
+        incomplete_reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+        finish_reason, native_finish_reason = map_openai_responses_finish_reason(status, incomplete_reason)
+        model_response.finish_reason = finish_reason
+        if model_response.provider_data is None:
+            model_response.provider_data = {}
+        model_response.provider_data["native_finish_reason"] = native_finish_reason
 
     def _get_metrics(self, response_usage: ResponseUsage) -> MessageMetrics:
         """
