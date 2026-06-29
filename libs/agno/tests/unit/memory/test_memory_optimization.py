@@ -126,9 +126,38 @@ def test_optimize_memories_async_db_error(mock_async_db, mock_model):
         manager.optimize_memories(user_id="user-1")
 
 
-def test_async_db_contract_exposes_replacement_and_bulk_upsert(mock_async_db):
-    assert hasattr(mock_async_db, "replace_user_memories")
-    assert hasattr(mock_async_db, "upsert_memories")
+@pytest.mark.asyncio
+async def test_async_db_contract_exposes_replacement_and_bulk_upsert():
+    class AsyncSingleUpsertFallbackDb:
+        upsert_memories = AsyncBaseDb.upsert_memories
+
+        def __init__(self):
+            self.get_user_memories = AsyncMock(
+                return_value=[UserMemory(memory="stale", user_id="user-1", memory_id="stale-1")]
+            )
+            self.upsert_user_memory = AsyncMock(
+                side_effect=[
+                    UserMemory(memory="kept", user_id="user-1", memory_id="keep-1"),
+                    UserMemory(memory="new", user_id="user-1", memory_id="new-1"),
+                ]
+            )
+            self.delete_user_memories = AsyncMock()
+
+    db = AsyncSingleUpsertFallbackDb()
+    replacement_memories = [
+        UserMemory(memory="kept", user_id="user-1", memory_id="keep-1"),
+        UserMemory(memory="new", user_id="user-1", memory_id="new-1"),
+    ]
+
+    result = await AsyncBaseDb.replace_user_memories(db, user_id="user-1", memories=replacement_memories)
+
+    assert result == replacement_memories
+    db.get_user_memories.assert_awaited_once_with(user_id="user-1")
+    assert db.upsert_user_memory.await_args_list == [
+        call(memory=replacement_memories[0], deserialize=True),
+        call(memory=replacement_memories[1], deserialize=True),
+    ]
+    db.delete_user_memories.assert_awaited_once_with(memory_ids=["stale-1"], user_id="user-1")
 
 
 def test_base_db_replace_user_memories_stages_upserts_before_stale_deletes():

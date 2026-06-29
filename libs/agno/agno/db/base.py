@@ -1475,7 +1475,14 @@ class AsyncBaseDb(ABC):
         }
         replacement_ids = {memory.memory_id for memory in memories if memory.memory_id is not None}
 
-        replaced_memories = await self.upsert_memories(memories=memories, deserialize=deserialize)
+        if getattr(type(self), "upsert_memories", None) is AsyncBaseDb.upsert_memories:
+            replaced_memories = []
+            for memory in memories:
+                replaced_memory = await self.upsert_user_memory(memory=memory, deserialize=deserialize)
+                if replaced_memory is not None:
+                    replaced_memories.append(replaced_memory)
+        else:
+            replaced_memories = await self.upsert_memories(memories=memories, deserialize=deserialize)
 
         stale_ids = list(existing_ids - replacement_ids)
         if stale_ids:
