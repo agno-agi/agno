@@ -1188,6 +1188,7 @@ class FunctionCall(BaseModel):
         """
         from functools import reduce
         from inspect import isasyncgenfunction, iscoroutinefunction
+        import asyncio
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
@@ -1195,10 +1196,13 @@ class FunctionCall(BaseModel):
             if self.arguments is not None:
                 arguments.update(self.arguments)
 
-            result = self.function.entrypoint(**arguments)  # type: ignore
-            if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
-                result = await result
-            return result
+            if iscoroutinefunction(self.function.entrypoint):
+                result = self.function.entrypoint(**arguments)  # type: ignore
+                if not isasyncgenfunction(self.function.entrypoint):
+                    result = await result
+                return result
+            else:
+                return await asyncio.to_thread(self.function.entrypoint, **arguments)  # type: ignore
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
@@ -1238,10 +1242,7 @@ class FunctionCall(BaseModel):
         hooks = list(reversed(self.function.tool_hooks))
 
         # Handle async and sync entrypoints
-        if iscoroutinefunction(self.function.entrypoint):
-            chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
-        else:
-            chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
+        chain = reduce(create_hook_wrapper, hooks, execute_entrypoint_async)
         return chain
 
     async def aexecute(self) -> FunctionExecutionResult:
@@ -1284,19 +1285,20 @@ class FunctionCall(BaseModel):
                 self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
                 if self.arguments is None or self.arguments == {}:
-                    result = self.function.entrypoint(**entrypoint_args)
+                    arguments_to_pass = entrypoint_args
                 else:
-                    result = self.function.entrypoint(**entrypoint_args, **self.arguments)
+                    arguments_to_pass = {**entrypoint_args, **self.arguments}
 
                 # Handle both sync and async entrypoints
                 if isasyncgenfunction(self.function.entrypoint):
-                    self.result = result  # Store async generator directly
+                    self.result = self.function.entrypoint(**arguments_to_pass)  # Store async generator directly
                 elif iscoroutinefunction(self.function.entrypoint):
-                    self.result = await result  # Await coroutine result
+                    self.result = await self.function.entrypoint(**arguments_to_pass)  # Await coroutine result
                 elif isgeneratorfunction(self.function.entrypoint):
-                    self.result = result  # Store sync generator directly
+                    self.result = self.function.entrypoint(**arguments_to_pass)  # Store sync generator directly
                 else:
-                    self.result = result  # Sync function, result is already computed
+                    import asyncio
+                    self.result = await asyncio.to_thread(self.function.entrypoint, **arguments_to_pass)  # Sync function, run in thread
 
             # Only cache if not a generator
             if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
