@@ -35,12 +35,17 @@ def _has_mcp_toolkit(tools: Any) -> bool:
 def _make_resolution_context(context_values: dict[str, Any]) -> RunContext:
     run_context = context_values.get("run_context")
     if isinstance(run_context, RunContext):
+        knowledge_filters = (
+            context_values["knowledge_filters"]
+            if "knowledge_filters" in context_values
+            else run_context.knowledge_filters
+        )
         return RunContext(
             run_id=context_values.get("run_id") or run_context.run_id,
             session_id=context_values.get("session_id") or run_context.session_id,
             user_id=context_values.get("user_id") or run_context.user_id,
             dependencies=run_context.dependencies,
-            knowledge_filters=run_context.knowledge_filters,
+            knowledge_filters=knowledge_filters,
             metadata=run_context.metadata,
             session_state=context_values.get("session_state")
             if context_values.get("session_state") is not None
