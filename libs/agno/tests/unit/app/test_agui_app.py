@@ -1675,6 +1675,43 @@ def test_event_buffer_state_snapshot_deep_copy():
     assert delta is None
 
 
+def test_event_buffer_state_delta_redacts_sensitive_values():
+    """Test state deltas redact credentials without mutating the original state."""
+    buffer = StreamState()
+
+    state = {"status": "idle"}
+    buffer.set_state_snapshot(state)
+
+    current_state = {
+        "status": "active",
+        "token_count": 7,
+        "nested": {
+            "db_password": "super_secret_123",
+            "headers": {"Authorization": "Bearer live_token_123456789"},
+        },
+        "events": [
+            {"message": "provider returned sk-test-secret123456"},
+            {"message": "safe text"},
+        ],
+    }
+
+    delta = buffer.compute_state_delta(current_state)
+
+    assert delta is not None
+    assert any(op["path"] == "/status" and op["value"] == "active" for op in delta)
+    assert any(op["path"] == "/token_count" and op["value"] == 7 for op in delta)
+
+    serialized_delta = str(delta)
+    assert "super_secret_123" not in serialized_delta
+    assert "live_token_123456789" not in serialized_delta
+    assert "sk-test-secret123456" not in serialized_delta
+    assert "[REDACTED]" in serialized_delta
+
+    assert current_state["nested"]["db_password"] == "super_secret_123"
+    assert current_state["nested"]["headers"]["Authorization"] == "Bearer live_token_123456789"
+    assert current_state["events"][0]["message"] == "provider returned sk-test-secret123456"
+
+
 def test_event_buffer_compute_delta_no_snapshot():
     """Test compute_state_delta returns None when no snapshot has been set."""
     buffer = StreamState()
