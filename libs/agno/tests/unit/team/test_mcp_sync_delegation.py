@@ -344,6 +344,52 @@ def test_run_member_sync_uses_arun_for_agents_with_callable_mcp_tools():
     mocked_member.arun_mock.assert_called_once()
 
 
+def test_run_member_sync_ignores_parent_run_context_tools_for_member_detection():
+    mocked_member = _make_member(with_mcp=True, content="parent context safe", session_key="parent_context_tools")
+    parent_context = RunContext(run_id="team-run", session_id="team-session", session_state={}, tools=[])
+
+    result = run_member_sync(
+        mocked_member.member,
+        input="delegate",
+        run_context=parent_context,
+        run_id="member-run",
+        session_id="team-session",
+        session_state={},
+    )
+
+    assert result.content == "parent context safe"
+    mocked_member.run_mock.assert_not_called()
+    mocked_member.arun_mock.assert_called_once()
+
+
+def test_run_member_sync_ignores_parent_run_context_members_for_subteam_detection():
+    mocked_subteam = _make_subteam(
+        with_mcp_member=True,
+        callable_members=True,
+        content="parent context subteam safe",
+        session_key="parent_context_members",
+    )
+    parent_context = RunContext(
+        run_id="team-run",
+        session_id="team-session",
+        session_state={},
+        members=[mocked_subteam.team],
+    )
+
+    result = run_member_sync(
+        mocked_subteam.team,
+        input="delegate",
+        run_context=parent_context,
+        run_id="member-run",
+        session_id="team-session",
+        session_state={},
+    )
+
+    assert result.content == "parent context subteam safe"
+    mocked_subteam.run_mock.assert_not_called()
+    mocked_subteam.arun_mock.assert_called_once()
+
+
 def test_run_member_sync_keeps_non_mcp_agents_on_run():
     member = Agent(name="Worker", id="worker", tools=[])
     expected = RunOutput(run_id="member-run", agent_id=member.id, agent_name=member.name, content="via run")
@@ -659,11 +705,11 @@ def test_sync_execute_tasks_parallel_routes_through_shared_helper(monkeypatch: p
     run_response, run_context, session = _make_team_context()
     task_list = TaskList()
     task = task_list.create_task(title="Parallel MCP", assignee=member.id)
-    helper_calls: list[str] = []
+    helper_calls: list[tuple[str, RunContext]] = []
     original_helper = task_tools.run_member_sync
 
     def spy_helper(member_agent: Agent, **kwargs: Any):
-        helper_calls.append(kwargs["run_id"])
+        helper_calls.append((kwargs["run_id"], kwargs["run_context"]))
         return original_helper(member_agent, **kwargs)
 
     monkeypatch.setattr(task_tools, "run_member_sync", spy_helper)
@@ -682,6 +728,7 @@ def test_sync_execute_tasks_parallel_routes_through_shared_helper(monkeypatch: p
 
     assert results == [f"Task [{task.id}] completed. Result: parallel via arun"]
     assert helper_calls
+    assert helper_calls[0][1] is run_context
     assert task.status == TaskStatus.completed
     assert task.result == "parallel via arun"
     assert run_context.session_state is not None

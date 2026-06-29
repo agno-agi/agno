@@ -784,7 +784,7 @@ def _get_task_management_tools(
             if not task.assignee:
                 yield f"Task [{tid}] has no assignee. Assign a member_id first."
                 return
-            member_result = _find_member_by_id(team, task.assignee)
+            member_result = _find_member_by_id(team, task.assignee, run_context=run_context)
             if member_result is None:
                 yield f"Member '{task.assignee}' not found for task [{tid}]."
                 return
@@ -833,6 +833,7 @@ def _get_task_management_tools(
                     stream=False,
                     debug_mode=debug_mode,
                     dependencies=run_context.dependencies,
+                    run_context=run_context,
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
