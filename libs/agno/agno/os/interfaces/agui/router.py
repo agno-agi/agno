@@ -21,7 +21,14 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input, validate_state
+from agno.os.interfaces.agui.input import (
+    convert_agui_messages_to_agno_messages,
+    extract_context,
+    extract_media,
+    extract_user_input,
+    has_tool_state,
+    validate_state,
+)
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -35,10 +42,19 @@ async def run_entity(
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
+        messages = run_input.messages or []
         # AG-UI frontends send full conversation history every request.
-        # Extract only the last user message — entity manages history via session DB.
-        user_input = extract_user_input(run_input.messages or [])
-        images, audio, videos, files = extract_media(run_input.messages or [])
+        # For plain turns, extract only the latest user message and let the
+        # entity manage history through its session DB. Tool result turns need
+        # the full transcript because those frontend-provided tool messages are
+        # not present in the paused run's persisted history yet.
+        use_full_message_history = has_tool_state(messages)
+        if use_full_message_history:
+            user_input = convert_agui_messages_to_agno_messages(messages)
+            images, audio, videos, files = [], [], [], []
+        else:
+            user_input = extract_user_input(messages)
+            images, audio, videos, files = extract_media(messages)
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -53,6 +69,8 @@ async def run_entity(
         if ui_deps:
             run_kwargs["dependencies"] = ui_deps
             run_kwargs["add_dependencies_to_context"] = True
+        if use_full_message_history:
+            run_kwargs["add_history_to_context"] = False
 
         response_stream = entity.arun(  # type: ignore
             input=user_input,

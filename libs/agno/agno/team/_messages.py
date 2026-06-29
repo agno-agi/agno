@@ -915,25 +915,31 @@ def _get_run_messages(
             # Extend the messages with the history
             run_messages.messages += history_copy
 
-    # 5. Add user message to run_messages (message second as per Dirk's requirement)
-    # 5.1 Build user message if message is None, str or list
-    user_message = _get_user_message(
-        team,
-        run_response=run_response,
-        run_context=run_context,
-        input_message=input_message,
-        user_id=user_id,
-        audio=audio,
-        images=images,
-        videos=videos,
-        files=files,
-        add_dependencies_to_context=add_dependencies_to_context,
-        **kwargs,
-    )
+    # 5. Add user/input messages to run_messages.
+    input_is_message_list = _is_message_list_input(input_message)
+    if input_is_message_list:
+        user_message = _add_input_messages_to_run_messages(
+            run_messages, cast(List[Union[Message, Dict[str, Any]]], input_message)
+        )
+    else:
+        user_message = _get_user_message(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            input_message=input_message,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
     # Add user message to run_messages
     if user_message is not None:
         run_messages.user_message = user_message
-        run_messages.messages.append(user_message)
+        if not input_is_message_list:
+            run_messages.messages.append(user_message)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1049,30 +1055,76 @@ async def _aget_run_messages(
             # Extend the messages with the history
             run_messages.messages += history_copy
 
-    # 5. Add user message to run_messages (message second as per Dirk's requirement)
-    # 5.1 Build user message if message is None, str or list
-    user_message = await _aget_user_message(
-        team,
-        run_response=run_response,
-        run_context=run_context,
-        input_message=input_message,
-        user_id=user_id,
-        audio=audio,
-        images=images,
-        videos=videos,
-        files=files,
-        add_dependencies_to_context=add_dependencies_to_context,
-        **kwargs,
-    )
+    # 5. Add user/input messages to run_messages.
+    input_is_message_list = _is_message_list_input(input_message)
+    if input_is_message_list:
+        user_message = _add_input_messages_to_run_messages(
+            run_messages, cast(List[Union[Message, Dict[str, Any]]], input_message)
+        )
+    else:
+        user_message = await _aget_user_message(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            input_message=input_message,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
     # Add user message to run_messages
     if user_message is not None:
         run_messages.user_message = user_message
-        run_messages.messages.append(user_message)
+        if not input_is_message_list:
+            run_messages.messages.append(user_message)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
 
     return run_messages
+
+
+def _is_message_list_input(input_message: Any) -> bool:
+    return (
+        isinstance(input_message, list)
+        and len(input_message) > 0
+        and (
+            isinstance(input_message[0], Message) or (isinstance(input_message[0], dict) and "role" in input_message[0])
+        )
+    )
+
+
+def _add_input_messages_to_run_messages(
+    run_messages: RunMessages,
+    input_messages: List[Union[Message, Dict[str, Any]]],
+) -> Optional[Message]:
+    user_message: Optional[Message] = None
+
+    for input_message in input_messages:
+        message: Optional[Message] = None
+        if isinstance(input_message, Message):
+            message = input_message
+        elif isinstance(input_message, dict):
+            try:
+                message = Message.model_validate(input_message)
+            except Exception as e:
+                log_warning(f"Failed to validate input message: {str(e)}")
+
+        if message is None:
+            continue
+
+        run_messages.messages.append(message)
+        if run_messages.extra_messages is None:
+            run_messages.extra_messages = []
+        run_messages.extra_messages.append(message)
+
+        if message.role == "user":
+            user_message = message
+
+    return user_message
 
 
 def _get_user_message(

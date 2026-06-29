@@ -9,11 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agno.agent.agent import Agent
 from agno.db.postgres import AsyncPostgresDb
+from agno.models.message import Message
 from agno.run import RunContext
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
 from agno.team import _hooks
+from agno.team import _messages as team_messages
 from agno.team import _run as team_run
 from agno.team.team import Team
 
@@ -49,6 +51,67 @@ def test_handle_team_run_paused_forwards_run_context_to_cleanup(monkeypatch: pyt
     )
 
     assert captured["run_context"] is run_context
+
+
+def test_team_run_messages_preserve_message_list_input():
+    team = Team(name="test-team", members=[Agent(name="m1")], system_message="test system")
+    run_context = RunContext(run_id="r1", session_id="s1")
+    input_messages = [
+        Message(role="user", content="say hello to Bob"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                {"id": "call_1", "type": "function", "function": {"name": "sayHello", "arguments": '{"name":"Bob"}'}}
+            ],
+        ),
+        Message(role="tool", content="Hello Bob", tool_call_id="call_1"),
+    ]
+
+    run_messages = team_messages._get_run_messages(
+        team=team,
+        run_response=TeamRunOutput(run_id="r1", session_id="s1", messages=[]),
+        run_context=run_context,
+        session=TeamSession(session_id="s1"),
+        input_message=input_messages,
+        add_history_to_context=False,
+    )
+
+    assert run_messages.messages[-3:] == input_messages
+    assert run_messages.user_message is input_messages[0]
+    assert run_messages.extra_messages == input_messages
+    assert run_context.messages[-3:] == input_messages
+
+
+@pytest.mark.asyncio
+async def test_team_arun_messages_preserve_message_list_input():
+    team = Team(name="test-team", members=[Agent(name="m1")], system_message="test system")
+    run_context = RunContext(run_id="r1", session_id="s1")
+    input_messages = [
+        Message(role="user", content="say hello to Bob"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[
+                {"id": "call_1", "type": "function", "function": {"name": "sayHello", "arguments": '{"name":"Bob"}'}}
+            ],
+        ),
+        Message(role="tool", content="Hello Bob", tool_call_id="call_1"),
+    ]
+
+    run_messages = await team_messages._aget_run_messages(
+        team=team,
+        run_response=TeamRunOutput(run_id="r1", session_id="s1", messages=[]),
+        run_context=run_context,
+        session=TeamSession(session_id="s1"),
+        input_message=input_messages,
+        add_history_to_context=False,
+    )
+
+    assert run_messages.messages[-3:] == input_messages
+    assert run_messages.user_message is input_messages[0]
+    assert run_messages.extra_messages == input_messages
+    assert run_context.messages[-3:] == input_messages
 
 
 @pytest.mark.asyncio
