@@ -77,6 +77,13 @@ def _get_resolved_members(entity: "Team", context_values: dict[str, Any]) -> Any
     return getattr(entity, "members", None)
 
 
+def _get_execution_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    execution_kwargs = dict(kwargs)
+    if isinstance(kwargs.get("run_context"), RunContext):
+        execution_kwargs["run_context"] = _make_resolution_context(kwargs)
+    return execution_kwargs
+
+
 def _uses_mcp_async_bridge(member_agent: Union[Agent, "Team"], context_values: dict[str, Any]) -> bool:
     if isinstance(member_agent, Agent):
         return _has_mcp_toolkit(_get_resolved_tools(member_agent, context_values))
@@ -148,7 +155,8 @@ def run_member_sync(
     if not _uses_mcp_async_bridge(member_agent, kwargs):
         return member_agent.run(**kwargs)  # type: ignore[misc]
 
-    return _run_async_in_thread(lambda: member_agent.arun(**kwargs))  # type: ignore[misc]
+    execution_kwargs = _get_execution_kwargs(kwargs)
+    return _run_async_in_thread(lambda: member_agent.arun(**execution_kwargs))  # type: ignore[misc]
 
 
 def stream_member_sync(member_agent: Union[Agent, "Team"], **kwargs: Any) -> Iterator[Any]:
@@ -157,4 +165,5 @@ def stream_member_sync(member_agent: Union[Agent, "Team"], **kwargs: Any) -> Ite
     if not _uses_mcp_async_bridge(member_agent, kwargs):
         return member_agent.run(**kwargs)  # type: ignore[misc]
 
-    return _stream_async_in_thread(lambda: member_agent.arun(**kwargs))  # type: ignore[misc]
+    execution_kwargs = _get_execution_kwargs(kwargs)
+    return _stream_async_in_thread(lambda: member_agent.arun(**execution_kwargs))  # type: ignore[misc]

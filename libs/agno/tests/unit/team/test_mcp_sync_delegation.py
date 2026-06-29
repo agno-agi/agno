@@ -360,6 +360,10 @@ def test_run_member_sync_ignores_parent_run_context_tools_for_member_detection()
     assert result.content == "parent context safe"
     mocked_member.run_mock.assert_not_called()
     mocked_member.arun_mock.assert_called_once()
+    forwarded_context = mocked_member.arun_mock.call_args.kwargs["run_context"]
+    assert forwarded_context is not parent_context
+    assert forwarded_context.tools is None
+    assert forwarded_context.run_id == parent_context.run_id
 
 
 def test_run_member_sync_ignores_parent_run_context_members_for_subteam_detection():
@@ -388,6 +392,10 @@ def test_run_member_sync_ignores_parent_run_context_members_for_subteam_detectio
     assert result.content == "parent context subteam safe"
     mocked_subteam.run_mock.assert_not_called()
     mocked_subteam.arun_mock.assert_called_once()
+    forwarded_context = mocked_subteam.arun_mock.call_args.kwargs["run_context"]
+    assert forwarded_context is not parent_context
+    assert forwarded_context.members is None
+    assert forwarded_context.session_id == parent_context.session_id
 
 
 def test_run_member_sync_keeps_non_mcp_agents_on_run():
