@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
+from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams, streamable_http_client_kwargs
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
 
@@ -52,6 +52,7 @@ class MultiMCPTools(Toolkit):
         ] = None,
         timeout_seconds: int = 10,
         client=None,
+        httpx_client_factory=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
@@ -69,6 +70,7 @@ class MultiMCPTools(Toolkit):
             server_params_list: List of StdioServerParameters or SSEClientParams or StreamableHTTPClientParams for creating new sessions.
             env: The environment variables to pass to the servers. Should be used in conjunction with commands.
             client: The underlying MCP client (optional, used to prevent garbage collection).
+            httpx_client_factory: Factory for a customized streamable-http transport client.
             timeout_seconds: Timeout in seconds for managing timeouts for Client Session if Agent or Tool doesn't respond.
             include_tools: Optional list of tool names to include (if None, includes all).
             exclude_tools: Optional list of tool names to exclude (if None, excludes none).
@@ -104,6 +106,7 @@ class MultiMCPTools(Toolkit):
         self.refresh_connection = refresh_connection
 
         self.header_provider = header_provider
+        self._httpx_client_factory = httpx_client_factory
 
         # Validate header_provider signature
         if header_provider:
@@ -346,7 +349,9 @@ class MultiMCPTools(Toolkit):
                 client_timeout = min(self.timeout_seconds, params_dict.get("timeout", self.timeout_seconds))
 
             elif isinstance(server_params, StreamableHTTPClientParams):
-                params_dict = asdict(server_params)
+                params_dict = streamable_http_client_kwargs(
+                    server_params, httpx_client_factory=self._httpx_client_factory
+                )
                 existing_headers = params_dict.get("headers") or {}
                 params_dict["headers"] = {**existing_headers, **dynamic_headers}
 
@@ -549,7 +554,9 @@ class MultiMCPTools(Toolkit):
 
                 # Handle Streamable HTTP connections
                 elif isinstance(server_params, StreamableHTTPClientParams):
-                    streamable_http_params = asdict(server_params)
+                    streamable_http_params = streamable_http_client_kwargs(
+                        server_params, httpx_client_factory=self._httpx_client_factory
+                    )
                     if init_headers:
                         existing_headers = streamable_http_params.get("headers") or {}
                         streamable_http_params["headers"] = {**existing_headers, **init_headers}

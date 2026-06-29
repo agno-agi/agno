@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -906,6 +907,21 @@ def test_mcp_kwargs_escape_hatch_forwards_to_mcptools():
     # User-provided keys win over provider-computed ones (timeout 99 > 5).
     assert tools.timeout_seconds == 99
     assert tools.tool_name_prefix == "srv_"
+
+
+def test_mcp_kwargs_httpx_client_factory_passes_through_unchanged():
+    client_factory = MagicMock()
+    p = MCPContextProvider(
+        "srv",
+        transport="streamable-http",
+        url="https://example.com/mcp",
+        mcp_kwargs={"httpx_client_factory": client_factory},
+    )
+
+    with patch("agno.context.mcp.provider.MCPTools") as mock_mcptools:
+        p._build_tools_instance()
+
+    assert mock_mcptools.call_args.kwargs["httpx_client_factory"] is client_factory
 
 
 @pytest.mark.asyncio
