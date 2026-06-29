@@ -33,7 +33,7 @@ from agno.utils.agent import (
     set_session_name_util,
     update_session_state_util,
 )
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 # ---------------------------------------------------------------------------
 # Session read / write
@@ -247,21 +247,7 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
 # ---------------------------------------------------------------------------
 
 
-def generate_session_name(team: "Team", session: TeamSession, _retries: int = 0) -> str:
-    """
-    Generate a name for the team session
-
-    Args:
-        session: The TeamSession to generate a name for.
-        _retries: Internal retry counter (do not set manually).
-    Returns:
-        str: The generated session name.
-    """
-    max_retries = 3
-
-    if team.model is None:
-        raise Exception("Model not set")
-
+def _get_session_name_messages(team: "Team", session: TeamSession) -> List[Message]:
     gen_session_name_prompt = "Team Conversation\n"
 
     # Get team session messages for generating the name
@@ -278,32 +264,72 @@ def generate_session_name(team: "Team", session: TeamSession, _retries: int = 0)
         "Remember, do not exceed 5 words.",
     )
     user_message = Message(role="user", content=gen_session_name_prompt)
-    generate_name_messages = [system_message, user_message]
+    return [system_message, user_message]
 
-    # Generate name
-    generated_name = team.model.response(messages=generate_name_messages)
-    content = generated_name.content
+
+def _parse_generated_session_name(content: Optional[str], retries: int, max_retries: int) -> Optional[str]:
     if content is None:
-        if _retries < max_retries:
-            from agno.utils.log import log_error
-
+        if retries < max_retries:
             log_error("Generated name is None. Trying again.")
-            return generate_session_name(team, session=session, _retries=_retries + 1)
-        from agno.utils.log import log_error
+            return None
 
         log_error("Generated name is None after max retries. Using fallback.")
         return "Team Session"
-    if len(content.split()) > 15:
-        if _retries < max_retries:
-            from agno.utils.log import log_error
 
+    if len(content.split()) > 15:
+        if retries < max_retries:
             log_error("Generated name is too long. Trying again.")
-            return generate_session_name(team, session=session, _retries=_retries + 1)
-        from agno.utils.log import log_error
+            return None
 
         log_error("Generated name is too long after max retries. Using fallback.")
         return "Team Session"
+
     return content.replace('"', "").strip()
+
+
+def generate_session_name(team: "Team", session: TeamSession, _retries: int = 0) -> str:
+    """
+    Generate a name for the team session
+
+    Args:
+        session: The TeamSession to generate a name for.
+        _retries: Internal retry counter (do not set manually).
+    Returns:
+        str: The generated session name.
+    """
+    max_retries = 3
+
+    if team.model is None:
+        raise Exception("Model not set")
+
+    # Generate name
+    generated_name = team.model.response(messages=_get_session_name_messages(team, session))
+    session_name = _parse_generated_session_name(generated_name.content, retries=_retries, max_retries=max_retries)
+    if session_name is None:
+        return generate_session_name(team, session=session, _retries=_retries + 1)
+    return session_name
+
+
+async def agenerate_session_name(team: "Team", session: TeamSession, _retries: int = 0) -> str:
+    """
+    Generate a name for the team session asynchronously
+
+    Args:
+        session: The TeamSession to generate a name for.
+        _retries: Internal retry counter (do not set manually).
+    Returns:
+        str: The generated session name.
+    """
+    max_retries = 3
+
+    if team.model is None:
+        raise Exception("Model not set")
+
+    generated_name = await team.model.aresponse(messages=_get_session_name_messages(team, session))
+    session_name = _parse_generated_session_name(generated_name.content, retries=_retries, max_retries=max_retries)
+    if session_name is None:
+        return await agenerate_session_name(team, session=session, _retries=_retries + 1)
+    return session_name
 
 
 def set_session_name(
