@@ -1811,10 +1811,12 @@ class SqliteDb(BaseDb):
                     }
                 )
 
+            replacement_id_set = set(memory_ids)
             with self.Session() as sess, sess.begin():
-                sess.execute(table.delete().where(table.c.user_id == user_id))
-                if not bulk_data:
-                    return []
+                existing_ids = set(
+                    sess.execute(select(table.c.memory_id).where(table.c.user_id == user_id)).scalars().all()
+                )
+                stale_ids = list(existing_ids - replacement_id_set)
 
                 stmt = sqlite.insert(table)
                 stmt = stmt.on_conflict_do_update(
@@ -1831,6 +1833,14 @@ class SqliteDb(BaseDb):
                     ),
                 )
                 sess.execute(stmt, bulk_data)
+
+                if stale_ids:
+                    sess.execute(
+                        table.delete().where(
+                            table.c.user_id == user_id,
+                            table.c.memory_id.in_(stale_ids),
+                        )
+                    )
 
                 result = sess.execute(select(table).where(table.c.memory_id.in_(memory_ids))).fetchall()
 

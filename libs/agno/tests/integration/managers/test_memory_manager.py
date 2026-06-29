@@ -553,6 +553,37 @@ def test_optimize_memories_with_db_empty_optimized_output_preserves_existing_row
     assert after == before
 
 
+def test_optimize_memories_with_db_same_id_preserves_created_at_and_refreshes_updated_at(memory_with_db):
+    """Test same-ID replacements keep created_at and advance updated_at."""
+    memory_with_db.add_user_memory(
+        memory=UserMemory(
+            memory="Original",
+            topics=["test"],
+            memory_id="same-1",
+            user_id="test_user",
+            created_at=1000,
+            updated_at=1000,
+        ),
+        user_id="test_user",
+    )
+
+    optimized = memory_with_db.optimize_memories(
+        user_id="test_user",
+        strategy=DeterministicOptimizationStrategy(
+            [UserMemory(memory="Optimized", topics=["summary"], memory_id="same-1")]
+        ),
+        apply=True,
+    )
+
+    final_memories = memory_with_db.get_user_memories(user_id="test_user")
+    assert [memory.memory_id for memory in optimized] == ["same-1"]
+    assert [memory.memory_id for memory in final_memories] == ["same-1"]
+    assert final_memories[0].memory == "Optimized"
+    assert final_memories[0].created_at == 1000
+    assert final_memories[0].updated_at is not None
+    assert final_memories[0].updated_at > 1000
+
+
 def test_optimize_memories_with_db_default_user_id(memory_with_db):
     """Test optimizing memories with default user_id."""
     memory_with_db.add_user_memory(
@@ -688,5 +719,44 @@ async def test_aoptimize_memories_with_async_sqlite_empty_optimized_output_prese
         after = [(memory.memory_id, memory.memory) for memory in await db.get_user_memories(user_id="test_user")]
         assert optimized == []
         assert after == before
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_aoptimize_memories_with_async_sqlite_same_id_preserves_created_at_and_refreshes_updated_at(
+    temp_db_file, model
+):
+    """Test async same-ID replacements keep created_at and advance updated_at."""
+    db = AsyncSqliteDb(db_file=temp_db_file)
+    try:
+        await db._get_table(table_type="memories", create_table_if_not_found=True)
+        await db.upsert_user_memory(
+            UserMemory(
+                memory="Original",
+                topics=["test"],
+                memory_id="async-same-1",
+                user_id="test_user",
+                created_at=1000,
+                updated_at=1000,
+            )
+        )
+
+        manager = MemoryManager(model=model, db=db)
+        optimized = await manager.aoptimize_memories(
+            user_id="test_user",
+            strategy=DeterministicOptimizationStrategy(
+                [UserMemory(memory="Optimized", topics=["summary"], memory_id="async-same-1")]
+            ),
+            apply=True,
+        )
+
+        final_memories = await db.get_user_memories(user_id="test_user")
+        assert [memory.memory_id for memory in optimized] == ["async-same-1"]
+        assert [memory.memory_id for memory in final_memories] == ["async-same-1"]
+        assert final_memories[0].memory == "Optimized"
+        assert final_memories[0].created_at == 1000
+        assert final_memories[0].updated_at is not None
+        assert final_memories[0].updated_at > 1000
     finally:
         await db.close()
