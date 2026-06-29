@@ -7,7 +7,7 @@ from typing import Optional
 import pytest
 from starlette.datastructures import Headers, UploadFile
 
-from agno.media import File
+from agno.media import File, Image
 from agno.os.utils import (
     DOCUMENT_MIME_TYPES,
     classify_upload_file,
@@ -213,3 +213,37 @@ class TestDocumentMimeTypesConsistency:
         for mime_type in DOCUMENT_MIME_TYPES:
             # Should not raise.
             File(content=b"data", mime_type=mime_type)
+
+
+class TestMediaValidationAndNormalization:
+    def test_image_mime_normalization_and_validation(self):
+        # Case insensitive normalization
+        img = Image(content=b"test", mime_type="IMAGE/PNG")
+        assert img.mime_type == "image/png"
+
+        # Invalid type raises ValueError
+        with pytest.raises(ValueError):
+            Image(content=b"test", mime_type="image/invalid")
+
+    def test_file_filename_normalization(self):
+        # Test directory traversal removal
+        f = File(content=b"test", filename="../../etc/passwd")
+        assert f.filename == "passwd"
+
+        # Test special characters removal
+        f2 = File(content=b"test", filename="my$file#name!.txt")
+        assert f2.filename == "myfilename.txt"
+
+    def test_process_uploaded_files_centralized(self):
+        from agno.os.utils import process_uploaded_files
+        
+        uploaded = [
+            _make_upload_file("test.png", "IMAGE/PNG", b"imgdata"),
+            _make_upload_file("test.pdf", "application/pdf", b"pdfdata"),
+        ]
+        
+        images, audios, videos, documents = process_uploaded_files(uploaded)
+        assert len(images) == 1
+        assert len(documents) == 1
+        assert images[0].content == b"imgdata"
+        assert documents[0].content == b"pdfdata"
