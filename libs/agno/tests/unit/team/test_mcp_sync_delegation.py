@@ -398,6 +398,31 @@ def test_run_member_sync_ignores_parent_run_context_members_for_subteam_detectio
     assert forwarded_context.session_id == "team-session"
 
 
+def test_run_member_sync_clears_parent_knowledge_filters_when_member_passes_none():
+    mocked_member = _make_member(with_mcp=True, content="knowledge filters safe", session_key="knowledge_filters")
+    parent_context = RunContext(
+        run_id="team-run",
+        session_id="team-session",
+        session_state={},
+        knowledge_filters={"scope": "parent"},
+    )
+
+    result = run_member_sync(
+        mocked_member.member,
+        input="delegate",
+        run_context=parent_context,
+        knowledge_filters=None,
+        run_id="member-run",
+        session_id="team-session",
+        session_state={},
+    )
+
+    assert result.content == "knowledge filters safe"
+    forwarded_context = mocked_member.arun_mock.call_args.kwargs["run_context"]
+    assert forwarded_context is not parent_context
+    assert forwarded_context.knowledge_filters is None
+
+
 def test_run_member_sync_keeps_non_mcp_agents_on_run():
     member = Agent(name="Worker", id="worker", tools=[])
     expected = RunOutput(run_id="member-run", agent_id=member.id, agent_name=member.name, content="via run")
