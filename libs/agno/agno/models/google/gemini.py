@@ -159,6 +159,17 @@ class Gemini(Model):
         "tool": "user",
     }
 
+    def _get_url_citation_from_grounding_chunk(self, chunk: Any) -> Optional[UrlCitation]:
+        source = getattr(chunk, "web", None) or getattr(chunk, "retrieved_context", None)
+        if not source:
+            return None
+
+        uri = source.uri
+        if uri:
+            return UrlCitation(url=uri, title=source.title)
+
+        return None
+
     def get_client(self) -> GeminiClient:
         """
         Returns an instance of the GeminiClient client.
@@ -1246,13 +1257,9 @@ class Gemini(Model):
                 for chunk in chunks:
                     if not chunk:
                         continue
-                    web = chunk.web
-                    if not web:
-                        continue
-                    uri = web.uri
-                    title = web.title
-                    if uri:
-                        citations_urls.append(UrlCitation(url=uri, title=title))
+                    citation = self._get_url_citation_from_grounding_chunk(chunk)
+                    if citation:
+                        citations_urls.append(citation)
 
             # Handle URLs from URL context tool
             if (
@@ -1399,13 +1406,9 @@ class Gemini(Model):
                 for chunk in chunks:
                     if not chunk:
                         continue
-                    web = chunk.web
-                    if not web:
-                        continue
-                    uri = web.uri
-                    title = web.title
-                    if uri:
-                        citations.urls.append(UrlCitation(url=uri, title=title))
+                    citation = self._get_url_citation_from_grounding_chunk(chunk)
+                    if citation:
+                        citations.urls.append(citation)
 
             # Handle URLs from URL context tool
             if (

@@ -7,6 +7,17 @@ import pytest
 
 pytest.importorskip("google.genai")
 
+from google.genai.types import (
+    Candidate,
+    Content,
+    GenerateContentResponse,
+    GroundingChunk,
+    GroundingChunkRetrievedContext,
+    GroundingChunkWeb,
+    GroundingMetadata,
+    Part,
+)
+
 from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.google.gemini import Gemini
@@ -89,6 +100,66 @@ def test_gemini_invoke_wraps_generic_errors_with_exception_type():
     ):
         with pytest.raises(ModelProviderError, match="TimeoutError"):
             model.invoke(messages=[Message(role="user", content="Hello")], assistant_message=assistant_message)
+
+
+def test_parse_provider_response_extracts_retrieved_context_citations():
+    response = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(role="model", parts=[Part(text="Grounded answer")]),
+                grounding_metadata=GroundingMetadata(
+                    grounding_chunks=[
+                        GroundingChunk(
+                            web=GroundingChunkWeb(uri="https://example.com/web", title="Web Source"),
+                        ),
+                        GroundingChunk(
+                            retrieved_context=GroundingChunkRetrievedContext(
+                                uri="https://example.com/retrieved",
+                                title="Retrieved Source",
+                            )
+                        ),
+                    ]
+                ),
+            )
+        ]
+    )
+
+    parsed = Gemini(api_key="test-key")._parse_provider_response(response)
+
+    assert parsed.citations is not None
+    assert parsed.citations.urls is not None
+    assert [citation.url for citation in parsed.citations.urls] == [
+        "https://example.com/web",
+        "https://example.com/retrieved",
+    ]
+    assert [citation.title for citation in parsed.citations.urls] == ["Web Source", "Retrieved Source"]
+
+
+def test_parse_provider_response_delta_extracts_retrieved_context_citations():
+    response = GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(role="model", parts=[Part(text="Grounded answer")]),
+                grounding_metadata=GroundingMetadata(
+                    grounding_chunks=[
+                        GroundingChunk(
+                            retrieved_context=GroundingChunkRetrievedContext(
+                                uri="https://example.com/retrieved",
+                                title="Retrieved Source",
+                            )
+                        ),
+                    ]
+                ),
+            )
+        ]
+    )
+
+    parsed = Gemini(api_key="test-key")._parse_provider_response_delta(response)
+
+    assert parsed.citations is not None
+    assert parsed.citations.urls is not None
+    assert [citation.url for citation in parsed.citations.urls] == ["https://example.com/retrieved"]
+    assert [citation.title for citation in parsed.citations.urls] == ["Retrieved Source"]
 
 
 class TestFormatFileForMessage:
