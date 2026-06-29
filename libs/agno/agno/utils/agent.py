@@ -558,6 +558,32 @@ def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRu
         run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
 
 
+def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+    """Give ``run_response`` its own shallow copies of the collections that media
+    scrubbing mutates in place (Message objects and RunInput).
+
+    ``scrub_media_from_run_output`` (store_media=False) reassigns attributes on
+    Message and RunInput objects. A shallow ``copy.copy`` of a RunOutput shares
+    those nested objects with the source, so scrubbing a *storage copy* on a
+    mid-run checkpoint would strip media off the still-running live run. Call
+    this on the storage copy before scrubbing on the in-flight (checkpoint) path.
+
+    Shallow per-element copies are enough — the scrub only reassigns attributes,
+    it does not mutate nested structures — and they avoid duplicating the media
+    payloads themselves (the copies share the payload refs until they are nulled).
+    """
+    import copy
+
+    if run_response.messages is not None:
+        run_response.messages = [copy.copy(message) for message in run_response.messages]
+    if run_response.additional_input is not None:
+        run_response.additional_input = [copy.copy(message) for message in run_response.additional_input]
+    if run_response.reasoning_messages is not None:
+        run_response.reasoning_messages = [copy.copy(message) for message in run_response.reasoning_messages]
+    if run_response.input is not None:
+        run_response.input = copy.copy(run_response.input)
+
+
 def get_run_output_util(
     entity: Union["Agent", "Team"],
     run_id: str,
