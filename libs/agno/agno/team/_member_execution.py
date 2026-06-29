@@ -24,19 +24,22 @@ class _AsyncStreamError:
         self.error = error
 
 
-def _has_mcp_toolkit(member_agent: Agent) -> bool:
-    return isinstance(member_agent.tools, list) and any(
+def _has_mcp_toolkit(tools: Any) -> bool:
+    return isinstance(tools, list) and any(
         hasattr(type(tool), "__mro__") and any(base.__name__ in _MCP_TOOLKIT_CLASS_NAMES for base in type(tool).__mro__)
-        for tool in member_agent.tools
+        for tool in tools
     )
 
 
 def _uses_mcp_async_bridge(member_agent: Union[Agent, "Team"]) -> bool:
     if isinstance(member_agent, Agent):
-        return _has_mcp_toolkit(member_agent)
+        return _has_mcp_toolkit(member_agent.tools)
 
     if type(member_agent).__name__ != "Team":
         return False
+
+    if _has_mcp_toolkit(getattr(member_agent, "tools", None)):
+        return True
 
     members = getattr(member_agent, "members", None) or []
     return any(_uses_mcp_async_bridge(member) for member in members)
