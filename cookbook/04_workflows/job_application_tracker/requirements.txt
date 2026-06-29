@@ -1,0 +1,2 @@
+agno
+google-generativeai
