@@ -1121,6 +1121,18 @@ class Gemini(Model):
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
 
+    @staticmethod
+    def _get_url_citation_from_grounding_chunk(chunk: Any) -> Optional[UrlCitation]:
+        source = getattr(chunk, "web", None) or getattr(chunk, "retrieved_context", None)
+        if not source:
+            return None
+
+        uri = source.uri
+        title = source.title
+        if uri:
+            return UrlCitation(url=uri, title=title)
+        return None
+
     def _parse_provider_response(self, response: GenerateContentResponse, **kwargs) -> ModelResponse:
         """
         Parse the Gemini response into a ModelResponse.
@@ -1246,13 +1258,9 @@ class Gemini(Model):
                 for chunk in chunks:
                     if not chunk:
                         continue
-                    web = chunk.web
-                    if not web:
-                        continue
-                    uri = web.uri
-                    title = web.title
-                    if uri:
-                        citations_urls.append(UrlCitation(url=uri, title=title))
+                    citation = self._get_url_citation_from_grounding_chunk(chunk)
+                    if citation:
+                        citations_urls.append(citation)
 
             # Handle URLs from URL context tool
             if (
@@ -1399,13 +1407,9 @@ class Gemini(Model):
                 for chunk in chunks:
                     if not chunk:
                         continue
-                    web = chunk.web
-                    if not web:
-                        continue
-                    uri = web.uri
-                    title = web.title
-                    if uri:
-                        citations.urls.append(UrlCitation(url=uri, title=title))
+                    citation = self._get_url_citation_from_grounding_chunk(chunk)
+                    if citation:
+                        citations.urls.append(citation)
 
             # Handle URLs from URL context tool
             if (
