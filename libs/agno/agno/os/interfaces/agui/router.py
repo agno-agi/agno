@@ -22,10 +22,12 @@ from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.agui.input import (
+    convert_agui_messages_to_agno_messages,
     extract_context,
     extract_media,
     extract_tool_messages,
     extract_user_input,
+    has_tool_state,
     parse_client_tools,
     validate_state,
 )
@@ -54,12 +56,23 @@ async def run_entity(
         messages = run_input.messages or []
 
         # 1. Extract inputs from AG-UI message history
-        user_input = extract_user_input(messages)
-        images, audio, videos, files = extract_media(messages)
         tool_messages = extract_tool_messages(messages)
 
         # 2. Convert frontend tool definitions to Agno Functions
         client_tools = parse_client_tools(run_input.tools) or None
+
+        # AG-UI frontends send full conversation history every request.
+        # For plain turns, extract only the latest user message and let the
+        # entity manage history through its session DB. Non-trailing tool
+        # history must be replayed as a full transcript; trailing tool results
+        # are handled by the paused-run resume path below.
+        use_full_message_history = has_tool_state(messages) and not tool_messages
+        if use_full_message_history:
+            user_input = convert_agui_messages_to_agno_messages(messages)
+            images, audio, videos, files = [], [], [], []
+        else:
+            user_input = extract_user_input(messages)
+            images, audio, videos, files = extract_media(messages)
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -83,6 +96,8 @@ async def run_entity(
         run_kwargs: dict = {}
         if ui_deps:
             run_kwargs["add_dependencies_to_context"] = True
+        if use_full_message_history:
+            run_kwargs["add_history_to_context"] = False
 
         # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
         if tool_messages:
