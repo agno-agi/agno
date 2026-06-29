@@ -61,3 +61,13 @@ Generated: 2026-02-08 16:39:09
 **Result:** Timed out after 35s. DEBUG [ERROR] Step 'Write Tests' not found in the list
 
 ---
+
+### job_application_tracker.py
+
+**Status:** PASS
+
+**Description:** Executed with `.venv/bin/python` (three sync runs).
+
+**Result:** Extracted three applications via output_schema; the tracker agent saved each through the save_application tool and listed them with the list_applications tool, so the tracker grew 1 -> 2 -> 3 across runs. Re-read in a fresh process returned the same records, confirming SqliteDb persistence.
+
+---
