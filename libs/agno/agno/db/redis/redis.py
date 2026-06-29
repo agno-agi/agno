@@ -28,7 +28,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
@@ -302,18 +302,55 @@ class RedisDb(BaseDb):
         """Sorted-set key listing run_ids for a session, scored by run_index."""
         return self._RUNS_BY_SESSION_INDEX_PATTERN.format(prefix=self.db_prefix, session_id=session_id)
 
-    def _store_session_runs(self, session: Session) -> None:
-        """Write every run of the given session as its own Redis key + update the session index."""
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run as its own Redis key + maintain the session index (O(1)).
 
-        index_key = self._runs_by_session_index_key(session.session_id)
-        pipe = self.redis_client.pipeline()
-        for row in rows:
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the row already exists
+            existing = self._get_record("runs", row["run_id"])
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+
+            index_key = self._runs_by_session_index_key(session_id)
             run_key = generate_redis_key(prefix=self.db_prefix, table_type="runs", key_id=row["run_id"])
+
+            pipe = self.redis_client.pipeline()
             pipe.set(run_key, serialize_data(row), ex=self.expire)
             pipe.zadd(index_key, {row["run_id"]: float(row.get("run_index") or 0)})
+            if self.expire is not None:
+                pipe.expire(index_key, self.expire)
+            pipe.execute()
+
             # Maintain field indexes for cross-session run queries
             create_index_entries(
                 redis_client=self.redis_client,
@@ -323,9 +360,9 @@ class RedisDb(BaseDb):
                 record_data=row,
                 index_fields=["session_id", "user_id", "agent_id", "team_id", "workflow_id", "run_type", "status"],
             )
-        if self.expire is not None:
-            pipe.expire(index_key, self.expire)
-        pipe.execute()
+        except Exception as e:
+            log_error(f"Exception upserting run into Redis: {str(e)}")
+            raise e
 
     def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
         """Get raw run_data dicts for a session, ordered by run_index."""
@@ -868,10 +905,8 @@ class RedisDb(BaseDb):
             if not success:
                 return None
 
-            # Persist runs as individual keys (one per run, plus a sorted-set index per session)
-            self._store_session_runs(session)
-
-            # Attach the in-memory runs for callers
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
+            # Attach the in-memory runs for callers.
             data["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
 
             if not deserialize:

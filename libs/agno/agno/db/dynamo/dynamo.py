@@ -36,7 +36,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
@@ -262,18 +262,63 @@ class DynamoDb(BaseDb):
             grouped[sid] = self._get_session_runs_data(sid)
         return grouped
 
-    def _store_session_runs(self, session: Session) -> None:
-        """Upsert every run of the given session into the runs table."""
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
-        table_name = self._get_table("runs", create_table_if_not_found=True)
-        for row in rows:
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run item into the runs table (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            table_name = self._get_table("runs", create_table_if_not_found=True)
+            if table_name is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the item already exists
+            try:
+                existing_resp = self.client.get_item(TableName=table_name, Key={"run_id": {"S": row["run_id"]}})
+                existing_item = existing_resp.get("Item")
+                if existing_item:
+                    existing = deserialize_from_dynamodb_item(existing_item)
+                    if "run_index" in existing:
+                        row["run_index"] = existing["run_index"]
+            except self.client.exceptions.ResourceNotFoundException:
+                pass
+
             payload = {k: v for k, v in row.items() if v is not None}
             if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
                 payload["run_data"] = json.dumps(payload["run_data"])
             item = serialize_to_dynamo_item(payload)
             self.client.put_item(TableName=table_name, Item=item)
+        except Exception as e:
+            log_error(f"Exception upserting run into runs table: {str(e)}")
+            raise e
 
     def _delete_session_runs(self, session_id: str) -> int:
         """Cascade-delete every run row for a session."""
@@ -959,13 +1004,8 @@ class DynamoDb(BaseDb):
             except self.client.exceptions.ConditionalCheckFailedException:
                 return None
 
-            # Persist runs into the dedicated runs table.
-            try:
-                self._store_session_runs(session)
-            except Exception as e:
-                log_error(f"Failed to store runs for session {session.session_id}: {str(e)}")
-
-            # Attach runs to the returned session dict so the caller sees them.
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
+            # Attach the in-memory runs to the returned dict so callers see them.
             serialized_session["runs"] = [r.to_dict() if hasattr(r, "to_dict") else r for r in (session.runs or [])]
             return deserialize_session_result(serialized_session, session, deserialize)
 

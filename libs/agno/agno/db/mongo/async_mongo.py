@@ -29,7 +29,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
@@ -632,12 +632,52 @@ class AsyncMongoDb(AsyncBaseDb):
             runs_by_session.setdefault(sid, []).append(run_data)
         return runs_by_session
 
-    async def _store_session_runs(self, runs_collection: AsyncMongoCollectionType, session: Session) -> None:
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
-        for row in rows:
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run document into the runs collection (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_collection = await self._get_collection(table_type="runs", create_collection_if_not_found=True)
+            if runs_collection is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            existing = await runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1})
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+
             await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
+        except Exception as e:
+            log_error(f"Exception upserting run into runs collection: {str(e)}")
+            raise e
 
     async def get_run(
         self, run_id: str, deserialize: Optional[bool] = True
