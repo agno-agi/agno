@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.6.19"
+version = "2.6.20"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -127,6 +127,7 @@ seltz = ["seltz>=0.2.0"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
+scavio = ["scavio"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 github = ["PyGithub"]
 gitlab = ["python-gitlab", "httpx"]
@@ -259,6 +260,7 @@ tools = [
   "agno[youtube]",
   "agno[firecrawl]",
   "agno[tavily]",
+  "agno[scavio]",
   # "agno[crawl4ai]",  # Temporarily disabled - depends on litellm which is compromised on PyPI (March 24, 2026)
   "agno[github]",
   "agno[gitlab]",
@@ -558,6 +560,7 @@ module = [
   "redisvl.*",
   "replicate.*",
   "requests.*",
+  "scavio.*",
   "scrapegraph_py.*",
   "sentence_transformers.*",
   "serpapi.*",

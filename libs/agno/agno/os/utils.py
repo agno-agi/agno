@@ -1279,6 +1279,29 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
     )
 
 
+def flatten_routes(routes: Sequence[Any]) -> List[Any]:
+    """Expand included routers into their underlying routes.
+
+    FastAPI 0.137 wraps each included router in a single path-less object instead of
+    inlining its routes, so recurse through those wrappers to recover the real routes.
+
+    Each route keeps the path defined on its own router; a prefix passed at include time
+    (include_router(prefix=...)) is not applied. AgentOS bakes prefixes into the routers
+    themselves, so its routes are unaffected.
+
+    Returns:
+        List[Any]: The routes with any included routers expanded in place.
+    """
+    flattened_routes: List[Any] = []
+    for route in routes:
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None and hasattr(included_router, "routes"):
+            flattened_routes.extend(flatten_routes(included_router.routes))
+        else:
+            flattened_routes.append(route)
+    return flattened_routes
+
+
 def get_existing_route_paths(fastapi_app: FastAPI) -> Dict[str, List[str]]:
     """Get all existing route paths and methods from the FastAPI app.
 

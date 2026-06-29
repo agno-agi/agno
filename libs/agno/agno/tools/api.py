@@ -45,10 +45,14 @@ class CustomApiTools(Toolkit):
             return HTTPBasicAuth(self.username, self.password)
         return None
 
-    def _get_headers(self, additional_headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    def _get_headers(
+        self,
+        additional_headers: Optional[Dict[str, str]] = None,
+        include_api_key: bool = True,
+    ) -> Dict[str, str]:
         """Combine default headers with additional headers."""
         headers = self.default_headers.copy()
-        if self.api_key:
+        if self.api_key and include_api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         if additional_headers:
             headers.update(additional_headers)
@@ -89,7 +93,7 @@ class CustomApiTools(Toolkit):
                 params=params,
                 data=data,
                 json=json_data,
-                headers=self._get_headers(headers),
+                headers=self._get_headers(headers, include_api_key=bool(self.base_url)),
                 auth=self._get_auth(),
                 verify=self.verify_ssl,
                 timeout=self.timeout,
