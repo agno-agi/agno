@@ -58,3 +58,21 @@ async def test_team_telemetry_async():
         assert call_args.kwargs["session_id"] is not None
         assert "run_id" in call_args.kwargs
         assert call_args.kwargs["run_id"] is not None
+
+@pytest.mark.asyncio
+async def test_alog_team_telemetry_is_fire_and_forget():
+    """Test that alog_team_telemetry schedules a background task instead of blocking."""
+    from unittest.mock import patch
+
+    from agno.team._telemetry import alog_team_telemetry
+
+    agent = Agent()
+    team = Team(members=[agent])
+    team.telemetry = True
+
+    with patch("agno.team._init._set_telemetry"):
+        with patch("agno.team._telemetry.asyncio.create_task") as mock_create_task:
+            await alog_team_telemetry(team, session_id="test-session", run_id="test-run")
+
+            # Must schedule a background task, not block
+            mock_create_task.assert_called_once()

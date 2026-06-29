@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from agno.team.team import Team
@@ -54,21 +55,32 @@ def log_team_telemetry(team: "Team", session_id: str, run_id: Optional[str] = No
             run=TeamRunCreate(session_id=session_id, run_id=run_id, data=get_telemetry_data(team)),
         )
     except Exception as e:
-        log_debug(f"Could not create Team run telemetry event: {e}")
+        log_warning(f"Could not create Team run telemetry event: {e}")
+
+
+async def _alog_team_telemetry_task(team: "Team", session_id: str, run_id: Optional[str]) -> None:
+    """Background task that performs the async telemetry POST."""
+    from agno.api.team import TeamRunCreate, acreate_team_run
+
+    try:
+        await acreate_team_run(
+            run=TeamRunCreate(session_id=session_id, run_id=run_id, data=get_telemetry_data(team))
+        )
+    except Exception as e:
+        log_warning(f"Could not create Team run telemetry event: {e}")
 
 
 async def alog_team_telemetry(team: "Team", session_id: str, run_id: Optional[str] = None) -> None:
-    """Send a telemetry event to the API for a created Team async run"""
+    """Send a telemetry event to the API for a created Team async run.
 
+    Schedules the HTTP POST as a background task so it never blocks the caller,
+    even if os-api.agno.com is unreachable and the request hangs until timeout.
+    """
     from agno.team._init import _set_telemetry
 
     _set_telemetry(team)
     if not team.telemetry:
         return
 
-    from agno.api.team import TeamRunCreate, acreate_team_run
-
-    try:
-        await acreate_team_run(run=TeamRunCreate(session_id=session_id, run_id=run_id, data=get_telemetry_data(team)))
-    except Exception as e:
-        log_debug(f"Could not create Team run telemetry event: {e}")
+    asyncio.create_task(_alog_team_telemetry_task(team, session_id=session_id, run_id=run_id))
+    log_debug("Team telemetry task scheduled (fire-and-forget)")
