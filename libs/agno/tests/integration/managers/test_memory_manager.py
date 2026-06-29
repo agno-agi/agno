@@ -23,15 +23,64 @@ class DeterministicOptimizationStrategy(MemoryOptimizationStrategy):
         return deepcopy(self.optimized_memories)
 
 
-class FailingReplaceSqliteDb(SqliteDb):
-    def replace_user_memories(self, user_id, memories, deserialize=True):
-        table = self._get_table(table_type="memories", create_table_if_not_found=True)
-        if table is None:
-            return []
+class _FailingSyncSession:
+    def __init__(self, session_factory):
+        self._session = session_factory()
+        self._failed = False
 
-        with self.Session() as sess, sess.begin():
-            sess.execute(table.delete().where(table.c.user_id == user_id))
+    def __enter__(self):
+        self._session.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._session.__exit__(exc_type, exc, tb)
+
+    def begin(self):
+        return self._session.begin()
+
+    def execute(self, stmt, *args, **kwargs):
+        if not self._failed and getattr(stmt, "is_insert", False):
+            self._failed = True
             raise RuntimeError("injected replacement failure")
+        return self._session.execute(stmt, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+
+class _FailingAsyncSession:
+    def __init__(self, session_factory):
+        self._session = session_factory()
+        self._failed = False
+
+    async def __aenter__(self):
+        await self._session.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return await self._session.__aexit__(exc_type, exc, tb)
+
+    def begin(self):
+        return self._session.begin()
+
+    async def execute(self, stmt, *args, **kwargs):
+        if not self._failed and getattr(stmt, "is_insert", False):
+            self._failed = True
+            raise RuntimeError("injected replacement failure")
+        return await self._session.execute(stmt, *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+
+def _inject_sync_replace_failure(db: SqliteDb) -> None:
+    original_session_factory = db.Session
+    db.Session = lambda: _FailingSyncSession(original_session_factory)
+
+
+def _inject_async_replace_failure(db: AsyncSqliteDb) -> None:
+    original_session_factory = db.async_session_factory
+    db.async_session_factory = lambda: _FailingAsyncSession(original_session_factory)
 
 
 @pytest.fixture
@@ -636,7 +685,7 @@ def test_optimize_memories_persistence_across_instances(model, memory_db):
 
 def test_optimize_memories_replace_failure_preserves_existing_rows(temp_db_file, model):
     """Test replacement rollback preserves existing memories on failure."""
-    db = FailingReplaceSqliteDb(db_file=temp_db_file)
+    db = SqliteDb(db_file=temp_db_file)
     try:
         manager = MemoryManager(model=model, db=db)
         manager.add_user_memory(
@@ -653,6 +702,7 @@ def test_optimize_memories_replace_failure_preserves_existing_rows(temp_db_file,
         )
 
         before = [(memory.memory_id, memory.memory) for memory in manager.get_user_memories(user_id="test_user")]
+        _inject_sync_replace_failure(db)
 
         with pytest.raises(RuntimeError, match="injected replacement failure"):
             manager.optimize_memories(user_id="test_user", strategy=strategy, apply=True)
@@ -690,6 +740,38 @@ async def test_aoptimize_memories_with_async_sqlite_persists_replacement(temp_db
         persisted_manager = MemoryManager(model=model, db=db)
         persisted_memories = await persisted_manager.aget_user_memories(user_id="test_user")
         assert [memory.memory_id for memory in persisted_memories] == ["async-optimized-1"]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_aoptimize_memories_with_async_sqlite_replace_failure_preserves_existing_rows(temp_db_file, model):
+    """Test async replacement rollback preserves existing memories on failure."""
+    db = AsyncSqliteDb(db_file=temp_db_file)
+    try:
+        await db._get_table(table_type="memories", create_table_if_not_found=True)
+        await db.upsert_user_memory(
+            UserMemory(memory="Keep me", topics=["test"], memory_id="async-keep-1", user_id="test_user")
+        )
+        await db.upsert_user_memory(
+            UserMemory(memory="Keep me too", topics=["test"], memory_id="async-keep-2", user_id="test_user")
+        )
+
+        manager = MemoryManager(model=model, db=db)
+        before = [(memory.memory_id, memory.memory) for memory in await db.get_user_memories(user_id="test_user")]
+        _inject_async_replace_failure(db)
+
+        with pytest.raises(RuntimeError, match="injected replacement failure"):
+            await manager.aoptimize_memories(
+                user_id="test_user",
+                strategy=DeterministicOptimizationStrategy(
+                    [UserMemory(memory="Should not persist", topics=["summary"], memory_id="async-optimized-1")]
+                ),
+                apply=True,
+            )
+
+        after = [(memory.memory_id, memory.memory) for memory in await db.get_user_memories(user_id="test_user")]
+        assert after == before
     finally:
         await db.close()
 

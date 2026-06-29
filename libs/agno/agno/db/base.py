@@ -307,6 +307,8 @@ class BaseDb(ABC):
         replacement_ids = {memory.memory_id for memory in memories if memory.memory_id is not None}
 
         replaced_memories = self.upsert_memories(memories=memories, deserialize=deserialize)
+        if len(replaced_memories) != len(memories):
+            return replaced_memories
 
         stale_ids = list(existing_ids - replacement_ids)
         if stale_ids:
@@ -1489,6 +1491,8 @@ class AsyncBaseDb(ABC):
                     replaced_memories.append(replaced_memory)
         else:
             replaced_memories = await self.upsert_memories(memories=memories, deserialize=deserialize)
+        if len(replaced_memories) != len(memories):
+            return replaced_memories
 
         stale_ids = list(existing_ids - replacement_ids)
         if stale_ids:
