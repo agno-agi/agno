@@ -2158,6 +2158,7 @@ def test_convert_agui_messages_preserves_tool_state():
         {"id": "call_1", "type": "function", "function": {"name": "sayHello", "arguments": '{"name":"Bob"}'}}
     ]
     assert converted[2].tool_call_id == "call_1"
+    assert converted[2].tool_name == "sayHello"
     assert converted[2].content == "Hello Bob"
 
 

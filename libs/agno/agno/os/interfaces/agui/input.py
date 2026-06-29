@@ -25,9 +25,10 @@ def has_tool_state(messages: List[AGUIMessage]) -> bool:
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
     """Convert AG-UI messages into Agno messages while preserving tool state."""
     converted_messages: List[Message] = []
+    tool_names_by_call_id: Dict[str, str] = {}
 
     for msg in messages:
-        converted_message = _convert_agui_message_to_agno_message(msg)
+        converted_message = _convert_agui_message_to_agno_message(msg, tool_names_by_call_id)
         if converted_message is not None:
             converted_messages.append(converted_message)
 
@@ -188,7 +189,9 @@ def _decode_base64(value: str) -> Optional[bytes]:
         return None
 
 
-def _convert_agui_message_to_agno_message(message: AGUIMessage) -> Optional[Message]:
+def _convert_agui_message_to_agno_message(
+    message: AGUIMessage, tool_names_by_call_id: Dict[str, str]
+) -> Optional[Message]:
     role = message.role
 
     if role == "user":
@@ -205,7 +208,17 @@ def _convert_agui_message_to_agno_message(message: AGUIMessage) -> Optional[Mess
         )
 
     if role == "assistant":
-        tool_calls = [_convert_agui_tool_call(tool_call) for tool_call in getattr(message, "tool_calls", []) or []]
+        tool_calls: List[Dict[str, Any]] = []
+        for tool_call in getattr(message, "tool_calls", []) or []:
+            converted_tool_call = _convert_agui_tool_call(tool_call)
+            tool_calls.append(converted_tool_call)
+
+            tool_call_id = converted_tool_call.get("id")
+            function = converted_tool_call.get("function") or {}
+            tool_name = function.get("name")
+            if tool_call_id and tool_name:
+                tool_names_by_call_id[tool_call_id] = tool_name
+
         return Message(
             id=message.id,
             role="assistant",
@@ -221,6 +234,7 @@ def _convert_agui_message_to_agno_message(message: AGUIMessage) -> Optional[Mess
             role="tool",
             content=message.content,
             tool_call_id=message.tool_call_id,
+            tool_name=tool_names_by_call_id.get(message.tool_call_id),
             tool_call_error=bool(tool_error),
         )
 
