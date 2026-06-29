@@ -5923,6 +5923,28 @@ def _prepare_member_hitl_continuation(
     run_response.content = None
 
 
+def _set_direct_member_hitl_continuation_content(
+    team: "Team",
+    run_response: TeamRunOutput,
+    member_results: List[str],
+) -> bool:
+    """Use resolved member HITL output directly when route/respond_directly would stop after delegation."""
+
+    if not getattr(team, "respond_directly", False):
+        return False
+
+    for tool in reversed(run_response.tools or []):
+        if tool.tool_name in {"delegate_task_to_member", "delegate_task_to_members"} and tool.result:
+            run_response.content = tool.result
+            return True
+
+    if member_results:
+        run_response.content = _build_continuation_message(member_results)
+        return True
+
+    return False
+
+
 async def _ahandle_model_response_for_continue(
     team: "Team",
     run_response: TeamRunOutput,
@@ -6830,6 +6852,7 @@ def continue_run_dispatch(
 
         # Prepare for member HITL continuation
         _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+        skip_model_response = _set_direct_member_hitl_continuation_content(team, run_response, member_results)
 
         log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
@@ -6845,6 +6868,7 @@ def continue_run_dispatch(
                 response_format=response_format,
                 stream_events=opts.stream_events,
                 yield_run_output=opts.yield_run_output,
+                skip_model_response=skip_model_response,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
                 **kwargs,
@@ -6859,6 +6883,7 @@ def continue_run_dispatch(
                 session=team_session,
                 user_id=user_id,
                 response_format=response_format,
+                skip_model_response=skip_model_response,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
                 **kwargs,
@@ -7031,6 +7056,7 @@ def _continue_run_dispatch_stream_with_member_events(
         )
 
         _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+        skip_model_response = _set_direct_member_hitl_continuation_content(team, run_response, member_results)
 
         log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
@@ -7045,6 +7071,7 @@ def _continue_run_dispatch_stream_with_member_events(
             response_format=response_format,
             stream_events=opts.stream_events,
             yield_run_output=opts.yield_run_output,
+            skip_model_response=skip_model_response,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
             **kwargs,
@@ -7067,6 +7094,7 @@ def _continue_run(
     session: TeamSession,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    skip_model_response: bool = False,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     **kwargs: Any,
@@ -7110,53 +7138,54 @@ def _continue_run(
             try:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # Generate model response
-                model_response: ModelResponse = call_model_with_fallback(
-                    team.model,
-                    team.fallback_config,
-                    messages=run_messages.messages,
-                    response_format=response_format,
-                    tools=tools,
-                    tool_choice=team.tool_choice,
-                    tool_call_limit=team.tool_call_limit,
-                    run_response=run_response,
-                    send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
-                    after_tool_results=build_team_after_tool_results_callback(
-                        team, run_response, session, run_messages, run_context
-                    ),
-                )
-
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # Parse with output/parser models if needed
-                parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
-                parse_response_with_parser_model(
-                    team, model_response, run_messages, run_context=run_context, run_response=run_response
-                )
-
-                # Update run response
-                _update_run_response(
-                    team,
-                    model_response=model_response,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                )
-
-                # Check for new pauses (team-level tools or member propagation)
-                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                    from agno.team import _hooks
-
-                    return _hooks.handle_team_run_paused(
-                        team, run_response=run_response, session=session, run_context=run_context
+                if not skip_model_response:
+                    # Generate model response
+                    model_response: ModelResponse = call_model_with_fallback(
+                        team.model,
+                        team.fallback_config,
+                        messages=run_messages.messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=team.tool_choice,
+                        tool_call_limit=team.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=team.send_media_to_model,
+                        compression_manager=team.compression_manager if team.compress_tool_results else None,
+                        after_tool_results=build_team_after_tool_results_callback(
+                            team, run_response, session, run_messages, run_context
+                        ),
                     )
 
-                # Convert to structured format
-                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # Always add media to run_response for caller availability
-                store_media_util(run_response, model_response)
+                    # Parse with output/parser models if needed
+                    parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+                    parse_response_with_parser_model(
+                        team, model_response, run_messages, run_context=run_context, run_response=run_response
+                    )
+
+                    # Update run response
+                    _update_run_response(
+                        team,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
+
+                    # Check for new pauses (team-level tools or member propagation)
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        return _hooks.handle_team_run_paused(
+                            team, run_response=run_response, session=session, run_context=run_context
+                        )
+
+                    # Convert to structured format
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+                    # Always add media to run_response for caller availability
+                    store_media_util(run_response, model_response)
 
                 # Execute post-hooks
                 if team.post_hooks is not None:
@@ -7265,6 +7294,7 @@ def _continue_run_stream(
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     stream_events: bool = False,
     yield_run_output: bool = False,
+    skip_model_response: bool = False,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
     **kwargs: Any,
@@ -7306,78 +7336,79 @@ def _continue_run_stream(
                     stream_events=stream_events,
                 )
 
-                # Stream model response
-                if team.output_model is None:
-                    for event in _handle_model_response_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-                else:
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+                if not skip_model_response:
+                    # Stream model response
+                    if team.output_model is None:
+                        for event in _handle_model_response_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-                    for event in _handle_model_response_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                        for event in _handle_model_response_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        for event in generate_response_with_output_model_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
-                        if isinstance(event, RunContentEvent):
-                            if stream_events:
-                                yield IntermediateRunContentEvent(
-                                    content=event.content,
-                                    content_type=event.content_type,
-                                )
-                        else:
                             yield event
 
-                    for event in generate_response_with_output_model_stream(
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # Check for new pauses
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        yield from _hooks.handle_team_run_paused_stream(
+                            team, run_response=run_response, session=session, run_context=run_context
+                        )
+                        if yield_run_output:
+                            yield run_response
+                        return
+
+                    # Parse response with parser model
+                    yield from parse_response_with_parser_model_stream(
                         team,
                         session=session,
                         run_response=run_response,
-                        run_messages=run_messages,
                         stream_events=stream_events,
-                    ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # Check for new pauses
-                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                    from agno.team import _hooks
-
-                    yield from _hooks.handle_team_run_paused_stream(
-                        team, run_response=run_response, session=session, run_context=run_context
+                        run_context=run_context,
                     )
-                    if yield_run_output:
-                        yield run_response
-                    return
-
-                # Parse response with parser model
-                yield from parse_response_with_parser_model_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    stream_events=stream_events,
-                    run_context=run_context,
-                )
 
                 # Content completed event
                 if stream_events:
@@ -8165,21 +8196,25 @@ async def _acontinue_run(
 
                     # Prepare for member HITL continuation
                     _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+                    skip_model_response = _set_direct_member_hitl_continuation_content(
+                        team, run_response, member_results
+                    )
 
                     log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
-                    # Handle model response using shared helper
-                    paused_result = await _ahandle_model_response_for_continue(
-                        team,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        run_context=run_context,
-                        tools=_tools,
-                        team_session=team_session,
-                        response_format=response_format,
-                    )
-                    if paused_result is not None:
-                        return paused_result
+                    if not skip_model_response:
+                        # Handle model response using shared helper
+                        paused_result = await _ahandle_model_response_for_continue(
+                            team,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                            tools=_tools,
+                            team_session=team_session,
+                            response_format=response_format,
+                        )
+                        if paused_result is not None:
+                            return paused_result
 
                 # Post-hooks
                 if team.post_hooks is not None:
@@ -8684,6 +8719,9 @@ async def _acontinue_run_stream(
 
                     # Prepare for member HITL continuation
                     _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+                    skip_model_response = _set_direct_member_hitl_continuation_content(
+                        team, run_response, member_results
+                    )
 
                     log_debug(f"Team Continue Run Stream (Member HITL): {run_response.run_id}", center=True)
 
@@ -8696,78 +8734,81 @@ async def _acontinue_run_stream(
                             store_events=team.store_events,
                         )
 
-                    # Stream model response
-                    if team.output_model is None:
-                        async for event in _ahandle_model_response_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            tools=_tools,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            session_state=run_context.session_state,
-                            run_context=run_context,
-                        ):
-                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                                await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
-                    else:
-                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+                    if not skip_model_response:
+                        # Stream model response
+                        if team.output_model is None:
+                            async for event in _ahandle_model_response_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                tools=_tools,
+                                response_format=response_format,
+                                stream_events=stream_events,
+                                session_state=run_context.session_state,
+                                run_context=run_context,
+                            ):
+                                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                                yield event
+                        else:
+                            from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-                        async for event in _ahandle_model_response_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            tools=_tools,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            session_state=run_context.session_state,
-                            run_context=run_context,
-                        ):
-                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            async for event in _ahandle_model_response_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                tools=_tools,
+                                response_format=response_format,
+                                stream_events=stream_events,
+                                session_state=run_context.session_state,
+                                run_context=run_context,
+                            ):
+                                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                                if isinstance(event, RunContentEvent):
+                                    if stream_events:
+                                        yield IntermediateRunContentEvent(
+                                            content=event.content,
+                                            content_type=event.content_type,
+                                        )
+                                else:
+                                    yield event
+
+                            async for event in agenerate_response_with_output_model_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                stream_events=stream_events,
+                            ):
                                 await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            if isinstance(event, RunContentEvent):
-                                if stream_events:
-                                    yield IntermediateRunContentEvent(
-                                        content=event.content,
-                                        content_type=event.content_type,
-                                    )
-                            else:
                                 yield event
 
-                        async for event in agenerate_response_with_output_model_stream(
+                        # Check for new pauses
+                        if run_response.requirements and any(
+                            not req.is_resolved() for req in run_response.requirements
+                        ):
+                            from agno.team import _hooks
+
+                            async for item in _hooks.ahandle_team_run_paused_stream(
+                                team, run_response=run_response, session=team_session, run_context=run_context
+                            ):
+                                yield item
+                            if yield_run_output:
+                                yield run_response
+                            return
+
+                        # Parse response with parser model
+                        async for event in aparse_response_with_parser_model_stream(
                             team,
                             session=team_session,
                             run_response=run_response,
-                            run_messages=run_messages,
                             stream_events=stream_events,
+                            run_context=run_context,
                         ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
-
-                    # Check for new pauses
-                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                        from agno.team import _hooks
-
-                        async for item in _hooks.ahandle_team_run_paused_stream(
-                            team, run_response=run_response, session=team_session, run_context=run_context
-                        ):
-                            yield item
-                        if yield_run_output:
-                            yield run_response
-                        return
-
-                    # Parse response with parser model
-                    async for event in aparse_response_with_parser_model_stream(
-                        team,
-                        session=team_session,
-                        run_response=run_response,
-                        stream_events=stream_events,
-                        run_context=run_context,
-                    ):
-                        yield event
 
                 # Content completed
                 if stream_events:
