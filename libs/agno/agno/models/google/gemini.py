@@ -1247,10 +1247,15 @@ class Gemini(Model):
                     if not chunk:
                         continue
                     web = chunk.web
-                    if not web:
-                        continue
-                    uri = web.uri
-                    title = web.title
+                    if web:
+                        uri = web.uri
+                        title = web.title
+                    else:
+                        retrieved_context = getattr(chunk, "retrieved_context", None)
+                        if not retrieved_context:
+                            continue
+                        uri = retrieved_context.uri
+                        title = retrieved_context.title
                     if uri:
                         citations_urls.append(UrlCitation(url=uri, title=title))
 
@@ -1400,10 +1405,15 @@ class Gemini(Model):
                     if not chunk:
                         continue
                     web = chunk.web
-                    if not web:
-                        continue
-                    uri = web.uri
-                    title = web.title
+                    if web:
+                        uri = web.uri
+                        title = web.title
+                    else:
+                        retrieved_context = getattr(chunk, "retrieved_context", None)
+                        if not retrieved_context:
+                            continue
+                        uri = retrieved_context.uri
+                        title = retrieved_context.title
                     if uri:
                         citations.urls.append(UrlCitation(url=uri, title=title))
 

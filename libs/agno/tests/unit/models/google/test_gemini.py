@@ -7,6 +7,8 @@ import pytest
 
 pytest.importorskip("google.genai")
 
+from google.genai import types
+
 from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.google.gemini import Gemini
@@ -89,6 +91,50 @@ def test_gemini_invoke_wraps_generic_errors_with_exception_type():
     ):
         with pytest.raises(ModelProviderError, match="TimeoutError"):
             model.invoke(messages=[Message(role="user", content="Hello")], assistant_message=assistant_message)
+
+
+def _make_grounded_response_with_retrieved_context():
+    return types.GenerateContentResponse(
+        candidates=[
+            types.Candidate(
+                content=types.Content(role="model", parts=[types.Part(text="Grounded answer")]),
+                grounding_metadata=types.GroundingMetadata(
+                    grounding_chunks=[
+                        types.GroundingChunk(
+                            retrieved_context=types.GroundingChunkRetrievedContext(
+                                uri="https://example.com/doc-1",
+                                title="Example datastore document",
+                            )
+                        )
+                    ]
+                ),
+            )
+        ]
+    )
+
+
+def test_parse_provider_response_includes_retrieved_context_citations():
+    model = Gemini(api_key="test-key")
+
+    response = model._parse_provider_response(_make_grounded_response_with_retrieved_context())
+
+    assert response.citations is not None
+    assert response.citations.urls is not None
+    assert len(response.citations.urls) == 1
+    assert response.citations.urls[0].url == "https://example.com/doc-1"
+    assert response.citations.urls[0].title == "Example datastore document"
+
+
+def test_parse_provider_response_delta_includes_retrieved_context_citations():
+    model = Gemini(api_key="test-key")
+
+    response = model._parse_provider_response_delta(_make_grounded_response_with_retrieved_context())
+
+    assert response.citations is not None
+    assert response.citations.urls is not None
+    assert len(response.citations.urls) == 1
+    assert response.citations.urls[0].url == "https://example.com/doc-1"
+    assert response.citations.urls[0].title == "Example datastore document"
 
 
 class TestFormatFileForMessage:
