@@ -9,8 +9,6 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 # Inject a lightweight fake `funasr` so the module-level import in
 # agno.tools.funasr succeeds without the real (torch-heavy) package.
 _funasr = types.ModuleType("funasr")
@@ -67,8 +65,9 @@ def test_transcribe_returns_clean_text(tmp_path):
     mock_model = MagicMock()
     mock_model.generate.return_value = [{"text": "<|zh|><|NEUTRAL|><|Speech|><|withitn|>hello world"}]
 
-    with patch.object(tools, "_get_model", return_value=mock_model), patch(
-        "agno.tools.funasr.rich_transcription_postprocess", return_value="hello world"
+    with (
+        patch.object(tools, "_get_model", return_value=mock_model),
+        patch("agno.tools.funasr.rich_transcription_postprocess", return_value="hello world"),
     ):
         result = tools.transcribe("sample.wav")
 
