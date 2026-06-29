@@ -8,6 +8,7 @@ from threading import Thread
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Coroutine, Iterator, TypeVar, Union
 
 from agno.agent import Agent
+from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 
@@ -31,18 +32,49 @@ def _has_mcp_toolkit(tools: Any) -> bool:
     )
 
 
-def _uses_mcp_async_bridge(member_agent: Union[Agent, "Team"]) -> bool:
+def _make_resolution_context(context_values: dict[str, Any]) -> RunContext:
+    return RunContext(
+        run_id=context_values.get("run_id") or "",
+        session_id=context_values.get("session_id") or "",
+        user_id=context_values.get("user_id"),
+        session_state=context_values.get("session_state"),
+    )
+
+
+def _get_resolved_tools(entity: Union[Agent, "Team"], context_values: dict[str, Any]) -> Any:
+    from agno.utils.callables import get_resolved_tools, resolve_callable_tools
+
+    run_context = _make_resolution_context(context_values)
+    resolve_callable_tools(entity, run_context)
+    resolved_tools = get_resolved_tools(entity, run_context)
+    if resolved_tools is not None:
+        return resolved_tools
+    return getattr(entity, "tools", None)
+
+
+def _get_resolved_members(entity: "Team", context_values: dict[str, Any]) -> Any:
+    from agno.utils.callables import get_resolved_members, resolve_callable_members
+
+    run_context = _make_resolution_context(context_values)
+    resolve_callable_members(entity, run_context)
+    resolved_members = get_resolved_members(entity, run_context)
+    if resolved_members is not None:
+        return resolved_members
+    return getattr(entity, "members", None)
+
+
+def _uses_mcp_async_bridge(member_agent: Union[Agent, "Team"], context_values: dict[str, Any]) -> bool:
     if isinstance(member_agent, Agent):
-        return _has_mcp_toolkit(member_agent.tools)
+        return _has_mcp_toolkit(_get_resolved_tools(member_agent, context_values))
 
     if type(member_agent).__name__ != "Team":
         return False
 
-    if _has_mcp_toolkit(getattr(member_agent, "tools", None)):
+    if _has_mcp_toolkit(_get_resolved_tools(member_agent, context_values)):
         return True
 
-    members = getattr(member_agent, "members", None) or []
-    return any(_uses_mcp_async_bridge(member) for member in members)
+    members = _get_resolved_members(member_agent, context_values) or []
+    return any(_uses_mcp_async_bridge(member, context_values) for member in members)
 
 
 def _run_async_in_thread(factory: Callable[[], Coroutine[Any, Any, _T]]) -> _T:
@@ -99,7 +131,7 @@ def run_member_sync(
 ) -> Union[RunOutput, TeamRunOutput]:
     """Run a member synchronously, bridging MCP-backed Agents to ``arun()`` when needed."""
 
-    if not _uses_mcp_async_bridge(member_agent):
+    if not _uses_mcp_async_bridge(member_agent, kwargs):
         return member_agent.run(**kwargs)  # type: ignore[misc]
 
     return _run_async_in_thread(lambda: member_agent.arun(**kwargs))  # type: ignore[misc]
@@ -108,7 +140,7 @@ def run_member_sync(
 def stream_member_sync(member_agent: Union[Agent, "Team"], **kwargs: Any) -> Iterator[Any]:
     """Stream a member synchronously, bridging MCP-backed Agents to ``arun()`` when needed."""
 
-    if not _uses_mcp_async_bridge(member_agent):
+    if not _uses_mcp_async_bridge(member_agent, kwargs):
         return member_agent.run(**kwargs)  # type: ignore[misc]
 
     return _stream_async_in_thread(lambda: member_agent.arun(**kwargs))  # type: ignore[misc]
