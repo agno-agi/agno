@@ -73,6 +73,7 @@ def _stub_arun(component, run_output):
         captured["message"] = message
         captured["user_id"] = kwargs.get("user_id")
         captured["session_id"] = kwargs.get("session_id")
+        captured["stream"] = kwargs.get("stream")
         return run_output
 
     component.arun = fake_arun  # type: ignore[method-assign]
@@ -241,6 +242,8 @@ async def test_run_agent_threads_resolved_identity(monkeypatch):
     assert captured["message"] == "hi"
     assert captured["user_id"] == "jwt-alice"
     assert captured["session_id"] == "s-1"
+    # Regression for #8062: MCP must force non-streaming so awaiting arun() never hits an AsyncIterator.
+    assert captured["stream"] is False
 
 
 async def test_run_team_threads_resolved_identity(monkeypatch):
@@ -254,6 +257,7 @@ async def test_run_team_threads_resolved_identity(monkeypatch):
 
     assert captured["user_id"] == "jwt-alice"
     assert captured["session_id"] == "s-2"
+    assert captured["stream"] is False
 
 
 async def test_run_workflow_threads_resolved_identity(monkeypatch):
@@ -267,6 +271,7 @@ async def test_run_workflow_threads_resolved_identity(monkeypatch):
 
     assert captured["user_id"] == "jwt-alice"
     assert captured["session_id"] == "s-3"
+    assert captured["stream"] is False
 
 
 # ==================== Identity in custom tools ====================
