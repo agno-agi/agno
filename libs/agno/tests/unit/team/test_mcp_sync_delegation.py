@@ -344,6 +344,72 @@ def test_run_member_sync_uses_arun_for_agents_with_callable_mcp_tools():
     mocked_member.arun_mock.assert_called_once()
 
 
+def test_run_member_sync_uses_member_defaults_for_callable_mcp_tools_without_cache_poisoning():
+    member = Agent(name="Worker", id="worker", metadata={"mode": "mcp"})
+
+    def tool_factory(agent: Agent, run_context: RunContext) -> list[Any]:
+        return [cast(Any, MCPTools())] if run_context.metadata == {"mode": "mcp"} else []
+
+    member.tools = tool_factory
+    run_mock = MagicMock(side_effect=RuntimeError("sync run path should not be used for this test"))
+
+    async def fake_arun(*args: Any, **kwargs: Any) -> RunOutput:
+        return RunOutput(run_id="member-run", agent_id=member.id, agent_name=member.name, content="metadata via arun")
+
+    arun_mock = MagicMock(side_effect=fake_arun)
+    cast(Any, member).run = run_mock
+    cast(Any, member).arun = arun_mock
+
+    result = run_member_sync(
+        member,
+        input="delegate",
+        run_context=RunContext(run_id="team-run", session_id="team-session", session_state={}, metadata={}),
+        run_id="member-run",
+        session_id="team-session",
+        session_state={},
+        metadata=None,
+    )
+
+    assert result.content == "metadata via arun"
+    assert not getattr(member, "_callable_tools_cache", {})
+    run_mock.assert_not_called()
+    arun_mock.assert_called_once()
+
+
+def test_run_member_sync_uses_team_defaults_for_callable_mcp_members_without_cache_poisoning():
+    nested_member = _make_member(with_mcp=True, content="nested member", session_key="nested_member").member
+
+    def member_factory(team: Team, run_context: RunContext) -> list[Any]:
+        return [nested_member] if run_context.metadata == {"mode": "mcp"} else []
+
+    subteam = Team(name="Subteam", id="subteam", metadata={"mode": "mcp"}, members=member_factory)
+    run_mock = MagicMock(side_effect=RuntimeError("sync run path should not be used for this test"))
+
+    async def fake_arun(*args: Any, **kwargs: Any) -> TeamRunOutput:
+        return TeamRunOutput(
+            run_id="member-run", team_id=subteam.id, team_name=subteam.name, content="metadata subteam"
+        )
+
+    arun_mock = MagicMock(side_effect=fake_arun)
+    cast(Any, subteam).run = run_mock
+    cast(Any, subteam).arun = arun_mock
+
+    result = run_member_sync(
+        subteam,
+        input="delegate",
+        run_context=RunContext(run_id="team-run", session_id="team-session", session_state={}, metadata={}),
+        run_id="member-run",
+        session_id="team-session",
+        session_state={},
+        metadata=None,
+    )
+
+    assert result.content == "metadata subteam"
+    assert not getattr(subteam, "_callable_members_cache", {})
+    run_mock.assert_not_called()
+    arun_mock.assert_called_once()
+
+
 def test_run_member_sync_ignores_parent_run_context_tools_for_member_detection():
     mocked_member = _make_member(with_mcp=True, content="parent context safe", session_key="parent_context_tools")
     parent_context = RunContext(run_id="team-run", session_id="team-session", session_state={}, tools=[])
