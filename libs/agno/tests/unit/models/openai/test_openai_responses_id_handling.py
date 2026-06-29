@@ -34,6 +34,8 @@ class _FakeResponse:
         self.output_text = output_text
         self.usage = usage
         self.error = error
+        self.status = "completed"
+        self.incomplete_details = None
 
 
 class _FakeStreamItem:
