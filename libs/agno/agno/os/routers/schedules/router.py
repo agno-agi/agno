@@ -121,6 +121,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             "method": body.method,
             "endpoint": body.endpoint,
             "payload": body.payload,
+            "content_type": body.content_type,
             "cron_expr": body.cron_expr,
             "timezone": body.timezone,
             "timeout_seconds": body.timeout_seconds,

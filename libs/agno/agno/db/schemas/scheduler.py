@@ -15,6 +15,7 @@ class Schedule:
     description: Optional[str] = None
     method: str = "POST"
     payload: Optional[Dict[str, Any]] = None
+    content_type: Optional[str] = None
     timezone: str = "UTC"
     timeout_seconds: int = 3600
     max_retries: int = 0
@@ -44,6 +45,7 @@ class Schedule:
             "method": self.method,
             "endpoint": self.endpoint,
             "payload": self.payload,
+            "content_type": self.content_type,
             "cron_expr": self.cron_expr,
             "timezone": self.timezone,
             "timeout_seconds": self.timeout_seconds,
@@ -67,6 +69,7 @@ class Schedule:
             "method",
             "endpoint",
             "payload",
+            "content_type",
             "cron_expr",
             "timezone",
             "timeout_seconds",

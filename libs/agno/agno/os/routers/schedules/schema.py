@@ -15,6 +15,7 @@ class ScheduleCreate(BaseModel):
     method: str = Field(default="POST", max_length=10)
     description: Optional[str] = Field(default=None, max_length=1024)
     payload: Optional[Dict[str, Any]] = None
+    content_type: Optional[str] = Field(default=None, max_length=128)
     timezone: str = Field(default="UTC", max_length=64)
     timeout_seconds: int = Field(default=3600, ge=1, le=86400)
     max_retries: int = Field(default=0, ge=0, le=10)
@@ -35,6 +36,15 @@ class ScheduleCreate(BaseModel):
             raise ValueError("Method must be GET, POST, PUT, PATCH, or DELETE")
         return v
 
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            allowed = ("application/json", "multipart/form-data")
+            if v not in allowed:
+                raise ValueError(f"content_type must be one of {allowed}")
+        return v
+
     @field_validator("endpoint")
     @classmethod
     def validate_endpoint(cls, v: str) -> str:
@@ -52,6 +62,7 @@ class ScheduleUpdate(BaseModel):
     method: Optional[str] = Field(default=None, max_length=10)
     description: Optional[str] = Field(default=None, max_length=1024)
     payload: Optional[Dict[str, Any]] = None
+    content_type: Optional[str] = Field(default=None, max_length=128)
     timezone: Optional[str] = Field(default=None, max_length=64)
     timeout_seconds: Optional[int] = Field(default=None, ge=1, le=86400)
     max_retries: Optional[int] = Field(default=None, ge=0, le=10)
@@ -83,6 +94,15 @@ class ScheduleUpdate(BaseModel):
                 raise ValueError("Endpoint must be a path, not a full URL")
         return v
 
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            allowed = ("application/json", "multipart/form-data")
+            if v not in allowed:
+                raise ValueError(f"content_type must be one of {allowed}")
+        return v
+
     @model_validator(mode="after")
     def reject_null_required_fields(self) -> "ScheduleUpdate":
         non_nullable = (
@@ -109,6 +129,7 @@ class ScheduleResponse(BaseModel):
     method: str
     endpoint: str
     payload: Optional[Dict[str, Any]] = None
+    content_type: Optional[str] = None
     cron_expr: str
     timezone: str
     timeout_seconds: int
@@ -118,6 +139,38 @@ class ScheduleResponse(BaseModel):
     next_run_at: Optional[int] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def coerce_payload_values(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Coerce string payload values back to native Python types.
+
+        Form-data submissions store booleans as ``"true"``/``"false"`` and numbers
+        as their string representations.  This validator normalises them so that the
+        API response uses proper JSON types (``true`` instead of ``"true"``).
+        """
+        if not v:
+            return v
+        coerced: Dict[str, Any] = {}
+        for key, val in v.items():
+            if isinstance(val, str):
+                low = val.lower()
+                if low == "true":
+                    coerced[key] = True
+                elif low == "false":
+                    coerced[key] = False
+                else:
+                    # Try numeric coercion
+                    try:
+                        coerced[key] = int(val)
+                    except ValueError:
+                        try:
+                            coerced[key] = float(val)
+                        except ValueError:
+                            coerced[key] = val
+            else:
+                coerced[key] = val
+        return coerced
 
 
 class ScheduleStateResponse(BaseModel):
