@@ -36,13 +36,15 @@ def _make_resolution_context(context_values: dict[str, Any]) -> RunContext:
     run_context = context_values.get("run_context")
     if isinstance(run_context, RunContext):
         return RunContext(
-            run_id=run_context.run_id,
-            session_id=run_context.session_id,
-            user_id=run_context.user_id,
+            run_id=context_values.get("run_id") or run_context.run_id,
+            session_id=context_values.get("session_id") or run_context.session_id,
+            user_id=context_values.get("user_id") or run_context.user_id,
             dependencies=run_context.dependencies,
             knowledge_filters=run_context.knowledge_filters,
             metadata=run_context.metadata,
-            session_state=run_context.session_state,
+            session_state=context_values.get("session_state")
+            if context_values.get("session_state") is not None
+            else run_context.session_state,
             output_schema=run_context.output_schema,
             messages=run_context.messages,
         )
@@ -152,18 +154,18 @@ def run_member_sync(
 ) -> Union[RunOutput, TeamRunOutput]:
     """Run a member synchronously, bridging MCP-backed Agents to ``arun()`` when needed."""
 
-    if not _uses_mcp_async_bridge(member_agent, kwargs):
-        return member_agent.run(**kwargs)  # type: ignore[misc]
-
     execution_kwargs = _get_execution_kwargs(kwargs)
+    if not _uses_mcp_async_bridge(member_agent, kwargs):
+        return member_agent.run(**execution_kwargs)  # type: ignore[misc]
+
     return _run_async_in_thread(lambda: member_agent.arun(**execution_kwargs))  # type: ignore[misc]
 
 
 def stream_member_sync(member_agent: Union[Agent, "Team"], **kwargs: Any) -> Iterator[Any]:
     """Stream a member synchronously, bridging MCP-backed Agents to ``arun()`` when needed."""
 
-    if not _uses_mcp_async_bridge(member_agent, kwargs):
-        return member_agent.run(**kwargs)  # type: ignore[misc]
-
     execution_kwargs = _get_execution_kwargs(kwargs)
+    if not _uses_mcp_async_bridge(member_agent, kwargs):
+        return member_agent.run(**execution_kwargs)  # type: ignore[misc]
+
     return _stream_async_in_thread(lambda: member_agent.arun(**execution_kwargs))  # type: ignore[misc]

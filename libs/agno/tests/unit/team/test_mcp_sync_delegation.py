@@ -363,7 +363,7 @@ def test_run_member_sync_ignores_parent_run_context_tools_for_member_detection()
     forwarded_context = mocked_member.arun_mock.call_args.kwargs["run_context"]
     assert forwarded_context is not parent_context
     assert forwarded_context.tools is None
-    assert forwarded_context.run_id == parent_context.run_id
+    assert forwarded_context.run_id == "member-run"
 
 
 def test_run_member_sync_ignores_parent_run_context_members_for_subteam_detection():
@@ -395,7 +395,7 @@ def test_run_member_sync_ignores_parent_run_context_members_for_subteam_detectio
     forwarded_context = mocked_subteam.arun_mock.call_args.kwargs["run_context"]
     assert forwarded_context is not parent_context
     assert forwarded_context.members is None
-    assert forwarded_context.session_id == parent_context.session_id
+    assert forwarded_context.session_id == "team-session"
 
 
 def test_run_member_sync_keeps_non_mcp_agents_on_run():
@@ -410,6 +410,33 @@ def test_run_member_sync_keeps_non_mcp_agents_on_run():
 
     assert result is expected
     run_mock.assert_called_once()
+    arun_mock.assert_not_called()
+
+
+def test_run_member_sync_sanitizes_parent_run_context_for_non_mcp_agents():
+    member = Agent(name="Worker", id="worker", tools=[])
+    expected = RunOutput(run_id="member-run", agent_id=member.id, agent_name=member.name, content="via run")
+    run_mock = MagicMock(return_value=expected)
+    arun_mock = MagicMock(side_effect=RuntimeError("async path should not be used for non-MCP members"))
+    parent_context = RunContext(run_id="team-run", session_id="team-session", session_state={"leader": "value"})
+    cast(Any, member).run = run_mock
+    cast(Any, member).arun = arun_mock
+
+    result = run_member_sync(
+        member,
+        input="delegate",
+        run_context=parent_context,
+        run_id="member-run",
+        session_id="member-session",
+        session_state={"member": "value"},
+    )
+
+    assert result is expected
+    forwarded_context = run_mock.call_args.kwargs["run_context"]
+    assert forwarded_context is not parent_context
+    assert forwarded_context.run_id == "member-run"
+    assert forwarded_context.session_id == "member-session"
+    assert forwarded_context.session_state == {"member": "value"}
     arun_mock.assert_not_called()
 
 
