@@ -29,7 +29,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
@@ -432,19 +432,54 @@ class MongoDb(BaseDb):
             runs_by_session.setdefault(sid, []).append(run_data)
         return runs_by_session
 
-    def _store_session_runs(self, runs_collection: Collection, session: Session) -> None:
-        """Upsert every run of the given session into the runs collection.
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run document into the runs collection (O(1) operation).
 
-        Uses per-document ``replace_one(upsert=True)`` rather than ``bulk_write``
-        so the implementation works against ``mongomock`` (whose bulk path is
-        more restrictive than real MongoDB).
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
         """
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
+        try:
+            runs_collection = self._get_collection(table_type="runs", create_collection_if_not_found=True)
+            if runs_collection is None:
+                return
 
-        for row in rows:
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the document already exists,
+            # so reorders don't happen on status-only updates.
+            existing = runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1})
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+
             runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
+        except Exception as e:
+            log_error(f"Exception upserting run into runs collection: {str(e)}")
+            raise e
 
     def get_run(
         self, run_id: str, deserialize: Optional[bool] = True
@@ -872,7 +907,6 @@ class MongoDb(BaseDb):
             collection = self._get_collection(table_type="sessions", create_collection_if_not_found=True)
             if collection is None:
                 return None
-            runs_collection = self._get_collection(table_type="runs", create_collection_if_not_found=True)
 
             session_dict = session.to_dict(include_runs=False)
 
@@ -943,10 +977,6 @@ class MongoDb(BaseDb):
             if not result:
                 return None
 
-            # Persist runs in the runs collection
-            if runs_collection is not None:
-                self._store_session_runs(runs_collection, session)
-
             # Attach the in-memory runs to the returned dict so callers see the full picture
             result["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
 
@@ -990,8 +1020,6 @@ class MongoDb(BaseDb):
                     for result in [self.upsert_session(session, deserialize=deserialize)]
                     if result is not None
                 ]
-            runs_collection = self._get_collection(table_type="runs", create_collection_if_not_found=True)
-
             from pymongo import ReplaceOne
 
             operations = []
@@ -1057,13 +1085,6 @@ class MongoDb(BaseDb):
             if operations:
                 # Execute bulk write
                 collection.bulk_write(operations)
-
-                # Persist runs separately
-                if runs_collection is not None:
-                    for session in sessions:
-                        if session is None:
-                            continue
-                        self._store_session_runs(runs_collection, session)
 
                 # Fetch the results
                 session_ids = [session.session_id for session in sessions if session and session.session_id]

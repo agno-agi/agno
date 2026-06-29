@@ -44,7 +44,7 @@ from agno.db.surrealdb.models import (
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
 from agno.db.utils import (
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
@@ -273,19 +273,62 @@ class SurrealDb(BaseDb):
             grouped[sid] = self._get_session_runs_data(sid)
         return grouped
 
-    def _store_session_runs(self, session: Session) -> None:
-        """Upsert every run of the given session into the runs table."""
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
-        runs_table = self._get_table("runs", create_table_if_not_found=True)
-        for row in rows:
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run row into the runs table (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = self._get_table("runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the record already exists
+            existing = self._query_one(
+                "SELECT * FROM ONLY $record",
+                {"record": RecordID(runs_table, row["run_id"])},
+                dict,
+            )
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+
             content = serialize_run_row(row, runs_table)
             self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
                 {"record": RecordID(runs_table, row["run_id"]), "content": content},
                 dict,
             )
+        except Exception as e:
+            log_error(f"Exception upserting run into runs table: {str(e)}")
+            raise e
 
     def _delete_session_runs(self, session_id: str) -> int:
         try:
@@ -751,12 +794,7 @@ class SurrealDb(BaseDb):
         if session_raw is None:
             return None
 
-        # Persist runs into the dedicated runs table.
-        try:
-            self._store_session_runs(session)
-        except Exception as e:
-            log_error(f"Failed to store runs for session {session.session_id}: {str(e)}")
-
+        # Runs are persisted separately via upsert_run by the caller (agent loop).
         desurrealized = desurrealize_session(session_raw)
         # Attach in-memory runs so the caller sees them on the returned session
         desurrealized["runs"] = [r.to_dict() if hasattr(r, "to_dict") else r for r in (session.runs or [])]
@@ -798,10 +836,6 @@ class SurrealDb(BaseDb):
             )
             if session_raw:
                 sessions_raw.append(session_raw)
-                try:
-                    self._store_session_runs(session)
-                except Exception as e:
-                    log_error(f"Failed to store runs for session {session.session_id}: {str(e)}")
         if not deserialize:
             return list(sessions_raw)
 

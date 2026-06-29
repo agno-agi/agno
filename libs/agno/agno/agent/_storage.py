@@ -167,7 +167,15 @@ async def aread_session(
 def upsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Upsert a Session into the database."""
+    """Upsert the session row.
+
+    Runs are persisted independently via ``upsert_run()`` — this writes only the
+    session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to upsert.
+    """
 
     try:
         if not agent.db:
@@ -184,7 +192,15 @@ def upsert_session(
 async def aupsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Upsert a Session into the database."""
+    """Upsert the session row.
+
+    Runs are persisted independently via ``upsert_run()`` — this writes only the
+    session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to upsert.
+    """
     from agno.agent import _init
 
     try:
@@ -200,6 +216,84 @@ async def aupsert_session(
         traceback.print_exc(limit=3)
         log_warning(f"Error upserting session into db: {str(e)}")
         return None
+
+
+def upsert_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Upsert a single run to the database (O(1) operation).
+
+    This is optimized for updating existing runs (e.g., status changes in HITL
+    or background mode) without re-upserting all runs in the session.
+
+    Silently no-ops on adapters that have not been ported to v3 storage —
+    those adapters persist runs inline via ``upsert_session``.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to upsert.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    try:
+        if not agent.db:
+            return
+        agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        # Adapter has not been ported to v3 storage; runs are persisted inline
+        # via upsert_session instead. Silent no-op.
+        log_debug(f"{type(agent.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+async def aupsert_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Upsert a single run to the database (O(1) operation).
+
+    This is the async version of upsert_run(). Optimized for updating existing
+    runs (e.g., status changes in HITL or background mode) without re-upserting
+    all runs in the session.
+
+    Silently no-ops on adapters that have not been ported to v3 storage —
+    those adapters persist runs inline via ``upsert_session``.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to upsert.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    from agno.agent import _init
+
+    try:
+        if not agent.db:
+            return
+        if _init.has_async_db(agent):
+            await agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+        else:
+            agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(agent.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,10 @@ from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 
 
@@ -212,6 +215,76 @@ class BaseDb(ABC):
     ) -> List[Union[Session, Dict[str, Any]]]:
         """Bulk upsert multiple sessions for improved performance on large datasets."""
         raise NotImplementedError
+
+    # --- Runs ---
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported to v3 storage return ``None``.
+        """
+        return None
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get runs matching the given filters.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported return an empty list (or empty tuple).
+        """
+        if deserialize:
+            return []
+        return [], 0
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported raise ``NotImplementedError`` — callers
+        should check ``hasattr(db, "upsert_run")`` is insufficient now that the
+        method is on the base class; check ``type(db).upsert_run is not BaseDb.upsert_run``
+        instead, or simply let the NotImplementedError bubble up.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement upsert_run yet. "
+            "Use upsert_session() to persist runs inline."
+        )
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported return ``False``.
+        """
+        return False
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Bulk-delete runs from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        No-op on adapters that have not been ported.
+        """
+        return None
 
     # --- Memory ---
     @abstractmethod
@@ -1340,6 +1413,53 @@ class AsyncBaseDb(ABC):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
+
+    # --- Runs ---
+    async def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Async read of a single run. Adapters ported to v3 storage override this."""
+        return None
+
+    async def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Async list of runs. Adapters ported to v3 storage override this."""
+        if deserialize:
+            return []
+        return [], 0
+
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Async upsert of a single run. Adapters ported to v3 storage override this."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement upsert_run yet. "
+            "Use upsert_session() to persist runs inline."
+        )
+
+    async def delete_run(self, run_id: str) -> bool:
+        """Async delete of a single run. Adapters ported to v3 storage override this."""
+        return False
+
+    async def delete_runs(self, run_ids: List[str]) -> None:
+        """Async bulk-delete of runs. Adapters ported to v3 storage override this."""
+        return None
 
     # --- Memory ---
     @abstractmethod

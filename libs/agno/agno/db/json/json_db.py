@@ -23,7 +23,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
@@ -188,17 +188,55 @@ class JsonDb(BaseDb):
             grouped[sid] = [it["run_data"] for it in items]
         return grouped  # type: ignore[return-value]
 
-    def _store_session_runs(self, session: Session) -> None:
-        """Upsert every run of the given session into the runs file."""
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
-        existing = self._read_runs_file(create_table_if_not_found=True)
-        # Merge: index by run_id so new rows replace old
-        by_id = {r["run_id"]: r for r in existing if "run_id" in r}
-        for row in rows:
-            by_id[row["run_id"]] = row
-        self._write_runs_file(list(by_id.values()))
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run row in the runs file.
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            existing = self._read_runs_file(create_table_if_not_found=True)
+            replaced = False
+            for i, r in enumerate(existing):
+                if r.get("run_id") == row["run_id"]:
+                    # Preserve the original run_index (don't bump it on update)
+                    row["run_index"] = r.get("run_index", row.get("run_index"))
+                    existing[i] = row
+                    replaced = True
+                    break
+            if not replaced:
+                existing.append(row)
+            self._write_runs_file(existing)
+        except Exception as e:
+            log_error(f"Exception upserting run into runs file: {str(e)}")
+            raise e
 
     def _delete_session_runs(self, session_id: str) -> int:
         """Cascade-delete every run row for a session."""
@@ -639,10 +677,8 @@ class JsonDb(BaseDb):
 
             self._write_json_file(self.session_table_name, sessions)
 
-            # Persist runs in the runs file
-            self._store_session_runs(session)
-
-            # Attach the in-memory runs to the returned dict so callers see the full picture
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
+            # Attach the in-memory runs to the returned dict so callers see the full picture.
             session_dict["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
 
             if not deserialize:

@@ -223,6 +223,50 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
     return None
 
 
+def _upsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Persist a single run to the runs storage (O(1) write).
+
+    Silently no-ops on adapters that have not implemented ``upsert_run`` yet.
+    """
+    try:
+        if not team.db:
+            return
+        team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+async def _aupsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Async version of ``_upsert_run``."""
+    from agno.team._init import _has_async_db
+
+    try:
+        if not team.db:
+            return
+        if _has_async_db(team):
+            await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+        else:
+            team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
 def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
     """Load the TeamSession from storage
 

@@ -30,7 +30,7 @@ from agno.db.sqlite.utils import (
 )
 from agno.db.utils import (
     CustomJSONEncoder,
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
@@ -578,29 +578,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             runs_by_session.setdefault(session_id, []).append(run_data)
         return runs_by_session
 
-    async def _store_session_runs(self, sess, runs_table: Table, session: Session) -> None:
-        """Upsert every run of the given session into the runs table."""
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
-
-        for row in rows:
-            row["run_data"] = json.dumps(row["run_data"], cls=CustomJSONEncoder)
-
-        stmt = sqlite.insert(runs_table)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["run_id"],
-            set_=dict(
-                status=stmt.excluded.status,
-                run_index=stmt.excluded.run_index,
-                run_data=stmt.excluded.run_data,
-                user_id=stmt.excluded.user_id,
-                parent_run_id=stmt.excluded.parent_run_id,
-                updated_at=stmt.excluded.updated_at,
-            ),
-        )
-        await sess.execute(stmt, rows)
-
     async def get_run(
         self, run_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
@@ -636,6 +613,64 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs table (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+            row["run_data"] = json.dumps(row["run_data"], cls=CustomJSONEncoder)
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = sqlite.insert(runs_table).values(**row)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["run_id"],
+                    set_=dict(
+                        status=stmt.excluded.status,
+                        run_data=stmt.excluded.run_data,
+                        user_id=stmt.excluded.user_id,
+                        parent_run_id=stmt.excluded.parent_run_id,
+                        updated_at=stmt.excluded.updated_at,
+                        # Note: run_index is NOT updated for existing runs to preserve ordering
+                    ),
+                )
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Exception upserting run to runs table: {str(e)}")
             raise e
 
     async def get_runs(
@@ -1083,7 +1118,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
-            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
 
             serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
 
@@ -1141,10 +1175,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if row is None:
                     return None
                 session_raw = deserialize_session_json_fields(dict(row._mapping))
-
-                # Persist the new and modified runs into the runs table
-                if runs_table is not None:
-                    await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
             if not deserialize:
                 session_raw["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
@@ -1207,8 +1237,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
-            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
-
             sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions}
 
             def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -1259,10 +1287,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                             ),
                         )
                         await sess.execute(stmt, agent_data)
-
-                        if runs_table is not None:
-                            for session in agent_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
@@ -1317,10 +1341,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                         )
                         await sess.execute(stmt, team_data)
 
-                        if runs_table is not None:
-                            for session in team_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(team_ids))
@@ -1373,10 +1393,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                             ),
                         )
                         await sess.execute(stmt, workflow_data)
-
-                        if runs_table is not None:
-                            for session in workflow_sessions:
-                                await self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]

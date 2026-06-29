@@ -71,6 +71,7 @@ from agno.run.cancel import (
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
+from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -1919,7 +1920,7 @@ async def _arun_background(
 
     Callers can poll for results via agent.aget_run_output(run_id, session_id).
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     # 1. Register the run for cancellation tracking (before spawning the task)
@@ -1932,17 +1933,19 @@ async def _arun_background(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
+    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
+    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
     # 4. Spawn the background task
     async def _background_task() -> None:
         try:
-            # Transition to RUNNING
+            # Transition to RUNNING — only persist the changed run (O(1))
             run_response.status = RunStatus.running
             agent_session.upsert_run(run=run_response)
-            await asave_session(agent, session=agent_session)
+            await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
 
             # Execute the actual run — _arun handles everything including
             # session persistence and cleanup
@@ -1962,11 +1965,11 @@ async def _arun_background(
             )
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
-            # Persist ERROR status
+            # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
-                await asave_session(agent, session=agent_session)
+                await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
@@ -2008,7 +2011,7 @@ async def _arun_background_stream(
     Similar to how Workflow._arun_background_stream handles WebSocket streaming,
     but uses SSE transport with event_buffer and sse_subscriber_manager.
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     run_id = run_response.run_id
@@ -2021,7 +2024,9 @@ async def _arun_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
+    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
+    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background stream run {run_id} persisted with RUNNING status")
 
@@ -2080,11 +2085,11 @@ async def _arun_background_stream(
 
         except Exception:
             log_error(f"Background stream run {run_id} failed", exc_info=True)
-            # Persist ERROR status
+            # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
-                await asave_session(agent, session=agent_session)
+                await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
@@ -3898,7 +3903,7 @@ async def _acontinue_run_background_stream(
     3. Buffers events (via event_buffer) and publishes to SSE subscribers
     4. Yields SSE-formatted strings via an asyncio.Queue
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     _run_id = run_id or (run_response.run_id if run_response else None)
@@ -3909,13 +3914,16 @@ async def _acontinue_run_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
 
-    # Update the run status to RUNNING in the session
+    # Transition to RUNNING here only if we have the run; otherwise the spawned
+    # task will load and persist it via _acontinue_run_stream.
     if run_response:
         run_response.status = RunStatus.running
         agent_session.upsert_run(run=run_response)
-    await asave_session(agent, session=agent_session)
-
-    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+        await asave_session(agent, session=agent_session)
+        await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
+        log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+    else:
+        log_info(f"Background continue-run stream {_run_id} spawned; run will be loaded by the task")
 
     # 2. Create queue for forwarding SSE strings to the caller
     sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
@@ -3971,12 +3979,12 @@ async def _acontinue_run_background_stream(
 
         except Exception:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-            # Persist ERROR status
+            # Persist ERROR status — only persist the changed run (O(1))
             try:
                 if run_response:
                     run_response.status = RunStatus.error
                     agent_session.upsert_run(run=run_response)
-                    await asave_session(agent, session=agent_session)
+                    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background continue-run stream {_run_id}", exc_info=True)
 
@@ -5128,6 +5136,7 @@ def cleanup_and_store(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5139,8 +5148,15 @@ def cleanup_and_store(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Save session to memory
+    # Persist the session row and this single run (both O(1))
     _session.save_session(agent, session=session)
+    _session.save_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=user_id,
+        run_index=run_index,
+    )
 
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id.
@@ -5185,6 +5201,7 @@ async def acleanup_and_store(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5196,8 +5213,15 @@ async def acleanup_and_store(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Save session to memory
+    # Persist the session row and this single run (both O(1))
     await _session.asave_session(agent, session=session)
+    await _session.asave_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=user_id,
+        run_index=run_index,
+    )
 
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id.

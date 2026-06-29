@@ -213,9 +213,18 @@ async def aget_session(
     return None
 
 
-def save_session(agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
+def save_session(
+    agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
+) -> None:
     """
-    Save the AgentSession to storage
+    Save the session row to storage.
+
+    Runs are persisted separately via ``save_run()``. This function writes
+    only the session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to save.
     """
     from agno.agent import _init, _storage
 
@@ -237,9 +246,18 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
 
-async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
+async def asave_session(
+    agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
+) -> None:
     """
-    Save the AgentSession to storage
+    Save the session row to storage.
+
+    Runs are persisted separately via ``asave_run()``. This function writes
+    only the session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to save.
     """
     from agno.agent import _init, _storage
 
@@ -259,6 +277,66 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
         else:
             _storage.upsert_session(agent, session=session)
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
+
+
+def save_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Save a single run to the database (O(1) operation).
+
+    This is optimized for updating existing runs (e.g., status changes in HITL
+    or background mode) without re-upserting all runs in the session.
+
+    Use this instead of save_session() when only a single run has changed.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to save.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    from agno.agent import _init, _storage
+
+    if _init.has_async_db(agent):
+        raise ValueError("Cannot use sync save_run() with an async database. Use asave_run() instead.")
+
+    if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+        _storage.upsert_run(agent, run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {run.run_id} to session {session_id}")
+
+
+async def asave_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Save a single run to the database (O(1) operation).
+
+    This is the async version of save_run(). Optimized for updating existing runs
+    (e.g., status changes in HITL or background mode) without re-upserting all
+    runs in the session.
+
+    Use this instead of asave_session() when only a single run has changed.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to save.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    from agno.agent import _init, _storage
+
+    if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+        await _storage.aupsert_run(agent, run=run, session_id=session_id, user_id=user_id, run_index=run_index)
+        log_debug(f"Saved run {run.run_id} to session {session_id}")
 
 
 def delete_session(agent: Agent, session_id: str, user_id: Optional[str] = None):

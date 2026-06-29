@@ -201,6 +201,56 @@ def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
     return rows
 
 
+def build_single_run_row(
+    run: Any,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build a single run-table row for the given run.
+
+    This is used by upsert_run() for O(1) single-run persistence, avoiding
+    the need to iterate over all session runs.
+
+    Args:
+        run: The run object (RunOutput, TeamRunOutput, WorkflowRunOutput) or dict.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index. If not provided, will be read from run_data
+            or left as None (for updates to existing runs where index is preserved).
+
+    Returns:
+        Row dict matching the runs table schema.
+    """
+    current_time = int(time.time())
+    run_id = run.get("run_id") if isinstance(run, dict) else getattr(run, "run_id", None)
+    if run_id is None:
+        raise ValueError("Run must have a run_id")
+
+    run_data = run if isinstance(run, dict) else run.to_dict()
+
+    # For run_index: use explicit param > run_data value > None
+    effective_run_index = run_index
+    if effective_run_index is None:
+        effective_run_index = run_data.get("run_index")
+
+    return {
+        "run_id": run_id,
+        "session_id": session_id,
+        "run_type": get_run_type(run),
+        "agent_id": run_data.get("agent_id"),
+        "team_id": run_data.get("team_id"),
+        "workflow_id": run_data.get("workflow_id"),
+        "user_id": user_id,
+        "parent_run_id": run_data.get("parent_run_id"),
+        "status": run_data.get("status"),
+        "run_index": effective_run_index,
+        "run_data": run_data,
+        "created_at": run_data.get("created_at") or current_time,
+        "updated_at": current_time,
+    }
+
+
 def merge_runs_table_with_legacy_blob(
     table_runs: List[Dict[str, Any]],
     legacy_runs: Optional[List[Any]],

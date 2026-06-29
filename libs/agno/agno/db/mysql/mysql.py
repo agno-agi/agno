@@ -26,7 +26,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
-    build_run_rows_for_session,
+    build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
@@ -523,22 +523,59 @@ class MySQLDb(BaseDb):
             runs_by_session.setdefault(session_id, []).append(run_data)
         return runs_by_session
 
-    def _store_session_runs(self, sess, runs_table: Table, session: Session) -> None:
-        """Upsert every run of the given session into the runs table."""
-        rows = build_run_rows_for_session(session=session)
-        if not rows:
-            return
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs table (O(1) operation).
 
-        stmt = mysql.insert(runs_table).values(rows)  # type: ignore
-        stmt = stmt.on_duplicate_key_update(
-            status=stmt.inserted.status,
-            run_index=stmt.inserted.run_index,
-            run_data=stmt.inserted.run_data,
-            user_id=stmt.inserted.user_id,
-            parent_run_id=stmt.inserted.parent_run_id,
-            updated_at=stmt.inserted.updated_at,
-        )
-        sess.execute(stmt)
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            with self.Session() as sess, sess.begin():
+                stmt = mysql.insert(runs_table).values(**row)  # type: ignore
+                stmt = stmt.on_duplicate_key_update(
+                    status=stmt.inserted.status,
+                    run_data=stmt.inserted.run_data,
+                    user_id=stmt.inserted.user_id,
+                    parent_run_id=stmt.inserted.parent_run_id,
+                    updated_at=stmt.inserted.updated_at,
+                    # Note: run_index is NOT updated for existing runs to preserve ordering
+                )
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Exception upserting run to runs table: {str(e)}")
+            raise e
 
     def get_run(
         self, run_id: str, deserialize: Optional[bool] = True
@@ -988,7 +1025,6 @@ class MySQLDb(BaseDb):
             table = self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
-            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
 
             session_dict = session.to_dict(include_runs=False)
 
@@ -1049,9 +1085,6 @@ class MySQLDb(BaseDb):
                 stmt = stmt.on_duplicate_key_update(**update_values)
                 sess.execute(stmt)
 
-                if runs_table is not None:
-                    self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                 # Fetch the row
                 select_stmt = select(table).where(table.c.session_id == session_dict.get("session_id"))
                 row = sess.execute(select_stmt).fetchone()
@@ -1099,8 +1132,6 @@ class MySQLDb(BaseDb):
                     for result in [self.upsert_session(session, deserialize=deserialize)]
                     if result is not None
                 ]
-            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
-
             # Group sessions by type for batch processing
             agent_sessions = []
             team_sessions = []
@@ -1166,10 +1197,6 @@ class MySQLDb(BaseDb):
                         )
                         sess.execute(stmt, agent_data)
 
-                        if runs_table is not None:
-                            for session in agent_sessions:
-                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                         # Fetch the results for agent sessions
                         agent_ids = [session.session_id for session in agent_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(agent_ids))
@@ -1221,10 +1248,6 @@ class MySQLDb(BaseDb):
                         )
                         sess.execute(stmt, team_data)
 
-                        if runs_table is not None:
-                            for session in team_sessions:
-                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
-
                         # Fetch the results for team sessions
                         team_ids = [session.session_id for session in team_sessions]
                         select_stmt = select(table).where(table.c.session_id.in_(team_ids))
@@ -1275,10 +1298,6 @@ class MySQLDb(BaseDb):
                             **extra_clear_runs,
                         )
                         sess.execute(stmt, workflow_data)
-
-                        if runs_table is not None:
-                            for session in workflow_sessions:
-                                self._store_session_runs(sess=sess, runs_table=runs_table, session=session)
 
                         # Fetch the results for workflow sessions
                         workflow_ids = [session.session_id for session in workflow_sessions]
