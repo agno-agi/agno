@@ -1247,12 +1247,15 @@ class Gemini(Model):
                     if not chunk:
                         continue
                     web = chunk.web
-                    if not web:
+                    if web and web.uri:
+                        citations_urls.append(UrlCitation(url=web.uri, title=web.title))
                         continue
-                    uri = web.uri
-                    title = web.title
-                    if uri:
-                        citations_urls.append(UrlCitation(url=uri, title=title))
+                    # Vertex AI Search / RAG datastore sources arrive under retrieved_context, not web
+                    retrieved = chunk.retrieved_context
+                    if retrieved and retrieved.uri:
+                        existing_urls = [citation.url for citation in citations_urls]
+                        if retrieved.uri not in existing_urls:
+                            citations_urls.append(UrlCitation(url=retrieved.uri, title=retrieved.title))
 
             # Handle URLs from URL context tool
             if (
@@ -1400,12 +1403,15 @@ class Gemini(Model):
                     if not chunk:
                         continue
                     web = chunk.web
-                    if not web:
+                    if web and web.uri:
+                        citations.urls.append(UrlCitation(url=web.uri, title=web.title))
                         continue
-                    uri = web.uri
-                    title = web.title
-                    if uri:
-                        citations.urls.append(UrlCitation(url=uri, title=title))
+                    # Vertex AI Search / RAG datastore sources arrive under retrieved_context, not web
+                    retrieved = chunk.retrieved_context
+                    if retrieved and retrieved.uri:
+                        existing_urls = [citation.url for citation in citations.urls]
+                        if retrieved.uri not in existing_urls:
+                            citations.urls.append(UrlCitation(url=retrieved.uri, title=retrieved.title))
 
             # Handle URLs from URL context tool
             if (

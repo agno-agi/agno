@@ -7,6 +7,17 @@ import pytest
 
 pytest.importorskip("google.genai")
 
+from google.genai.types import (
+    Candidate,
+    Content,
+    GenerateContentResponse,
+    GroundingChunk,
+    GroundingChunkRetrievedContext,
+    GroundingChunkWeb,
+    GroundingMetadata,
+    Part,
+)
+
 from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.google.gemini import Gemini
@@ -778,3 +789,107 @@ class TestFileSearchToolWiring:
             return  # No tools at all, which is the expected case
         file_search_tools = [t for t in config.tools if getattr(t, "file_search", None) is not None]
         assert len(file_search_tools) == 0
+
+
+def _grounding_response(chunks):
+    """Build a minimal grounded GenerateContentResponse with the given grounding chunks."""
+    return GenerateContentResponse(
+        candidates=[
+            Candidate(
+                content=Content(role="model", parts=[Part(text="answer")]),
+                grounding_metadata=GroundingMetadata(grounding_chunks=chunks),
+            )
+        ]
+    )
+
+
+def test_parse_provider_response_extracts_retrieved_context_citations():
+    """Vertex AI Search sources arrive under retrieved_context and should populate citations."""
+    model = Gemini(api_key="test-key")
+    response = _grounding_response(
+        [GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://ds/doc1", title="Doc 1"))]
+    )
+
+    model_response = model._parse_provider_response(response)
+
+    assert model_response.citations is not None
+    assert [(c.url, c.title) for c in model_response.citations.urls] == [("gs://ds/doc1", "Doc 1")]
+
+
+def test_parse_provider_response_extracts_web_and_retrieved_context_citations():
+    """A mixed response should yield both web and retrieved_context citations."""
+    model = Gemini(api_key="test-key")
+    response = _grounding_response(
+        [
+            GroundingChunk(web=GroundingChunkWeb(uri="https://example.com", title="Example")),
+            GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://ds/doc2", title="Doc 2")),
+        ]
+    )
+
+    model_response = model._parse_provider_response(response)
+
+    assert [(c.url, c.title) for c in model_response.citations.urls] == [
+        ("https://example.com", "Example"),
+        ("gs://ds/doc2", "Doc 2"),
+    ]
+
+
+def test_parse_provider_response_deduplicates_retrieved_context_citations():
+    """Repeated retrieved_context URIs should be appended only once."""
+    model = Gemini(api_key="test-key")
+    response = _grounding_response(
+        [
+            GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://ds/dup", title="Dup")),
+            GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://ds/dup", title="Dup")),
+        ]
+    )
+
+    model_response = model._parse_provider_response(response)
+
+    assert [c.url for c in model_response.citations.urls] == ["gs://ds/dup"]
+
+
+def test_parse_provider_response_delta_extracts_retrieved_context_citations():
+    """Streaming responses should also extract retrieved_context citations."""
+    model = Gemini(api_key="test-key")
+    response = _grounding_response(
+        [GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://ds/doc1", title="Doc 1"))]
+    )
+
+    model_response = model._parse_provider_response_delta(response)
+
+    assert model_response.citations is not None
+    assert [(c.url, c.title) for c in model_response.citations.urls] == [("gs://ds/doc1", "Doc 1")]
+
+
+def test_parse_provider_response_delta_extracts_web_and_retrieved_context_citations():
+    """A mixed streaming response should yield both web and retrieved_context citations."""
+    model = Gemini(api_key="test-key")
+    response = _grounding_response(
+        [
+            GroundingChunk(web=GroundingChunkWeb(uri="https://example.com", title="Example")),
+            GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://ds/doc2", title="Doc 2")),
+        ]
+    )
+
+    model_response = model._parse_provider_response_delta(response)
+
+    assert [(c.url, c.title) for c in model_response.citations.urls] == [
+        ("https://example.com", "Example"),
+        ("gs://ds/doc2", "Doc 2"),
+    ]
+
+
+def test_parse_provider_response_delta_deduplicates_retrieved_context_citations():
+    """Repeated retrieved_context URIs should be appended only once when streaming."""
+    model = Gemini(api_key="test-key")
+    response = _grounding_response(
+        [
+            GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://ds/dup", title="Dup")),
+            GroundingChunk(retrieved_context=GroundingChunkRetrievedContext(uri="gs://ds/dup", title="Dup")),
+        ]
+    )
+
+    model_response = model._parse_provider_response_delta(response)
+
+    assert [c.url for c in model_response.citations.urls] == ["gs://ds/dup"]
