@@ -593,6 +593,15 @@ class MemoryManager:
             log_warning(f"Error deleting memory in db: {str(e)}")
             return "Error deleting memory"
 
+    def _prepare_optimized_memories_for_user(self, memories: List[UserMemory], user_id: str) -> List[UserMemory]:
+        for memory in memories:
+            if not memory.memory_id:
+                from uuid import uuid4
+
+                memory.memory_id = str(uuid4())
+            memory.user_id = user_id
+        return memories
+
     # -*- Utility Functions
     def search_user_memories(
         self,
@@ -852,18 +861,10 @@ class MemoryManager:
                 log_warning("Memory DB not provided. Cannot apply optimized memories.")
                 return optimized_memories
 
-            # Clear all existing memories for the user
-            self.clear_user_memories(user_id=user_id)
-
-            # Add all optimized memories
-            for opt_mem in optimized_memories:
-                # Ensure memory has an ID (generate if needed for new memories)
-                if not opt_mem.memory_id:
-                    from uuid import uuid4
-
-                    opt_mem.memory_id = str(uuid4())
-
-                self.db.upsert_user_memory(memory=opt_mem)
+            self.db.replace_user_memories(
+                user_id=user_id,
+                memories=self._prepare_optimized_memories_for_user(optimized_memories, user_id),
+            )
 
         optimized_tokens = strategy_instance.count_tokens(optimized_memories)
         log_debug(f"Optimization complete. New token count: {optimized_tokens}")
@@ -922,21 +923,11 @@ class MemoryManager:
                 log_warning("Memory DB not provided. Cannot apply optimized memories.")
                 return optimized_memories
 
-            # Clear all existing memories for the user
-            await self.aclear_user_memories(user_id=user_id)
-
-            # Add all optimized memories
-            for opt_mem in optimized_memories:
-                # Ensure memory has an ID (generate if needed for new memories)
-                if not opt_mem.memory_id:
-                    from uuid import uuid4
-
-                    opt_mem.memory_id = str(uuid4())
-
-                if isinstance(self.db, AsyncBaseDb):
-                    await self.db.upsert_user_memory(memory=opt_mem)
-                elif isinstance(self.db, BaseDb):
-                    self.db.upsert_user_memory(memory=opt_mem)
+            replacement_memories = self._prepare_optimized_memories_for_user(optimized_memories, user_id)
+            if isinstance(self.db, AsyncBaseDb):
+                await self.db.replace_user_memories(user_id=user_id, memories=replacement_memories)
+            elif isinstance(self.db, BaseDb):
+                self.db.replace_user_memories(user_id=user_id, memories=replacement_memories)
 
         optimized_tokens = strategy_instance.count_tokens(optimized_memories)
         log_debug(f"Memory optimization complete. New token count: {optimized_tokens}")

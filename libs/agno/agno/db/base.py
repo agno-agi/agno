@@ -280,6 +280,30 @@ class BaseDb(ABC):
         """Bulk upsert multiple memories for improved performance on large datasets."""
         raise NotImplementedError
 
+    def replace_user_memories(
+        self,
+        user_id: str,
+        memories: List[UserMemory],
+        deserialize: Optional[bool] = True,
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """Replace one user's memory set without deleting before replacement is staged."""
+        existing_memories = self.get_user_memories(user_id=user_id)
+        if isinstance(existing_memories, tuple):
+            existing_memories = existing_memories[0]
+
+        existing_ids = {
+            memory.memory_id for memory in existing_memories if isinstance(memory, UserMemory) and memory.memory_id is not None
+        }
+        replacement_ids = {memory.memory_id for memory in memories if memory.memory_id is not None}
+
+        replaced_memories = self.upsert_memories(memories=memories, deserialize=deserialize)
+
+        stale_ids = list(existing_ids - replacement_ids)
+        if stale_ids:
+            self.delete_user_memories(memory_ids=stale_ids, user_id=user_id)
+
+        return replaced_memories
+
     # --- Metrics ---
     @abstractmethod
     def get_metrics(
@@ -1411,6 +1435,39 @@ class AsyncBaseDb(ABC):
         self, memory: UserMemory, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         raise NotImplementedError
+
+    async def upsert_memories(
+        self,
+        memories: List[UserMemory],
+        deserialize: Optional[bool] = True,
+        preserve_updated_at: bool = False,
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """Bulk upsert multiple memories for improved performance on large datasets."""
+        raise NotImplementedError
+
+    async def replace_user_memories(
+        self,
+        user_id: str,
+        memories: List[UserMemory],
+        deserialize: Optional[bool] = True,
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        """Replace one user's memory set without deleting before replacement is staged."""
+        existing_memories = await self.get_user_memories(user_id=user_id)
+        if isinstance(existing_memories, tuple):
+            existing_memories = existing_memories[0]
+
+        existing_ids = {
+            memory.memory_id for memory in existing_memories if isinstance(memory, UserMemory) and memory.memory_id is not None
+        }
+        replacement_ids = {memory.memory_id for memory in memories if memory.memory_id is not None}
+
+        replaced_memories = await self.upsert_memories(memories=memories, deserialize=deserialize)
+
+        stale_ids = list(existing_ids - replacement_ids)
+        if stale_ids:
+            await self.delete_user_memories(memory_ids=stale_ids, user_id=user_id)
+
+        return replaced_memories
 
     # --- Metrics ---
     @abstractmethod

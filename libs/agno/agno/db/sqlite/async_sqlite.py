@@ -1607,6 +1607,77 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if result is not None
             ]
 
+    async def replace_user_memories(
+        self,
+        user_id: str,
+        memories: List[UserMemory],
+        deserialize: Optional[bool] = True,
+    ) -> List[Union[UserMemory, Dict[str, Any]]]:
+        try:
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return []
+
+            current_time = int(time.time())
+            memory_ids: List[str] = []
+            bulk_data: List[Dict[str, Any]] = []
+
+            for memory in memories:
+                if memory.memory_id is None:
+                    memory.memory_id = str(uuid4())
+                memory.user_id = user_id
+                memory_ids.append(memory.memory_id)
+                bulk_data.append(
+                    {
+                        "user_id": memory.user_id,
+                        "agent_id": memory.agent_id,
+                        "team_id": memory.team_id,
+                        "memory_id": memory.memory_id,
+                        "memory": memory.memory,
+                        "topics": memory.topics,
+                        "input": memory.input,
+                        "feedback": memory.feedback,
+                        "created_at": memory.created_at,
+                        "updated_at": memory.created_at,
+                    }
+                )
+
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(table.delete().where(table.c.user_id == user_id))
+                if not bulk_data:
+                    return []
+
+                stmt = sqlite.insert(table)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["memory_id"],
+                    set_=dict(
+                        memory=stmt.excluded.memory,
+                        topics=stmt.excluded.topics,
+                        input=stmt.excluded.input,
+                        agent_id=stmt.excluded.agent_id,
+                        team_id=stmt.excluded.team_id,
+                        feedback=stmt.excluded.feedback,
+                        updated_at=current_time,
+                        created_at=table.c.created_at,
+                    ),
+                )
+                await sess.execute(stmt, bulk_data)
+
+                result = await sess.execute(select(table).where(table.c.memory_id.in_(memory_ids)))
+                rows = result.fetchall()
+
+            memory_rows: Dict[str, Dict[str, Any]] = {row.memory_id: dict(row._mapping) for row in rows}
+            replaced_memories: List[Dict[str, Any]] = [
+                memory_rows[memory_id] for memory_id in memory_ids if memory_id in memory_rows
+            ]
+            if not deserialize:
+                return cast(List[Union[UserMemory, Dict[str, Any]]], replaced_memories)
+            return [UserMemory.from_dict(memory_row) for memory_row in replaced_memories]
+
+        except Exception as e:
+            log_error(f"Error replacing user memories: {str(e)}")
+            raise e
+
     async def clear_memories(self) -> None:
         """Delete all memories from the database.
 
