@@ -49,11 +49,21 @@ def _make_team(
     return team
 
 
-def _make_member(*, with_mcp: bool, content: str, session_key: str = "path") -> MockedMember:
+def _make_member(
+    *, with_mcp: bool, callable_tools: bool = False, content: str, session_key: str = "path"
+) -> MockedMember:
+    tools: Any = [cast(Any, MCPTools())] if with_mcp else []
+    if callable_tools:
+
+        def tool_factory() -> list[Any]:
+            return [cast(Any, MCPTools())] if with_mcp else []
+
+        tools = tool_factory
+
     member = Agent(
         name="Worker",
         id="worker",
-        tools=[cast(Any, MCPTools())] if with_mcp else [],
+        tools=tools,
     )
     run_mock = MagicMock(side_effect=RuntimeError("sync run path should not be used for this test"))
 
@@ -104,16 +114,32 @@ def _make_member(*, with_mcp: bool, content: str, session_key: str = "path") -> 
 def _make_subteam(
     *,
     with_mcp_member: bool,
+    callable_members: bool = False,
     with_team_mcp: bool = False,
+    callable_team_tools: bool = False,
     content: str,
     session_key: str = "subteam",
 ) -> MockedSubteam:
     nested_member = _make_member(with_mcp=with_mcp_member, content=content, session_key=session_key).member
+    members: Any = [nested_member]
+    if callable_members:
+
+        def member_factory() -> list[Any]:
+            return [nested_member]
+
+        members = member_factory
+    tools: Any = [cast(Any, MCPTools())] if with_team_mcp else []
+    if callable_team_tools:
+
+        def tool_factory() -> list[Any]:
+            return [cast(Any, MCPTools())] if with_team_mcp else []
+
+        tools = tool_factory
     subteam = Team(
         name="Subteam",
         id="subteam",
-        members=[nested_member],
-        tools=[cast(Any, MCPTools())] if with_team_mcp else [],
+        members=members,
+        tools=tools,
     )
     run_mock = MagicMock(side_effect=RuntimeError("sync run path should not be used for this test"))
 
@@ -296,6 +322,28 @@ def test_run_member_sync_uses_arun_for_subteams_with_team_level_mcp_tools():
     mocked_subteam.arun_mock.assert_called_once()
 
 
+def test_run_member_sync_uses_arun_for_agents_with_callable_mcp_tools():
+    mocked_member = _make_member(
+        with_mcp=True,
+        callable_tools=True,
+        content="callable tools via arun",
+        session_key="callable_agent_tools",
+    )
+
+    result = run_member_sync(
+        mocked_member.member,
+        input="delegate",
+        user_id="user-1",
+        session_id="team-session",
+        session_state={},
+        run_id="member-run",
+    )
+
+    assert result.content == "callable tools via arun"
+    mocked_member.run_mock.assert_not_called()
+    mocked_member.arun_mock.assert_called_once()
+
+
 def test_run_member_sync_keeps_non_mcp_agents_on_run():
     member = Agent(name="Worker", id="worker", tools=[])
     expected = RunOutput(run_id="member-run", agent_id=member.id, agent_name=member.name, content="via run")
@@ -430,6 +478,57 @@ def test_sync_default_delegation_routes_team_level_mcp_subteams_via_arun():
 
     assert results == ["team-level subteam delegated"]
     assert run_context.session_state == {"delegate_subteam_team_tools": "team-level subteam delegated"}
+    mocked_subteam.run_mock.assert_not_called()
+    mocked_subteam.arun_mock.assert_called_once()
+
+
+def test_sync_default_delegation_routes_callable_member_subteams_via_arun():
+    mocked_subteam = _make_subteam(
+        with_mcp_member=True,
+        callable_members=True,
+        content="callable member subteam delegated",
+        session_key="delegate_subteam_callable_members",
+    )
+    team = _make_team(mocked_subteam.team)
+    run_response, run_context, session = _make_team_context()
+
+    delegate_tool = team._get_delegate_task_function(
+        run_response=run_response,
+        run_context=run_context,
+        session=session,
+        team_run_context={},
+    )
+
+    results = _call_tool(delegate_tool, member_id=mocked_subteam.team.id, task="Use MCP")
+
+    assert results == ["callable member subteam delegated"]
+    assert run_context.session_state == {"delegate_subteam_callable_members": "callable member subteam delegated"}
+    mocked_subteam.run_mock.assert_not_called()
+    mocked_subteam.arun_mock.assert_called_once()
+
+
+def test_sync_default_delegation_routes_callable_team_tool_subteams_via_arun():
+    mocked_subteam = _make_subteam(
+        with_mcp_member=False,
+        with_team_mcp=True,
+        callable_team_tools=True,
+        content="callable tool subteam delegated",
+        session_key="delegate_subteam_callable_tools",
+    )
+    team = _make_team(mocked_subteam.team)
+    run_response, run_context, session = _make_team_context()
+
+    delegate_tool = team._get_delegate_task_function(
+        run_response=run_response,
+        run_context=run_context,
+        session=session,
+        team_run_context={},
+    )
+
+    results = _call_tool(delegate_tool, member_id=mocked_subteam.team.id, task="Use MCP")
+
+    assert results == ["callable tool subteam delegated"]
+    assert run_context.session_state == {"delegate_subteam_callable_tools": "callable tool subteam delegated"}
     mocked_subteam.run_mock.assert_not_called()
     mocked_subteam.arun_mock.assert_called_once()
 
