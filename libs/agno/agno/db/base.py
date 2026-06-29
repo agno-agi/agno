@@ -287,12 +287,19 @@ class BaseDb(ABC):
         deserialize: Optional[bool] = True,
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """Replace one user's memory set without deleting before replacement is staged."""
-        existing_memories = self.get_user_memories(user_id=user_id)
-        if isinstance(existing_memories, tuple):
-            existing_memories = existing_memories[0]
+        existing_memories_result = self.get_user_memories(user_id=user_id)
+        existing_memory_rows = (
+            existing_memories_result[0] if isinstance(existing_memories_result, tuple) else existing_memories_result
+        )
+        existing_memories = [
+            memory if isinstance(memory, UserMemory) else UserMemory.from_dict(memory)
+            for memory in existing_memory_rows
+        ]
 
         existing_ids = {
-            memory.memory_id for memory in existing_memories if isinstance(memory, UserMemory) and memory.memory_id is not None
+            memory.memory_id
+            for memory in existing_memories
+            if isinstance(memory, UserMemory) and memory.memory_id is not None
         }
         replacement_ids = {memory.memory_id for memory in memories if memory.memory_id is not None}
 
@@ -1452,12 +1459,19 @@ class AsyncBaseDb(ABC):
         deserialize: Optional[bool] = True,
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """Replace one user's memory set without deleting before replacement is staged."""
-        existing_memories = await self.get_user_memories(user_id=user_id)
-        if isinstance(existing_memories, tuple):
-            existing_memories = existing_memories[0]
+        existing_memories_result = await self.get_user_memories(user_id=user_id)
+        existing_memory_rows = (
+            existing_memories_result[0] if isinstance(existing_memories_result, tuple) else existing_memories_result
+        )
+        existing_memories = [
+            memory if isinstance(memory, UserMemory) else UserMemory.from_dict(memory)
+            for memory in existing_memory_rows
+        ]
 
         existing_ids = {
-            memory.memory_id for memory in existing_memories if isinstance(memory, UserMemory) and memory.memory_id is not None
+            memory.memory_id
+            for memory in existing_memories
+            if isinstance(memory, UserMemory) and memory.memory_id is not None
         }
         replacement_ids = {memory.memory_id for memory in memories if memory.memory_id is not None}
 
