@@ -2151,3 +2151,218 @@ def test_extract_context_preserves_none_value():
     item = MagicMock(description="empty", value=None)
     result = extract_context([item])
     assert result == {"empty": None}
+
+
+# ---------------------------------------------------------------------------
+# AGUI claims-props feature - JWT-claim extraction from forwardedProps
+# ---------------------------------------------------------------------------
+
+
+def test_extract_claims_default_user_id_only():
+    """Default claim ('user_id') pulls the user_id and returns no dependencies."""
+    from agno.os.interfaces.agui.router import _extract_claims
+
+    props = {"user_id": "u-1", "email": "a@b.com"}
+    user_id, deps = _extract_claims(props, user_id_claim="user_id", dependencies_claims=[])
+    assert user_id == "u-1"
+    assert deps is None
+
+
+def test_extract_claims_custom_user_id_claim():
+    """Custom claim name (e.g. 'sub') resolves to user_id correctly."""
+    from agno.os.interfaces.agui.router import _extract_claims
+
+    props = {"sub": "u-2", "email": "a@b.com"}
+    user_id, deps = _extract_claims(props, user_id_claim="sub", dependencies_claims=[])
+    assert user_id == "u-2"
+    assert deps is None
+
+
+def test_extract_claims_with_dependencies():
+    """Listed dependency claims are extracted into a flat dict with same keys."""
+    from agno.os.interfaces.agui.router import _extract_claims
+
+    props = {"user_id": "u-3", "email": "a@b.com", "name": "Alice", "extra": "ignored"}
+    user_id, deps = _extract_claims(props, user_id_claim="user_id", dependencies_claims=["email", "name"])
+    assert user_id == "u-3"
+    assert deps == {"email": "a@b.com", "name": "Alice"}
+
+
+def test_extract_claims_missing_dependency_silently_skipped():
+    """Claims requested but not present in forwardedProps are silently skipped."""
+    from agno.os.interfaces.agui.router import _extract_claims
+
+    props = {"user_id": "u-4"}  # no email/name
+    user_id, deps = _extract_claims(props, user_id_claim="user_id", dependencies_claims=["email", "name"])
+    assert user_id == "u-4"
+    assert deps is None  # empty dict collapses to None per the helper's contract
+
+
+def test_extract_claims_partial_dependencies():
+    """When some claims are present and others missing, only the present ones are extracted."""
+    from agno.os.interfaces.agui.router import _extract_claims
+
+    props = {"user_id": "u-5", "email": "a@b.com"}  # name missing
+    user_id, deps = _extract_claims(props, user_id_claim="user_id", dependencies_claims=["email", "name"])
+    assert user_id == "u-5"
+    assert deps == {"email": "a@b.com"}
+
+
+def test_extract_claims_no_forwarded_props():
+    """None or non-dict forwarded_props yields (None, None)."""
+    from agno.os.interfaces.agui.router import _extract_claims
+
+    assert _extract_claims(None, user_id_claim="user_id", dependencies_claims=["email"]) == (None, None)
+    assert _extract_claims({}, user_id_claim="user_id", dependencies_claims=["email"]) == (None, None)
+
+
+def test_extract_claims_user_id_not_in_props():
+    """If the configured user_id_claim isn't present, user_id is None but dependencies still extract."""
+    from agno.os.interfaces.agui.router import _extract_claims
+
+    props = {"email": "a@b.com"}  # no user_id or sub
+    user_id, deps = _extract_claims(props, user_id_claim="user_id", dependencies_claims=["email"])
+    assert user_id is None
+    assert deps == {"email": "a@b.com"}
+
+
+def test_agui_constructor_default_claim_config():
+    """AGUI() defaults preserve current behavior: user_id_claim='user_id', no dependencies_claims."""
+    from agno.agent.agent import Agent
+    from agno.os.interfaces.agui.agui import AGUI
+
+    agent = MagicMock(spec=Agent)
+    iface = AGUI(agent=agent)
+    assert iface.user_id_claim == "user_id"
+    assert iface.dependencies_claims == []
+
+
+def test_agui_constructor_custom_claim_config():
+    """AGUI() with custom claim config stores the values correctly."""
+    from agno.agent.agent import Agent
+    from agno.os.interfaces.agui.agui import AGUI
+
+    agent = MagicMock(spec=Agent)
+    iface = AGUI(agent=agent, user_id_claim="sub", dependencies_claims=["email", "name"])
+    assert iface.user_id_claim == "sub"
+    assert iface.dependencies_claims == ["email", "name"]
+
+
+async def test_run_entity_merges_claim_and_context_dependencies_context_wins():
+    """Claims (#8171) and readable-context (#8201) deps BOTH reach arun, merged; context wins a collision.
+
+    This is the merge landmine: it fails if either source clobbers the other, or if the
+    tie-break is not context-wins.
+    """
+    from agno.os.interfaces.agui.router import run_entity
+
+    class _CaptureEntity:
+        def __init__(self):
+            self.captured: dict = {}
+
+        async def arun(self, **kwargs):
+            self.captured = kwargs
+            return
+            yield  # make this an async generator
+
+    class _Input:
+        messages = [MagicMock(role="user", content="hi")]
+        thread_id = "t-merge"
+        run_id = "r-merge"
+        state = None
+        # "shared" exists in BOTH sources with different values -> context must win.
+        forwarded_props = {"sub": "u-9", "email": "claim@example.com", "shared": "FROM_CLAIMS"}
+        context = [
+            MagicMock(description="page", value="home"),
+            MagicMock(description="shared", value="FROM_CONTEXT"),
+        ]
+
+    entity = _CaptureEntity()
+    async for _ in run_entity(entity, _Input(), user_id_claim="sub", dependencies_claims=["email", "shared"]):
+        pass
+
+    deps = entity.captured.get("dependencies")
+    assert entity.captured.get("user_id") == "u-9"  # user_id resolved from the 'sub' claim
+    assert entity.captured.get("add_dependencies_to_context") is True
+    assert deps == {"email": "claim@example.com", "page": "home", "shared": "FROM_CONTEXT"}
+    assert deps["shared"] == "FROM_CONTEXT", "context must win on a key collision"
+    assert deps["email"] == "claim@example.com", "claim-only dependency must survive the merge"
+    assert deps["page"] == "home", "context-only dependency must survive the merge"
+
+
+def test_agui_team_constructor_claim_config():
+    """AGUI(team=...) stores claim config identically to the agent path."""
+    from agno.os.interfaces.agui.agui import AGUI
+    from agno.team.team import Team
+
+    team = MagicMock(spec=Team)
+    iface = AGUI(team=team, user_id_claim="sub", dependencies_claims=["email", "name"])
+    assert iface.team is team
+    assert iface.user_id_claim == "sub"
+    assert iface.dependencies_claims == ["email", "name"]
+
+
+async def test_run_entity_threads_claims_for_team_entity():
+    """run_entity applies claim extraction + the dependency merge for a Team entity, not just an Agent."""
+    from agno.os.interfaces.agui.router import run_entity
+
+    class _CaptureTeam:
+        def __init__(self):
+            self.captured: dict = {}
+
+        async def arun(self, **kwargs):
+            self.captured = kwargs
+            return
+            yield  # make this an async generator
+
+    class _Input:
+        messages = [MagicMock(role="user", content="hi")]
+        thread_id = "t-team"
+        run_id = "r-team"
+        state = None
+        forwarded_props = {"sub": "team-user", "email": "claim@example.com", "name": "Alice"}
+        context = [MagicMock(description="email", value="context@example.com")]
+
+    team = _CaptureTeam()
+    async for _ in run_entity(team, _Input(), user_id_claim="sub", dependencies_claims=["email", "name"]):
+        pass
+
+    assert team.captured.get("user_id") == "team-user"
+    assert team.captured.get("add_dependencies_to_context") is True
+    # context wins the "email" collision; claim-only "name" survives
+    assert team.captured.get("dependencies") == {"email": "context@example.com", "name": "Alice"}
+
+
+async def test_run_entity_no_claims_configured_does_not_leak_forwarded_props():
+    """Default path (no dependencies_claims): forwardedProps claims are NOT extracted — only context flows.
+
+    Locks the 'byte-identical to #8364 base when unconfigured' guarantee: claim values present in
+    forwardedProps must not leak into dependencies, and user_id uses the default 'user_id' key.
+    """
+    from agno.os.interfaces.agui.router import run_entity
+
+    class _CaptureEntity:
+        def __init__(self):
+            self.captured: dict = {}
+
+        async def arun(self, **kwargs):
+            self.captured = kwargs
+            return
+            yield  # make this an async generator
+
+    class _Input:
+        messages = [MagicMock(role="user", content="hi")]
+        thread_id = "t-default"
+        run_id = "r-default"
+        state = None
+        # email/name present but NO dependencies_claims configured -> must be ignored (no leak)
+        forwarded_props = {"user_id": "u-default", "email": "claim@example.com", "name": "Alice"}
+        context = [MagicMock(description="topic", value="weather")]
+
+    entity = _CaptureEntity()
+    async for _ in run_entity(entity, _Input()):  # defaults: user_id_claim="user_id", dependencies_claims=None
+        pass
+
+    assert entity.captured.get("user_id") == "u-default"  # from the default 'user_id' key
+    assert entity.captured.get("add_dependencies_to_context") is True  # context is present
+    assert entity.captured.get("dependencies") == {"topic": "weather"}  # only context — no email/name leak
