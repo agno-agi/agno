@@ -287,6 +287,9 @@ class BaseDb(ABC):
         deserialize: Optional[bool] = True,
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """Replace one user's memory set without deleting before replacement is staged."""
+        if not memories:
+            return []
+
         existing_memories_result = self.get_user_memories(user_id=user_id)
         existing_memory_rows = (
             existing_memories_result[0] if isinstance(existing_memories_result, tuple) else existing_memories_result
@@ -1459,6 +1462,9 @@ class AsyncBaseDb(ABC):
         deserialize: Optional[bool] = True,
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         """Replace one user's memory set without deleting before replacement is staged."""
+        if not memories:
+            return []
+
         existing_memories_result = await self.get_user_memories(user_id=user_id)
         existing_memory_rows = (
             existing_memories_result[0] if isinstance(existing_memories_result, tuple) else existing_memories_result

@@ -1614,6 +1614,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         deserialize: Optional[bool] = True,
     ) -> List[Union[UserMemory, Dict[str, Any]]]:
         try:
+            if not memories:
+                return []
+
             table = await self._get_table(table_type="memories", create_table_if_not_found=True)
             if table is None:
                 return []

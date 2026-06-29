@@ -186,6 +186,17 @@ def test_base_db_replace_user_memories_stages_upserts_before_stale_deletes():
     ]
 
 
+def test_base_db_replace_user_memories_empty_replacement_is_noop():
+    db = MagicMock(spec=BaseDb)
+
+    result = BaseDb.replace_user_memories(db, user_id="user-1", memories=[])
+
+    assert result == []
+    db.get_user_memories.assert_not_called()
+    db.upsert_memories.assert_not_called()
+    db.delete_user_memories.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_async_base_db_replace_user_memories_stages_upserts_before_stale_deletes():
     db = AsyncMock(spec=AsyncBaseDb)
@@ -211,6 +222,19 @@ async def test_async_base_db_replace_user_memories_stages_upserts_before_stale_d
         call.upsert_memories(memories=replacement_memories, deserialize=True),
         call.delete_user_memories(memory_ids=["stale-1"], user_id="user-1"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_async_base_db_replace_user_memories_empty_replacement_is_noop():
+    db = AsyncMock(spec=AsyncBaseDb)
+
+    result = await AsyncBaseDb.replace_user_memories(db, user_id="user-1", memories=[])
+
+    assert result == []
+    db.get_user_memories.assert_not_called()
+    db.upsert_memories.assert_not_called()
+    db.upsert_user_memory.assert_not_called()
+    db.delete_user_memories.assert_not_called()
 
 
 @pytest.mark.asyncio

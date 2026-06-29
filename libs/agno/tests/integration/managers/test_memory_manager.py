@@ -517,6 +517,42 @@ def test_optimize_memories_with_db_empty(memory_with_db):
     assert optimized == []
 
 
+def test_optimize_memories_with_db_empty_optimized_output_preserves_existing_rows(memory_with_db):
+    """Test empty optimized output leaves existing rows intact."""
+    memory_with_db.add_user_memory(
+        memory=UserMemory(
+            memory="Keep me",
+            topics=["test"],
+            memory_id="keep-1",
+            user_id="test_user",
+            updated_at=datetime.now(),
+        ),
+        user_id="test_user",
+    )
+    memory_with_db.add_user_memory(
+        memory=UserMemory(
+            memory="Keep me too",
+            topics=["test"],
+            memory_id="keep-2",
+            user_id="test_user",
+            updated_at=datetime.now(),
+        ),
+        user_id="test_user",
+    )
+
+    before = [(memory.memory_id, memory.memory) for memory in memory_with_db.get_user_memories(user_id="test_user")]
+
+    optimized = memory_with_db.optimize_memories(
+        user_id="test_user",
+        strategy=DeterministicOptimizationStrategy([]),
+        apply=True,
+    )
+
+    after = [(memory.memory_id, memory.memory) for memory in memory_with_db.get_user_memories(user_id="test_user")]
+    assert optimized == []
+    assert after == before
+
+
 def test_optimize_memories_with_db_default_user_id(memory_with_db):
     """Test optimizing memories with default user_id."""
     memory_with_db.add_user_memory(
@@ -623,5 +659,34 @@ async def test_aoptimize_memories_with_async_sqlite_persists_replacement(temp_db
         persisted_manager = MemoryManager(model=model, db=db)
         persisted_memories = await persisted_manager.aget_user_memories(user_id="test_user")
         assert [memory.memory_id for memory in persisted_memories] == ["async-optimized-1"]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_aoptimize_memories_with_async_sqlite_empty_optimized_output_preserves_rows(temp_db_file, model):
+    """Test async empty optimized output leaves existing rows intact."""
+    db = AsyncSqliteDb(db_file=temp_db_file)
+    try:
+        await db._get_table(table_type="memories", create_table_if_not_found=True)
+        await db.upsert_user_memory(
+            UserMemory(memory="Keep me", topics=["test"], memory_id="async-keep-1", user_id="test_user")
+        )
+        await db.upsert_user_memory(
+            UserMemory(memory="Keep me too", topics=["test"], memory_id="async-keep-2", user_id="test_user")
+        )
+
+        manager = MemoryManager(model=model, db=db)
+        before = [(memory.memory_id, memory.memory) for memory in await db.get_user_memories(user_id="test_user")]
+
+        optimized = await manager.aoptimize_memories(
+            user_id="test_user",
+            strategy=DeterministicOptimizationStrategy([]),
+            apply=True,
+        )
+
+        after = [(memory.memory_id, memory.memory) for memory in await db.get_user_memories(user_id="test_user")]
+        assert optimized == []
+        assert after == before
     finally:
         await db.close()
