@@ -1,5 +1,5 @@
 import re
-from typing import Any, Sequence
+from typing import Any, Sequence, Optional
 
 DEFAULT_SENSITIVE_KEY_PATTERNS = [
     "password",
@@ -17,7 +17,7 @@ DEFAULT_SENSITIVE_KEY_PATTERNS = [
     "db_password",
 ]
 
-def resolve_key_patterns(custom_keys: Sequence[str] | None) -> Sequence[str]:
+def resolve_key_patterns(custom_keys: Optional[Sequence[str]]) -> Sequence[str]:
     """
     Merges custom redaction keys with defaults.
     Ensures that default sensitive keys are never overridden, only appended to.
@@ -26,16 +26,13 @@ def resolve_key_patterns(custom_keys: Sequence[str] | None) -> Sequence[str]:
         return DEFAULT_SENSITIVE_KEY_PATTERNS
     
     # Use dict.fromkeys for deduping while preserving order
-    return list(dict.fromkeys([*DEFAULT_SENSITIVE_KEY_PATTERNS, *custom_keys]))
+    return list(dict.fromkeys([*DEFAULT_SENSITIVE_KEY_PATTERNS, *(k.lower() for k in custom_keys)]))
 
-# This list of regexes is a best-effort secondary net, not an exhaustive list.
-# The primary defense is the key-name match above, because it doesn't depend on
-# guessing every vendor's token format. No fixed set of examples can cover every
-# key format every provider will ever use.
+
 TOKEN_REGEXES = [
     re.compile(r"sk-[A-Za-z0-9-]{10,}"),  # OpenAI/Anthropic
     re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS access keys
-    re.compile(r"gh[ps]_[A-Za-z0-9]{20,}"),  # GitHub tokens
+    re.compile(r"(?:gh[posur]_|github_pat_)[A-Za-z0-9_]{20,}"),  # GitHub tokens
     re.compile(r"xox[baprs]-[A-Za-z0-9-]+"),  # Slack tokens
     re.compile(r"(sk_live_[A-Za-z0-9]+|pk_live_[A-Za-z0-9]+)"),  # Stripe keys
     re.compile(r"AIza[A-Za-z0-9_-]{20,}"),  # Google API keys

@@ -1,4 +1,4 @@
-from agno.os.interfaces.agui.redact import redact_sensitive_data
+from agno.os.interfaces.agui.redact import redact_sensitive_data, resolve_key_patterns
 
 
 def test_redact_sensitive_data_keys():
@@ -37,6 +37,8 @@ def test_redact_sensitive_data_regex_values():
         "my_string": "sk-1234567890abcdefg",  # OpenAI
         "aws_key": "AKIAIOSFODNN7EXAMPLE",  # AWS
         "github": "ghp_123456789012345678901234567890",  # GitHub
+        "github_pat": "github_pat_11AAAAAAA0123456789012_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123",  # GitHub fine-grained
+        "github_oauth": "gho_123456789012345678901234567890",  # GitHub OAuth
         "slack": "xoxb-1234567890-1234567890-abcdefg",  # Slack
         "stripe": "sk_live_1234567890abcdefg",  # Stripe
         "google": "AIzaSyB-1234567890abcdefghijklmnopqrst",  # Google
@@ -51,6 +53,8 @@ def test_redact_sensitive_data_regex_values():
     assert redacted["my_string"] == "[REDACTED]"
     assert redacted["aws_key"] == "[REDACTED]"
     assert redacted["github"] == "[REDACTED]"
+    assert redacted["github_pat"] == "[REDACTED]"
+    assert redacted["github_oauth"] == "[REDACTED]"
     assert redacted["slack"] == "[REDACTED]"
     assert redacted["stripe"] == "[REDACTED]"
     assert redacted["google"] == "[REDACTED]"
@@ -83,3 +87,15 @@ def test_redact_sensitive_data_weird_input():
     redacted = redact_sensitive_data(data)
     assert redacted["normal"] == "ok"
     assert redacted["weird"] == weird
+
+
+def test_resolve_key_patterns():
+    custom_keys = ["SSN", "API_KEY", "Password"]
+    patterns = resolve_key_patterns(custom_keys)
+    
+    assert "ssn" in patterns
+    assert "api_key" in patterns
+    assert "password" in patterns
+    
+    # Ensure deduplication (e.g. password is in default, shouldn't appear twice)
+    assert patterns.count("password") == 1
