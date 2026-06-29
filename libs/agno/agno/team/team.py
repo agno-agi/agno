@@ -338,6 +338,9 @@ class Team:
     num_history_messages: Optional[int] = None
     # Maximum number of tool calls to include from history (None = no limit)
     max_tool_calls_from_history: Optional[int] = None
+    # Run statuses to skip when building model history and team session summaries.
+    # None preserves TeamSession.get_messages() defaults.
+    history_skip_statuses: Optional[List[RunStatus]] = None
 
     # --- Team Storage ---
     # Metadata stored with this team
@@ -502,6 +505,7 @@ class Team:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
+        history_skip_statuses: Optional[List[RunStatus]] = None,
         skills: Optional[Skills] = None,
         tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -625,6 +629,7 @@ class Team:
             num_history_runs=num_history_runs,
             num_history_messages=num_history_messages,
             max_tool_calls_from_history=max_tool_calls_from_history,
+            history_skip_statuses=history_skip_statuses,
             skills=skills,
             tools=tools,
             tool_call_limit=tool_call_limit,
