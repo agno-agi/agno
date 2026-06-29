@@ -7,6 +7,8 @@ import pytest
 
 pytest.importorskip("google.genai")
 
+from google.genai.types import GenerateContentResponse
+
 from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.google.gemini import Gemini
@@ -89,6 +91,64 @@ def test_gemini_invoke_wraps_generic_errors_with_exception_type():
     ):
         with pytest.raises(ModelProviderError, match="TimeoutError"):
             model.invoke(messages=[Message(role="user", content="Hello")], assistant_message=assistant_message)
+
+
+def test_gemini_parse_provider_response_adds_retrieved_context_citations():
+    response = GenerateContentResponse.model_validate(
+        {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "Grounded answer."}]},
+                    "groundingMetadata": {
+                        "groundingChunks": [
+                            {
+                                "retrievedContext": {
+                                    "uri": "https://example.com/vertex-doc",
+                                    "title": "Vertex Search Document",
+                                }
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    model_response = Gemini(api_key="test-key")._parse_provider_response(response)
+
+    assert model_response.citations is not None
+    assert model_response.citations.urls is not None
+    assert model_response.citations.urls[0].url == "https://example.com/vertex-doc"
+    assert model_response.citations.urls[0].title == "Vertex Search Document"
+
+
+def test_gemini_parse_provider_response_delta_adds_retrieved_context_citations():
+    response = GenerateContentResponse.model_validate(
+        {
+            "candidates": [
+                {
+                    "content": {"role": "model", "parts": [{"text": "Grounded answer."}]},
+                    "groundingMetadata": {
+                        "groundingChunks": [
+                            {
+                                "retrievedContext": {
+                                    "uri": "https://example.com/vertex-doc",
+                                    "title": "Vertex Search Document",
+                                }
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    model_response = Gemini(api_key="test-key")._parse_provider_response_delta(response)
+
+    assert model_response.citations is not None
+    assert model_response.citations.urls is not None
+    assert model_response.citations.urls[0].url == "https://example.com/vertex-doc"
+    assert model_response.citations.urls[0].title == "Vertex Search Document"
 
 
 class TestFormatFileForMessage:

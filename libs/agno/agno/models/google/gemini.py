@@ -1247,10 +1247,11 @@ class Gemini(Model):
                     if not chunk:
                         continue
                     web = chunk.web
-                    if not web:
+                    source = web if web else chunk.retrieved_context
+                    if not source:
                         continue
-                    uri = web.uri
-                    title = web.title
+                    uri = source.uri
+                    title = source.title
                     if uri:
                         citations_urls.append(UrlCitation(url=uri, title=title))
 
@@ -1400,10 +1401,11 @@ class Gemini(Model):
                     if not chunk:
                         continue
                     web = chunk.web
-                    if not web:
+                    source = web if web else chunk.retrieved_context
+                    if not source:
                         continue
-                    uri = web.uri
-                    title = web.title
+                    uri = source.uri
+                    title = source.title
                     if uri:
                         citations.urls.append(UrlCitation(url=uri, title=title))
 
