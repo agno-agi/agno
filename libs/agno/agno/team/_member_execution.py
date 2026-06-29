@@ -56,7 +56,7 @@ def _make_resolution_context(context_values: dict[str, Any]) -> RunContext:
             if context_values.get("session_state") is not None
             else run_context.session_state,
             output_schema=output_schema,
-            messages=run_context.messages,
+            messages=context_values.get("messages"),
         )
 
     return RunContext(
