@@ -34,7 +34,7 @@ class TestPerUserBucketing:
             "team": [],
             "workflow": [],
         }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        records = calculate_date_metrics(date(2026, 1, 1), sessions_data, user_isolation=True)
 
         assert len(records) == 2
         users_seen = {r["user_id"] for r in records}
@@ -49,7 +49,7 @@ class TestPerUserBucketing:
             "team": [],
             "workflow": [],
         }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        records = calculate_date_metrics(date(2026, 1, 1), sessions_data, user_isolation=True)
 
         assert len(records) == 1
         assert records[0]["user_id"] == "alice"
@@ -68,7 +68,7 @@ class TestEmptyStringSentinelBucket:
             "team": [],
             "workflow": [],
         }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        records = calculate_date_metrics(date(2026, 1, 1), sessions_data, user_isolation=True)
 
         assert len(records) == 1
         assert records[0]["user_id"] == ""
@@ -81,7 +81,7 @@ class TestEmptyStringSentinelBucket:
             "team": [],
             "workflow": [],
         }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        records = calculate_date_metrics(date(2026, 1, 1), sessions_data, user_isolation=True)
 
         assert records[0]["users_count"] == 0
 
@@ -92,7 +92,7 @@ class TestEmptyStringSentinelBucket:
             "team": [],
             "workflow": [],
         }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        records = calculate_date_metrics(date(2026, 1, 1), sessions_data, user_isolation=True)
 
         assert records[0]["users_count"] == 1
 
@@ -110,7 +110,7 @@ class TestMixedOwnership:
             "team": [],
             "workflow": [],
         }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        records = calculate_date_metrics(date(2026, 1, 1), sessions_data, user_isolation=True)
 
         assert len(records) == 3
         by_user = {r["user_id"]: r for r in records}
@@ -128,7 +128,7 @@ class TestMixedOwnership:
             "team": [],
             "workflow": [],
         }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        records = calculate_date_metrics(date(2026, 1, 1), sessions_data, user_isolation=True)
 
         by_user = {r["user_id"]: r for r in records}
         assert by_user["alice"]["token_metrics"]["input_tokens"] == 1000
@@ -137,7 +137,9 @@ class TestMixedOwnership:
 
 class TestEmptySessionsData:
     def test_no_sessions_returns_empty_list(self):
-        records = calculate_date_metrics(date(2026, 1, 1), {"agent": [], "team": [], "workflow": []})
+        records = calculate_date_metrics(
+            date(2026, 1, 1), {"agent": [], "team": [], "workflow": []}, user_isolation=True
+        )
         assert records == []
 
 
@@ -151,7 +153,7 @@ class TestRecordShape:
             "team": [],
             "workflow": [],
         }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        records = calculate_date_metrics(date(2026, 1, 1), sessions_data, user_isolation=True)
         return records[0]
 
     def test_has_id(self, single_user_record):
@@ -172,6 +174,4 @@ class TestRecordShape:
         assert single_user_record["completed"] is True
 
     def test_has_model_metrics(self, single_user_record):
-        assert single_user_record["model_metrics"] == [
-            {"model_id": "gpt-4", "model_provider": "OpenAI", "count": 3}
-        ]
+        assert single_user_record["model_metrics"] == [{"model_id": "gpt-4", "model_provider": "OpenAI", "count": 3}]

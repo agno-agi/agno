@@ -472,6 +472,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
         if existing is None:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+        # Non-admins can read shared (unowned) content but not modify it.
+        if scoped_user_id is not None and existing.user_id is None:
+            raise HTTPException(status_code=403, detail="Cannot modify shared content")
 
         content = Content(
             id=content_id,
@@ -700,6 +703,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+            # Non-admins can read shared (unowned) content but not delete it.
+            if scoped_user_id is not None and existing.user_id is None:
+                raise HTTPException(status_code=403, detail="Cannot delete shared content")
             await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
 
         return ContentResponseSchema(

@@ -242,18 +242,19 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     return results  # type: ignore
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isolation: bool = False) -> List[dict]:
     """Calculate metrics for the given single date, bucketed per ``user_id``.
 
     Each session is attributed to its owning user. Sessions without a
     ``user_id`` (system / pre-RBAC / anonymous) aggregate under the sentinel
     empty-string bucket — that bucket is what RBAC-off deployments see and it
-    looks identical to the legacy global-metrics shape (one row per date).
+    looks identical to the global-metrics shape (one row per date).
 
     Args:
         date_to_process: The date to calculate metrics for.
         sessions_data: Sessions for this date, keyed by session_type
             (``agent`` / ``team`` / ``workflow``).
+        user_isolation: If ``True``, bucket metrics per ``user_id``; otherwise one row per date (default).
 
     Returns:
         A list of per-user metrics records. One entry per distinct ``user_id``
@@ -282,6 +283,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
                 "reasoning_tokens": 0,
             },
             "model_counts": {},
+            "user_ids": set(),
         }
 
     session_types = [
@@ -297,8 +299,11 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
         sessions = sessions_data.get(session_type, []) or []
 
         for session in sessions:
-            bucket_key = session.get("user_id") or ""
+            session_user_id = session.get("user_id") or ""
+            bucket_key = session_user_id if user_isolation else ""
             bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            if session_user_id:
+                bucket["user_ids"].add(session_user_id)
             bucket[sessions_count_key] += 1
 
             # Parse runs from JSON string
@@ -330,9 +335,9 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
         # ``users_count`` in a per-user bucket is always 1 (or 0 for the
-        # unowned bucket — kept as 0 so legacy global-shape callers see the
+        # unowned bucket — kept as 0 so global-shape callers see the
         # same number they always did when summing).
-        users_count = 0 if user_id == "" else 1
+        users_count = len(bucket["user_ids"])
 
         records.append(
             {

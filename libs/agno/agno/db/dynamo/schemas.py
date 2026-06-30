@@ -414,7 +414,6 @@ SPAN_TABLE_SCHEMA = {
 }
 
 
-
 def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
     """
     Get the expected schema definition for the given table.

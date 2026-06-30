@@ -1148,7 +1148,9 @@ class SurrealDb(BaseDb):
 
         return [], latest_update
 
-    def calculate_metrics(self) -> Optional[List[Dict[str, Any]]]:  # More specific return type
+    def calculate_metrics(
+        self, user_isolation: bool = False
+    ) -> Optional[List[Dict[str, Any]]]:  # More specific return type
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1202,7 +1204,9 @@ class SurrealDb(BaseDb):
                 # calculate_date_metrics now returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Flatten into the bulk-upsert list.
-                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
+                metrics_records.extend(
+                    calculate_date_metrics(date_to_process, sessions_for_date, user_isolation=user_isolation)
+                )
 
             results = []  # Initialize before the if block
             if metrics_records:
@@ -2122,4 +2126,3 @@ class SurrealDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for SurrealDb")
-

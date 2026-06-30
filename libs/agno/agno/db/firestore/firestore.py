@@ -1398,7 +1398,7 @@ class FirestoreDb(BaseDb):
             log_error(f"Exception getting metrics calculation starting date: {str(e)}")
             raise e
 
-    def calculate_metrics(self) -> Optional[list[dict]]:
+    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
         try:
             collection_ref = self._get_collection(table_type="metrics", create_collection_if_not_found=True)
@@ -1442,7 +1442,9 @@ class FirestoreDb(BaseDb):
                 # calculate_date_metrics now returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Flatten into the bulk-upsert list.
-                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
+                metrics_records.extend(
+                    calculate_date_metrics(date_to_process, sessions_for_date, user_isolation=user_isolation)
+                )
 
             if metrics_records:
                 results = bulk_upsert_metrics(collection_ref, metrics_records)
@@ -2569,4 +2571,3 @@ class FirestoreDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for FirestoreDb")
-

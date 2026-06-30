@@ -1109,7 +1109,7 @@ class RedisDb(BaseDb):
             log_error(f"Error getting metrics starting date: {str(e)}")
             raise e
 
-    def calculate_metrics(self) -> Optional[list[dict]]:
+    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1156,13 +1156,13 @@ class RedisDb(BaseDb):
                 # calculate_date_metrics now returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Iterate and upsert each.
-                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                for metrics_record in calculate_date_metrics(
+                    date_to_process, sessions_for_date, user_isolation=user_isolation
+                ):
                     # Preserve created_at across re-runs.
                     existing_record = self._get_record("metrics", metrics_record["id"])
                     if existing_record:
-                        metrics_record["created_at"] = existing_record.get(
-                            "created_at", metrics_record["created_at"]
-                        )
+                        metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
 
                     success = self._store_record("metrics", metrics_record["id"], metrics_record)
                     if success:
@@ -2297,4 +2297,3 @@ class RedisDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
-

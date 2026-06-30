@@ -252,10 +252,12 @@ SCHEDULE_TABLE_SCHEMA = {
     "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
     "locked_by": {"type": String, "nullable": True},
     "locked_at": {"type": BigInteger, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+        {"name": "user_enabled_next_run_at", "columns": ["user_id", "enabled", "next_run_at"]},
     ],
 }
 
@@ -284,6 +286,7 @@ def _get_schedule_runs_table_schema(
         "input": {"type": JSONB, "nullable": True},
         "output": {"type": JSONB, "nullable": True},
         "requirements": {"type": JSONB, "nullable": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
     }
 

@@ -233,16 +233,13 @@ def _normalize(recs: List[dict]) -> Dict[str, dict]:
 
 @pytest.mark.parametrize("backend, get_calc", BACKEND_CALCS, ids=[b for b, _ in BACKEND_CALCS])
 @pytest.mark.parametrize("case_label, sessions_data", CASES, ids=[c for c, _ in CASES])
-def test_backend_matches_sqlite_reference(
-    backend: str, get_calc: Callable, case_label: str, sessions_data: dict
-):
+def test_backend_matches_sqlite_reference(backend: str, get_calc: Callable, case_label: str, sessions_data: dict):
     backend_calc = get_calc()
     target_date = date(2026, 1, 1)
     backend_recs = backend_calc(target_date, sessions_data)
     sqlite_recs = sqlite_calc(target_date, sessions_data)
     assert _normalize(backend_recs) == _normalize(sqlite_recs), (
-        f"backend={backend} case={case_label}: calculate_date_metrics drift "
-        f"from SQLite reference"
+        f"backend={backend} case={case_label}: calculate_date_metrics drift from SQLite reference"
     )
 
 
@@ -264,13 +261,9 @@ SURREAL_NUMERIC_FIELDS = (
 )
 
 
-@pytest.mark.parametrize(
-    "backend, get_calc", LOOSE_PARITY_BACKENDS, ids=[b for b, _ in LOOSE_PARITY_BACKENDS]
-)
+@pytest.mark.parametrize("backend, get_calc", LOOSE_PARITY_BACKENDS, ids=[b for b, _ in LOOSE_PARITY_BACKENDS])
 @pytest.mark.parametrize("case_label, sessions_data", CASES, ids=[c for c, _ in CASES])
-def test_loose_parity_buckets_and_counts_match_sqlite(
-    backend: str, get_calc, case_label: str, sessions_data: dict
-):
+def test_loose_parity_buckets_and_counts_match_sqlite(backend: str, get_calc, case_label: str, sessions_data: dict):
     """Backends that ship their own ID/date/timestamp shapes still need to
     produce the same per-user bucket set and the same counts/token metrics
     as the SQLite reference. We don't compare the ID or date field shapes

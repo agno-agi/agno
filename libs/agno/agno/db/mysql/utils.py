@@ -158,14 +158,14 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         update_dict = {
             col.name: record.get(col.name)
             for col in table.columns
-            if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
-            and col.name in record
+            if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"] and col.name in record
         }
 
         stmt = stmt.on_duplicate_key_update(**update_dict)
         session.execute(stmt)
 
-    session.commit()
+    # No commit here: the caller's ``sess.begin()`` owns the transaction, and
+    # committing inside it would close it before the SELECT-back below.
 
     # Fetch the updated records — match by the full unique key (user_id, date, period).
     from sqlalchemy import and_, select
@@ -208,8 +208,7 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
         update_dict = {
             col.name: record.get(col.name)
             for col in table.columns
-            if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
-            and col.name in record
+            if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"] and col.name in record
         }
 
         stmt = stmt.on_duplicate_key_update(**update_dict)
@@ -234,17 +233,18 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     return results
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+def calculate_date_metrics(date_to_process: date, sessions_data: dict, user_isolation: bool = False) -> List[dict]:
     """Calculate metrics for the given single date, bucketed per ``user_id``.
 
     Each session is attributed to its owning user. Sessions without a
     ``user_id`` aggregate under the sentinel empty-string bucket — that
     bucket is what RBAC-off deployments see and looks identical to the
-    legacy global-metrics shape (one row per date).
+    global-metrics shape (one row per date).
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
+        user_isolation: If ``True``, bucket metrics per ``user_id``; otherwise one row per date (default).
 
     Returns:
         A list of per-user metrics records.
@@ -271,6 +271,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
                 "reasoning_tokens": 0,
             },
             "model_counts": {},
+            "user_ids": set(),
         }
 
     session_types = [
@@ -285,8 +286,11 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
         sessions = sessions_data.get(session_type, []) or []
 
         for session in sessions:
-            bucket_key = session.get("user_id") or ""
+            session_user_id = session.get("user_id") or ""
+            bucket_key = session_user_id if user_isolation else ""
             bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            if session_user_id:
+                bucket["user_ids"].add(session_user_id)
             bucket[sessions_count_key] += 1
 
             runs = session.get("runs", []) or []
@@ -311,7 +315,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
             model_id, model_provider = model.rsplit(":", 1)
             model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
 
-        users_count = 0 if user_id == "" else 1
+        users_count = len(bucket["user_ids"])
 
         records.append(
             {

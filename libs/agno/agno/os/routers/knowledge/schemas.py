@@ -34,6 +34,7 @@ class ContentResponseSchema(BaseModel):
     access_count: Optional[int] = Field(None, description="Number of times content has been accessed", ge=0)
     status: Optional[ContentStatus] = Field(None, description="Processing status of the content")
     status_message: Optional[str] = Field(None, description="Status message or error details")
+    user_id: Optional[str] = Field(None, description="ID of the user who owns the content")
     created_at: Optional[datetime] = Field(None, description="Timestamp when content was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when content was last updated")
 
@@ -84,6 +85,7 @@ class ContentResponseSchema(BaseModel):
             metadata=content.get("metadata"),
             status=status,
             status_message=content.get("status_message"),
+            user_id=content.get("user_id"),
             created_at=parse_timestamp(content.get("created_at")),
             updated_at=parse_timestamp(content.get("updated_at", content.get("created_at", 0))),
             # TODO: These fields are not available in the Content class. Fix the inconsistency

@@ -195,6 +195,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             db = await get_db(dbs, db_id, table)
 
+            # Scope the refresh response to the caller, like GET /metrics.
+            scoped_user_id = get_scoped_user_id(request)
+            user_isolation = bool(getattr(request.app.state, "user_isolation_enabled", False))
+
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -202,11 +206,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                result = await db.calculate_metrics()
+                result = await db.calculate_metrics(user_isolation=user_isolation)
             else:
-                result = db.calculate_metrics()
+                result = db.calculate_metrics(user_isolation=user_isolation)
             if result is None:
                 return []
+
+            # Non-admins see only their own bucket; admins / isolation-off get all.
+            if scoped_user_id is not None:
+                result = [metric for metric in result if metric.get("user_id") == scoped_user_id]
 
             return [DayAggregatedMetrics.from_dict(metric) for metric in result]
 

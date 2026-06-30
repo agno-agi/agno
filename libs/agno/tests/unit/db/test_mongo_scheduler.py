@@ -130,9 +130,7 @@ def test_mongo_update_schedule_updates_and_returns_schedule(monkeypatch: pytest.
     update_result.matched_count = 1
     collection.update_one.return_value = update_result
     monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
-    monkeypatch.setattr(
-        db, "get_schedule", lambda schedule_id, user_id=None: {"id": schedule_id, "name": "Updated"}
-    )
+    monkeypatch.setattr(db, "get_schedule", lambda schedule_id, user_id=None: {"id": schedule_id, "name": "Updated"})
 
     result = db.update_schedule("sched-1", name="Updated")
 
@@ -224,9 +222,7 @@ def test_mongo_update_schedule_run_updates_and_returns_run(monkeypatch: pytest.M
     update_result.matched_count = 1
     collection.update_one.return_value = update_result
     monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
-    monkeypatch.setattr(
-        db, "get_schedule_run", lambda run_id, user_id=None: {"id": run_id, "status": "success"}
-    )
+    monkeypatch.setattr(db, "get_schedule_run", lambda run_id, user_id=None: {"id": run_id, "status": "success"})
 
     result = db.update_schedule_run("run-1", status="success")
 

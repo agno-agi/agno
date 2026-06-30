@@ -116,6 +116,7 @@ class ScheduleResponse(BaseModel):
     retry_delay_seconds: int
     enabled: bool
     next_run_at: Optional[int] = None
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
@@ -144,4 +145,5 @@ class ScheduleRunResponse(BaseModel):
     input: Optional[Dict[str, Any]] = None
     output: Optional[Dict[str, Any]] = None
     requirements: Optional[List[Dict[str, Any]]] = None
+    user_id: Optional[str] = None
     created_at: Optional[int] = None

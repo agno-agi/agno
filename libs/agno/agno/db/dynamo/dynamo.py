@@ -1186,7 +1186,7 @@ class DynamoDb(BaseDb):
 
     # --- Metrics ---
 
-    def calculate_metrics(self) -> Optional[Any]:
+    def calculate_metrics(self, user_isolation: bool = False) -> Optional[Any]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1250,7 +1250,9 @@ class DynamoDb(BaseDb):
                 # calculate_date_metrics now returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Flatten into the bulk-upsert list.
-                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
+                metrics_records.extend(
+                    calculate_date_metrics(date_to_process, sessions_for_date, user_isolation=user_isolation)
+                )
 
             # Store metrics in DynamoDB
             if metrics_records:
@@ -2980,4 +2982,3 @@ class DynamoDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for DynamoDb")
-
