@@ -5098,41 +5098,50 @@ def _build_cancel_terminal_events(
     return cancelled_event, completed_event
 
 
-def cleanup_and_store(
+def _scrub_and_propagate_session_state(
+    agent: Agent,
+    run_response: RunOutput,
+    run_context: Optional[RunContext] = None,
+    isolate_inflight: bool = False,
+) -> RunOutput:
+    """Build the scrubbed storage copy used for persistence.
+
+    Helper shared by cleanup_and_store (terminal) and persist_run_in_session
+    (mid-run checkpoint). Returns a shallow copy with media/tool fields
+    scrubbed per agent settings. Also propagates the current session_state
+    onto both the original run_response and the storage copy.
+    """
+    import copy
+
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
+    return storage_copy
+
+
+def persist_run_in_session(
     agent: Agent,
     run_response: RunOutput,
     session: AgentSession,
     run_context: Optional[RunContext] = None,
-    user_id: Optional[str] = None,
+    storage_copy: Optional[RunOutput] = None,
 ) -> None:
-    import copy
+    """Persist the current run state into the session and save the session.
 
+    Shared by terminal cleanup (cleanup_and_store) and mid-run checkpointing.
+    Performs: scrub a shallow copy (unless one is supplied), upsert it into
+    the session's runs list, refresh session metrics, sync session_state into
+    session_data, and write both the session row and the run row (O(1) each).
+
+    Does NOT stop the run timer, write to file, or update approval status —
+    those are terminal-only and live in cleanup_and_store.
+    """
     from agno.agent import _session
-    from agno.run.approval import update_approval_run_status
 
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = copy.copy(run_response)
-    scrub_run_output_for_storage(agent, storage_copy)
-
-    # Stop the timer for the Run duration
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
-
-    # Update run_response.session_state before saving
-    # This ensures RunOutput reflects all tool modifications
-    if run_context is not None and run_context.session_state is not None:
-        run_response.session_state = run_context.session_state
-        storage_copy.session_state = run_context.session_state
-
-    # Optional: Save output to file if save_response_to_file is set
-    save_run_response_to_file(
-        agent,
-        run_response=storage_copy,
-        input=run_response.input.input_content_string() if run_response.input else "",
-        session_id=session.session_id,
-        user_id=user_id,
-    )
+    if storage_copy is None:
+        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
@@ -5154,12 +5163,73 @@ def cleanup_and_store(
         agent,
         run=storage_copy,
         session_id=session.session_id,
-        user_id=user_id,
+        user_id=session.user_id,
         run_index=run_index,
     )
 
+
+async def apersist_run_in_session(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    storage_copy: Optional[RunOutput] = None,
+) -> None:
+    """Async variant of :func:`persist_run_in_session`."""
+    from agno.agent import _session
+
+    if storage_copy is None:
+        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
+
+    session.upsert_run(run=storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
+    update_session_metrics(agent, session=session, run_response=run_response)
+
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    await _session.asave_session(agent, session=session)
+    await _session.asave_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+    )
+
+
+def cleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    from agno.run.approval import update_approval_run_status
+
+    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Optional: Save output to file if save_response_to_file is set
+    save_run_response_to_file(
+        agent,
+        run_response=storage_copy,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Persist run into session, save session row and run row
+    persist_run_in_session(agent, run_response, session, run_context, storage_copy=storage_copy)
+
     # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id.
+    # This is a no-op if no approval exists for this run_id. (Terminal only.)
     if run_response.status is not None and run_response.run_id is not None:
         update_approval_run_status(agent.db, run_response.run_id, run_response.status)
 
@@ -5171,26 +5241,13 @@ async def acleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
-    import copy
-
-    from agno.agent import _session
     from agno.run.approval import aupdate_approval_run_status
 
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = copy.copy(run_response)
-    scrub_run_output_for_storage(agent, storage_copy)
+    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
 
-    # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Update run_response.session_state before saving
-    if run_context is not None and run_context.session_state is not None:
-        run_response.session_state = run_context.session_state
-        storage_copy.session_state = run_context.session_state
-
-    # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
         agent,
         run_response=storage_copy,
@@ -5199,32 +5256,8 @@ async def acleanup_and_store(
         user_id=user_id,
     )
 
-    # Add scrubbed RunOutput to Agent Session
-    session.upsert_run(run=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    await apersist_run_in_session(agent, run_response, session, run_context, storage_copy=storage_copy)
 
-    # Calculate session metrics
-    update_session_metrics(agent, session=session, run_response=run_response)
-
-    # Update session state before saving the session
-    if run_context is not None and run_context.session_state is not None:
-        if session.session_data is not None:
-            session.session_data["session_state"] = run_context.session_state
-        else:
-            session.session_data = {"session_state": run_context.session_state}
-
-    # Persist the session row and this single run (both O(1))
-    await _session.asave_session(agent, session=session)
-    await _session.asave_run(
-        agent,
-        run=storage_copy,
-        session_id=session.session_id,
-        user_id=user_id,
-        run_index=run_index,
-    )
-
-    # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
         await aupdate_approval_run_status(agent.db, run_response.run_id, run_response.status)
 
