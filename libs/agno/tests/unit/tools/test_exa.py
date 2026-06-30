@@ -15,6 +15,7 @@ def mock_exa_client():
     """Create a mock Exa API client."""
     with patch("agno.tools.exa.Exa") as mock_exa:
         mock_client = Mock(spec=Exa)
+        mock_client.headers = {}
         mock_exa.return_value = mock_client
         return mock_client
 
@@ -34,6 +35,8 @@ def create_mock_search_result(
     author: str = None,
     published_date: str = None,
     text: str = None,
+    highlights=None,
+    summary=None,
 ):
     """Helper function to create mock search result."""
     result = Mock()
@@ -42,6 +45,8 @@ def create_mock_search_result(
     result.author = author
     result.published_date = published_date
     result.text = text
+    result.highlights = highlights
+    result.summary = summary
     return result
 
 
@@ -51,6 +56,26 @@ def test_init_with_api_key():
         with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
             ExaTools()
             mock_exa.assert_called_once_with("test_key")
+
+
+def test_init_sets_integration_header():
+    """Integration header must be set for API usage attribution."""
+    with patch("agno.tools.exa.Exa") as mock_exa:
+        mock_client = Mock(spec=Exa)
+        mock_client.headers = {}
+        mock_exa.return_value = mock_client
+        with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
+            ExaTools()
+            assert mock_client.headers.get("x-exa-integration") == "agno"
+
+
+def test_init_integration_header_failure_is_silent():
+    """Header set should not raise if client surface is unexpected."""
+    with patch("agno.tools.exa.Exa") as mock_exa:
+        mock_client = Mock(spec=[])  # no `headers` attribute
+        mock_exa.return_value = mock_client
+        with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
+            ExaTools()  # should not raise
 
 
 def test_init_with_selective_tools():
@@ -183,6 +208,7 @@ def test_search_with_category(exa_tools, mock_exa_client):
     mock_exa_client.search_and_contents.assert_called_with(
         "research",
         text=True,
+        highlights=False,
         summary=False,
         num_results=5,
         category="research paper",
@@ -230,6 +256,60 @@ def test_parse_results_with_missing_fields(exa_tools):
     assert "title" not in result_data[0]
     assert "author" not in result_data[0]
     assert "published_date" not in result_data[0]
+
+
+def test_search_surfaces_highlights_and_summary(exa_tools, mock_exa_client):
+    """When the API returns highlights or summary, they should appear in parsed output."""
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [
+        create_mock_search_result(
+            url="https://example.com",
+            title="Doc",
+            text="body",
+            highlights=["snippet one", "snippet two"],
+            summary="short summary",
+        )
+    ]
+    mock_exa_client.search_and_contents.return_value = mock_response
+
+    exa_tools.highlights = True
+    exa_tools.summary = True
+
+    result = exa_tools.search_exa("q")
+    result_data = json.loads(result)
+
+    assert result_data[0]["highlights"] == ["snippet one", "snippet two"]
+    assert result_data[0]["summary"] == "short summary"
+
+
+def test_search_passes_new_filters(exa_tools, mock_exa_client):
+    """include_text, exclude_text, and user_location should be forwarded when set."""
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = []
+    mock_exa_client.search_and_contents.return_value = mock_response
+
+    exa_tools.include_text = ["quarterly revenue"]
+    exa_tools.exclude_text = ["press release"]
+    exa_tools.user_location = "US"
+
+    exa_tools.search_exa("q")
+
+    _, kwargs = mock_exa_client.search_and_contents.call_args
+    assert kwargs["include_text"] == ["quarterly revenue"]
+    assert kwargs["exclude_text"] == ["press release"]
+    assert kwargs["user_location"] == "US"
+
+
+def test_parse_results_omits_missing_highlights_and_summary(exa_tools):
+    """Missing highlights/summary fields should not appear as keys."""
+    mock_response = Mock(spec=SearchResponse)
+    mock_response.results = [create_mock_search_result(url="https://example.com")]
+
+    result = exa_tools._parse_results(mock_response)
+    result_data = json.loads(result)
+
+    assert "highlights" not in result_data[0]
+    assert "summary" not in result_data[0]
 
 
 def test_text_length_limit(exa_tools, mock_exa_client):
