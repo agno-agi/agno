@@ -41,7 +41,7 @@ ui_team = Team(
 # Setup our AgentOS app
 agent_os = AgentOS(
     teams=[ui_team],
-    interfaces=[AGUI(team=ui_team)],
+    interfaces=[AGUI(team=ui_team, prefix="/agentic_chat")],
 )
 app = agent_os.get_app()
 
