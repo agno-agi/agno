@@ -361,6 +361,13 @@ def parse_tools(
     ):
         strict = True
 
+    # Team-level delegation tools must never appear in a member agent's tool schema.
+    # When this agent runs as a team member (agent._team is not None), filter them out
+    # so the model cannot hallucinate calls to tools that belong to the parent team.
+    _team_only_tool_names: set = (
+        {"delegate_task_to_member", "delegate_task_to_members"} if agent._team is not None else set()
+    )
+
     for tool in tools:
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
@@ -372,6 +379,9 @@ def parse_tools(
             # For each function in the toolkit and process entrypoint
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
+                if name in _team_only_tool_names:
+                    log_debug(f"Skipping team-only tool '{name}' for member agent")
+                    continue
                 if name in _function_names:
                     log_warning(
                         f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
@@ -402,6 +412,9 @@ def parse_tools(
                 agent._tool_instructions.append(tool.instructions)
 
         elif isinstance(tool, Function):
+            if tool.name in _team_only_tool_names:
+                log_debug(f"Skipping team-only tool '{tool.name}' for member agent")
+                continue
             if tool.name in _function_names:
                 log_warning(f"Duplicate tool name '{tool.name}' already registered on agent; skipping the duplicate.")
                 continue
@@ -430,6 +443,9 @@ def parse_tools(
             try:
                 function_name = tool.__name__
 
+                if function_name in _team_only_tool_names:
+                    log_debug(f"Skipping team-only tool '{function_name}' for member agent")
+                    continue
                 if function_name in _function_names:
                     log_warning(
                         f"Duplicate tool name '{function_name}' already registered on agent; skipping the duplicate."
