@@ -257,7 +257,7 @@ class TestScrapeWebsite:
 
         # Assert
         mock_oxylabs_client.universal.scrape_url.assert_called_once_with(
-            url="https://example.com", render=None, parse=True
+            url="https://example.com", render=None, markdown=True
         )
 
         result_data = json.loads(result)
