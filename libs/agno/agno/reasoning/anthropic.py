@@ -10,19 +10,47 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 
+def _anthropic_fallback(reasoning_model: Model) -> bool:
+    """Config-based check, used only when the models.retrieve lookup fails: thinking is set."""
+    return hasattr(reasoning_model, "thinking") and reasoning_model.thinking is not None
+
+
 def is_anthropic_reasoning_model(reasoning_model: Model) -> bool:
-    """Check if the model is an Anthropic Claude model with thinking support."""
-    is_claude = reasoning_model.__class__.__name__ == "Claude"
-    if not is_claude:
+    """Check if the model is an Anthropic Claude model with thinking support.
+
+    Uses the Anthropic API (models.retrieve -> capabilities.thinking.supported) to detect thinking
+    support, and falls back to checking whether the thinking parameter is set only if the API call
+    fails.
+    """
+    if reasoning_model.__class__.__name__ != "Claude":
         return False
 
-    # Check if provider is Anthropic (not VertexAI)
+    # Only the Anthropic-hosted Claude (not VertexAI/Bedrock) exposes this capability endpoint.
     is_anthropic_provider = hasattr(reasoning_model, "provider") and reasoning_model.provider == "Anthropic"
+    if not is_anthropic_provider:
+        return False
 
-    # Check if thinking parameter is set
-    has_thinking = hasattr(reasoning_model, "thinking") and reasoning_model.thinking is not None
+    try:
+        client = reasoning_model.get_client()  # type: ignore[attr-defined]
+        model_info = client.models.retrieve(reasoning_model.id)
+        # `capabilities` is returned as an extra (untyped) field, so it arrives as a nested dict.
+        capabilities = getattr(model_info, "capabilities", None)
+        if capabilities is not None:
+            thinking = (
+                capabilities.get("thinking")
+                if isinstance(capabilities, dict)
+                else getattr(capabilities, "thinking", None)
+            )
+            if thinking is not None:
+                supported = (
+                    thinking.get("supported") if isinstance(thinking, dict) else getattr(thinking, "supported", None)
+                )
+                if supported is not None:
+                    return bool(supported)
+    except Exception as e:
+        log_warning(f"Could not determine Anthropic thinking capability via API, falling back to config: {str(e)}")
 
-    return is_claude and is_anthropic_provider and has_thinking
+    return _anthropic_fallback(reasoning_model)
 
 
 def get_anthropic_reasoning(
