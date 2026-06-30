@@ -96,6 +96,11 @@ class TestUnsplashToolsInit:
         tools = UnsplashTools(access_key="provided_key")
         assert tools.access_key == "provided_key"
 
+    def test_init_with_custom_timeout(self):
+        """Test initialization with a custom timeout."""
+        tools = UnsplashTools(access_key="provided_key", timeout=15)
+        assert tools.timeout == 15
+
     def test_init_without_api_key_logs_warning(self):
         """Test initialization without API key logs a warning."""
         with patch.dict("os.environ", {}, clear=True):
@@ -493,3 +498,12 @@ class TestMakeRequest:
         call_args = mock_urlopen.call_args[0][0]
         assert call_args.headers["Authorization"] == "Client-ID test_key"
         assert call_args.headers["Accept-version"] == "v1"
+
+    def test_make_request_passes_timeout(self, unsplash_tools, mock_urlopen):
+        """Test request passes the configured timeout to urlopen."""
+        mock_urlopen.return_value = create_mock_response({"test": "data"})
+        unsplash_tools.timeout = 15
+
+        unsplash_tools._make_request("/test")
+
+        assert mock_urlopen.call_args.kwargs["timeout"] == 15

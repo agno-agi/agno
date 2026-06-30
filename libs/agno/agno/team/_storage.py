@@ -27,6 +27,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.utils import resolve_model
 from agno.registry.registry import Registry
+from agno.run import RunStatus
 from agno.run.agent import RunOutput
 from agno.run.team import (
     TeamRunOutput,
@@ -639,6 +640,10 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["num_history_messages"] = team.num_history_messages
     if team.max_tool_calls_from_history is not None:
         config["max_tool_calls_from_history"] = team.max_tool_calls_from_history
+    if team.history_skip_statuses is not None:
+        config["history_skip_statuses"] = [
+            status.value if isinstance(status, RunStatus) else str(status) for status in team.history_skip_statuses
+        ]
 
     # --- Media/storage settings ---
     if not team.send_media_to_model:  # default is True
@@ -726,6 +731,12 @@ def _parse_team_mode(value: Optional[str]) -> Optional["TeamMode"]:
     from agno.team.mode import TeamMode
 
     return TeamMode(value)
+
+
+def _parse_run_statuses(value: Optional[List[Union[RunStatus, str]]]) -> Optional[List[RunStatus]]:
+    if value is None:
+        return None
+    return [status if isinstance(status, RunStatus) else RunStatus(status) for status in value]
 
 
 def from_dict(
@@ -968,6 +979,7 @@ def from_dict(
             num_history_runs=config.get("num_history_runs"),
             num_history_messages=config.get("num_history_messages"),
             max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
+            history_skip_statuses=_parse_run_statuses(config.get("history_skip_statuses")),
             # --- Compression settings ---
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO

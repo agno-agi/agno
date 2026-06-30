@@ -38,6 +38,7 @@ from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.utils import get_model
+from agno.run import RunStatus
 from agno.run.agent import RunEvent
 from agno.run.team import (
     TeamRunEvent,
@@ -128,6 +129,7 @@ def __init__(
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
     max_tool_calls_from_history: Optional[int] = None,
+    history_skip_statuses: Optional[List[RunStatus]] = None,
     skills: Optional[Skills] = None,
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
     tool_call_limit: Optional[int] = None,
@@ -249,6 +251,7 @@ def __init__(
         team.num_history_runs = 3
 
     team.max_tool_calls_from_history = max_tool_calls_from_history
+    team.history_skip_statuses = history_skip_statuses
 
     team.add_team_history_to_members = add_team_history_to_members
     team.num_team_history_runs = num_team_history_runs
@@ -577,11 +580,13 @@ def _set_memory_manager(team: "Team") -> None:
 
 def _set_session_summary_manager(team: "Team") -> None:
     if team.enable_session_summaries and team.session_summary_manager is None:
-        team.session_summary_manager = SessionSummaryManager(model=team.model)
+        team.session_summary_manager = SessionSummaryManager(model=team.model, skip_statuses=team.history_skip_statuses)
 
     if team.session_summary_manager is not None:
         if team.session_summary_manager.model is None:
             team.session_summary_manager.model = team.model
+        if team.session_summary_manager.skip_statuses is None and team.history_skip_statuses is not None:
+            team.session_summary_manager.skip_statuses = team.history_skip_statuses
 
     if team.add_session_summary_to_context is None:
         team.add_session_summary_to_context = team.enable_session_summaries or team.session_summary_manager is not None

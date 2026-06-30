@@ -19,6 +19,7 @@ import pytest
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
+from agno.run import RunStatus
 from agno.session import TeamSession
 from agno.team.team import Team, get_team_by_id, get_teams
 
@@ -201,6 +202,18 @@ class TestTeamToDict:
 
         assert team.store_history_messages is False
         assert "store_history_messages" not in team.to_dict()
+
+    def test_history_skip_statuses_are_serialized(self):
+        """Test custom history skip statuses are serialized as enum values."""
+        team = Team(id="history-skip-team", members=[], history_skip_statuses=[RunStatus.paused, RunStatus.error])
+
+        assert team.to_dict()["history_skip_statuses"] == ["PAUSED", "ERROR"]
+
+    def test_history_skip_statuses_round_trip_from_dict(self):
+        """Test custom history skip statuses are restored from config."""
+        team = Team.from_dict({"id": "history-skip-team", "members": [], "history_skip_statuses": ["PAUSED"]})
+
+        assert team.history_skip_statuses == [RunStatus.paused]
 
     def test_add_search_knowledge_instructions_default_omitted(self):
         """Test add_search_knowledge_instructions default is omitted from config."""

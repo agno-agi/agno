@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from agno.models.base import Model
 from agno.models.utils import get_model
+from agno.run import RunStatus
 from agno.run.agent import Message
 from agno.utils.log import log_debug, log_warning
 
@@ -92,6 +93,9 @@ class SessionSummaryManager:
 
     # Maximum number of messages to include in the summary conversation. None means no limit.
     conversation_limit: Optional[int] = None
+
+    # Statuses to skip when building the conversation used for summaries.
+    skip_statuses: Optional[List[RunStatus]] = None
 
     def __post_init__(self) -> None:
         if self.id is None:
@@ -181,6 +185,7 @@ class SessionSummaryManager:
             conversation=session.get_messages(  # type: ignore
                 last_n_runs=self.last_n_runs,
                 limit=self.conversation_limit,
+                skip_statuses=self.skip_statuses,
             ),
             response_format=response_format,
         )
