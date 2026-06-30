@@ -63,6 +63,9 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
         return "Team run paused."
     parts: list[str] = []
     for req in active:
+        # Skip silent external execution requirements — mirrors agent-side filter
+        if req.external_execution_silent:
+            continue
         member = req.member_agent_name or "team"
         tool_name = req.tool_execution.tool_name if req.tool_execution else "unknown"
         if req.needs_confirmation:
@@ -71,6 +74,8 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
             parts.append(f"- {member}: {tool_name} requires user input")
         elif req.needs_external_execution:
             parts.append(f"- {member}: {tool_name} requires external execution")
+    if not parts:
+        return ""
     return "Team run paused. The following require input:\n" + "\n".join(parts)
 
 
