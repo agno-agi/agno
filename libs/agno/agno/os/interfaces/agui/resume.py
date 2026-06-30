@@ -24,12 +24,13 @@ async def resume_paused_run(
 
     from agno.run.base import RunStatus
     from agno.session.agent import AgentSession
+    from agno.session.team import TeamSession
 
-    session = entity.db.get_session(session_id=session_id)  # type: ignore[union-attr]
+    session = await entity.aget_session(session_id=session_id)
     if not session:
         raise ValueError(f"Session {session_id} not found")
-    if not isinstance(session, AgentSession):
-        raise ValueError(f"Session {session_id} is not an AgentSession")
+    if not isinstance(session, (AgentSession, TeamSession)):
+        raise ValueError(f"Session {session_id} is not a valid session type")
 
     # Find the paused run (AG-UI sends new run_id on resume, so we find by status)
     paused_run = next(
