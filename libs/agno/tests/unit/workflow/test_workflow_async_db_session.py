@@ -69,3 +69,17 @@ def test_sync_workflow_session_writes_reject_async_postgres_db_without_leaking_c
     )
 
     _assert_raises_without_unawaited_warning(lambda: method(session=session))
+
+
+def test_sync_workflow_delete_session_rejects_async_postgres_db_without_leaking_coroutines(
+    workflow_with_async_postgres_db: Workflow,
+):
+    _assert_raises_without_unawaited_warning(
+        lambda: workflow_with_async_postgres_db.delete_session(session_id="test-session")
+    )
+
+
+def test_sync_workflow_get_run_rejects_async_postgres_db_without_leaking_coroutines(
+    workflow_with_async_postgres_db: Workflow,
+):
+    _assert_raises_without_unawaited_warning(lambda: workflow_with_async_postgres_db.get_run(run_id="test-run"))
