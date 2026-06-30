@@ -204,12 +204,16 @@ def _format_type(props: Dict[str, Any], indent: int) -> str:
         return f"{{\n{_format_object_parameters(props, indent + 2)}\n}}"
     elif type_name in ["integer", "number"]:
         if "enum" in props:
-            return " | ".join([f'"{item}"' for item in props["enum"]])
+            # Numeric enums map to TypeScript numeric literal unions (e.g. 1 | 2 | 3), not quoted strings
+            return " | ".join([str(item) for item in props["enum"]])
         return "number"
     elif type_name == "boolean":
         return "boolean"
     elif type_name == "null":
         return "null"
+    elif "enum" in props:
+        # Untyped enums (e.g. mixed-type Literals) still map to a literal union; quote strings, leave numbers bare
+        return " | ".join([f'"{item}"' if isinstance(item, str) else str(item) for item in props["enum"]])
     else:
         # Default to "any" for unknown types
         return "any"

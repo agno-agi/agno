@@ -37,6 +37,7 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "schedules_table",
         "schedule_runs_table",
         "approvals_table",
+        "auth_tokens_table",
     }
 )
 
@@ -510,6 +511,14 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
             return SqliteDb.from_dict(db_data)
         except Exception as e:
             log_error(f"Error reconstructing SqliteDb from dictionary: {str(e)}")
+            return None
+    elif db_type == "clickhouse":
+        try:
+            from agno.db.clickhouse import ClickhouseDb
+
+            return ClickhouseDb.from_dict(db_data)
+        except Exception as e:
+            log_error(f"Error reconstructing ClickhouseDb from dictionary: {str(e)}")
             return None
     else:
         log_warning(f"Unknown database type: {db_type}")
