@@ -4,6 +4,9 @@ Team with Client Tools
 
 Demonstrates AG-UI client_tools with a Team.
 Frontend tools are defined by the AG-UI client (e.g., CopilotKit) and executed in the browser.
+
+Dojo expects:
+- change_background(background: str) -> changes CSS background
 """
 
 from agno.agent.agent import Agent
