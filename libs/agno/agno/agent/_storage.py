@@ -284,7 +284,7 @@ async def aupsert_run(
         if not agent.db:
             return
         if _init.has_async_db(agent):
-            await agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+            await agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
         else:
             agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:

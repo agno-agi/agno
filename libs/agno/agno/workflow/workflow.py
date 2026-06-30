@@ -1607,7 +1607,7 @@ class Workflow:
             return
         try:
             if self._has_async_db():
-                await self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+                await self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
             else:
                 self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
         except NotImplementedError:

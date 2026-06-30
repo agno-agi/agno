@@ -258,7 +258,7 @@ async def _aupsert_run(
         if not team.db:
             return
         if _has_async_db(team):
-            await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+            await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
         else:
             team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:
