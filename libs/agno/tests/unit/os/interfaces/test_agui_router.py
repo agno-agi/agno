@@ -8,13 +8,14 @@ from agno.os.interfaces.agui.router import run_entity
 
 
 class FakeRunInput:
-    def __init__(self, *, context=None, state=None):
+    def __init__(self, *, context=None, state=None, tools=None):
         self.messages = [MagicMock(role="user", content="test")]
         self.thread_id = "test-thread"
         self.run_id = "test-run"
         self.forwarded_props = None
         self.state = state
         self.context = context
+        self.tools = tools
 
 
 class CaptureKwargsEntity:
@@ -43,8 +44,8 @@ async def test_run_entity_passes_stream_events():
 
 
 @pytest.mark.asyncio
-async def test_run_entity_no_context_omits_dependencies_kwarg():
-    """No context means no dependencies or add_dependencies_to_context passed."""
+async def test_run_entity_no_context_omits_add_dependencies_flag():
+    """No context means no add_dependencies_to_context passed."""
     fake_entity = CaptureKwargsEntity()
     run_input = FakeRunInput(context=None)
 
@@ -52,12 +53,11 @@ async def test_run_entity_no_context_omits_dependencies_kwarg():
         pass
 
     assert "add_dependencies_to_context" not in fake_entity.captured_kwargs
-    assert "dependencies" not in fake_entity.captured_kwargs
 
 
 @pytest.mark.asyncio
-async def test_run_entity_with_context_passes_dependencies():
-    """Context items are passed as dependencies with add_dependencies_to_context=True."""
+async def test_run_entity_with_context_passes_run_context_with_dependencies():
+    """Context items are passed via run_context.dependencies with add_dependencies_to_context=True."""
     fake_entity = CaptureKwargsEntity()
     context = [MagicMock(description="user_name", value="Alice")]
     run_input = FakeRunInput(context=context)
@@ -66,4 +66,6 @@ async def test_run_entity_with_context_passes_dependencies():
         pass
 
     assert fake_entity.captured_kwargs.get("add_dependencies_to_context") is True
-    assert fake_entity.captured_kwargs.get("dependencies") == {"user_name": "Alice"}
+    run_context = fake_entity.captured_kwargs.get("run_context")
+    assert run_context is not None
+    assert run_context.dependencies == {"user_name": "Alice"}
