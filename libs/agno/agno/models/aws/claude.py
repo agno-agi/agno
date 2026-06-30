@@ -49,6 +49,20 @@ class Claude(AnthropicClaude):
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False
 
+    def _using_structured_outputs(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> bool:
+        """AWS Bedrock does not support the Anthropic native structured outputs beta
+        (``structured-outputs-2025-11-13`` header). Structured outputs are handled
+        via the JSON output prompt fallback in the agent message layer instead.
+        Override to suppress the misleading parent warning that fires when
+        ``response_format`` is passed to a model with
+        ``supports_native_structured_outputs=False``.
+        """
+        return False
+
     def _get_client_params(self) -> Dict[str, Any]:
         if self.session:
             # Use get_frozen_credentials() for an atomic snapshot so that
