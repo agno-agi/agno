@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Union
 
 from agno.agent import Agent
 from agno.os.interfaces.agui.input import merge_tool_results_into_requirements
@@ -11,7 +11,6 @@ async def resume_paused_run(
     session_id: str,
     tool_messages: list,
     run_context: RunContext,
-    session_state: Optional[dict],
     run_kwargs: dict,
 ):
     # Remote entities don't support client_tools resume (no aget_session)
@@ -54,7 +53,6 @@ async def resume_paused_run(
         requirements=requirements,
         stream=True,
         stream_events=True,
-        session_state=session_state,
         run_context=run_context,
         **run_kwargs,
     )

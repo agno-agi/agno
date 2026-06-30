@@ -86,7 +86,6 @@ async def run_entity(
                 session_id=run_input.thread_id,
                 tool_messages=tool_messages,
                 run_context=run_context,
-                session_state=session_state,
                 run_kwargs=run_kwargs,
             )
         else:
