@@ -1,8 +1,11 @@
+import asyncio
 import base64
 import json
 from os import getenv
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+
+import httpx
 
 from agno.agent import Agent
 from agno.media import Image
@@ -14,6 +17,53 @@ try:
     import requests
 except ImportError:
     raise ImportError("`requests` not installed.")
+
+
+_BRIGHTDATA_DATASETS: Dict[str, str] = {
+    "amazon_product": "gd_l7q7dkf244hwjntr0",
+    "amazon_product_reviews": "gd_le8e811kzy4ggddlq",
+    "amazon_product_search": "gd_lwdb4vjm1ehb499uxs",
+    "walmart_product": "gd_l95fol7l1ru6rlo116",
+    "walmart_seller": "gd_m7ke48w81ocyu4hhz0",
+    "ebay_product": "gd_ltr9mjt81n0zzdk1fb",
+    "homedepot_products": "gd_lmusivh019i7g97q2n",
+    "zara_products": "gd_lct4vafw1tgx27d4o0",
+    "etsy_products": "gd_ltppk0jdv1jqz25mz",
+    "bestbuy_products": "gd_ltre1jqe1jfr7cccf",
+    "linkedin_person_profile": "gd_l1viktl72bvl7bjuj0",
+    "linkedin_company_profile": "gd_l1vikfnt1wgvvqz95w",
+    "linkedin_job_listings": "gd_lpfll7v5hcqtkxl6l",
+    "linkedin_posts": "gd_lyy3tktm25m4avu764",
+    "linkedin_people_search": "gd_m8d03he47z8nwb5xc",
+    "crunchbase_company": "gd_l1vijqt9jfj7olije",
+    "zoominfo_company_profile": "gd_m0ci4a4ivx3j5l6nx",
+    "instagram_profiles": "gd_l1vikfch901nx3by4",
+    "instagram_posts": "gd_lk5ns7kz21pck8jpis",
+    "instagram_reels": "gd_lyclm20il4r5helnj",
+    "instagram_comments": "gd_ltppn085pokosxh13",
+    "facebook_posts": "gd_lyclm1571iy3mv57zw",
+    "facebook_marketplace_listings": "gd_lvt9iwuh6fbcwmx1a",
+    "facebook_company_reviews": "gd_m0dtqpiu1mbcyc2g86",
+    "facebook_events": "gd_m14sd0to1jz48ppm51",
+    "tiktok_profiles": "gd_l1villgoiiidt09ci",
+    "tiktok_posts": "gd_lu702nij2f790tmv9h",
+    "tiktok_shop": "gd_m45m1u911dsa4274pi",
+    "tiktok_comments": "gd_lkf2st302ap89utw5k",
+    "google_maps_reviews": "gd_luzfs1dn2oa0teb81",
+    "google_shopping": "gd_ltppk50q18kdw67omz",
+    "google_play_store": "gd_lsk382l8xei8vzm4u",
+    "apple_app_store": "gd_lsk9ki3u2iishmwrui",
+    "reuter_news": "gd_lyptx9h74wtlvpnfu",
+    "github_repository_file": "gd_lyrexgxc24b3d4imjt",
+    "yahoo_finance_business": "gd_lmrpz3vxmz972ghd7",
+    "x_posts": "gd_lwxkxvnf1cynvib9co",
+    "zillow_properties_listing": "gd_lfqkr8wm13ixtbd8f5",
+    "booking_hotel_listings": "gd_m5mbdl081229ln6t4a",
+    "youtube_profiles": "gd_lk538t2k2p1k3oos71",
+    "youtube_comments": "gd_lk9q0ew71spt1mxywf",
+    "reddit_posts": "gd_lvz8ah06191smkebj4",
+    "youtube_videos": "gd_m5mbdl081229ln6t4a",
+}
 
 
 class BrightDataTools(Toolkit):
@@ -65,6 +115,7 @@ class BrightDataTools(Toolkit):
         self.timeout = timeout
 
         tools: List[Any] = []
+        async_tools: List[Any] = []
         if all or enable_scrape_markdown:
             tools.append(self.scrape_as_markdown)
         if all or enable_screenshot:
@@ -73,8 +124,9 @@ class BrightDataTools(Toolkit):
             tools.append(self.search_engine)
         if all or enable_web_data_feed:
             tools.append(self.web_data_feed)
+            async_tools.append((self.aweb_data_feed, "web_data_feed"))
 
-        super().__init__(name="brightdata_tools", tools=tools, **kwargs)
+        super().__init__(name="brightdata_tools", tools=tools, async_tools=async_tools, **kwargs)
 
     def _make_request(self, payload: Dict) -> str:
         """Make a request to Bright Data API."""
@@ -266,51 +318,7 @@ class BrightDataTools(Toolkit):
 
             log_info(f"Retrieving {source_type} data from: {url}")
 
-            datasets = {
-                "amazon_product": "gd_l7q7dkf244hwjntr0",
-                "amazon_product_reviews": "gd_le8e811kzy4ggddlq",
-                "amazon_product_search": "gd_lwdb4vjm1ehb499uxs",
-                "walmart_product": "gd_l95fol7l1ru6rlo116",
-                "walmart_seller": "gd_m7ke48w81ocyu4hhz0",
-                "ebay_product": "gd_ltr9mjt81n0zzdk1fb",
-                "homedepot_products": "gd_lmusivh019i7g97q2n",
-                "zara_products": "gd_lct4vafw1tgx27d4o0",
-                "etsy_products": "gd_ltppk0jdv1jqz25mz",
-                "bestbuy_products": "gd_ltre1jqe1jfr7cccf",
-                "linkedin_person_profile": "gd_l1viktl72bvl7bjuj0",
-                "linkedin_company_profile": "gd_l1vikfnt1wgvvqz95w",
-                "linkedin_job_listings": "gd_lpfll7v5hcqtkxl6l",
-                "linkedin_posts": "gd_lyy3tktm25m4avu764",
-                "linkedin_people_search": "gd_m8d03he47z8nwb5xc",
-                "crunchbase_company": "gd_l1vijqt9jfj7olije",
-                "zoominfo_company_profile": "gd_m0ci4a4ivx3j5l6nx",
-                "instagram_profiles": "gd_l1vikfch901nx3by4",
-                "instagram_posts": "gd_lk5ns7kz21pck8jpis",
-                "instagram_reels": "gd_lyclm20il4r5helnj",
-                "instagram_comments": "gd_ltppn085pokosxh13",
-                "facebook_posts": "gd_lyclm1571iy3mv57zw",
-                "facebook_marketplace_listings": "gd_lvt9iwuh6fbcwmx1a",
-                "facebook_company_reviews": "gd_m0dtqpiu1mbcyc2g86",
-                "facebook_events": "gd_m14sd0to1jz48ppm51",
-                "tiktok_profiles": "gd_l1villgoiiidt09ci",
-                "tiktok_posts": "gd_lu702nij2f790tmv9h",
-                "tiktok_shop": "gd_m45m1u911dsa4274pi",
-                "tiktok_comments": "gd_lkf2st302ap89utw5k",
-                "google_maps_reviews": "gd_luzfs1dn2oa0teb81",
-                "google_shopping": "gd_ltppk50q18kdw67omz",
-                "google_play_store": "gd_lsk382l8xei8vzm4u",
-                "apple_app_store": "gd_lsk9ki3u2iishmwrui",
-                "reuter_news": "gd_lyptx9h74wtlvpnfu",
-                "github_repository_file": "gd_lyrexgxc24b3d4imjt",
-                "yahoo_finance_business": "gd_lmrpz3vxmz972ghd7",
-                "x_posts": "gd_lwxkxvnf1cynvib9co",
-                "zillow_properties_listing": "gd_lfqkr8wm13ixtbd8f5",
-                "booking_hotel_listings": "gd_m5mbdl081229ln6t4a",
-                "youtube_profiles": "gd_lk538t2k2p1k3oos71",
-                "youtube_comments": "gd_lk9q0ew71spt1mxywf",
-                "reddit_posts": "gd_lvz8ah06191smkebj4",
-                "youtube_videos": "gd_m5mbdl081229ln6t4a",
-            }
+            datasets = _BRIGHTDATA_DATASETS
 
             if source_type not in datasets:
                 valid_sources = ", ".join(datasets.keys())
@@ -360,6 +368,84 @@ class BrightDataTools(Toolkit):
                 except Exception:
                     attempts += 1
                     time.sleep(1)
+
+            return f"Timeout after {max_attempts} seconds waiting for {source_type} data"
+
+        except Exception as e:
+            return f"Error retrieving {source_type} data from {url}: {e}"
+
+    async def aweb_data_feed(
+        self,
+        source_type: str,
+        url: str,
+        num_of_reviews: Optional[int] = None,
+    ) -> str:
+        """
+        Retrieve structured web data from various sources like LinkedIn, Amazon, Instagram, etc.
+
+        Args:
+            source_type (str): Type of data source (e.g., 'linkedin_person_profile', 'amazon_product')
+            url (str): URL of the web resource to retrieve data from
+            num_of_reviews (Optional[int]): Number of reviews to retrieve
+
+        Returns:
+            str: Structured data from the requested source as JSON
+        """
+        try:
+            if not self.api_key:
+                return "Please provide a Bright Data API key"
+            if not url:
+                return "Please provide a URL to retrieve data from"
+
+            log_info(f"Retrieving {source_type} data from: {url}")
+
+            if source_type not in _BRIGHTDATA_DATASETS:
+                valid_sources = ", ".join(_BRIGHTDATA_DATASETS.keys())
+                return f"Invalid source_type: {source_type}. Valid options are: {valid_sources}"
+
+            dataset_id = _BRIGHTDATA_DATASETS[source_type]
+
+            request_data = {"url": url}
+            if source_type == "facebook_company_reviews" and num_of_reviews is not None:
+                request_data["num_of_reviews"] = str(num_of_reviews)
+
+            attempts = 0
+            max_attempts = self.timeout
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                trigger_response = await client.post(
+                    "https://api.brightdata.com/datasets/v3/trigger",
+                    params={"dataset_id": dataset_id, "include_errors": "true"},
+                    headers=self.headers,
+                    json=[request_data],
+                )
+
+                trigger_data = trigger_response.json()
+                if not trigger_data.get("snapshot_id"):
+                    return "No snapshot ID returned from trigger request"
+
+                snapshot_id = trigger_data["snapshot_id"]
+
+                while attempts < max_attempts:
+                    try:
+                        snapshot_response = await client.get(
+                            f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}",
+                            params={"format": "json"},
+                            headers=self.headers,
+                        )
+
+                        snapshot_data = snapshot_response.json()
+
+                        if isinstance(snapshot_data, dict) and snapshot_data.get("status") == "running":
+                            attempts += 1
+                            await asyncio.sleep(1)
+                            continue
+
+                        return json.dumps(snapshot_data)
+
+                    except Exception:
+                        attempts += 1
+                        await asyncio.sleep(1)
 
             return f"Timeout after {max_attempts} seconds waiting for {source_type} data"
 
