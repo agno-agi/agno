@@ -50,84 +50,107 @@ def apply_sorting(
         return data
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given single date.
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+    """Calculate metrics for the given single date, bucketed per ``user_id``.
+
+    Each session is attributed to its owning user. Sessions without a
+    ``user_id`` aggregate under the sentinel empty-string bucket.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        dict: The calculated metrics.
+        A list of per-user metrics records.
     """
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+        }
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
-    all_user_ids = set()
+
+    per_user: Dict[str, Dict[str, Any]] = {}
 
     for session_type, sessions_count_key, runs_count_key in session_types:
         sessions = sessions_data.get(session_type, []) or []
-        metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
-            metrics[runs_count_key] += len(session.get("runs", []))
-            if runs := session.get("runs", []):
-                for run in runs:
-                    if model_id := run.get("model"):
-                        model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
+            bucket_key = session.get("user_id") or ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            bucket[sessions_count_key] += 1
 
-            session_metrics = session.get("session_data", {}).get("session_metrics", {})
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
+            runs = session.get("runs", []) or []
+            bucket[runs_count_key] += len(runs)
+            for run in runs:
+                if model_id := run.get("model"):
+                    model_provider = run.get("model_provider", "")
+                    key = f"{model_id}:{model_provider}"
+                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.rsplit(":", 1)
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+            session_metrics = session.get("session_data", {}).get("session_metrics", {}) or {}
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
-    metrics["users_count"] = len(all_user_ids)
     current_time = int(time.time())
+    completed = date_to_process < datetime.now(timezone.utc).date()
+    date_iso = date_to_process.isoformat()
 
-    return {
-        "id": str(uuid4()),
-        "date": date_to_process.isoformat(),
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
-    }
+    records: List[dict] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+
+        users_count = 0 if user_id == "" else 1
+        metric_id = f"{date_iso}_{user_id}_daily"
+
+        records.append(
+            {
+                "id": metric_id,
+                "date": date_iso,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records
 
 
 def fetch_all_sessions_data(

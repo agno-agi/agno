@@ -1749,9 +1749,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 async with self.async_session_factory() as sess, sess.begin():
@@ -1766,13 +1767,19 @@ class AsyncPostgresDb(AsyncBaseDb):
             return None
 
     async def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1791,17 +1798,28 @@ class AsyncPostgresDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 records = result.fetchall()
                 if not records:
                     return [], None
 
-                # Get the latest updated_at
+                # Get the latest updated_at, scoped to whatever filter was applied.
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_result = await sess.execute(latest_stmt)
                 latest_updated_at = latest_result.scalar()
 
-            return [dict(row._mapping) for row in records], latest_updated_at
+            # Map the sentinel empty-string user_id back to None.
+            rows: List[dict] = []
+            for row in records:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_warning(f"Exception getting metrics: {str(e)}")
@@ -3084,6 +3102,44 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error deleting learning: {e}")
             return False
 
+    async def update_learning(
+        self, id: str, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return False
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.learning_id == id)
+                    .values(content=content, metadata=metadata, updated_at=int(time.time()))
+                )
+                result = await sess.execute(stmt)
+                return getattr(result, "rowcount", 0) > 0
+
+        except Exception as e:
+            log_error(f"Error updating learning: {e}")
+            raise e
+
+    async def delete_user_learnings(self, user_id: str, learning_type: Optional[str] = None) -> int:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return 0
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.delete().where(table.c.user_id == user_id)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                result = await sess.execute(stmt)
+                return getattr(result, "rowcount", 0) or 0
+
+        except Exception as e:
+            log_error(f"Error deleting user learnings: {e}")
+            raise e
+
     async def get_learnings(
         self,
         learning_type: Optional[str] = None,
@@ -3149,6 +3205,134 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.learning_id == id))
+                row = result.fetchone()
+                return dict(row._mapping) if row else None
+        except Exception as e:
+            log_error(f"Error getting learning by id: {e}")
+            raise e
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        include_global: bool = False,
+        limit: int = 100,
+        page: int = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    if include_global:
+                        stmt = stmt.where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    else:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                stmt = apply_sorting(stmt, table, sort_by or "updated_at", sort_order or "desc")
+                stmt = stmt.limit(limit).offset((page - 1) * limit)
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+                return [dict(row._mapping) for row in rows], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error listing learnings: {e}")
+            raise e
+
+    async def get_learnings_user_stats(
+        self,
+        learning_type: Optional[str] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        user_id: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = await self._get_table(table_type="learnings")
+            if table is None:
+                return [], 0
+
+            async with self.async_session_factory() as sess:
+                last_updated_col = func.max(table.c.updated_at)
+                stmt = select(
+                    table.c.user_id,
+                    last_updated_col.label("last_learning_updated_at"),
+                )
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_not(None))
+                stmt = stmt.group_by(table.c.user_id)
+
+                sort_columns = {
+                    "user_id": table.c.user_id,
+                    "last_learning_updated_at": last_updated_col,
+                }
+                sort_col = sort_columns.get(sort_by or "last_learning_updated_at", last_updated_col)
+                stmt = stmt.order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc())
+
+                count_stmt = select(func.count()).select_from(stmt.subquery())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = await sess.execute(stmt)
+                rows = result.fetchall()
+                return [
+                    {
+                        "user_id": row.user_id,
+                        "last_learning_updated_at": row.last_learning_updated_at,
+                    }
+                    for row in rows
+                ], int(total_count)
+
+        except Exception as e:
+            log_error(f"Error getting learning user stats: {e}")
+            raise e
 
     # --- Components (Not yet supported for async) ---
     def get_component(
@@ -3265,26 +3449,36 @@ class AsyncPostgresDb(AsyncBaseDb):
         raise NotImplementedError("Component methods not yet supported for async databases")
 
     # -- Schedule methods --
-    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
+    # routes can scope by owner. The executor pair (``claim_due_schedule`` /
+    # ``release_schedule``) intentionally has no user_id — the poller must be
+    # able to fire schedules across all users.
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == schedule_id))
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.name == name))
+                stmt = select(table).where(table.c.name == name)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -3296,6 +3490,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedules")
@@ -3306,6 +3501,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -3336,7 +3533,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error creating schedule: {str(e)}")
             raise
 
-    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -3344,13 +3543,16 @@ class AsyncPostgresDb(AsyncBaseDb):
             kwargs["updated_at"] = int(time.time())
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    await sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
-            return await self.get_schedule(schedule_id)
+                    stmt = table.update().where(table.c.id == schedule_id)
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    await sess.execute(stmt.values(**kwargs))
+            return await self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    async def delete_schedule(self, schedule_id: str) -> bool:
+    async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -3359,8 +3561,17 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     if runs_table is not None:
-                        await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                    result = await sess.execute(table.delete().where(table.c.id == schedule_id))
+                        # Mirror the user_id guard on the cascade delete so we don't
+                        # nuke another user's runs if the schedule_id happens to be
+                        # shared (it shouldn't be, but defend in depth).
+                        runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                        if user_id is not None:
+                            runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                        await sess.execute(runs_delete)
+                    delete_stmt = table.delete().where(table.c.id == schedule_id)
+                    if user_id is not None:
+                        delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(delete_stmt)
                     return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
@@ -3448,13 +3659,16 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == run_id))
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -3466,14 +3680,19 @@ class AsyncPostgresDb(AsyncBaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
                 return [], 0
             async with self.async_session_factory() as sess:
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = and_(base_filter, table.c.user_id == user_id)
+
                 # Get total count
-                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
                 count_result = await sess.execute(count_stmt)
                 total_count = count_result.scalar() or 0
 
@@ -3483,7 +3702,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Get paginated results
                 stmt = (
                     select(table)
-                    .where(table.c.schedule_id == schedule_id)
+                    .where(base_filter)
                     .order_by(table.c.created_at.desc())
                     .limit(limit)
                     .offset(offset)
