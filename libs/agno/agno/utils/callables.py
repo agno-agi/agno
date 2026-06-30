@@ -57,6 +57,30 @@ def is_callable_factory(value: Any, excluded_types: Tuple[type, ...] = ()) -> bo
     return True
 
 
+def build_injected_kwargs(func: Callable, available: Dict[str, Any]) -> Dict[str, Any]:
+    """Build kwargs for a callable by intersecting its signature with available parameters."""
+    sig = inspect.signature(func)
+    return {k: v for k, v in available.items() if k in sig.parameters}
+
+
+def invoke_callable_with_kwargs(func: Callable, kwargs: Dict[str, Any]) -> Any:
+    """Invoke a callable with pre-built kwargs, raising if a coroutine is returned."""
+    result = func(**kwargs)
+    if asyncio.isfuture(result) or asyncio.iscoroutine(result):
+        if asyncio.iscoroutine(result):
+            result.close()
+        raise RuntimeError(f"Callable {func!r} returned an awaitable in sync mode. Use the async variant instead.")
+    return result
+
+
+async def ainvoke_callable_with_kwargs(func: Callable, kwargs: Dict[str, Any]) -> Any:
+    """Invoke a callable with pre-built kwargs, awaiting coroutine results automatically."""
+    result = func(**kwargs)
+    if asyncio.iscoroutine(result):
+        result = await result
+    return result
+
+
 def invoke_callable_factory(
     factory: Callable,
     entity: Any,
@@ -76,29 +100,14 @@ def invoke_callable_factory(
             f"Async callable factory {factory!r} cannot be used in sync mode. Use arun() or aprint_response() instead."
         )
 
-    sig = inspect.signature(factory)
-    kwargs: Dict[str, Any] = {}
-
-    if "agent" in sig.parameters:
-        kwargs["agent"] = entity
-    if "team" in sig.parameters:
-        kwargs["team"] = entity
-    if "run_context" in sig.parameters:
-        kwargs["run_context"] = run_context
-    if "session_state" in sig.parameters:
-        kwargs["session_state"] = run_context.session_state if run_context.session_state is not None else {}
-
-    result = factory(**kwargs)
-
-    if asyncio.isfuture(result) or asyncio.iscoroutine(result):
-        # Cleanup the coroutine to prevent warnings
-        if asyncio.iscoroutine(result):
-            result.close()
-        raise RuntimeError(
-            f"Callable factory {factory!r} returned an awaitable in sync mode. Use arun() or aprint_response() instead."
-        )
-
-    return result
+    available: Dict[str, Any] = {
+        "agent": entity,
+        "team": entity,
+        "run_context": run_context,
+        "session_state": run_context.session_state if run_context.session_state is not None else {},
+    }
+    kwargs = build_injected_kwargs(factory, available)
+    return invoke_callable_with_kwargs(factory, kwargs)
 
 
 async def ainvoke_callable_factory(
@@ -110,24 +119,14 @@ async def ainvoke_callable_factory(
 
     Supports both sync and async factories. Async results are awaited automatically.
     """
-    sig = inspect.signature(factory)
-    kwargs: Dict[str, Any] = {}
-
-    if "agent" in sig.parameters:
-        kwargs["agent"] = entity
-    if "team" in sig.parameters:
-        kwargs["team"] = entity
-    if "run_context" in sig.parameters:
-        kwargs["run_context"] = run_context
-    if "session_state" in sig.parameters:
-        kwargs["session_state"] = run_context.session_state if run_context.session_state is not None else {}
-
-    result = factory(**kwargs)
-
-    if asyncio.iscoroutine(result):
-        result = await result
-
-    return result
+    available: Dict[str, Any] = {
+        "agent": entity,
+        "team": entity,
+        "run_context": run_context,
+        "session_state": run_context.session_state if run_context.session_state is not None else {},
+    }
+    kwargs = build_injected_kwargs(factory, available)
+    return await ainvoke_callable_with_kwargs(factory, kwargs)
 
 
 def _compute_cache_key(
@@ -148,15 +147,12 @@ def _compute_cache_key(
                 "Use arun() or aprint_response() instead."
             )
 
-        sig = inspect.signature(custom_key_fn)
-        kwargs: Dict[str, Any] = {}
-        if "run_context" in sig.parameters:
-            kwargs["run_context"] = run_context
-        if "agent" in sig.parameters:
-            kwargs["agent"] = entity
-        if "team" in sig.parameters:
-            kwargs["team"] = entity
-
+        available: Dict[str, Any] = {
+            "run_context": run_context,
+            "agent": entity,
+            "team": entity,
+        }
+        kwargs = build_injected_kwargs(custom_key_fn, available)
         result = custom_key_fn(**kwargs)
         if asyncio.iscoroutine(result):
             result.close()
@@ -184,15 +180,12 @@ async def _acompute_cache_key(
     Priority: custom_key_fn > user_id > session_id > None (skip caching).
     """
     if custom_key_fn is not None:
-        sig = inspect.signature(custom_key_fn)
-        kwargs: Dict[str, Any] = {}
-        if "run_context" in sig.parameters:
-            kwargs["run_context"] = run_context
-        if "agent" in sig.parameters:
-            kwargs["agent"] = entity
-        if "team" in sig.parameters:
-            kwargs["team"] = entity
-
+        available: Dict[str, Any] = {
+            "run_context": run_context,
+            "agent": entity,
+            "team": entity,
+        }
+        kwargs = build_injected_kwargs(custom_key_fn, available)
         result = custom_key_fn(**kwargs)
         if asyncio.iscoroutine(result):
             result = await result
