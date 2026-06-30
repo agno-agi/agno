@@ -827,10 +827,15 @@ class ReasoningManager:
 
         log_debug("Starting Reasoning", center=True, symbol="=")
 
+        parent_session_state = self.config.run_context.session_state if self.config.run_context else None
+
         while next_action == NextAction.CONTINUE and step_count < self.config.max_steps:
             log_debug(f"Step {step_count}", center=True, symbol="=")
             try:
-                reasoning_agent_response: RunOutput = reasoning_agent.run(input=run_messages.get_input_messages())
+                reasoning_agent_response: RunOutput = reasoning_agent.run(
+                    input=run_messages.get_input_messages(),
+                    session_state=parent_session_state,
+                )
 
                 # Accumulate reasoning model metrics
                 if self.config.run_metrics is not None:
@@ -939,12 +944,15 @@ class ReasoningManager:
 
         log_debug("Starting Reasoning", center=True, symbol="=")
 
+        parent_session_state = self.config.run_context.session_state if self.config.run_context else None
+
         while next_action == NextAction.CONTINUE and step_count < self.config.max_steps:
             log_debug(f"Step {step_count}", center=True, symbol="=")
             step_count += 1
             try:
                 reasoning_agent_response: RunOutput = await reasoning_agent.arun(  # type: ignore[misc]
-                    input=run_messages.get_input_messages()
+                    input=run_messages.get_input_messages(),
+                    session_state=parent_session_state,
                 )
 
                 # Accumulate reasoning model metrics
