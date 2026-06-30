@@ -7,6 +7,7 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -106,6 +107,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             db = await get_db(dbs, db_id, table)
 
+            # Scope metrics to the caller's bucket when user_isolation is on.
+            # Admins (and isolation-off deployments) get the full table — which
+            # in the legacy / single-tenant case is a single global bucket and
+            # behaves identically to the pre-isolation API.
+            scoped_user_id = get_scoped_user_id(request)
+
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -115,9 +122,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                metrics, latest_updated_at = await db.get_metrics(starting_date=starting_date, ending_date=ending_date)
+                metrics, latest_updated_at = await db.get_metrics(
+                    starting_date=starting_date, ending_date=ending_date, user_id=scoped_user_id
+                )
             else:
-                metrics, latest_updated_at = db.get_metrics(starting_date=starting_date, ending_date=ending_date)
+                metrics, latest_updated_at = db.get_metrics(
+                    starting_date=starting_date, ending_date=ending_date, user_id=scoped_user_id
+                )
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],

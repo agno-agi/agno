@@ -48,6 +48,11 @@ class Content:
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     external_id: Optional[str] = None
+    # Uploader of this content. Set from the JWT sub by the route layer when
+    # ``user_isolation`` is on; ``None`` means shared / visible to all (admin
+    # uploads, system / library-mode ingestion, legacy data). Carried through
+    # to ``KnowledgeRow.user_id`` by ``Knowledge._build_knowledge_row``.
+    user_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Content":
@@ -71,4 +76,5 @@ class Content:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             external_id=data.get("external_id"),
+            user_id=data.get("user_id"),
         )

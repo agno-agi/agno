@@ -13,6 +13,7 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.remote_content.s3 import S3Config
 from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.knowledge.schemas import (
     ChunkerSchema,
     ConfigResponseSchema,
@@ -188,6 +189,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             elif url:
                 name = parsed_urls
 
+        # Capture owner at request time. The background task runs after the
+        # response goes back to the client, so ``request`` is unavailable
+        # there — the JWT-derived user_id has to be pinned onto Content now.
+        # ``None`` means shared / org-wide (admin upload, RBAC off).
+        scoped_user_id = get_scoped_user_id(request)
+
         content = Content(
             name=name,
             description=description,
@@ -195,6 +202,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             metadata=parsed_metadata,
             file_data=file_data,
             size=file.size if file else None if text_content else None,
+            user_id=scoped_user_id,
         )
         content_hash = knowledge._build_content_hash(content)
         content.content_hash = content_hash
@@ -352,11 +360,16 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Set name from path if not provided
         content_name = name or path
 
+        # See the matching upload_content route for why we capture user_id
+        # at request time and pin it onto Content before queuing the task.
+        scoped_user_id = get_scoped_user_id(request)
+
         content = Content(
             name=content_name,
             description=description,
             metadata=parsed_metadata,
             remote_content=remote_content,
+            user_id=scoped_user_id,
         )
         content_hash = knowledge._build_content_hash(content)
         content.content_hash = content_hash
@@ -452,11 +465,23 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             reader_id=reader_id if reader_id and reader_id.strip() else None,
         )
 
+        # Pre-check ownership: 404 if the row exists but is owned by someone
+        # else. apatch_content reaches into the row by id without an owner
+        # filter (existing behaviour), so the gate has to be at the route.
+        scoped_user_id = get_scoped_user_id(request)
+        existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+
         content = Content(
             id=content_id,
             name=update_data.name,
             description=update_data.description,
             metadata=update_data.metadata,
+            # Preserve ownership across the patch — Knowledge._build_knowledge_row
+            # writes ``user_id`` straight from Content, so reasserting the owner
+            # here prevents an accidental NULL-out of a previously owned row.
+            user_id=existing.user_id,
         )
 
         if update_data.reader_id:
@@ -542,7 +567,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 headers=headers,
             )
 
-        contents, count = await knowledge.aget_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
+        # Scope by uploader: non-admin callers see their own + shared (NULL)
+        # rows. Admins / RBAC-off see everything.
+        scoped_user_id = get_scoped_user_id(request)
+        contents, count = await knowledge.aget_content(
+            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
+        )
 
         return PaginatedResponse(
             data=[
@@ -614,7 +644,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_content_by_id(content_id=content_id, headers=headers)
 
-        content = await knowledge.aget_content_by_id(content_id=content_id)
+        # 404 (not 403) when the row exists but isn't owned by the caller —
+        # mirrors the pattern used for sessions/approvals: mask existence.
+        scoped_user_id = get_scoped_user_id(request)
+        content = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
         if not content:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
         response = ContentResponseSchema.from_dict(
@@ -655,12 +688,19 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ContentResponseSchema:
         knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+        scoped_user_id = get_scoped_user_id(request)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             await knowledge.delete_content_by_id(content_id=content_id, headers=headers)
         else:
-            await knowledge.aremove_content_by_id(content_id=content_id)
+            # Pre-check existence under the caller's scope so we return 404
+            # instead of silently succeeding when the row exists but is owned
+            # by someone else.
+            existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+            await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
 
         return ContentResponseSchema(
             id=content_id,
@@ -691,7 +731,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.delete_all_content(headers=headers)
 
-        await knowledge.aremove_all_content()
+        # Bulk delete is scoped to the caller's rows + shared rows. An admin
+        # bulk-delete clears EVERYTHING (no scoping). A non-admin's bulk
+        # delete also clears shared rows — that's deliberate at the DB layer
+        # but may be tighter than what we want here. Route-level policy
+        # (e.g. "only admin can delete shared") is a follow-up; for now this
+        # matches the existing read/list semantics for symmetry.
+        scoped_user_id = get_scoped_user_id(request)
+        await knowledge.aremove_all_content(user_id=scoped_user_id)
         return "success"
 
     @router.get(
@@ -736,7 +783,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_content_status(content_id=content_id, headers=headers)
 
-        knowledge_status, status_message = await knowledge.aget_content_status(content_id=content_id)
+        scoped_user_id = get_scoped_user_id(request)
+        knowledge_status, status_message = await knowledge.aget_content_status(
+            content_id=content_id, user_id=scoped_user_id
+        )
 
         # Handle the case where content is not found
         if knowledge_status is None:

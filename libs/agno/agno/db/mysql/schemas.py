@@ -69,6 +69,9 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status": {"type": lambda: String(50), "nullable": True},
     "status_message": {"type": Text, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
+    # Per-user knowledge ownership; reads scope on
+    # ``(user_id = :uid OR user_id IS NULL)``.
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -84,13 +87,18 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSON, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": lambda: String(20), "nullable": False},
+    # Owner of this metric bucket. Stored as an empty string for "no owner"
+    # (RBAC off / pre-isolation deployments / system runs) so the unique
+    # constraint behaves predictably. ``get_metrics`` maps ``""`` back to
+    # ``None`` for API consumers.
+    "user_id": {"type": lambda: String(128), "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
-            "name": "uq_metrics_date_period",
-            "columns": ["date", "aggregation_period"],
+            "name": "uq_metrics_user_date_period",
+            "columns": ["user_id", "date", "aggregation_period"],
         }
     ],
 }

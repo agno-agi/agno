@@ -221,7 +221,9 @@ class TestDeleteSchedule:
         mock_db.delete_schedule = MagicMock(return_value=True)
         resp = client.delete("/schedules/sched-1")
         assert resp.status_code == 204
-        mock_db.delete_schedule.assert_called_once_with("sched-1")
+        # Router passes ``user_id=get_scoped_user_id(request)`` — None when
+        # user_isolation is off (the default in this unit test).
+        mock_db.delete_schedule.assert_called_once_with("sched-1", user_id=None)
 
     def test_delete_not_found(self, client, mock_db):
         mock_db.get_schedule = MagicMock(return_value=None)

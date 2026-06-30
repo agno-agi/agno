@@ -83,6 +83,10 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
       ``AuthorizationConfig(user_isolation=True)`` flag is off).
     - No user_id in the JWT.
     - The user has admin scope (admins see all data).
+    - The caller is the framework's own scheduler executor (authenticated
+      with the internal service token). The sentinel ``__scheduler__``
+      identifies the *caller*, not the *owner* of any work; routes route
+      around it using the form-field ``user_id`` set by the executor.
 
     Returns the user_id string only when a regular (non-admin) user is
     authenticated AND user isolation is enabled.
@@ -101,6 +105,17 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
 
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
+        return None
+
+    # Scheduler executor caller: the sentinel never means "scope to user
+    # __scheduler__" — that user does not exist. Return None so the route
+    # falls through to its form-field ``user_id`` override (the schedule
+    # owner). Without this short-circuit, every scheduler-fired run, session,
+    # trace, and metric is attributed to ``__scheduler__`` instead of the
+    # owner, which is what users reported as the sessions/metrics gap.
+    from agno.os.auth import INTERNAL_SERVICE_USER_ID
+
+    if user_id == INTERNAL_SERVICE_USER_ID:
         return None
 
     scopes: List[str] = getattr(request.state, "scopes", [])

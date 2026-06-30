@@ -57,9 +57,17 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "date"},
     {"key": "aggregation_period"},
+    # Owner of this metric bucket. Stored as an empty string for "no owner"
+    # so the compound unique key behaves predictably — Mongo treats multiple
+    # explicit-null values as distinct, which would break uniqueness on the
+    # per-user bucket. ``get_metrics`` maps ``""`` back to ``None`` on read.
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
-    {"key": [("date", 1), ("aggregation_period", 1)], "unique": True},
+    # Unique key expanded to include user_id after per-user aggregation
+    # landed. The old (date, aggregation_period) index would conflict on the
+    # second row written for any single date that has > 1 distinct user.
+    {"key": [("user_id", 1), ("date", 1), ("aggregation_period", 1)], "unique": True},
 ]
 
 CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA = [
