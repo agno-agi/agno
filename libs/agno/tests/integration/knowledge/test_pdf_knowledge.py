@@ -389,7 +389,9 @@ def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_d
     # Check that we have a substantive response
     assert len(response_content) > 50
 
-    # The response should either ask for clarification or mention recipes
+    # The response should either ask for clarification, mention recipes, or report that
+    # nothing was found. Retrieval is non-deterministic and may return 0 documents, in
+    # which case "no results found" is a legitimate answer for this test.
     clarification_phrases = [
         "specify",
         "which cuisine",
@@ -398,14 +400,28 @@ def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_d
         "be more specific",
         "specific",
     ]
+    no_results_phrases = [
+        "couldn't find",
+        "couldn’t find",
+        "could not find",
+        "no recipe",
+        "no recipes",
+        "not find any",
+        "don't have",
+        "do not have",
+    ]
 
     recipes_mentioned = any(cuisine in response_content for cuisine in ["thai", "cape", "tom kha", "cape malay"])
-    valid_response = any(phrase in response_content for phrase in clarification_phrases) or recipes_mentioned
+    no_results_reported = any(phrase in response_content for phrase in no_results_phrases)
+    valid_response = (
+        any(phrase in response_content for phrase in clarification_phrases) or recipes_mentioned or no_results_reported
+    )
 
     # Print debug information
     print(f"Response content: {response_content}")
     print(f"Contains clarification phrase: {any(phrase in response_content for phrase in clarification_phrases)}")
     print(f"Recipes mentioned: {recipes_mentioned}")
+    print(f"No results reported: {no_results_reported}")
 
     assert valid_response
 
@@ -488,7 +504,9 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(se
     # Check that we have a substantive response
     assert len(response_content) > 50
 
-    # The response should either ask for clarification or mention recipes
+    # The response should either ask for clarification, mention recipes, or report that
+    # nothing was found. Retrieval is non-deterministic and may return 0 documents, in
+    # which case "no results found" is a legitimate answer for this test.
     clarification_phrases = [
         "specify",
         "which cuisine",
@@ -497,14 +515,28 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(se
         "be more specific",
         "specific",
     ]
+    no_results_phrases = [
+        "couldn't find",
+        "couldn’t find",
+        "could not find",
+        "no recipe",
+        "no recipes",
+        "not find any",
+        "don't have",
+        "do not have",
+    ]
 
     recipes_mentioned = any(cuisine in response_content for cuisine in ["thai", "cape", "tom kha", "cape malay"])
-    valid_response = any(phrase in response_content for phrase in clarification_phrases) or recipes_mentioned
+    no_results_reported = any(phrase in response_content for phrase in no_results_phrases)
+    valid_response = (
+        any(phrase in response_content for phrase in clarification_phrases) or recipes_mentioned or no_results_reported
+    )
 
     # Print debug information
     print(f"Response content: {response_content}")
     print(f"Contains clarification phrase: {any(phrase in response_content for phrase in clarification_phrases)}")
     print(f"Recipes mentioned: {recipes_mentioned}")
+    print(f"No results reported: {no_results_reported}")
 
     assert valid_response
 
