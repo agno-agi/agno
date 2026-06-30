@@ -258,6 +258,28 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Generate session_id if not provided
         session_id = create_session_request.session_id or str(uuid4())
 
+        # Idempotency: if the caller supplied a session_id that already exists, return the
+        # existing session instead of upserting a fresh (empty) one over it. Otherwise a
+        # repeated create with the same session_id either fails (the DB upsert returns None
+        # when the stored session is owned by a different/known user_id, surfaced as a 500)
+        # or silently overwrites the stored runs/session_data, losing the conversation.
+        if create_session_request.session_id is not None:
+            if isinstance(db, AsyncBaseDb):
+                existing_session = await db.get_session(
+                    session_id=session_id, session_type=session_type, deserialize=True
+                )
+            else:
+                existing_session = db.get_session(
+                    session_id=session_id, session_type=session_type, deserialize=True
+                )
+            if existing_session is not None:
+                if session_type == SessionType.AGENT:
+                    return AgentSessionDetailSchema.from_session(existing_session)  # type: ignore
+                elif session_type == SessionType.TEAM:
+                    return TeamSessionDetailSchema.from_session(existing_session)  # type: ignore
+                else:
+                    return WorkflowSessionDetailSchema.from_session(existing_session)  # type: ignore
+
         # Prepare session_data with session_state and session_name
         session_data: dict[str, Any] = {}
         if create_session_request.session_state is not None:
