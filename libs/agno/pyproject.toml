@@ -156,6 +156,7 @@ oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
 neo4j = ["neo4j"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
+superserve = ["superserve"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -478,6 +479,7 @@ module = [
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",
+  "superserve.*",
   "discord.*",
   "docker.*",
   "docling.*",
