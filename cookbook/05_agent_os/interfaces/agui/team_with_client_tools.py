@@ -4,19 +4,6 @@ Team with Client Tools
 
 Demonstrates AG-UI client_tools with a Team.
 Frontend tools are defined by the AG-UI client (e.g., CopilotKit) and executed in the browser.
-
-Test with curl:
-    curl -X POST http://localhost:9001/agui \
-      -H "Content-Type: application/json" \
-      -d '{
-        "thread_id": "test-123",
-        "run_id": "run-1",
-        "messages": [{"id": "1", "role": "user", "content": "Change the background to blue"}],
-        "tools": [{"name": "change_background", "description": "Changes the UI background color", "parameters": {"type": "object", "properties": {"color": {"type": "string"}}}}],
-        "context": [],
-        "state": {},
-        "forwarded_props": {}
-      }'
 """
 
 from agno.agent.agent import Agent
@@ -48,11 +35,13 @@ ui_team = Team(
     show_members_responses=True,
 )
 
+# Setup our AgentOS app
 agent_os = AgentOS(
     teams=[ui_team],
     interfaces=[AGUI(team=ui_team)],
 )
 app = agent_os.get_app()
+
 
 # ---------------------------------------------------------------------------
 # Run Example
@@ -63,5 +52,7 @@ if __name__ == "__main__":
 
     You can see the configuration and available apps at:
     http://localhost:9001/config
+
+    Use Port 9001 for Dojo compatibility.
     """
     agent_os.serve(app="team_with_client_tools:app", reload=True, port=9001)
