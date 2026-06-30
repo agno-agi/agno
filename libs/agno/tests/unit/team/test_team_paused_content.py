@@ -1,7 +1,5 @@
 """Tests for _get_team_paused_content and external_execution_silent behavior."""
 
-import pytest
-
 from agno.models.response import ToolExecution
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput
