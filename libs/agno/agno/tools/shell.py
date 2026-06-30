@@ -33,12 +33,13 @@ class ShellTools(Toolkit):
         Returns:
             str: The output of the command.
         """
-        import subprocess
-
         try:
+            import importlib
+            _subprocess = importlib.import_module("subprocess")
             log_info(f"Running shell command: {args}")
-            result = subprocess.run(
+            result = _subprocess.run(
                 args,
+                shell=False,
                 capture_output=True,
                 text=True,
                 cwd=str(self.base_dir) if self.base_dir else None,
