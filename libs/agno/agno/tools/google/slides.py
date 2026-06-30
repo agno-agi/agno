@@ -42,26 +42,20 @@ Alternatively, for Server-to-Server use cases you can use a Service Account:
 import json
 import textwrap
 import uuid
-from os import getenv
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 try:
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
 except ImportError:
     raise ImportError(
         "`google-api-python-client` `google-auth-httplib2` `google-auth-oauthlib` not installed. "
         "Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
 
-from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_debug
+from agno.tools.google.base import GoogleToolkit
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Google Slides tools for creating and managing presentations.
@@ -81,8 +75,11 @@ SLIDES_INSTRUCTIONS = textwrap.dedent("""\
 authenticate = google_authenticate("slides")
 
 
-class GoogleSlidesTools(Toolkit):
-    DEFAULT_SCOPES = [
+class GoogleSlidesTools(GoogleToolkit):
+    api_name = "slides"
+    api_version = "v1"
+    google_service_name = "slides"
+    default_scopes = [
         "https://www.googleapis.com/auth/presentations",
         "https://www.googleapis.com/auth/drive.file",
     ]
@@ -120,16 +117,6 @@ class GoogleSlidesTools(Toolkit):
         add_instructions: bool = True,
         **kwargs,
     ):
-        self.creds = creds
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
-        self.scopes = scopes or self.DEFAULT_SCOPES
-
-        self.service: Any = None
         self.slides_service: Any = None
         self.drive_service: Any = None
 
@@ -179,76 +166,24 @@ class GoogleSlidesTools(Toolkit):
         super().__init__(
             name="google_slides_tools",
             tools=tools,
+            instructions=self.instructions,
             add_instructions=add_instructions,
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
             **kwargs,
         )
 
-    def _build_service(self):
-        self.slides_service = build("slides", "v1", credentials=self.creds)
-        self.drive_service = build("drive", "v3", credentials=self.creds)
-        # Returned value stored as self.service by decorator (sentinel for "services built")
+    def _build_service(self, creds: Any) -> Any:
+        # Slides needs both Slides API and Drive API (for listing/deleting presentations)
+        self.slides_service = self._build_google_service("slides", "v1", creds)
+        self.drive_service = self._build_google_service("drive", "v3", creds)
         return self.slides_service
-
-    def _auth(self) -> None:
-        """Authenticate with Google Slides API"""
-        if self.creds and self.creds.valid:
-            return
-
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            sa_creds = ServiceAccountCredentials.from_service_account_file(service_account_path, scopes=self.scopes)
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            if delegated_user:
-                sa_creds = sa_creds.with_subject(delegated_user)
-            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
-            sa_creds.refresh(Request())
-            self.creds = sa_creds
-            return
-
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        if token_file.exists():
-            try:
-                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                # Token file missing refresh_token — fall through to re-auth
-                self.creds = None
-
-        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
-            try:
-                self.creds.refresh(Request())
-            except Exception:
-                # Refresh token revoked or expired — fall through to re-auth
-                self.creds = None
-
-        if not self.creds or not self.creds.valid:
-            client_config = {
-                "installed": {
-                    "client_id": getenv("GOOGLE_CLIENT_ID"),
-                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                    "project_id": getenv("GOOGLE_PROJECT_ID"),
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                }
-            }
-            if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-            else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-
-            # prompt=consent forces Google to return a refresh_token every time
-            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-            if self.login_hint:
-                oauth_kwargs["login_hint"] = self.login_hint
-            oauth_kwargs["port"] = self.oauth_port
-            self.creds = flow.run_local_server(**oauth_kwargs)
-        # Save the credentials for future use
-        if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            log_debug("Google Slides credentials saved")
 
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:
         return (

@@ -97,7 +97,7 @@ class WebSearchTools(Toolkit):
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
             results = ddgs.text(**search_kwargs)
 
-        return json.dumps(results, indent=2)
+        return json.dumps(results, indent=2, ensure_ascii=False)
 
     def search_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from the web.
@@ -124,4 +124,4 @@ class WebSearchTools(Toolkit):
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
             results = ddgs.news(**search_kwargs)
 
-        return json.dumps(results, indent=2)
+        return json.dumps(results, indent=2, ensure_ascii=False)
