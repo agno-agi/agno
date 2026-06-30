@@ -105,13 +105,19 @@ def test_create(mock_clickhouse):
         # Verify command was called to create database
         mock_clickhouse.client.command.assert_called()
 
-    # Test when table exists
+    # Test when table exists: create() runs the user_id-column migration
     with patch.object(mock_clickhouse, "table_exists", return_value=True):
         mock_clickhouse.client.command.reset_mock()
+        mock_clickhouse.client.query.reset_mock()
         mock_clickhouse.create()
 
-        # Verify command was not called
-        assert not mock_clickhouse.client.command.called
+        # Check that the column existence was queried against system.columns
+        mock_clickhouse.client.query.assert_called_once()
+        assert "system.columns" in mock_clickhouse.client.query.call_args[0][0]
+
+        # Check that the migration issued the ADD COLUMN ALTER
+        mock_clickhouse.client.command.assert_called_once()
+        assert "ADD COLUMN IF NOT EXISTS user_id" in mock_clickhouse.client.command.call_args[0][0]
 
 
 def test_name_exists(mock_clickhouse):
@@ -185,8 +191,8 @@ def test_upsert(mock_clickhouse):
         mock_clickhouse.client.query.return_value = query_result
         mock_clickhouse.upsert(documents=docs, content_hash="test_hash")
 
-        # Check that insert was called
-        mock_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash")
+        # Check that insert was called with user_id forwarded (None when unscoped)
+        mock_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash", user_id=None)
         # Check that query was called to check for existing content_hash
         mock_clickhouse.client.query.assert_called_once()
 
@@ -325,13 +331,19 @@ async def test_async_create(mock_clickhouse):
         # Verify command was called to create database
         assert mock_clickhouse.async_client.command.called
 
-    # Test when table exists
+    # Test when table exists: async_create runs the user_id-column migration
     with patch.object(mock_clickhouse, "async_table_exists", return_value=True):
         mock_clickhouse.async_client.command.reset_mock()
+        mock_clickhouse.async_client.query.reset_mock()
         await mock_clickhouse.async_create()
 
-        # Verify command was not called
-        assert not mock_clickhouse.async_client.command.called
+        # Check that the column existence was queried against system.columns
+        mock_clickhouse.async_client.query.assert_called_once()
+        assert "system.columns" in mock_clickhouse.async_client.query.call_args[0][0]
+
+        # Check that the migration issued the ADD COLUMN ALTER
+        mock_clickhouse.async_client.command.assert_called_once()
+        assert "ADD COLUMN IF NOT EXISTS user_id" in mock_clickhouse.async_client.command.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -385,8 +397,8 @@ async def test_async_upsert(mock_clickhouse):
         mock_async_insert.return_value = None
         await mock_clickhouse.async_upsert(documents=docs, content_hash="test_hash")
 
-        # Check that async_insert was called
-        mock_async_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash")
+        # Check that async_insert was called with user_id forwarded (None when unscoped)
+        mock_async_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash", user_id=None)
         # Check that query was called to finalize the upsert
         mock_clickhouse.async_client.query.assert_called_once()
 
@@ -548,6 +560,9 @@ def test_delete_by_metadata(mock_clickhouse):
 
 def test_delete_by_content_id(mock_clickhouse):
     """Test delete_by_content_id method."""
+    # The contract counts matches before deleting; simulate one match.
+    mock_clickhouse.client.query.return_value.result_rows = [[1]]
+
     # Test successful deletion
     result = mock_clickhouse.delete_by_content_id("content_123")
     assert result is True

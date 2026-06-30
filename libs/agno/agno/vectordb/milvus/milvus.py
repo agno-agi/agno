@@ -24,8 +24,25 @@ MILVUS_DISTANCE_MAP = {
     Distance.max_inner_product: "IP",
 }
 
+# Per-user isolation: user_id is the chunk owner, stored as a top-level field so the
+# owner scope can be AND-ed into vector and hybrid search. NULL/unset is the shared bucket.
+USER_ID_FIELD = "user_id"
+
+
+def _quote(value: str) -> str:
+    """Escape a string for a double-quoted Milvus filter literal.
+
+    Backslash first so it isn't double-escaped, then the quote, then the newline,
+    carriage return and tab that Milvus's filter lexer rejects inside a quoted literal.
+    """
+    return (
+        value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+    )
+
 
 class Milvus(VectorDb):
+    USER_ID_KEY = USER_ID_FIELD
+
     def __init__(
         self,
         collection: str,
@@ -184,6 +201,9 @@ class Milvus(VectorDb):
         for field_name, datatype, max_length, is_primary in fields:
             schema.add_field(field_name=field_name, datatype=datatype, max_length=max_length, is_primary=is_primary)
 
+        # Declare the owner field explicitly - hybrid search cannot filter on a dynamic field
+        schema.add_field(field_name=self.USER_ID_KEY, datatype=DataType.VARCHAR, max_length=256, nullable=True)
+
         # Add vector fields
         schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=self.dimensions)
         schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
@@ -214,7 +234,12 @@ class Milvus(VectorDb):
         return index_params
 
     def _prepare_document_data(
-        self, content_hash: str, document: Document, include_vectors: bool = True
+        self,
+        content_hash: str,
+        document: Document,
+        include_vectors: bool = True,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Union[str, List[float], Dict[int, float], None]]:
         """
         Prepare document data for insertion.
@@ -222,6 +247,8 @@ class Milvus(VectorDb):
         Args:
             document: Document to prepare data for
             include_vectors: Whether to include vector data
+            filters: Optional metadata filters merged into meta_data
+            user_id: Owner of this chunk for per-user isolation
 
         Returns:
             Dictionary with document data where values can be strings, vectors (List[float]),
@@ -229,12 +256,16 @@ class Milvus(VectorDb):
         """
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
-        # Include content_hash in ID to ensure uniqueness across different content hashes
+        # Fold content_hash and user_id into the id so two users sharing a content_hash don't collide
         base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        doc_id = self._doc_id(base_id, content_hash, user_id)
+
+        meta_data = document.meta_data or {}
+        if filters:
+            meta_data = {**meta_data, **filters}
 
         # Convert dictionary fields to JSON strings
-        meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
+        meta_data_str = json.dumps(meta_data) if meta_data else "{}"
         usage_str = json.dumps(document.usage) if document.usage else "{}"
 
         data: Dict[str, Union[str, List[float], Dict[int, float], None]] = {
@@ -246,6 +277,7 @@ class Milvus(VectorDb):
             "content": cleaned_content,
             "usage": usage_str,
             "content_hash": content_hash,
+            self.USER_ID_KEY: user_id,
         }
 
         if include_vectors:
@@ -349,18 +381,33 @@ class Milvus(VectorDb):
             return len(collection_points) > 0
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def _content_hash_expr(self, content_hash: str, user_id: Optional[str], scope_none_to_shared: bool = False) -> str:
+        """Build the content_hash predicate for upsert dedupe and existence checks.
+
+        A set user_id matches the owner. When None, scope_none_to_shared=True matches only
+        the shared (null) bucket so a dedupe-delete never wipes a scoped owner, while the
+        default matches any owner.
+        """
+        expr = f'content_hash == "{_quote(content_hash)}"'
+        if user_id:
+            expr += f' and {self.USER_ID_KEY} == "{_quote(user_id)}"'
+        elif scope_none_to_shared:
+            expr += f" and {self.USER_ID_KEY} is null"
+        return expr
+
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Check if a document with the given content hash exists.
 
         Args:
             content_hash (str): The content hash to check.
+            user_id (Optional[str]): Restrict the check to the owner's chunks.
 
         Returns:
             bool: True if a document with the given content hash exists, False otherwise.
         """
         if self.client:
-            expr = f'content_hash == "{content_hash}"'
+            expr = self._content_hash_expr(content_hash, user_id)
             scroll_result = self.client.query(
                 collection_name=self.collection,
                 filter=expr,
@@ -370,36 +417,54 @@ class Milvus(VectorDb):
             return len(scroll_result) > 0 and len(scroll_result[0]) > 0
         return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content hash.
 
         Args:
             content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks.
 
         Returns:
             bool: True if documents were deleted, False otherwise.
         """
         if self.client:
-            expr = f'content_hash == "{content_hash}"'
+            expr = self._content_hash_expr(content_hash, user_id, scope_none_to_shared=True)
             self.client.delete(collection_name=self.collection, filter=expr)
             log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
             return True
         return False
 
-    def _insert_hybrid_document(self, content_hash: str, document: Document) -> None:
+    def _insert_hybrid_document(
+        self,
+        content_hash: str,
+        document: Document,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert a document with both dense and sparse vectors."""
-        data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+        # Embed before building the row so _prepare_document_data sees the dense_vector
         document.embed(embedder=self.embedder)
+        data = self._prepare_document_data(
+            content_hash=content_hash, document=document, include_vectors=True, filters=filters, user_id=user_id
+        )
         self.client.insert(
             collection_name=self.collection,
             data=data,
         )
         log_debug(f"Inserted hybrid document: {document.name} ({document.meta_data})")
 
-    async def _async_insert_hybrid_document(self, content_hash: str, document: Document) -> None:
+    async def _async_insert_hybrid_document(
+        self,
+        content_hash: str,
+        document: Document,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert a document with both dense and sparse vectors asynchronously."""
-        data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+        data = self._prepare_document_data(
+            content_hash=content_hash, document=document, include_vectors=True, filters=filters, user_id=user_id
+        )
 
         await self.async_client.insert(
             collection_name=self.collection,
@@ -407,13 +472,26 @@ class Milvus(VectorDb):
         )
         log_debug(f"Inserted hybrid document asynchronously: {document.name} ({document.meta_data})")
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Insert documents based on search type."""
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Insert documents based on search type.
+
+        Args:
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+                None (default) writes to the shared bucket.
+        """
         log_debug(f"Inserting {len(documents)} documents")
 
         if self.search_type == SearchType.hybrid:
             for document in documents:
-                self._insert_hybrid_document(content_hash=content_hash, document=document)
+                self._insert_hybrid_document(
+                    content_hash=content_hash, document=document, filters=filters, user_id=user_id
+                )
         else:
             for document in documents:
                 document.embed(embedder=self.embedder)
@@ -421,7 +499,9 @@ class Milvus(VectorDb):
                     log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
                     continue
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
+                # Fold content_hash and user_id into the id so two users sharing a content_hash don't collide
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                doc_id = self._doc_id(base_id, content_hash, user_id)
 
                 meta_data = document.meta_data or {}
                 if filters:
@@ -436,6 +516,7 @@ class Milvus(VectorDb):
                     "content": cleaned_content,
                     "usage": json.dumps(document.usage) if document.usage else "{}",
                     "content_hash": content_hash,
+                    self.USER_ID_KEY: user_id,
                 }
                 self.client.insert(
                     collection_name=self.collection,
@@ -446,9 +527,18 @@ class Milvus(VectorDb):
         log_info(f"Inserted {len(documents)} documents")
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Insert documents asynchronously based on search type."""
+        """Insert documents asynchronously based on search type.
+
+        Args:
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+                None (default) writes to the shared bucket.
+        """
         log_info(f"Inserting {len(documents)} documents asynchronously")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -492,7 +582,12 @@ class Milvus(VectorDb):
 
         if self.search_type == SearchType.hybrid:
             await asyncio.gather(
-                *[self._async_insert_hybrid_document(content_hash=content_hash, document=doc) for doc in documents]
+                *[
+                    self._async_insert_hybrid_document(
+                        content_hash=content_hash, document=doc, filters=filters, user_id=user_id
+                    )
+                    for doc in documents
+                ]
             )
         else:
 
@@ -502,9 +597,9 @@ class Milvus(VectorDb):
                     log_debug(f"Skipping document without embedding: {document.name} ({document.meta_data})")
                     return None
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                # Include content_hash in ID to ensure uniqueness across different content hashes
+                # Fold content_hash and user_id into the id so two users sharing a content_hash don't collide
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                doc_id = self._doc_id(base_id, content_hash, user_id)
 
                 meta_data = document.meta_data or {}
                 if filters:
@@ -519,6 +614,7 @@ class Milvus(VectorDb):
                     "content": cleaned_content,
                     "usage": json.dumps(document.usage) if document.usage else "{}",
                     "content_hash": content_hash,
+                    self.USER_ID_KEY: user_id,
                 }
                 await self.async_client.insert(
                     collection_name=self.collection,
@@ -540,20 +636,33 @@ class Milvus(VectorDb):
         """
         return True
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Upsert documents into the database.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         log_debug(f"Upserting {len(documents)} documents")
+
+        # Dedupe-delete scoped to the owner: replace only the caller's stale chunks for this content_hash.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
 
         if self.search_type == SearchType.hybrid:
             for document in documents:
                 document.embed(embedder=self.embedder)
-                data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+                data = self._prepare_document_data(
+                    content_hash=content_hash, document=document, include_vectors=True, filters=filters, user_id=user_id
+                )
                 self.client.upsert(
                     collection_name=self.collection,
                     data=data,
@@ -563,7 +672,8 @@ class Milvus(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                doc_id = self._doc_id(base_id, content_hash, user_id)
 
                 meta_data = document.meta_data or {}
                 if filters:
@@ -578,6 +688,7 @@ class Milvus(VectorDb):
                     "content": cleaned_content,
                     "usage": json.dumps(document.usage) if document.usage else "{}",
                     "content_hash": content_hash,
+                    self.USER_ID_KEY: user_id,
                 }
                 self.client.upsert(
                     collection_name=self.collection,
@@ -586,9 +697,22 @@ class Milvus(VectorDb):
                 log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
+        """Upsert documents asynchronously.
+
+        Args:
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+        """
         log_debug(f"Upserting {len(documents)} documents asynchronously")
+
+        # Mirror sync upsert: dedupe-delete the owner's stale chunks before re-inserting.
+        if await self._async_content_hash_exists(content_hash, user_id=user_id):
+            await self._async_delete_by_content_hash(content_hash, user_id=user_id)
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -632,7 +756,9 @@ class Milvus(VectorDb):
         if self.search_type == SearchType.hybrid:
 
             async def process_hybrid_document(document):
-                data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+                data = self._prepare_document_data(
+                    content_hash=content_hash, document=document, include_vectors=True, filters=filters, user_id=user_id
+                )
                 await self.async_client.upsert(
                     collection_name=self.collection,
                     data=data,
@@ -645,7 +771,8 @@ class Milvus(VectorDb):
 
             async def process_document(document):
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                doc_id = md5(cleaned_content.encode()).hexdigest()
+                base_id = document.id or md5(cleaned_content.encode()).hexdigest()
+                doc_id = self._doc_id(base_id, content_hash, user_id)
 
                 meta_data = document.meta_data or {}
                 if filters:
@@ -660,6 +787,7 @@ class Milvus(VectorDb):
                     "content": cleaned_content,
                     "usage": json.dumps(document.usage) if document.usage else "{}",
                     "content_hash": content_hash,
+                    self.USER_ID_KEY: user_id,
                 }
                 await self.async_client.upsert(
                     collection_name=self.collection,
@@ -687,6 +815,7 @@ class Milvus(VectorDb):
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_params: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Search for documents matching the query.
@@ -699,6 +828,8 @@ class Milvus(VectorDb):
                 - radius (float): Minimum similarity threshold for range search
                 - range_filter (float): Maximum similarity threshold for range search
                 - params (dict): Index-specific search params (e.g., nprobe, ef)
+            user_id (Optional[str]): Restrict results to the caller's chunks plus
+                the shared bucket. None means no scope (admin view, sees all).
 
         Returns:
             List[Document]: List of matching documents
@@ -707,7 +838,7 @@ class Milvus(VectorDb):
             log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
             filters = None
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit)
+            return self.hybrid_search(query, limit, filters, user_id=user_id)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -717,8 +848,8 @@ class Milvus(VectorDb):
         results = self.client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            filter=self._build_expr(filters),
-            output_fields=["*"],
+            filter=self._scoped_expr(filters, user_id) or "",
+            output_fields=self._read_output_fields(),
             limit=limit,
             search_params=search_params,
         )
@@ -727,20 +858,7 @@ class Milvus(VectorDb):
         search_results: List[Document] = []
         for result in results[0]:
             entity = result["entity"]
-            meta_data = self._decode_json_field(entity.get("meta_data"), default={})
-            usage = self._decode_json_field(entity.get("usage"), default=None)
-            search_results.append(
-                Document(
-                    id=result["id"],
-                    name=entity.get("name", None),
-                    meta_data=meta_data,
-                    content=entity.get("content", ""),
-                    content_id=entity.get("content_id", None),
-                    embedder=self.embedder,
-                    embedding=entity.get("vector", None),
-                    usage=usage,
-                )
-            )
+            search_results.append(self._entity_to_document(result["id"], entity))
 
         # Apply reranker if available
         if self.reranker and search_results:
@@ -756,6 +874,7 @@ class Milvus(VectorDb):
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_params: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Asynchronously search for documents matching the query.
@@ -768,6 +887,8 @@ class Milvus(VectorDb):
                 - radius (float): Minimum similarity threshold for range search
                 - range_filter (float): Maximum similarity threshold for range search
                 - params (dict): Index-specific search params (e.g., nprobe, ef)
+            user_id (Optional[str]): Restrict results to the caller's chunks plus
+                the shared bucket. None means no scope (admin view, sees all).
 
         Returns:
             List[Document]: List of matching documents
@@ -776,7 +897,7 @@ class Milvus(VectorDb):
             log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
             filters = None
         if self.search_type == SearchType.hybrid:
-            return await self.async_hybrid_search(query, limit, filters)
+            return await self.async_hybrid_search(query, limit, filters, user_id=user_id)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -786,8 +907,8 @@ class Milvus(VectorDb):
         results = await self.async_client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            filter=self._build_expr(filters),
-            output_fields=["*"],
+            filter=self._scoped_expr(filters, user_id) or "",
+            output_fields=self._read_output_fields(),
             limit=limit,
             search_params=search_params,
         )
@@ -796,26 +917,17 @@ class Milvus(VectorDb):
         search_results: List[Document] = []
         for result in results[0]:
             entity = result["entity"]
-            meta_data = self._decode_json_field(entity.get("meta_data"), default={})
-            usage = self._decode_json_field(entity.get("usage"), default=None)
-            search_results.append(
-                Document(
-                    id=result["id"],
-                    name=entity.get("name", None),
-                    meta_data=meta_data,
-                    content=entity.get("content", ""),
-                    content_id=entity.get("content_id", None),
-                    embedder=self.embedder,
-                    embedding=entity.get("vector", None),
-                    usage=usage,
-                )
-            )
+            search_results.append(self._entity_to_document(result["id"], entity))
 
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
     def hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining dense and sparse vector similarity.
@@ -824,11 +936,17 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            user_id (Optional[str]): Restrict results to the caller's chunks plus
+                the shared bucket. None means no scope (admin view, sees all).
 
         Returns:
             List[Document]: List of matching documents
         """
         from pymilvus import AnnSearchRequest, RRFRanker
+
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
+            filters = None
 
         # Get query embeddings
         dense_vector = self.embedder.get_embedding(query)
@@ -841,6 +959,10 @@ class Milvus(VectorDb):
         if self._client is None:
             log_error("Milvus client not initialized")
             return []
+
+        # Apply the owner scope as a pre-filter on each AnnSearchRequest - the per-branch
+        # top-k is computed before fusion, so a post-filter would starve scoped users out
+        scope_expr = self._scoped_expr(filters, user_id)
 
         try:
             # Refer to docs for details- https://milvus.io/docs/multi-vector-search.md
@@ -862,6 +984,10 @@ class Milvus(VectorDb):
                 "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
             }
 
+            if scope_expr:
+                dense_search_param["expr"] = scope_expr
+                sparse_search_param["expr"] = scope_expr
+
             # Create search requests
             dense_request = AnnSearchRequest(**dense_search_param)
             sparse_request = AnnSearchRequest(**sparse_search_param)
@@ -872,7 +998,11 @@ class Milvus(VectorDb):
 
             log_info("Performing hybrid search")
             results = self._client.hybrid_search(
-                collection_name=self.collection, reqs=reqs, ranker=ranker, limit=limit, output_fields=["*"]
+                collection_name=self.collection,
+                reqs=reqs,
+                ranker=ranker,
+                limit=limit,
+                output_fields=self._read_output_fields(),
             )
 
             # Build search results
@@ -908,7 +1038,11 @@ class Milvus(VectorDb):
             return []
 
     async def async_hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform an asynchronous hybrid search combining dense and sparse vector similarity.
@@ -917,11 +1051,17 @@ class Milvus(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            user_id (Optional[str]): Restrict results to the caller's chunks plus
+                the shared bucket. None means no scope (admin view, sees all).
 
         Returns:
             List[Document]: List of matching documents
         """
         from pymilvus import AnnSearchRequest, RRFRanker
+
+        if isinstance(filters, List):
+            log_warning("Filters Expressions are not supported in Milvus. No filters will be applied.")
+            filters = None
 
         # Get query embeddings
         dense_vector = self.embedder.get_embedding(query)
@@ -930,6 +1070,9 @@ class Milvus(VectorDb):
         if dense_vector is None:
             log_error(f"Error getting dense embedding for Query: {query}")
             return []
+
+        # See hybrid_search: the owner scope is a pre-filter on each branch
+        scope_expr = self._scoped_expr(filters, user_id)
 
         try:
             # Refer to docs for details- https://milvus.io/docs/multi-vector-search.md
@@ -951,6 +1094,10 @@ class Milvus(VectorDb):
                 "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
             }
 
+            if scope_expr:
+                dense_search_param["expr"] = scope_expr
+                sparse_search_param["expr"] = scope_expr
+
             # Create search requests
             dense_request = AnnSearchRequest(**dense_search_param)
             sparse_request = AnnSearchRequest(**sparse_search_param)
@@ -961,7 +1108,11 @@ class Milvus(VectorDb):
 
             log_info("Performing async hybrid search")
             results = await self.async_client.hybrid_search(
-                collection_name=self.collection, reqs=reqs, ranker=ranker, limit=limit, output_fields=["*"]
+                collection_name=self.collection,
+                reqs=reqs,
+                ranker=ranker,
+                limit=limit,
+                output_fields=self._read_output_fields(),
             )
 
             # Build search results
@@ -1108,27 +1259,54 @@ class Milvus(VectorDb):
             log_info(f"Error deleting documents with metadata {metadata}: {e}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
-        Delete documents by content ID.
+        Delete documents by content ID, scoped to user_id when set.
+
+        user_id set deletes only that owner's chunks (never another user's or the
+        shared NULL bucket); None deletes all chunks with this content_id.
 
         Args:
             content_id (str): The content ID to delete
+            user_id (Optional[str]): Restrict the delete to the owner's chunks.
 
         Returns:
-            bool: True if documents were deleted, False otherwise
+            bool: True if documents were actually deleted, False otherwise.
         """
         try:
-            log_debug(f"Milvus VectorDB : Deleting documents with content_id {content_id}")
+            log_debug(f"Milvus VectorDB : Deleting documents with content_id {content_id} (user_id={user_id})")
 
-            # Delete by content_id using Milvus delete operation with filter
-            expr = f'content_id == "{content_id}"'
-            self.client.delete(collection_name=self.collection, filter=expr)
-            log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
-            return True
+            expr = f'content_id == "{_quote(content_id)}"'
+            if user_id:
+                # Scope to the owner; never matches shared (NULL) chunks.
+                expr += f' and {self.USER_ID_KEY} == "{_quote(user_id)}"'
+
+            result = self.client.delete(collection_name=self.collection, filter=expr)
+            count = self._delete_count(result)
+            # None means the result shape is unrecognized, so assume the delete ran
+            deleted = count is None or count > 0
+            if deleted:
+                log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
+            return deleted
         except Exception as e:
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
+
+    @staticmethod
+    def _delete_count(result: Any) -> Optional[int]:
+        """Normalize the Milvus delete result into a deleted-row count.
+
+        Milvus Lite returns a list of deleted primary keys; a Milvus server returns a
+        mapping with a delete_count field. Returns None when the count is undeterminable.
+        """
+        if isinstance(result, list):
+            return len(result)
+        if isinstance(result, dict):
+            try:
+                return int(result.get("delete_count", 0) or 0)
+            except (TypeError, ValueError):
+                return None
+        return None
 
     @staticmethod
     def _decode_json_field(value: Any, default: Any) -> Any:
@@ -1176,6 +1354,81 @@ class Milvus(VectorDb):
             return " and ".join(expressions)
         return None
 
+    def _doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Deterministic primary key with the owner folded in. The shared bucket keeps the legacy id."""
+        if user_id:
+            return md5(f"{base_id}_{content_hash}_{user_id}".encode()).hexdigest()
+        return md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+
+    def _user_scope_expr(self, user_id: Optional[str]) -> Optional[str]:
+        """Owner scope for a search: the caller's own chunks plus the shared (null) bucket.
+
+        user_id=None returns None (no scope, admin sees everything).
+        """
+        if not user_id:
+            return None
+        return f'({self.USER_ID_KEY} == "{_quote(user_id)}" or {self.USER_ID_KEY} is null)'
+
+    def _scoped_expr(self, filters: Optional[Dict[str, Any]], user_id: Optional[str]) -> Optional[str]:
+        """Combine the caller's metadata filter with the owner scope.
+
+        The owner scope is OR-based (own OR shared), so it is parenthesized and
+        AND-ed with the metadata filter rather than flattened into it.
+        """
+        base = self._build_expr(filters)
+        scope = self._user_scope_expr(user_id)
+        if base and scope:
+            return f"({base}) and {scope}"
+        return scope or base
+
+    def _read_output_fields(self) -> List[str]:
+        """Explicit output fields for reads.
+
+        Milvus does NOT expand dynamic fields via ``output_fields=["*"]`` — that
+        returns only the schema fields (``id`` + the vector), so every dynamic
+        field we wrote (content, owner, metadata, ...) must be named back.
+        """
+        fields = ["text", "content", "name", "content_id", "meta_data", "usage", "content_hash", self.USER_ID_KEY]
+        if self.search_type == SearchType.hybrid:
+            return fields + ["dense_vector", "sparse_vector"]
+        return fields + ["vector"]
+
+    def _entity_to_document(self, doc_id: str, entity: Dict[str, Any]) -> Document:
+        """Map a Milvus entity back to a Document, surfacing the owner in meta_data."""
+        meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+        owner = entity.get(self.USER_ID_KEY)
+        if owner is not None:
+            meta_data = {**meta_data, self.USER_ID_KEY: owner}
+        usage = self._decode_json_field(entity.get("usage"), default=None)
+        return Document(
+            id=doc_id,
+            name=entity.get("name", None),
+            meta_data=meta_data,
+            content=entity.get("content", ""),
+            content_id=entity.get("content_id", None),
+            embedder=self.embedder,
+            embedding=entity.get("vector", None),
+            usage=usage,
+        )
+
+    async def _async_content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Async counterpart to content_hash_exists used by async_upsert."""
+        expr = self._content_hash_expr(content_hash, user_id)
+        scroll_result = await self.async_client.query(
+            collection_name=self.collection,
+            filter=expr,
+            output_fields=["id"],
+            limit=1,
+        )
+        return len(scroll_result) > 0
+
+    async def _async_delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Async counterpart to _delete_by_content_hash used by async_upsert."""
+        expr = self._content_hash_expr(content_hash, user_id, scope_none_to_shared=True)
+        await self.async_client.delete(collection_name=self.collection, filter=expr)
+        log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
+        return True
+
     def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
@@ -1190,12 +1443,8 @@ class Milvus(VectorDb):
         try:
             # Fetch the full row so we can do a complete upsert. Milvus only supports
             # partial-field upsert from 2.6.2+, so we read every field and rewrite it.
-            # Vector fields are listed explicitly because some Milvus versions exclude
-            # them from output_fields=["*"].
-            search_expr = f'content_id == "{content_id}"'
-            output_fields = (
-                ["*", "dense_vector", "sparse_vector"] if self.search_type == SearchType.hybrid else ["*", "vector"]
-            )
+            search_expr = f'content_id == "{_quote(content_id)}"'
+            output_fields = self._read_output_fields()
             results = self.client.query(
                 collection_name=self.collection,
                 filter=search_expr,
@@ -1206,22 +1455,25 @@ class Milvus(VectorDb):
                 log_debug(f"No documents found with content_id: {content_id}")
                 return
 
+            # Owner is never caller-writable; strip it so metadata can't reassign the chunk's tenant.
+            safe_metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
+
             updated_count = 0
             for row in results:
                 current_metadata = self._decode_json_field(row.get("meta_data"), default={})
                 if not isinstance(current_metadata, dict):
                     current_metadata = {}
 
-                updated_metadata = {**current_metadata, **metadata}
+                updated_metadata = {**current_metadata, **safe_metadata}
 
-                # Rebuild the full row
+                # Rebuild the full row, preserving the existing owner field.
                 new_row: Dict[str, Any] = dict(row)
                 new_row["meta_data"] = json.dumps(updated_metadata)
                 if "filters" in row:
                     current_filters = self._decode_json_field(row.get("filters"), default={})
                     if not isinstance(current_filters, dict):
                         current_filters = {}
-                    new_row["filters"] = json.dumps({**current_filters, **metadata})
+                    new_row["filters"] = json.dumps({**current_filters, **safe_metadata})
 
                 usage_value = row.get("usage")
                 if isinstance(usage_value, (dict, list)):

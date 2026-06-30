@@ -264,15 +264,8 @@ class LanceDb(VectorDb):
                     logger.exception("Sync table creation also failed")
                     raise
 
-    # Top-level column that holds the chunk owner for per-user RAG isolation.
-    # ``NULL`` means shared / unowned (admin / org-wide content). The column is
-    # populated from the explicit ``user_id`` parameter on insert/upsert. By
-    # promoting this out of the JSON ``payload`` blob, we can push it down
-    # into LanceDB's native ``.where(...)`` clause — the wrapper previously
-    # filtered in Python AFTER the top-K vector search (broken for isolation:
-    # top-K math becomes silently wrong for any predicate that excludes most
-    # of the global top-K). With a real column we use ``prefilter=True`` so
-    # the predicate runs BEFORE the ANN search.
+    # Owner column for per-user isolation; NULL means shared. A real column lets
+    # the scope predicate run in .where(prefilter=True) instead of the payload JSON.
     USER_ID_COL: str = "user_id"
 
     def _base_schema(self) -> pa.Schema:
@@ -316,10 +309,9 @@ class LanceDb(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to add as metadata to documents
-            user_id (Optional[str]): Owner of these chunks for per-user RAG
-                isolation. Stored in the dedicated ``user_id`` column.
-                ``None`` means shared / unscoped.
+            user_id (Optional[str]): Owner for per-user isolation; None means shared.
         """
+
         if len(documents) <= 0:
             log_info("No documents to insert")
             return
@@ -340,9 +332,13 @@ class LanceDb(VectorDb):
             if document.embedding is None or (isinstance(document.embedding, list) and len(document.embedding) == 0):
                 document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            # Include content_hash in ID to ensure uniqueness across different content hashes
+            # Fold the owner into the row id so two users' copies of the same
+            # content_hash get distinct ids; shared rows keep the legacy id.
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            doc_id = str(md5(f"{base_id}_{content_hash}".encode()).hexdigest())
+            id_seed = f"{base_id}_{content_hash}"
+            if user_id is not None:
+                id_seed = f"{id_seed}_{user_id}"
+            doc_id = str(md5(id_seed.encode()).hexdigest())
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,
@@ -392,7 +388,7 @@ class LanceDb(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
-            user_id (Optional[str]): See ``insert``.
+            user_id (Optional[str]): See insert.
         """
         if len(documents) <= 0:
             log_debug("No documents to insert")
@@ -459,10 +455,11 @@ class LanceDb(VectorDb):
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
-            user_id (Optional[str]): See ``insert``.
+            user_id (Optional[str]): See insert.
         """
+        # Scope the dedupe delete to this owner.
         if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
+            self._delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_upsert(
@@ -519,15 +516,8 @@ class LanceDb(VectorDb):
         self.upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def _user_scope_where_clause(self, user_id: Optional[str]) -> Optional[str]:
-        """Build the LanceDB SQL ``WHERE`` clause for per-user scope.
-
-        ``None`` (no scope) → no WHERE clause.
-        A non-empty string → ``user_id = '<value>' OR user_id IS NULL`` so
-        the caller sees their own chunks plus shared (NULL) content.
-
-        The value is single-quoted with internal quotes doubled (standard
-        SQL escape). ``user_id`` is the column name LanceDB sees; ``payload``
-        is opaque JSON, so this predicate is server-side and indexable.
+        """Build the scope WHERE clause: user_id = '<value>' OR user_id IS NULL
+        (own + shared). Returns None when unscoped. Internal quotes are doubled.
         """
         if user_id is None:
             return None
@@ -548,10 +538,8 @@ class LanceDb(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
-            user_id (Optional[str]): Per-user RAG isolation scope. When set,
-                results are restricted to rows with ``user_id = <value>`` OR
-                ``user_id IS NULL`` (shared). When ``None``, no owner
-                predicate is applied.
+            user_id (Optional[str]): Scope to this owner's rows plus shared
+                (user_id IS NULL) rows. None is unscoped.
 
         Returns:
             List[Document]: List of matching documents
@@ -633,7 +621,7 @@ class LanceDb(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
-            user_id (Optional[str]): See ``search``.
+            user_id (Optional[str]): See search.
 
         Returns:
             List[Document]: List of matching documents
@@ -662,10 +650,8 @@ class LanceDb(VectorDb):
             vector_column_name=self._vector_col,
         ).limit(limit)
 
-        # ``prefilter=True`` runs the predicate BEFORE the ANN top-K so the
-        # vector ranking only sees rows that pass scope. Without this LanceDB
-        # would post-filter, silently truncating results — the exact failure
-        # mode that made K2 unsafe on LanceDB before this refactor.
+        # prefilter=True runs the scope predicate before the ANN top-K, so
+        # post-filtering can't silently truncate results.
         where_clause = self._user_scope_where_clause(user_id)
         if where_clause is not None:
             results = results.where(where_clause, prefilter=True)
@@ -705,7 +691,7 @@ class LanceDb(VectorDb):
             .limit(limit)
         )
 
-        # Hybrid search: same prefilter rationale as ``vector_search``.
+        # Hybrid search: same prefilter rationale as vector_search.
         where_clause = self._user_scope_where_clause(user_id)
         if where_clause is not None:
             results = results.where(where_clause, prefilter=True)
@@ -735,8 +721,7 @@ class LanceDb(VectorDb):
             query_type="fts",
         ).limit(limit)
 
-        # FTS doesn't have the same top-K cliff as ANN, but pre-filtering
-        # still avoids ranking rows the caller can't see.
+        # Prefilter so FTS only ranks rows the caller can see.
         where_clause = self._user_scope_where_clause(user_id)
         if where_clause is not None:
             results = results.where(where_clause, prefilter=True)
@@ -955,27 +940,24 @@ class LanceDb(VectorDb):
             return False
 
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
-        """Delete content by content ID, scoped to ``user_id`` when set.
+        """Delete content by content ID, scoped to user_id when set.
 
-        With ``user_id``: only rows where the ``user_id`` column matches
-        AND content_id matches get deleted. Prevents cross-user delete
-        races. Without ``user_id``: deletes across all owners (legacy
-        behaviour; safe only for unscoped/admin tooling).
+        With user_id: only rows matching both user_id and content_id.
+        Without user_id: deletes across all owners (legacy / admin).
         """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
+
         try:
             total_count = self.table.count_rows()
-            # Pre-filter on the user_id column at the server side when
-            # scoped — saves scanning every payload in Python.
+            # Pre-filter on the user_id column server-side when scoped.
             select_cols = ["id", "payload", self.USER_ID_COL]
             search = self.table.search().select(select_cols).limit(total_count)
             if user_id is not None:
-                search = search.where(
-                    f"{self.USER_ID_COL} = '{user_id.replace(chr(39), chr(39) + chr(39))}'"
-                )
+                escaped = user_id.replace("'", "''")
+                search = search.where(f"{self.USER_ID_COL} = '{escaped}'")
             result = search.to_list()
 
             ids_to_delete = []
@@ -999,15 +981,27 @@ class LanceDb(VectorDb):
             logger.exception(f"Error deleting rows by content_id '{content_id}'")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete content by content hash."""
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete content by content hash on the upsert dedupe path, scoped to the
+        caller's own bucket. A scoped upsert (user_id set) touches only the caller's
+        rows; a shared (None) upsert touches only the shared (NULL-owned) bucket,
+        never another owner's rows.
+        """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
+            # Scope on the owner column server-side.
+            select_cols = ["id", "payload", self.USER_ID_COL]
+            search = self.table.search().select(select_cols).limit(total_count)
+            if user_id is not None:
+                escaped = user_id.replace("'", "''")
+                search = search.where(f"{self.USER_ID_COL} = '{escaped}'")
+            else:
+                search = search.where(f"{self.USER_ID_COL} IS NULL")
+            result = search.to_list()
 
             ids_to_delete = []
             for row in result:
@@ -1067,14 +1061,10 @@ class LanceDb(VectorDb):
                 return
 
             total_count = self.table.count_rows()
-            # Select the user_id column too so we can preserve it across the
-            # delete-and-reinsert dance below; without this the column would
-            # come back NULL on every update_metadata call.
+            # Select the user_id column too so it's preserved across the
+            # delete-and-reinsert below.
             results = (
-                self.table.search()
-                .select(["id", "payload", "vector", self.USER_ID_COL])
-                .limit(total_count)
-                .to_list()
+                self.table.search().select(["id", "payload", "vector", self.USER_ID_COL]).limit(total_count).to_list()
             )
 
             if not results:
@@ -1124,10 +1114,7 @@ class LanceDb(VectorDb):
                     update_data["vector"] = vector_data
                 if text_data is not None:
                     update_data["text"] = text_data
-                # Preserve the owner column across delete-and-reinsert. The
-                # row dict from ``select`` above carries the existing value;
-                # omitting this would NULL out user_id (and silently turn an
-                # owned chunk into a shared one).
+                # Preserve the owner column across delete-and-reinsert.
                 update_data[self.USER_ID_COL] = row.get(self.USER_ID_COL)
 
                 # Delete old record and insert updated one

@@ -151,6 +151,7 @@ class GCSLoader(BaseLoader):
                 status=ContentStatus.PROCESSING,
                 metadata=merged_metadata,
                 file_type="gcs",
+                user_id=content.user_id,
             )
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)
@@ -242,6 +243,7 @@ class GCSLoader(BaseLoader):
                 status=ContentStatus.PROCESSING,
                 metadata=merged_metadata,
                 file_type="gcs",
+                user_id=content.user_id,
             )
             content_entry.content_hash = self._build_content_hash(content_entry)
             content_entry.id = generate_id(content_entry.content_hash)

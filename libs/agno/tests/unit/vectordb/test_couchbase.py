@@ -806,6 +806,10 @@ async def test_async_search_scope_level(couchbase_fts, mock_embedder):
         mock_scope_inst.search.assert_called_once()
         search_args, search_kwargs = mock_scope_inst.search.call_args
         assert search_kwargs["options"]["limit"] == 5
+        # No caller filters and no user scope (user_id=None), so the vector query carries no pre-filter.
+        # Filters are now built into the SearchRequest's vector prefilter, never into options["raw"].
+        request = search_kwargs["request"]
+        assert request.vector_search.queries[0].prefilter is None
 
         # __async_get_doc_from_kv will call get_async_collection then .get for each doc
         mock_get_async_collection_for_kv.assert_called_once()
@@ -831,7 +835,14 @@ async def test_async_search_scope_level(couchbase_fts, mock_embedder):
         mock_scope_inst.search.assert_called_once()
         search_args_f, search_kwargs_f = mock_scope_inst.search.call_args
         assert search_kwargs_f["options"]["limit"] == 5
-        assert search_kwargs_f["options"]["raw"] == filters
+        # Caller filters are now applied via the FTS query path: a TermQuery on the
+        # filters.<key> field is attached to the vector query as its pre-filter
+        # (replaces the removed options["raw"] = filters mechanism).
+        request_f = search_kwargs_f["request"]
+        prefilter = request_f.vector_search.queries[0].prefilter
+        assert prefilter is not None
+        assert prefilter.field == "filters.category"
+        assert prefilter.term == "test_scope_kv"
 
         mock_get_async_collection_for_kv.assert_called_once()
         mock_async_collection_instance.get.assert_called_once_with(mock_search_row.id)
@@ -885,6 +896,10 @@ async def test_async_search_cluster_level(couchbase_fts, mock_embedder):
         mock_cluster_inst.search.assert_called_once()
         search_args, search_kwargs = mock_cluster_inst.search.call_args
         assert search_kwargs["options"]["limit"] == 3
+        # No caller filters and no user scope (user_id=None), so the vector query carries no pre-filter.
+        # Filters are now built into the SearchRequest's vector prefilter, never into options["raw"].
+        request = search_kwargs["request"]
+        assert request.vector_search.queries[0].prefilter is None
 
         mock_get_async_collection_for_kv.assert_called_once()
         mock_async_collection_instance.get.assert_called_once_with(mock_search_row.id)
@@ -908,7 +923,14 @@ async def test_async_search_cluster_level(couchbase_fts, mock_embedder):
         mock_cluster_inst.search.assert_called_once()
         search_args_f, search_kwargs_f = mock_cluster_inst.search.call_args
         assert search_kwargs_f["options"]["limit"] == 3
-        assert search_kwargs_f["options"]["raw"] == filters
+        # Caller filters are now applied via the FTS query path: a TermQuery on the
+        # filters.<key> field is attached to the vector query as its pre-filter
+        # (replaces the removed options["raw"] = filters mechanism).
+        request_f = search_kwargs_f["request"]
+        prefilter = request_f.vector_search.queries[0].prefilter
+        assert prefilter is not None
+        assert prefilter.field == "filters.type"
+        assert prefilter.term == "cluster_kv"
 
         mock_get_async_collection_for_kv.assert_called_once()
         mock_async_collection_instance.get.assert_called_once_with(mock_search_row.id)
@@ -1341,7 +1363,7 @@ def test_delete_by_content_id(couchbase_fts, mock_scope, mock_collection):
     # Test deletion when no documents exist
     mock_result.rows.return_value = []
     result = couchbase_fts.delete_by_content_id("nonexistent_content")
-    assert result is True  # Returns True even if no documents found
+    assert result is False  # Nothing matched, so nothing was deleted
     assert mock_collection.remove.call_count == 0  # No remove calls
 
     # Reset mocks for next test

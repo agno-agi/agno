@@ -13,6 +13,14 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
+# Per-user RAG isolation. Single collection with a top-level user_id field,
+# kept out of meta_data so it can be declared as a $vectorSearch filter field.
+# * Inserts with user_id stamp the field; user_id=None leaves it null (shared bucket).
+# * Searches with user_id=X match own OR shared; user_id=None sees all (admin view).
+# * The scope is a $vectorSearch pre-filter, not a post-stage $match, so it runs
+#   before the vector top-k instead of starving scoped users out of recall.
+USER_ID_FIELD = "user_id"
+
 try:
     from hashlib import md5
 
@@ -35,6 +43,8 @@ class MongoDb(VectorDb):
     MongoDB Vector Database implementation with elegant handling of Atlas Search index creation.
     """
 
+    USER_ID_KEY = USER_ID_FIELD
+
     def __init__(
         self,
         collection_name: str,
@@ -46,7 +56,12 @@ class MongoDb(VectorDb):
         embedder: Optional[Embedder] = None,
         distance_metric: str = Distance.cosine,
         overwrite: bool = False,
-        wait_until_index_ready_in_seconds: Optional[float] = 3,
+        # Atlas Search builds run in the background after ``createSearchIndex``
+        # returns; the index reports ``queryable: False`` until the build
+        # finishes. Atlas-Local typically takes 20-60s, cloud Atlas can be
+        # faster. 90s is a reasonable default that won't time out under
+        # normal conditions; bump higher on slow hosts.
+        wait_until_index_ready_in_seconds: Optional[float] = 90,
         wait_after_insert_in_seconds: Optional[float] = 3,
         max_pool_size: int = 100,
         retry_writes: bool = True,
@@ -217,6 +232,9 @@ class MongoDb(VectorDb):
 
     def _get_or_create_collection(self) -> Collection:
         """Get or create the MongoDB collection, handling Atlas Search index creation."""
+        # Ensure the db handle exists; on a fresh instance create() lands here first
+        if self._db is None:
+            self._get_client()
         self._collection = self._db[self.collection_name]  # type: ignore
 
         if not self.collection_exists():
@@ -326,6 +344,11 @@ class MongoDb(VectorDb):
                                     "path": "embedding",
                                     "similarity": self.distance_metric,
                                 },
+                                # user_id is a filter field so the per-user scope can pre-filter inside $vectorSearch
+                                {
+                                    "type": "filter",
+                                    "path": USER_ID_FIELD,
+                                },
                             ]
                         },
                         name=index_name,
@@ -352,15 +375,48 @@ class MongoDb(VectorDb):
                     logger.exception("Unexpected error creating search index")
                     raise
 
-    async def _create_search_index_async(self) -> None:
-        """Create the Atlas Search index asynchronously."""
-        index_name = self.search_index_name
+    async def _create_search_index_async(self, overwrite: bool = False) -> None:
+        """Create or overwrite the Atlas Search index asynchronously.
+
+        Mirrors the sync ``_create_search_index(overwrite=...)`` contract:
+        when ``overwrite=True`` the drop is performed as part of the same
+        retried operation so a transient failure leaves the original
+        index intact rather than leaving the deployment with no index at
+        all (the previous async migration dropped first then ran a
+        separate create — if the create failed the deployment was left
+        without a vector index and every search returned zero rows).
+        """
+        index_name = self.search_index_name or "vector_index_1"
         max_retries = 3
         retry_delay = 5
 
         for attempt in range(max_retries):
             try:
                 collection = await self._get_async_collection()
+
+                # Drop existing index inside the retried operation so a
+                # failed recreate leaves us in a known-bad rather than
+                # known-empty state. The caller retries with the same
+                # overwrite semantics.
+                if overwrite and await self._async_search_index_exists():
+                    log_info(f"Dropping existing search index '{index_name}'.")
+                    try:
+                        await collection.drop_search_index(index_name)
+                        # Atlas needs a beat to flush the drop before recreate.
+                        await asyncio.sleep(retry_delay * 2)
+                    except errors.OperationFailure as e:
+                        if "Index already requested to be deleted" in str(e):
+                            log_info("Index is already being deleted, waiting...")
+                            await asyncio.sleep(retry_delay * 2)
+                        else:
+                            raise
+
+                    # Verify drop completed before creating new one.
+                    retries = 3
+                    while retries > 0 and await self._async_search_index_exists():
+                        log_info("Waiting for index deletion to complete...")
+                        await asyncio.sleep(retry_delay)
+                        retries -= 1
 
                 # Get embedding dimension from embedder
                 embedding_dim = getattr(self.embedder, "dimensions", 1536)
@@ -374,6 +430,11 @@ class MongoDb(VectorDb):
                                 "path": "embedding",
                                 "similarity": self.distance_metric,
                             },
+                            # user_id is a filter field so the per-user scope can pre-filter inside $vectorSearch
+                            {
+                                "type": "filter",
+                                "path": USER_ID_FIELD,
+                            },
                         ]
                     },
                     name=index_name,
@@ -384,12 +445,34 @@ class MongoDb(VectorDb):
                 log_info(f"Search index '{index_name}' created successfully.")
                 return
 
-            except Exception:
-                if attempt < max_retries - 1:
+            except errors.OperationFailure as e:
+                if "Duplicate Index" in str(e) and attempt < max_retries - 1:
+                    log_warning(f"Index already exists, retrying... (attempt {attempt + 1}): {str(e)}")
                     await asyncio.sleep(retry_delay * (attempt + 1))
                     continue
                 logger.exception("Failed to create search index")
                 raise
+            except Exception:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (attempt + 1))
+                    continue
+                logger.exception("Unexpected error creating search index asynchronously")
+                raise
+
+    async def _async_search_index_exists(self) -> bool:
+        """Async counterpart to ``_search_index_exists``."""
+        if self.cosmos_compatibility:
+            return True  # cosmos uses a regular index; treat as opaque
+        index_name = self.search_index_name or "vector_index_1"
+        try:
+            collection = await self._get_async_collection()
+            async for index in await collection.list_search_indexes():
+                if index.get("name") == index_name:
+                    return True
+            return False
+        except Exception:
+            logger.exception("Error checking search index existence asynchronously")
+            return False
 
     def _search_index_exists(self) -> bool:
         """Check if the search index exists."""
@@ -427,34 +510,72 @@ class MongoDb(VectorDb):
                 return False
 
     def _wait_for_index_ready(self) -> None:
-        """Wait until the Atlas Search index is ready."""
+        """Wait until the Atlas Search index is actually queryable.
+
+        Important: ``_search_index_exists`` only checks name presence, but
+        Atlas reports the index as soon as the metadata record is written
+        — it's still in ``status: PENDING`` and ``queryable: False`` while
+        the background build runs. If we only checked existence we'd
+        return immediately and every subsequent ``$vectorSearch`` would
+        find 0 rows even after writes succeed. We poll the actual
+        ``queryable`` flag from ``$listSearchIndexes``.
+        """
+        start_time = time.time()
         index_name = self.search_index_name
         while True:
             try:
-                if self._search_index_exists():
-                    log_info(f"Search index '{index_name}' is ready.")
-                    break
+                collection = self._get_collection()
+                for index in collection.list_search_indexes():  # type: ignore
+                    if index.get("name") == index_name and index.get("queryable") is True:
+                        log_info(f"Search index '{index_name}' is queryable.")
+                        return
             except Exception:
                 logger.exception("Error checking index status")
-                raise TimeoutError("Timeout waiting for search index to become ready.")
+
+            if time.time() - start_time > self.wait_until_index_ready_in_seconds:  # type: ignore
+                raise TimeoutError(
+                    f"Timeout waiting for search index '{index_name}' to become queryable. "
+                    f"Increase ``wait_until_index_ready_in_seconds`` (current: "
+                    f"{self.wait_until_index_ready_in_seconds}s) — Atlas-Local typically "
+                    f"takes 20-60s to finish the background build."
+                )
             time.sleep(1)
 
     async def _wait_for_index_ready_async(self) -> None:
-        """Wait until the Atlas Search index is ready asynchronously."""
+        """Wait until the Atlas Search index is actually queryable.
+
+        Two prior bugs combined to make every cookbook query return 0
+        results: (1) iterating ``await collection.list_search_indexes()``
+        with a plain ``for`` raised ``TypeError`` and silently masked the
+        check, and (2) the check itself only verified name presence, not
+        the ``queryable`` flag. Atlas reports the index as soon as the
+        metadata record exists, but it stays ``status: PENDING`` until
+        the background build finishes — so we have to poll for
+        ``queryable: True`` explicitly.
+        """
         start_time = time.time()
         index_name = self.search_index_name
         while True:
             try:
                 collection = await self._get_async_collection()
-                indexes = await collection.list_search_indexes()
-                if any(index["name"] == index_name for index in indexes):
-                    log_info(f"Search index '{index_name}' is ready.")
-                    break
+                ready = False
+                async for index in await collection.list_search_indexes():
+                    if index.get("name") == index_name and index.get("queryable") is True:
+                        ready = True
+                        break
+                if ready:
+                    log_info(f"Search index '{index_name}' is queryable.")
+                    return
             except Exception:
                 logger.exception("Error checking index status asynchronously")
 
             if time.time() - start_time > self.wait_until_index_ready_in_seconds:  # type: ignore
-                raise TimeoutError("Timeout waiting for search index to become ready.")
+                raise TimeoutError(
+                    f"Timeout waiting for search index '{index_name}' to become queryable. "
+                    f"Increase ``wait_until_index_ready_in_seconds`` (current: "
+                    f"{self.wait_until_index_ready_in_seconds}s) — Atlas-Local typically "
+                    f"takes 20-60s to finish the background build."
+                )
             await asyncio.sleep(1)
 
     def collection_exists(self) -> bool:
@@ -508,18 +629,67 @@ class MongoDb(VectorDb):
             logger.exception("Error checking document ID existence")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def _doc_id(self, cleaned_content: str, user_id: Optional[str]) -> str:
+        """Derive the deterministic _id, folding the owner in so the same content under
+        different owners maps to different ids. The shared bucket keeps the legacy
+        content-only id so previously persisted documents stay addressable.
+
+        Uses a strict ``is None`` check rather than truthiness — boundary
+        normalization is the Knowledge layer's job, so an empty string
+        reaching this far is a contract violation and we'd rather fail
+        loudly than silently degrade an owned chunk to the shared bucket.
+        """
+        if user_id is None:
+            return md5(cleaned_content.encode("utf-8")).hexdigest()
+        return md5(f"{cleaned_content}_{user_id}".encode("utf-8")).hexdigest()
+
+    def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Build the per-user read scope: own chunks OR the shared (null) bucket.
+
+        Returns None for user_id=None (no scope; admin sees all). Uses direct null
+        equality rather than $in/$exists because the $vectorSearch pre-filter rejects
+        those forms.
+
+        Uses ``is None`` rather than truthiness so an empty-string ``user_id``
+        — which would otherwise silently degrade to "admin sees all" —
+        instead reaches the backend and surfaces the missing-boundary-
+        normalization bug at the upstream caller.
+        """
+        if user_id is None:
+            return None
+        return {"$or": [{USER_ID_FIELD: user_id}, {USER_ID_FIELD: None}]}
+
+    def _content_hash_query(
+        self, content_hash: str, user_id: Optional[str], scope_none_to_shared: bool = False
+    ) -> Dict[str, Any]:
+        """Build the content_hash dedupe query, scoped to the owner.
+
+        With user_id set the query matches the owner exactly. With user_id None,
+        scope_none_to_shared=False matches any owner (existence gate) and True matches
+        only the shared (null) bucket so a shared re-ingest never wipes a scoped owner.
+        """
+        query: Dict[str, Any] = {"content_hash": content_hash}
+        if user_id is not None:
+            query[USER_ID_FIELD] = user_id
+        elif scope_none_to_shared:
+            query[USER_ID_FIELD] = None
+        return query
+
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if documents with the given content hash exist in the collection.
 
         Args:
             content_hash (str): The content hash to check.
+            user_id (Optional[str]): Restrict the check to the owner's chunks.
+                When ``None`` matches ANY owner (existence gate semantic
+                used by Knowledge's ``skip_if_exists`` flag).
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
         """
         try:
             collection = self._get_collection()
-            result = collection.find_one({"content_hash": content_hash})
+            result = collection.find_one(self._content_hash_query(content_hash, user_id))
             exists = result is not None
             log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
             return exists
@@ -527,8 +697,43 @@ class MongoDb(VectorDb):
             logger.exception("Error checking content_hash existence")
             return False
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Insert documents into the MongoDB collection."""
+    def _content_hash_exists_in_scope(self, content_hash: str, user_id: Optional[str]) -> bool:
+        """Existence gate scoped to exactly the bucket a scoped delete would
+        touch: the owner's chunks (when ``user_id`` is set) or the shared
+        bucket (when ``user_id`` is ``None``).
+
+        Used by upsert paths so the existence gate and the dedupe delete
+        agree on which rows they're targeting. Without this, an unscoped
+        (admin) upsert that sees Alice's content under the same hash would
+        trigger the delete branch which only blows away the shared rows —
+        the gate and the delete pointing at different buckets.
+        """
+        try:
+            collection = self._get_collection()
+            result = collection.find_one(
+                self._content_hash_query(content_hash, user_id, scope_none_to_shared=True)
+            )
+            return result is not None
+        except Exception:
+            logger.exception("Error checking content_hash existence (scoped)")
+            return False
+
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Insert documents into the MongoDB collection.
+
+        Args:
+            content_hash (str): Content hash shared by these chunks.
+            documents (List[Document]): Documents to insert.
+            filters (Optional[Dict[str, Any]]): Filters merged into each chunk's metadata.
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+                None (default) writes to the shared bucket.
+        """
         log_debug(f"Inserting {len(documents)} documents")
         collection = self._get_collection()
 
@@ -538,7 +743,7 @@ class MongoDb(VectorDb):
                 document.embed(embedder=self.embedder)
                 if document.embedding is None:
                     raise ValueError(f"Failed to generate embedding for document: {document.id}")
-                doc_data = self.prepare_doc(content_hash, document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
                 prepared_docs.append(doc_data)
             except ValueError:
                 logger.exception(f"Error preparing document '{document.name}'")
@@ -554,17 +759,39 @@ class MongoDb(VectorDb):
             except Exception:
                 logger.exception("Error inserting documents")
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Upsert documents into the MongoDB collection."""
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Upsert documents into the MongoDB collection.
+
+        Args:
+            content_hash (str): Content hash shared by these chunks.
+            documents (List[Document]): Documents to upsert.
+            filters (Optional[Dict[str, Any]]): Filters merged into each chunk's metadata.
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+        """
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
+
+        # Gate + dedupe-delete on the same scope: the caller's own chunks
+        # (or the shared bucket when user_id is None). Without ``_in_scope``
+        # the public gate would match any owner — so an unscoped re-ingest
+        # that finds Alice's chunks would trigger the delete branch which
+        # only touches the shared bucket, leaving Alice's rows untouched
+        # and the gate-vs-delete contract confused.
+        if self._content_hash_exists_in_scope(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
 
         for document in documents:
             try:
                 document.embed(embedder=self.embedder)
                 if document.embedding is None:
                     raise ValueError(f"Failed to generate embedding for document: {document.id}")
-                doc_data = self.prepare_doc(content_hash, document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
                 collection.update_one(
                     {"_id": doc_data["_id"]},
                     {"$set": doc_data},
@@ -584,28 +811,49 @@ class MongoDb(VectorDb):
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         min_score: float = 0.0,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Search for documents using vector similarity."""
+        """Search for documents using vector similarity.
+
+        Args:
+            query (str): Query to search for.
+            limit (int): Number of results to return.
+            filters (Optional[...]): Metadata filters to apply.
+            min_score (float): Minimum similarity score (Atlas path only).
+            user_id (Optional[str]): Restrict results to the caller's chunks plus
+                the shared bucket. None means no scope (admin view).
+        """
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
             filters = None
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit=limit, filters=filters)
+            return self.hybrid_search(query, limit=limit, filters=filters, user_id=user_id)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Failed to generate embedding for query: {query}")
             return []
 
+        scope_filter = self._user_scope_filter(user_id)
+
         if self.cosmos_compatibility:
             # Azure Cosmos DB Mongo Vcore compatibility mode
             try:
                 collection = self._get_collection()
 
-                # Construct the search pipeline
+                # Construct the search pipeline. Cosmos applies the scope as a
+                # pre-filter inside cosmosSearch via the filter option.
+                cosmos_search: Dict[str, Any] = {
+                    "vector": query_embedding,
+                    "path": "embedding",
+                    "k": limit,
+                    "nProbes": 2,
+                }
+                if scope_filter is not None:
+                    cosmos_search["filter"] = scope_filter
                 search_stage = {
                     "$search": {
-                        "cosmosSearch": {"vector": query_embedding, "path": "embedding", "k": limit, "nProbes": 2},
+                        "cosmosSearch": cosmos_search,
                         "returnStoredSource": True,
                     }
                 }
@@ -645,16 +893,18 @@ class MongoDb(VectorDb):
             # MongoDB Atlas Search
             try:
                 collection = self._get_collection()
+                vector_search_stage: Dict[str, Any] = {
+                    "index": self.search_index_name,
+                    "limit": limit,
+                    "numCandidates": min(limit * 4, 100),
+                    "queryVector": query_embedding,
+                    "path": "embedding",
+                }
+                # Scope as a pre-filter inside $vectorSearch (requires user_id as a filter field), not a post-$match
+                if scope_filter is not None:
+                    vector_search_stage["filter"] = scope_filter
                 pipeline = [
-                    {
-                        "$vectorSearch": {
-                            "index": self.search_index_name,
-                            "limit": limit,
-                            "numCandidates": min(limit * 4, 100),
-                            "queryVector": query_embedding,
-                            "path": "embedding",
-                        }
-                    },
+                    {"$vectorSearch": vector_search_stage},
                     {"$set": {"score": {"$meta": "vectorSearchScore"}}},
                 ]
 
@@ -702,17 +952,22 @@ class MongoDb(VectorDb):
                 logger.exception("Error during search")
                 raise
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
+    def vector_search(self, query: str, limit: int = 5, user_id: Optional[str] = None) -> List[Document]:
         """Perform a vector-based search."""
         log_debug("Performing vector search.")
-        return self.search(query, limit=limit)
+        return self.search(query, limit=limit, user_id=user_id)
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
+    def keyword_search(self, query: str, limit: int = 5, user_id: Optional[str] = None) -> List[Document]:
         """Perform a keyword-based search."""
         try:
             collection = self._get_collection()
+            # Scope the keyword find: own chunks OR the shared bucket.
+            find_query: Dict[str, Any] = {"content": {"$regex": query, "$options": "i"}}
+            scope_filter = self._user_scope_filter(user_id)
+            if scope_filter is not None:
+                find_query = {"$and": [find_query, scope_filter]}
             cursor = collection.find(
-                {"content": {"$regex": query, "$options": "i"}},
+                find_query,
                 {"_id": 1, "name": 1, "content": 1, "meta_data": 1, "content_id": 1},
             ).limit(limit)
             results = [
@@ -736,12 +991,15 @@ class MongoDb(VectorDb):
         query: str,
         limit: int = 5,
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword-based searches using Reciprocal Rank Fusion.
 
         Weights for vector and keyword search are configured at the instance level (hybrid_vector_weight, hybrid_keyword_weight).
         The rank constant k is used in the RRF formula `1 / (rank + k)` to smooth scores.
+
+        user_id scopes both branches: the vector branch as a $vectorSearch pre-filter and the keyword branch via a $match on the owner.
 
         Reference: https://www.mongodb.com/docs/atlas/atlas-vector-search/tutorials/reciprocal-rank-fusion
         """
@@ -760,6 +1018,7 @@ class MongoDb(VectorDb):
         collection = self._get_collection()
 
         k = self.hybrid_rank_constant
+        scope_filter = self._user_scope_filter(user_id)
 
         mongo_filters = {}
         if filters:
@@ -770,17 +1029,64 @@ class MongoDb(VectorDb):
                 else:
                     mongo_filters[key] = value
 
-        pipeline = [
-            # Vector Search Branch
+        # Vector branch: scope as a pre-filter inside $vectorSearch.
+        vector_search_stage: Dict[str, Any] = {
+            "index": self.search_index_name,
+            "path": "embedding",
+            "queryVector": query_embedding,
+            "numCandidates": min(limit * 10, 200),
+            "limit": limit * 2,
+        }
+        if scope_filter is not None:
+            vector_search_stage["filter"] = scope_filter
+
+        # Keyword branch: scope as a $match on the owner right after the text search.
+        keyword_branch_pipeline: List[Dict[str, Any]] = [
             {
-                "$vectorSearch": {
-                    "index": self.search_index_name,
-                    "path": "embedding",
-                    "queryVector": query_embedding,
-                    "numCandidates": min(limit * 10, 200),
-                    "limit": limit * 2,
+                "$search": {
+                    "index": "default",
+                    "text": {"query": query, "path": "content"},
                 }
             },
+        ]
+        if scope_filter is not None:
+            keyword_branch_pipeline.append({"$match": scope_filter})
+        keyword_branch_pipeline += [
+            {"$limit": limit * 2},
+            {"$group": {"_id": None, "docs": {"$push": "$$ROOT"}}},
+            {"$unwind": {"path": "$docs", "includeArrayIndex": "rank"}},
+            {
+                "$addFields": {
+                    "_id": "$docs._id",
+                    "name": "$docs.name",
+                    "content": "$docs.content",
+                    "meta_data": "$docs.meta_data",
+                    "content_id": "$docs.content_id",
+                    "vs_score": 0.0,
+                    "fts_score": {
+                        "$divide": [
+                            self.hybrid_keyword_weight,
+                            {"$add": ["$rank", k, 1]},
+                        ]
+                    },
+                }
+            },
+            {
+                "$project": {
+                    "_id": 1,
+                    "name": 1,
+                    "content": 1,
+                    "meta_data": 1,
+                    "content_id": 1,
+                    "vs_score": 1,
+                    "fts_score": 1,
+                }
+            },
+        ]
+
+        pipeline = [
+            # Vector Search Branch
+            {"$vectorSearch": vector_search_stage},
             {"$group": {"_id": None, "docs": {"$push": "$$ROOT"}}},
             {"$unwind": {"path": "$docs", "includeArrayIndex": "rank"}},
             {
@@ -811,48 +1117,11 @@ class MongoDb(VectorDb):
                     "fts_score": 1,
                 }
             },
-            # Union with Keyword Search Branch
+            # Union with Keyword Search Branch (scoped above when user_id is set)
             {
                 "$unionWith": {
                     "coll": self.collection_name,
-                    "pipeline": [
-                        {
-                            "$search": {
-                                "index": "default",
-                                "text": {"query": query, "path": "content"},
-                            }
-                        },
-                        {"$limit": limit * 2},
-                        {"$group": {"_id": None, "docs": {"$push": "$$ROOT"}}},
-                        {"$unwind": {"path": "$docs", "includeArrayIndex": "rank"}},
-                        {
-                            "$addFields": {
-                                "_id": "$docs._id",
-                                "name": "$docs.name",
-                                "content": "$docs.content",
-                                "meta_data": "$docs.meta_data",
-                                "content_id": "$docs.content_id",
-                                "vs_score": 0.0,
-                                "fts_score": {
-                                    "$divide": [
-                                        self.hybrid_keyword_weight,
-                                        {"$add": ["$rank", k, 1]},
-                                    ]
-                                },
-                            }
-                        },
-                        {
-                            "$project": {
-                                "_id": 1,
-                                "name": 1,
-                                "content": 1,
-                                "meta_data": 1,
-                                "content_id": 1,
-                                "vs_score": 1,
-                                "fts_score": 1,
-                            }
-                        },
-                    ],
+                    "pipeline": keyword_branch_pipeline,
                 }
             },
             # Combine and Rank
@@ -982,7 +1251,11 @@ class MongoDb(VectorDb):
         return True
 
     def prepare_doc(
-        self, content_hash: str, document: Document, filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        document: Document,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
 
@@ -993,7 +1266,7 @@ class MongoDb(VectorDb):
             document.meta_data = meta_data
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
-        doc_id = md5(cleaned_content.encode("utf-8")).hexdigest()
+        doc_id = self._doc_id(cleaned_content, user_id)
         doc_data = {
             "_id": doc_id,
             "name": document.name,
@@ -1002,6 +1275,8 @@ class MongoDb(VectorDb):
             "embedding": document.embedding,
             "content_id": document.content_id,
             "content_hash": content_hash,
+            # Top-level owner field, kept out of meta_data so it can be a $vectorSearch filter field
+            USER_ID_FIELD: user_id,
         }
         log_debug(f"Prepared document: {doc_data['_id']}")
         return doc_data
@@ -1018,9 +1293,18 @@ class MongoDb(VectorDb):
             return 0
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Insert documents asynchronously."""
+        """Insert documents asynchronously.
+
+        Args:
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+                None (default) writes to the shared bucket.
+        """
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
@@ -1066,7 +1350,7 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
-                doc_data = self.prepare_doc(content_hash, document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
                 prepared_docs.append(doc_data)
             except ValueError:
                 logger.exception(f"Error preparing document '{document.name}'")
@@ -1083,11 +1367,23 @@ class MongoDb(VectorDb):
                 logger.exception("Error inserting documents asynchronously")
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Upsert documents asynchronously."""
+        """Upsert documents asynchronously.
+
+        Args:
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+        """
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
+
+        # Scope the dedupe-delete to the owner so it only clears the caller's stale chunks
+        if await self._async_content_hash_exists(content_hash, user_id=user_id):
+            await self._async_delete_by_content_hash(content_hash, user_id=user_id)
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -1130,7 +1426,7 @@ class MongoDb(VectorDb):
 
         for document in documents:
             try:
-                doc_data = self.prepare_doc(content_hash, document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
                 await collection.update_one(
                     {"_id": doc_data["_id"]},
                     {"$set": doc_data},
@@ -1141,9 +1437,18 @@ class MongoDb(VectorDb):
                 logger.exception(f"Error upserting document '{document.name}' asynchronously")
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Search for documents asynchronously."""
+        """Search for documents asynchronously.
+
+        Args:
+            user_id (Optional[str]): Restrict results to the caller's chunks plus
+                the shared bucket. None means no scope (admin view).
+        """
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
             filters = None
@@ -1152,18 +1457,22 @@ class MongoDb(VectorDb):
             log_error(f"Failed to generate embedding for query: {query}")
             return []
 
+        scope_filter = self._user_scope_filter(user_id)
+
         try:
             collection = await self._get_async_collection()
+            vector_search_stage: Dict[str, Any] = {
+                "index": self.search_index_name,
+                "limit": limit,
+                "numCandidates": min(limit * 4, 100),
+                "queryVector": query_embedding,
+                "path": "embedding",
+            }
+            # Scope as a pre-filter inside $vectorSearch, not a post-$match
+            if scope_filter is not None:
+                vector_search_stage["filter"] = scope_filter
             pipeline = [
-                {
-                    "$vectorSearch": {
-                        "index": self.search_index_name,
-                        "limit": limit,
-                        "numCandidates": min(limit * 4, 100),
-                        "queryVector": query_embedding,
-                        "path": "embedding",
-                    }
-                },
+                {"$vectorSearch": vector_search_stage},
                 {"$set": {"score": {"$meta": "vectorSearchScore"}}},
             ]
 
@@ -1325,34 +1634,77 @@ class MongoDb(VectorDb):
             logger.exception(f"Error deleting documents with metadata '{metadata}'")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by content hash.
 
         Args:
             content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks.
 
         Returns:
             bool: True if documents were deleted successfully, False otherwise.
         """
         try:
             collection = self._get_collection()
-            result = collection.delete_many({"content_hash": content_hash})
+            result = collection.delete_many(
+                self._content_hash_query(content_hash, user_id, scope_none_to_shared=True)
+            )
             log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
             return True
         except Exception:
             logger.exception(f"Error deleting documents by content_hash '{content_hash}'")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete documents by content ID."""
+    async def _async_content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Async existence gate scoped to exactly the bucket a scoped
+        delete would touch — see ``_content_hash_exists_in_scope``.
+
+        Used only by ``async_upsert``; the public ``content_hash_exists``
+        keeps its any-owner gate semantic for the ``skip_if_exists`` flow.
+        """
+        try:
+            collection = await self._get_async_collection()
+            result = await collection.find_one(
+                self._content_hash_query(content_hash, user_id, scope_none_to_shared=True)
+            )
+            return result is not None
+        except Exception:
+            logger.exception("Error checking content_hash existence asynchronously")
+            return False
+
+    async def _async_delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Async counterpart to _delete_by_content_hash used by async_upsert."""
+        try:
+            collection = await self._get_async_collection()
+            result = await collection.delete_many(
+                self._content_hash_query(content_hash, user_id, scope_none_to_shared=True)
+            )
+            log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
+            return True
+        except Exception:
+            logger.exception(f"Error deleting documents by content_hash '{content_hash}' asynchronously")
+            return False
+
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content ID.
+
+        Args:
+            content_id (str): The content ID to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks. None
+                deletes all chunks with this content_id regardless of owner.
+        """
         try:
             collection = self._get_collection()
-            result = collection.delete_many({"content_id": content_id})
+            query: Dict[str, Any] = {"content_id": content_id}
+            if user_id:
+                # Scope exactly to the owner, never the shared (null) bucket
+                query[USER_ID_FIELD] = user_id
+            result = collection.delete_many(query)
 
             log_info(
                 f"Deleted {result.deleted_count} document(s) with content_id '{content_id}' from collection '{self.collection_name}'."
             )
-            return True
+            return result.deleted_count > 0
         except Exception:
             logger.exception(f"Error deleting documents with content_id '{content_id}'")
             return False
@@ -1373,6 +1725,9 @@ class MongoDb(VectorDb):
 
             update_operations = {}
             for key, value in metadata.items():
+                # Skip the owner field so metadata can't reassign a chunk to another user
+                if key == USER_ID_FIELD:
+                    continue
                 update_operations[f"meta_data.{key}"] = value
                 update_operations[f"filters.{key}"] = value
 

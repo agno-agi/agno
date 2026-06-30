@@ -1702,7 +1702,18 @@ def get_relevant_docs_from_knowledge(
             num_documents = getattr(knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
-        relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+        # Owner scope flows from the run context (JWT sub for routed runs, or
+        # whatever Team.user_id was set to). Probe the retrieve signature so a
+        # custom Knowledge subclass that doesn't accept user_id keeps working.
+        retrieve_kwargs: Dict[str, Any] = {"query": query, "max_results": num_documents, "filters": filters}
+        from inspect import signature
+
+        try:
+            if "user_id" in signature(retrieve_fn).parameters:
+                retrieve_kwargs["user_id"] = run_context.user_id if run_context is not None else None
+        except (TypeError, ValueError):
+            pass
+        relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
             log_debug("No relevant documents found for query")
@@ -1799,10 +1810,24 @@ async def aget_relevant_docs_from_knowledge(
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
+        # Owner scope flows from the run context. Probe the signature so a
+        # custom Knowledge subclass without user_id keeps working.
+        retrieve_kwargs: Dict[str, Any] = {"query": query, "max_results": num_documents, "filters": filters}
+        from inspect import signature
+
+        chosen_fn = aretrieve_fn if callable(aretrieve_fn) else retrieve_fn
+        if not callable(chosen_fn):
+            return None
+        try:
+            if "user_id" in signature(chosen_fn).parameters:
+                retrieve_kwargs["user_id"] = run_context.user_id if run_context is not None else None
+        except (TypeError, ValueError):
+            pass
+
         if callable(aretrieve_fn):
-            relevant_docs: List[Document] = await aretrieve_fn(query=query, max_results=num_documents, filters=filters)
+            relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
-            relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+            relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:
             return None
 

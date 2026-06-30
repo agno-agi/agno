@@ -8,22 +8,31 @@ whatever native primitive it was designed for.
 
 ## Backend matrix
 
-| File           | Backend  | Isolation primitive                                                            | Status   |
-| -------------- | -------- | ------------------------------------------------------------------------------ | -------- |
-| `pgvector.py`  | PgVector | Top-level `user_id` column, `WHERE user_id = X OR IS NULL`                     | Shipped  |
-| `lancedb.py`   | LanceDB  | Top-level `user_id` column, `.where("... OR IS NULL", prefilter=True)`         | Shipped  |
-| `chromadb.py`  | Chroma   | One collection per user (`{base}__{user_id}`), base collection = shared bucket | Shipped  |
-| `pinecone.py`  | Pinecone | Namespaces (`user_id` → namespace, `__shared__` namespace)                     | Pending  |
-| `qdrant.py`    | Qdrant   | Indexed payload + multi-tenant collection (`is_tenant=True` on `user_id`)      | Shipped  |
-| `weaviate.py`  | Weaviate | Native multi-tenancy mode                                                      | Pending  |
-| `milvus.py`    | Milvus   | Partitions                                                                     | Pending  |
-| `mongodb.py`   | MongoDB  | Indexed `user_id` field + `$match` before `$vectorSearch`                      | Pending  |
+Every backend stores the owner on each chunk and scopes reads to
+`user_id = X OR <unowned>`; the column shape and the "unowned" predicate
+differ per backend.
 
-Backends not in this table (Cassandra, ClickHouse, Redis, SingleStore)
-haven't been audited yet — they silently accept filters without applying
-them in their current Agno wrappers, so isolation would silently leak.
-Don't enable `user_isolation=True` against them until their per-backend
-work has shipped.
+| File               | Backend     | Isolation primitive                                                            |
+| ------------------ | ----------- | ------------------------------------------------------------------------------ |
+| `pgvector_db.py`   | PgVector    | Nullable `user_id` column, `WHERE user_id = X OR user_id IS NULL`              |
+| `lance_db.py`      | LanceDB     | `user_id` column, `.where("user_id = X OR user_id IS NULL", prefilter=True)`   |
+| `chroma_db.py`     | Chroma      | One collection per user (`{base}__{user_id}`), base collection = shared bucket |
+| `qdrant_db.py`     | Qdrant      | Single collection, indexed `user_id` payload field, `should` match + is-empty  |
+| `milvus_db.py`     | Milvus      | Nullable `user_id` field, `user_id == X or user_id is null`                    |
+| `mongo_db.py`      | MongoDB     | Top-level `user_id` field, `$match {$in: [X, null]}` before `$vectorSearch`    |
+| `weaviate_db.py`   | Weaviate    | `user_id` text property (`tokenization: field`), `where` OR `is_none`          |
+| `redis_db.py`      | Redis       | `user_id` TAG field, `(@user_id:{X}) \| ismissing(@user_id)`                   |
+| `clickhouse.py`    | ClickHouse  | Non-nullable `String` column, `""` sentinel for shared, bound-param `WHERE`    |
+| `cassandra_db.py`  | Cassandra   | `user_id` metadata, `__shared__` sentinel for unowned chunks                   |
+| `couchbase_db.py`  | Couchbase   | Keyword-indexed FTS `user_id` field, `__shared__` sentinel (no is-missing)     |
+| `singlestore_db.py`| SingleStore | Nullable `user_id` column, `WHERE user_id = X OR user_id IS NULL`              |
+| `surreal_db.py`    | SurrealDB   | `user_id` field, dedicated `$scope_user_id` bind (can't collide with filters)  |
+| `pinecone_db.py`   | Pinecone    | `user_id` in vector metadata, `$or [{$eq: X}, {$exists: false}]` filter         |
+| `upstash_db.py`    | Upstash     | `user_id` in metadata, `user_id = X OR HAS NOT FIELD user_id`                  |
+
+In every case `user_id=None` drops the scope predicate entirely (admin /
+unscoped view). Values are always passed as bound parameters or quoted
+filter literals — never concatenated into a query string.
 
 ## How the API stays uniform
 

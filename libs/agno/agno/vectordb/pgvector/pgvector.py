@@ -187,12 +187,7 @@ class PgVector(VectorDb):
             Column("updated_at", DateTime(timezone=True), onupdate=func.now()),
             Column("content_hash", String),
             Column("content_id", String),
-            # Owner column for per-user RAG isolation. ``NULL`` means
-            # "shared / org-wide" content — readable by everyone, including
-            # admin/unscoped callers. A non-NULL value scopes the chunk to
-            # that user; scoped searches return ``WHERE user_id = caller
-            # OR user_id IS NULL`` so users see their own chunks plus shared.
-            # See agno.knowledge.knowledge for the wrapper that drives this.
+            # Owner for per-user isolation; NULL means shared / unscoped.
             Column("user_id", String, nullable=True),
             extend_existing=True,
         )
@@ -202,10 +197,7 @@ class PgVector(VectorDb):
         Index(f"idx_{self.table_name}_name", table.c.name)
         Index(f"idx_{self.table_name}_content_hash", table.c.content_hash)
         Index(f"idx_{self.table_name}_content_id", table.c.content_id)
-        # B-tree on user_id for fast scope filtering. The isolation
-        # predicate is a column equality — exactly what a B-tree handles
-        # best. Indexes already-NULL rows too via PostgreSQL's NULL-aware
-        # index semantics.
+        # B-tree on user_id for scope filtering.
         Index(f"idx_{self.table_name}_user_id", table.c.user_id)
         return table
 
@@ -238,6 +230,13 @@ class PgVector(VectorDb):
     def create(self) -> None:
         """
         Create the table if it does not exist.
+
+        Schema upgrades for existing tables (e.g. the ``user_id`` column added
+        with per-user isolation) are NOT applied here — ``create()`` only
+        provisions the table for new deployments. Existing deployments must
+        amend the schema explicitly (a one-line ``ALTER TABLE ... ADD COLUMN
+        IF NOT EXISTS user_id VARCHAR`` plus a matching index) so we don't
+        silently mutate a production schema on app startup.
         """
         if not self.table_exists():
             with self.Session() as sess, sess.begin():
@@ -310,6 +309,14 @@ class PgVector(VectorDb):
         """
         return self._record_exists(self.table.c.content_hash, content_hash)
 
+    def _record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Deterministic primary key. Folds in ``user_id`` so two users' copies
+        of the same content_hash get distinct ids; ``None`` keeps the legacy id.
+        """
+        if not user_id:
+            return md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        return md5(f"{base_id}_{content_hash}_{user_id}".encode()).hexdigest()
+
     def _clean_content(self, content: str) -> str:
         """
         Clean the content by replacing null characters.
@@ -338,9 +345,7 @@ class PgVector(VectorDb):
             documents (List[Document]): List of documents to insert.
             filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
             batch_size (int): Number of documents to insert in each batch.
-            user_id (Optional[str]): Owner of these chunks for per-user RAG
-                isolation. Stored in the dedicated ``user_id`` column.
-                ``None`` means shared / unscoped.
+            user_id (Optional[str]): Owner for per-user isolation; ``None`` means shared.
         """
         try:
             with self.Session() as sess:
@@ -352,9 +357,7 @@ class PgVector(VectorDb):
                         batch_records = []
                         for doc in batch_docs:
                             try:
-                                batch_records.append(
-                                    self._get_document_record(doc, filters, content_hash, user_id)
-                                )
+                                batch_records.append(self._get_document_record(doc, filters, content_hash, user_id))
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
@@ -398,10 +401,10 @@ class PgVector(VectorDb):
                         for doc in batch_docs:
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                # Include content_hash in ID to ensure uniqueness across different content hashes
-                                # This allows the same URL/content to be inserted with different descriptions
+                                # Include content_hash AND user_id in ID to ensure uniqueness
+                                # across different content hashes and owners. See _record_id.
                                 base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
-                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                                record_id = self._record_id(base_id, content_hash, user_id)
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
@@ -463,7 +466,8 @@ class PgVector(VectorDb):
         """
         try:
             if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
+                # Scope the dedupe delete to this owner.
+                self._delete_by_content_hash(content_hash, user_id=user_id)
             self._upsert(content_hash, documents, filters, batch_size, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")
@@ -521,9 +525,7 @@ class PgVector(VectorDb):
                                 "usage": insert_stmt.excluded.usage,
                                 "content_hash": insert_stmt.excluded.content_hash,
                                 "content_id": insert_stmt.excluded.content_id,
-                                # Refresh user_id on conflict so re-upserting
-                                # the same content_hash doesn't leave a stale
-                                # owner behind.
+                                # Refresh user_id on conflict.
                                 "user_id": insert_stmt.excluded.user_id,
                             },
                         )
@@ -547,10 +549,9 @@ class PgVector(VectorDb):
     ) -> Dict[str, Any]:
         doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
-        # Include content_hash in ID to ensure uniqueness across different content hashes
-        # This allows the same URL/content to be inserted with different descriptions
+        # Include content_hash AND user_id in ID for uniqueness. See _record_id.
         base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
-        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        record_id = self._record_id(base_id, content_hash, user_id)
 
         meta_data = doc.meta_data or {}
         if filters:
@@ -670,7 +671,8 @@ class PgVector(VectorDb):
         """
         try:
             if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
+                # Scope the dedupe delete to this owner.
+                self._delete_by_content_hash(content_hash, user_id=user_id)
             await self._async_upsert(content_hash, documents, filters, batch_size, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")
@@ -707,10 +709,10 @@ class PgVector(VectorDb):
                         for idx, doc in enumerate(batch_docs):
                             try:
                                 cleaned_content = self._clean_content(doc.content)
-                                # Include content_hash in ID to ensure uniqueness across different content hashes
-                                # This allows the same URL/content to be inserted with different descriptions
+                                # Include content_hash AND user_id in ID to ensure uniqueness
+                                # across different content hashes and owners. See _record_id.
                                 base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
-                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                                record_id = self._record_id(base_id, content_hash, user_id)
 
                                 if (
                                     doc.embedding is not None
@@ -758,9 +760,7 @@ class PgVector(VectorDb):
                                 "usage": insert_stmt.excluded.usage,
                                 "content_hash": insert_stmt.excluded.content_hash,
                                 "content_id": insert_stmt.excluded.content_id,
-                                # Refresh user_id on conflict so re-upserting
-                                # the same content_hash doesn't leave a stale
-                                # owner behind.
+                                # Refresh user_id on conflict.
                                 "user_id": insert_stmt.excluded.user_id,
                             },
                         )
@@ -816,11 +816,8 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
-            user_id (Optional[str]): Per-user RAG isolation scope. When set,
-                results are restricted to rows owned by this user (matching
-                ``user_id``) or shared rows (``user_id IS NULL``). When
-                ``None``, no owner predicate is applied — admin / unscoped
-                callers see every row.
+            user_id (Optional[str]): Scope to this owner's rows plus shared
+                (``user_id IS NULL``) rows. ``None`` is unscoped.
 
         Returns:
             List[Document]: List of matching documents.
@@ -867,16 +864,13 @@ class PgVector(VectorDb):
             raise ValueError(f"Unknown filter operator: {op}")
 
     def _apply_user_scope(self, stmt, user_id: Optional[str]):
-        """AND the user-isolation predicate into ``stmt`` when ``user_id``
-        is set. The predicate is ``user_id = X OR user_id IS NULL`` — i.e.
-        rows owned by the caller plus shared/admin rows. Returns the
-        modified statement (no-op if ``user_id`` is ``None``).
+        """AND ``user_id = X OR user_id IS NULL`` into ``stmt`` when scoped.
+
+        Adds no predicate when ``user_id`` is ``None`` (unscoped).
         """
         if user_id is None:
             return stmt
-        return stmt.where(
-            or_(self.table.c.user_id == user_id, self.table.c.user_id.is_(None))
-        )
+        return stmt.where(or_(self.table.c.user_id == user_id, self.table.c.user_id.is_(None)))
 
     def vector_search(
         self,
@@ -927,8 +921,7 @@ class PgVector(VectorDb):
             # Build the base statement
             stmt = select(*columns)
 
-            # Apply per-user isolation FIRST so the planner can use the
-            # user_id index to narrow before the (more expensive) ANN search.
+            # Apply per-user isolation first so the index narrows before the ANN search.
             stmt = self._apply_user_scope(stmt, user_id)
 
             # Apply filters if provided
@@ -1088,7 +1081,7 @@ class PgVector(VectorDb):
             # Build the base statement
             stmt = select(*columns)
 
-            # Apply per-user isolation FIRST (B-tree narrows before FTS).
+            # Apply per-user isolation first (B-tree narrows before FTS).
             stmt = self._apply_user_scope(stmt, user_id)
 
             # Build the text search vector
@@ -1247,7 +1240,7 @@ class PgVector(VectorDb):
             # Build the base statement, including the hybrid score
             stmt = select(*columns, hybrid_score.label("hybrid_score"))
 
-            # Apply per-user isolation FIRST.
+            # Apply per-user isolation first.
             stmt = self._apply_user_scope(stmt, user_id)
 
             # Add the full-text search condition
@@ -1638,33 +1631,41 @@ class PgVector(VectorDb):
         Delete content by content ID, scoped to ``user_id`` when set.
 
         With ``user_id``: ``DELETE WHERE content_id = ? AND user_id = ?``.
-        This is the safe path for per-user isolation — Bob cannot wipe
-        Alice's chunks by guessing her content_id.
+        Without ``user_id``: deletes across all owners (legacy / admin).
 
-        Without ``user_id``: deletes across all owners (legacy behaviour).
-        Only safe for unscoped/admin tooling.
+        Returns ``True`` only when at least one row was deleted.
         """
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_id == content_id)
                 if user_id is not None:
                     stmt = stmt.where(self.table.c.user_id == user_id)
-                sess.execute(stmt)
+                result = sess.execute(stmt)
                 sess.commit()
                 log_info(f"Deleted records with content ID '{content_id}' from table '{self.table.fullname}'.")
-                return True
+                return result.rowcount > 0
         except Exception as e:
             log_error(f"Error deleting rows from table '{self.table.fullname}': {str(e)}")
             sess.rollback()
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
-        Delete content by content hash.
+        Delete content by content hash on the upsert dedupe path, scoped to the
+        caller's own bucket.
+
+        With ``user_id``: ``DELETE WHERE content_hash = ? AND user_id = ?`` — only
+        the caller's stale chunks. Without ``user_id``: ``... AND user_id IS NULL``
+        — only the shared bucket, so a shared/admin re-ingest never wipes a scoped
+        owner's rows that happen to share the same content_hash.
         """
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_hash == content_hash)
+                if user_id is not None:
+                    stmt = stmt.where(self.table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(self.table.c.user_id.is_(None))
                 sess.execute(stmt)
                 sess.commit()
                 log_info(f"Deleted records with content hash '{content_hash}' from table '{self.table.fullname}'.")

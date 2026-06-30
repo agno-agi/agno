@@ -240,7 +240,8 @@ def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedde
         batch_records = args[1]
         assert isinstance(batch_records, list) and len(batch_records) == 2
 
-        # IDs now include content_hash for uniqueness
+        # IDs now include content_hash AND user_id for uniqueness; an unscoped
+        # insert (user_id=None) keeps the legacy owner-less id md5(f"{base}_{hash}").
         from hashlib import md5
 
         expected_id_0 = md5(f"{docs[0].id}_{content_hash}".encode()).hexdigest()
@@ -295,7 +296,8 @@ def test_upsert_builds_records_and_sets_conflict_on_id(mock_pgvector, mock_embed
         batch_records = values_arg
         assert isinstance(batch_records, list) and len(batch_records) == 2
 
-        # IDs now include content_hash for uniqueness
+        # IDs now include content_hash AND user_id for uniqueness; an unscoped
+        # insert (user_id=None) keeps the legacy owner-less id md5(f"{base}_{hash}").
         from hashlib import md5
 
         expected_id_0 = md5(f"{docs[0].id}_{content_hash}".encode()).hexdigest()
@@ -320,19 +322,19 @@ def test_search(mock_pgvector):
     with patch.object(mock_pgvector, "vector_search") as mock_vector_search:
         mock_pgvector.search_type = SearchType.vector
         mock_pgvector.search("test query")
-        mock_vector_search.assert_called_with(query="test query", limit=5, filters=None)
+        mock_vector_search.assert_called_with(query="test query", limit=5, filters=None, user_id=None)
 
     # Test keyword search
     with patch.object(mock_pgvector, "keyword_search") as mock_keyword_search:
         mock_pgvector.search_type = SearchType.keyword
         mock_pgvector.search("test query")
-        mock_keyword_search.assert_called_with(query="test query", limit=5, filters=None)
+        mock_keyword_search.assert_called_with(query="test query", limit=5, filters=None, user_id=None)
 
     # Test hybrid search
     with patch.object(mock_pgvector, "hybrid_search") as mock_hybrid_search:
         mock_pgvector.search_type = SearchType.hybrid
         mock_pgvector.search("test query")
-        mock_hybrid_search.assert_called_with(query="test query", limit=5, filters=None)
+        mock_hybrid_search.assert_called_with(query="test query", limit=5, filters=None, user_id=None)
 
 
 def test_vector_search(mock_pgvector, mock_embedder):
@@ -536,7 +538,7 @@ async def test_async_search(mock_pgvector):
 
         # Check results and that search was called via to_thread
         assert results == expected_results
-        mock_to_thread.assert_called_once_with(mock_pgvector.search, "test query", 5, None)
+        mock_to_thread.assert_called_once_with(mock_pgvector.search, "test query", 5, None, None)
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,14 @@ from agno.utils.string import generate_id
 
 
 class VectorDb(ABC):
-    """Base class for Vector Databases"""
+    """Base class for Vector Databases.
+
+    Per-user isolation contract:
+      * ``user_id=None`` means "no scope" (admin / RBAC-off / unscoped view).
+        Reads see everything; writes go to the shared bucket.
+      * ``user_id="..."`` (non-empty string) scopes to that owner. Reads
+        return own + shared; writes stamp ownership.
+    """
 
     def __init__(
         self,
@@ -61,23 +68,11 @@ class VectorDb(ABC):
     def content_hash_exists(self, content_hash: str) -> bool:
         raise NotImplementedError
 
-    # ---- ``user_id`` semantics for per-user RAG isolation ----
-    #
-    # ``user_id`` is a first-class parameter on every insert / upsert /
-    # search method below. It identifies the OWNER of the chunks. Backends
-    # translate it into their native primitive: pgvector writes a column,
-    # Chroma routes to a per-user collection, Pinecone uses a namespace,
-    # etc.
-    #
-    # ``None`` means "shared / org-wide / unscoped" — chunks become
-    # visible to every caller, and searches with ``user_id=None`` see
-    # everything (admin / RBAC-off view).
-    #
-    # Backends that don't yet implement isolation must still accept the
-    # parameter (no-op) so the Knowledge wrapper can pass it uniformly.
-    # When you wire up a new backend, write a smoke test that proves the
-    # native primitive actually isolates (alice's search doesn't surface
-    # bob's chunks) before claiming support.
+    # user_id is the owner of the chunks on every insert/upsert/search/delete
+    # method below; backends translate it into their native primitive (column,
+    # collection, namespace, ...). None means shared/unscoped, visible to all,
+    # and a search with user_id=None sees every owner (admin view). Backends
+    # that can't enforce isolation raise NotImplementedError on a non-None user_id.
 
     @abstractmethod
     def insert(
@@ -195,14 +190,11 @@ class VectorDb(ABC):
 
     @abstractmethod
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
-        """Delete all chunks with the given ``content_id``.
+        """Delete all chunks with the given content_id.
 
-        ``user_id`` scopes the delete to the owner's bucket — preventing
-        cross-user delete races where one caller could wipe another's
-        chunks by guessing their content_id. ``None`` deletes across all
-        owners (legacy behaviour; safe only for unscoped deployments).
-        Backends that don't yet implement per-user isolation accept the
-        parameter as a no-op for forward-compatibility.
+        user_id scopes the delete to the owner's bucket exactly and must not
+        touch the shared (None-owned) bucket. None deletes across all owners.
+        Backends that can't enforce isolation raise NotImplementedError.
         """
         raise NotImplementedError
 

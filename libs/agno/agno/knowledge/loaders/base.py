@@ -90,6 +90,7 @@ class BaseLoader:
             status=ContentStatus.PROCESSING,
             metadata=metadata,
             file_type=file_type,
+            user_id=content.user_id,
         )
         entry.content_hash = self._build_content_hash(entry)  # type: ignore[attr-defined]
         entry.id = generate_id(entry.content_hash)

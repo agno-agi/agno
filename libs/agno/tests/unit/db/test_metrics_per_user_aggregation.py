@@ -1,9 +1,8 @@
 """Unit tests for per-user metrics aggregation.
 
-Locks in the contract that ``calculate_date_metrics`` buckets sessions by
-``user_id`` and emits one metrics record per distinct user. Sessions without
-a user_id aggregate into the sentinel empty-string bucket — the legacy
-single-tenant deployment surface.
+Locks in that ``calculate_date_metrics`` buckets sessions by ``user_id`` and
+emits one record per distinct user; sessions without one fall into the
+empty-string sentinel bucket.
 """
 
 from datetime import date
@@ -172,6 +171,4 @@ class TestRecordShape:
         assert single_user_record["completed"] is True
 
     def test_has_model_metrics(self, single_user_record):
-        assert single_user_record["model_metrics"] == [
-            {"model_id": "gpt-4", "model_provider": "OpenAI", "count": 3}
-        ]
+        assert single_user_record["model_metrics"] == [{"model_id": "gpt-4", "model_provider": "OpenAI", "count": 3}]

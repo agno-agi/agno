@@ -53,17 +53,11 @@ class MockVectorDb(VectorDb):
         return True
 
     def search(self, query: str, limit: int = 5, filters=None, user_id=None) -> List[Document]:
-        self.search_calls.append(
-            {"query": query, "limit": limit, "filters": filters, "user_id": user_id}
-        )
+        self.search_calls.append({"query": query, "limit": limit, "filters": filters, "user_id": user_id})
         return [Document(name="test", content="test content")]
 
-    async def async_search(
-        self, query: str, limit: int = 5, filters=None, user_id=None
-    ) -> List[Document]:
-        self.search_calls.append(
-            {"query": query, "limit": limit, "filters": filters, "user_id": user_id}
-        )
+    async def async_search(self, query: str, limit: int = 5, filters=None, user_id=None) -> List[Document]:
+        self.search_calls.append({"query": query, "limit": limit, "filters": filters, "user_id": user_id})
         return [Document(name="test", content="test content")]
 
     def drop(self) -> None:
@@ -93,7 +87,7 @@ class MockVectorDb(VectorDb):
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
         pass
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id=None) -> bool:
         return True
 
     def get_supported_search_types(self) -> List[str]:

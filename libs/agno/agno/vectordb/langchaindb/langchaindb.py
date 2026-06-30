@@ -50,31 +50,60 @@ class LangChainVectorDb(VectorDb):
     def content_hash_exists(self, content_hash: str) -> bool:
         raise NotImplementedError
 
-    def delete_by_content_id(self, content_id: str) -> None:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         logger.warning("LangChainKnowledgeBase.insert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         logger.warning("LangChainKnowledgeBase.async_insert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         logger.warning("LangChainKnowledgeBase.upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         logger.warning("LangChainKnowledgeBase.async_upsert() not supported - please check the vectorstore manually.")
         raise NotImplementedError
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Returns relevant documents matching the query"""
+        """Returns relevant documents matching the query.
+
+        user_id is forwarded as a metadata filter; scoping depends on the wrapped vectorstore.
+        """
 
         if isinstance(filters, List):
             log_warning(
@@ -90,23 +119,25 @@ class LangChainVectorDb(VectorDb):
                 "The `langchain` package is not installed. Please install it via `pip install langchain`."
             )
 
-        if self.vectorstore is not None and self.knowledge_retriever is None:
-            log_debug("Creating knowledge retriever")
-            if self.search_kwargs is None:
-                self.search_kwargs = {"k": limit}
+        retriever = self.knowledge_retriever
+        if retriever is None and self.vectorstore is not None:
+            # Build the retriever per call so each caller's filters/user_id scope only their own search
+            call_kwargs = dict(self.search_kwargs) if self.search_kwargs else {"k": limit}
             if filters is not None:
-                self.search_kwargs.update(filters)
-            self.knowledge_retriever = self.vectorstore.as_retriever(search_kwargs=self.search_kwargs)
+                call_kwargs.update(filters)
+            if user_id is not None:
+                call_kwargs["filter"] = {**call_kwargs.get("filter", {}), "user_id": user_id}
+            retriever = self.vectorstore.as_retriever(search_kwargs=call_kwargs)
 
-        if self.knowledge_retriever is None:
+        if retriever is None:
             log_error("No knowledge retriever provided")
             return []
 
-        if not isinstance(self.knowledge_retriever, BaseRetriever):
-            raise ValueError(f"Knowledge retriever is not of type BaseRetriever: {self.knowledge_retriever}")
+        if not isinstance(retriever, BaseRetriever):
+            raise ValueError(f"Knowledge retriever is not of type BaseRetriever: {retriever}")
 
         log_debug(f"Getting {limit} relevant documents for query: {query}")
-        lc_documents: List[LangChainDocument] = self.knowledge_retriever.invoke(input=query)
+        lc_documents: List[LangChainDocument] = retriever.invoke(input=query)
         documents = []
         for lc_doc in lc_documents:
             documents.append(
@@ -118,9 +149,13 @@ class LangChainVectorDb(VectorDb):
         return documents
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        return self.search(query, limit, filters)
+        return self.search(query, limit, filters, user_id)
 
     def drop(self) -> None:
         raise NotImplementedError
