@@ -7,7 +7,6 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "fix/ci-failures"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
