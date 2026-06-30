@@ -134,9 +134,13 @@ def test_continue_legacy_session_writes_all_runs_to_table():
     loaded = db.get_session("s3", SessionType.AGENT)
     assert len(loaded.runs) == 2
 
-    # Append a new run and save
-    loaded.upsert_run(_make_run("r2", "s3", "fresh"))
+    # Append a new run and save the session row; runs are persisted individually
+    # via upsert_run (the new v3 contract).
+    new_run = _make_run("r2", "s3", "fresh")
+    loaded.upsert_run(new_run)
     db.upsert_session(loaded)
+    for idx, r in enumerate(loaded.runs):
+        db.upsert_run(run=r, session_id="s3", user_id="u1", run_index=idx)
 
     conn = sqlite3.connect(db_file)
     try:
@@ -168,6 +172,8 @@ def test_partial_state_merges_table_and_blob():
     """
     db, db_file = _new_db()
     db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
+    # Ensure the runs table exists before raw-inserting into it.
+    db._get_table(table_type="runs", create_table_if_not_found=True)
     _add_legacy_runs_column(db_file)
 
     legacy = [_make_run(f"rl{i}", "s4", f"c{i}").to_dict() for i in range(3)]
@@ -197,6 +203,8 @@ def test_partial_state_table_wins_over_blob_on_conflict():
     """When the same run_id exists in both, the runs table is the source of truth."""
     db, db_file = _new_db()
     db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
+    # Ensure the runs table exists before raw-inserting into it.
+    db._get_table(table_type="runs", create_table_if_not_found=True)
     _add_legacy_runs_column(db_file)
 
     # Legacy blob has content="legacy-version"

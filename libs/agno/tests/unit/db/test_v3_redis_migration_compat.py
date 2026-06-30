@@ -59,9 +59,13 @@ def test_fresh_schema_round_trip():
     db = _new_db()
 
     session = AgentSession(session_id="s1", agent_id="agent-1", user_id="u1")
-    session.upsert_run(_make_run("r1", "s1", "one"))
-    session.upsert_run(_make_run("r2", "s1", "two"))
+    r1 = _make_run("r1", "s1", "one")
+    r2 = _make_run("r2", "s1", "two")
+    session.upsert_run(r1)
+    session.upsert_run(r2)
     db.upsert_session(session)
+    db.upsert_run(run=r1, session_id="s1", user_id="u1", run_index=0)
+    db.upsert_run(run=r2, session_id="s1", user_id="u1", run_index=1)
 
     # Session record has no `runs` field
     raw = db._get_record("sessions", "s1")
@@ -143,9 +147,12 @@ def test_cleanup_refuses_when_legacy_runs_still_present():
 def test_get_run_get_runs_apis():
     db = _new_db()
     session = AgentSession(session_id="sx", agent_id="agent-1", user_id="u1")
-    for i in range(3):
-        session.upsert_run(_make_run(f"r{i}", "sx", f"c{i}"))
+    runs = [_make_run(f"r{i}", "sx", f"c{i}") for i in range(3)]
+    for r in runs:
+        session.upsert_run(r)
     db.upsert_session(session)
+    for idx, r in enumerate(runs):
+        db.upsert_run(run=r, session_id="sx", user_id="u1", run_index=idx)
 
     run = db.get_run("r1")
     assert run is not None and run.content == "c1"
