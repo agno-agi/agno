@@ -13,6 +13,7 @@ from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
     download_event_files_async,
     extract_event_context,
+    is_ambient_thread,
     open_chat_stream,
     resolve_channel_name,
     resolve_slack_user,
@@ -58,6 +59,7 @@ class SlackEventHandler:
     entity_type: Literal["agent", "team", "workflow"]
     bot_name_resolver: BotNameResolver
     reply_to_mentions_only: bool
+    ambient_mode: bool
     resolve_user_identity: bool
     loading_text: str
     loading_messages: Optional[List[str]]
@@ -70,18 +72,24 @@ class SlackEventHandler:
 
     async def resolve_context(self, data: dict) -> Optional[EventContext]:
         event = data["event"]
-        if not should_respond(event, self.reply_to_mentions_only):
+        client = self._client()
+        authorizations = data.get("authorizations") or [{}]
+        bot_user_id = authorizations[0].get("user_id")
+
+        # Ambient mode: respond to all thread replies where bot was mentioned in first message
+        is_ambient = False
+        if self.ambient_mode:
+            thread_ts = event.get("thread_ts")
+            is_thread_reply = thread_ts and thread_ts != event.get("ts")
+            if is_thread_reply:
+                is_ambient = await is_ambient_thread(client, event.get("channel", ""), thread_ts, bot_user_id)
+
+        if not should_respond(event, self.reply_to_mentions_only, is_ambient):
             return None
 
-        client = self._client()
         raw_ctx = extract_event_context(event)
-
-        bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
         bot_name = await self.bot_name_resolver.resolve(client, bot_user_id) if bot_user_id else None
         message_text = strip_bot_mention(raw_ctx["message_text"], bot_user_id, bot_name)
-
-        session_id = f"{self.entity_id}:{raw_ctx['thread_id']}"
-        team_id = data.get("team_id") or event.get("team")
 
         resolved_user_id = raw_ctx["user"]
         display_name = None
@@ -95,8 +103,8 @@ class SlackEventHandler:
             thread_id=raw_ctx["thread_id"],
             user=raw_ctx["user"],
             message_text=message_text,
-            session_id=session_id,
-            team_id=team_id,
+            session_id=f"{self.entity_id}:{raw_ctx['thread_id']}",
+            team_id=data.get("team_id") or event.get("team"),
             resolved_user_id=resolved_user_id,
             display_name=display_name,
             channel_name=channel_name,

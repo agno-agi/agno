@@ -48,6 +48,7 @@ def _make_event_handler(**overrides: Any) -> SlackEventHandler:
         "entity_type": "agent",
         "bot_name_resolver": BotNameResolver(),
         "reply_to_mentions_only": False,
+        "ambient_mode": False,
         "resolve_user_identity": False,
         "loading_text": "Thinking...",
         "loading_messages": None,
