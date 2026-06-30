@@ -64,13 +64,14 @@ async def run_entity(
 
         ui_deps = extract_context(run_input.context)
 
-        # 3. Build RunContext with client_tools
+        # 3. Build RunContext with client_tools and session_state
         run_context = RunContext(
             run_id=run_id,
             session_id=run_input.thread_id,
             user_id=user_id,
             client_tools=client_tools,
             dependencies=ui_deps,
+            session_state=session_state,
         )
 
         run_kwargs: dict = {}
