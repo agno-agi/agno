@@ -333,10 +333,11 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
         events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
         state.close_text_message()
 
-    # Emit external execution tools for paused runs
-    from agno.run.agent import RunPausedEvent
+    # Emit external execution tools for paused runs (Agent or Team)
+    from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
+    from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 
-    if isinstance(chunk, RunPausedEvent):
+    if isinstance(chunk, (AgentRunPausedEvent, TeamRunPausedEvent)):
         external_tools = chunk.tools_awaiting_external_execution
         if external_tools:
             assistant_message_id = str(uuid.uuid4())
