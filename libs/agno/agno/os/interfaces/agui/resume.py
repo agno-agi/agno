@@ -1,25 +1,24 @@
 from typing import Optional, Union
 
-from agno.agent import Agent, RemoteAgent
+from agno.agent import Agent
 from agno.os.interfaces.agui.input import merge_tool_results_into_requirements
 from agno.run.base import RunContext
-from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 
 
 async def resume_paused_run(
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
+    entity: Union[Agent, Team],
     session_id: str,
     tool_messages: list,
     run_context: RunContext,
     session_state: Optional[dict],
     run_kwargs: dict,
 ):
-    # Load paused run from DB, merge tool results, and call acontinue_run
+    # Remote entities don't support client_tools resume (no aget_session)
     if not getattr(entity, "db", None):
         raise ValueError(
-            "Frontend tool resume requires a database to be configured on the agent. "
-            "Set db=SqliteDb(...) or db=PgDb(...) on your Agent."
+            "Frontend tool resume requires a database. "
+            "Set db=SqliteDb(...) or db=PgDb(...) on your Agent/Team."
         )
 
     from agno.run.base import RunStatus

@@ -81,7 +81,7 @@ async def run_entity(
         if tool_messages:
             # Resume: frontend executed external tools and sent results back
             response_stream = await resume_paused_run(
-                entity=entity,
+                entity=entity,  # type: ignore[arg-type]
                 session_id=run_input.thread_id,
                 tool_messages=tool_messages,
                 run_context=run_context,
