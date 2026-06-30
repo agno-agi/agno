@@ -332,7 +332,7 @@ async def asave_run(
         user_id: Optional user ID to associate with the run.
         run_index: Optional run index for new runs.
     """
-    from agno.agent import _init, _storage
+    from agno.agent import _storage
 
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
         await _storage.aupsert_run(agent, run=run, session_id=session_id, user_id=user_id, run_index=run_index)
