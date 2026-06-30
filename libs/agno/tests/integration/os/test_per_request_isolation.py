@@ -1781,7 +1781,9 @@ class TestCustomExecutorWithInternalAgentTeam:
             execution_log.append(
                 {
                     "request_id": local_agent.metadata["request_id"],
-                    "agent_id": id(local_agent),
+                    # Keep the instance itself (not id()) so a garbage-collected
+                    # address can't be reused and falsely look like the same agent.
+                    "agent": local_agent,
                 }
             )
             # In real usage: result = local_agent.run(step_input.input)
@@ -1804,7 +1806,7 @@ class TestCustomExecutorWithInternalAgentTeam:
         assert len(execution_log) == 2
         assert execution_log[0]["request_id"] == "req-1"
         assert execution_log[1]["request_id"] == "req-2"
-        assert execution_log[0]["agent_id"] != execution_log[1]["agent_id"]
+        assert execution_log[0]["agent"] is not execution_log[1]["agent"]
 
     def test_safe_pattern_agent_deep_copy_in_function(self):
         """SAFE PATTERN: deep_copy the template agent inside function."""
