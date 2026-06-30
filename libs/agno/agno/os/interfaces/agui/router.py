@@ -102,7 +102,6 @@ async def run_entity(
                 audio=audio or None,
                 videos=videos or None,
                 files=files or None,
-                session_state=session_state,
                 run_context=run_context,
                 **run_kwargs,
             )
