@@ -1,0 +1,417 @@
+from typing import List, Optional
+
+from pydantic import BaseModel
+
+from agno.utils.string import generate_id_from_name, parse_response_model_str, sanitize_postgres_string, url_safe_string
+
+
+def test_url_safe_string_spaces():
+    """Test conversion of spaces to dashes"""
+    assert url_safe_string("hello world") == "hello-world"
+
+
+def test_url_safe_string_camel_case():
+    """Test conversion of camelCase to kebab-case"""
+    assert url_safe_string("helloWorld") == "hello-world"
+
+
+def test_url_safe_string_snake_case():
+    """Test conversion of snake_case to kebab-case"""
+    assert url_safe_string("hello_world") == "hello-world"
+
+
+def test_url_safe_string_special_chars():
+    """Test removal of special characters"""
+    assert url_safe_string("hello@world!") == "helloworld"
+
+
+def test_url_safe_string_consecutive_dashes():
+    """Test handling of consecutive dashes"""
+    assert url_safe_string("hello--world") == "hello-world"
+
+
+def test_url_safe_string_mixed_cases():
+    """Test a mix of different cases and separators"""
+    assert url_safe_string("hello_World Test") == "hello-world-test"
+
+
+def test_url_safe_string_preserve_dots():
+    """Test preservation of dots"""
+    assert url_safe_string("hello.world") == "hello.world"
+
+
+def test_url_safe_string_complex():
+    """Test a complex string with multiple transformations"""
+    assert (
+        url_safe_string("Hello World_Example-String.With@Special#Chars")
+        == "hello-world-example-string.withspecialchars"
+    )
+
+
+class MockModel(BaseModel):
+    name: str
+    value: Optional[str] = None
+    description: Optional[str] = None
+
+
+def test_parse_direct_json():
+    """Test parsing a clean JSON string directly"""
+    content = '{"name": "test", "value": "123"}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_parse_already_escaped_string():
+    """Test parsing a clean JSON string directly"""
+    content = '{"name": "test", "value": "Already escaped "quote""}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == 'Already escaped "quote"'
+
+
+def test_parse_json_with_markdown_block():
+    """Test parsing JSON from a markdown code block"""
+    content = """Some text before
+    ```json
+    {
+        "name": "test",
+        "value": "123"
+    }
+    ```
+    Some text after"""
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_parse_json_with_generic_code_block():
+    """Test parsing JSON from a generic markdown code block"""
+    content = """Some text before
+    ```
+    {
+        "name": "test",
+        "value": "123"
+    }
+    ```
+    Some text after"""
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_parse_json_with_unclosed_block():
+    """Test parsing JSON from an unclosed markdown code block"""
+    content = """```json
+    {
+        "name": "test",
+        "value": "123"
+    }"""
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_parse_json_with_control_characters():
+    """Test parsing JSON with control characters"""
+    content = '{\n\t"name": "test",\r\n\t"value": "123"\n}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_parse_json_with_markdown_formatting():
+    """Test parsing JSON with markdown formatting"""
+    content = '{*"name"*: "test", `"value"`: "123"}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_parse_json_with_quotes_in_values():
+    """Test parsing JSON with quotes in values"""
+    content = '{"name": "test "quoted" text", "value": "some "quoted" value"}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == 'test "quoted" text'
+    assert result.value == 'some "quoted" value'
+
+
+def test_parse_json_with_missing_required_field():
+    """Test parsing JSON with missing required field"""
+    content = '{"value": "123"}'  # Missing required 'name' field
+    result = parse_response_model_str(content, MockModel)
+    assert result is None
+
+
+def test_parse_invalid_json():
+    """Test parsing invalid JSON"""
+    content = '{"name": "test", value: "123"}'  # Missing quotes around value
+    result = parse_response_model_str(content, MockModel)
+    assert result is None
+
+
+def test_parse_empty_string():
+    """Test parsing empty string"""
+    content = ""
+    result = parse_response_model_str(content, MockModel)
+    assert result is None
+
+
+def test_parse_non_json_string():
+    """Test parsing non-JSON string"""
+    content = "Just some regular text"
+    result = parse_response_model_str(content, MockModel)
+    assert result is None
+
+
+def test_parse_json_with_code_blocks_in_fields():
+    """Test parsing JSON with code blocks in field values"""
+    content = """
+    ```json
+    {
+        "name": "test",
+        "value": "```python
+    def hello():
+        print('Hello, world!')
+    ```",
+        "description": "A function that prints hello"
+    }
+    ```
+    """
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert "def hello()" in result.value
+    assert "print('Hello, world!')" in result.value
+    assert result.description == "A function that prints hello"
+
+
+def test_parse_complex_markdown():
+    """Test parsing JSON embedded in complex markdown"""
+    content = """# Title
+    Here's some text with *formatting* and a code block:
+
+    ```json
+    {
+        "name": "test",
+        "value": "123",
+        "description": "A \"quoted\" description"
+    }
+    ```
+
+    And some more text after."""
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+    assert result.description == 'A "quoted" description'
+
+
+def test_parse_nested_json():
+    """Test parsing nested JSON"""
+
+    class Step(BaseModel):
+        step: str
+        description: str
+
+    class Steps(BaseModel):
+        steps: List[Step]
+
+    content = """
+    ```json
+    {
+        "steps": [
+            {
+                "step": "1",
+                "description": "Step 1 description"
+            },
+            {
+                "step": "2",
+                "description": "Step 2 description"
+            }
+        ]
+    }
+    ```"""
+    result = parse_response_model_str(content, Steps)
+    assert result is not None
+    assert result.steps[0].step == "1"
+    assert result.steps[0].description == "Step 1 description"
+    assert result.steps[1].step == "2"
+    assert result.steps[1].description == "Step 2 description"
+
+
+def test_parse_concatenated_reasoning_steps():
+    """Test concatenated JSON objects."""
+
+    from agno.reasoning.step import ReasoningSteps
+
+    content = (
+        '{"reasoning_steps":[{"title":"Step A","confidence":1.0}]}'
+        '{"reasoning_steps":[{"title":"Step B","confidence":0.9}]}'
+    )
+
+    result = parse_response_model_str(content, ReasoningSteps)
+
+    assert result is not None
+    assert len(result.reasoning_steps) == 2
+    assert result.reasoning_steps[0].title == "Step A"
+    assert result.reasoning_steps[1].title == "Step B"
+
+
+def test_parse_json_with_prefix_suffix_noise():
+    """Test JSON with trailing characters."""
+
+    from agno.reasoning.step import ReasoningSteps
+
+    content = 'Here is my reasoning: {"reasoning_steps":[{"title":"Only Step","confidence":0.8}]} -- end of reasoning'
+
+    result = parse_response_model_str(content, ReasoningSteps)
+
+    assert result is not None
+    assert len(result.reasoning_steps) == 1
+    assert result.reasoning_steps[0].title == "Only Step"
+
+
+def test_parse_preserves_field_name_case():
+    """Test that field names with mixed case are preserved correctly"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+        camelCase: str
+        UPPER_CASE: str
+
+    content = '{"Supplier_name": "test supplier", "newData": "some data", "camelCase": "camel value", "UPPER_CASE": "upper value"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == "test supplier"
+    assert result.newData == "some data"
+    assert result.camelCase == "camel value"
+    assert result.UPPER_CASE == "upper value"
+
+
+def test_parse_preserves_field_name_case_with_cleanup_path():
+    """Test that field names with mixed case are preserved when going through the cleanup path"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = '{"Supplier_name": "test \\"quoted\\" supplier", "newData": "some \\"quoted\\" data"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_preserves_field_name_case_with_markdown():
+    """Test that field names with mixed case are preserved when parsing from markdown blocks with special formatting"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = """```json
+    {
+        "Supplier_name": "test "quoted" supplier",
+        "newData": "some "quoted" data"
+    }
+    ```"""
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_json_with_python_code_in_value():
+    """Test parsing JSON with valid Python code containing # and * characters as a value"""
+
+    class CodeModel(BaseModel):
+        function_name: str
+        code: str
+        description: str
+
+    content = """```json
+    {
+        "function_name": "calculate_factorial",
+        "code": "def factorial(n):\n    # Calculate factorial of n\n    if n <= 1:\n        return 1\n    return n * factorial(n - 1)",
+        "description": "A recursive factorial function with comments and multiplication"
+    }
+    ```"""
+
+    result = parse_response_model_str(content, CodeModel)
+
+    assert result is not None
+    assert result.function_name == "calculate_factorial"
+    assert (
+        result.code
+        == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
+    )
+    assert result.description == "A recursive factorial function with comments and multiplication"
+
+
+def test_generate_id_from_name_with_name():
+    """Test that named IDs are deterministic kebab-case"""
+    assert generate_id_from_name("My Agent") == "my-agent"
+    assert generate_id_from_name("hello_world") == "hello-world"
+    assert generate_id_from_name("UPPER") == "upper"
+
+
+def test_generate_id_from_name_without_name():
+    """Test that unnamed IDs are human-readable Docker-style"""
+    result = generate_id_from_name()
+    parts = result.split("-")
+    assert len(parts) == 3, f"Expected 3 parts, got {len(parts)}: {result}"
+    adjective, name, hex_suffix = parts
+    assert adjective.isalpha()
+    assert name.isalpha()
+    assert len(hex_suffix) == 8
+    int(hex_suffix, 16)  # must be valid hex
+
+
+def test_generate_id_from_name_uniqueness():
+    """Test that successive calls produce different IDs"""
+    ids = {generate_id_from_name() for _ in range(100)}
+    assert len(ids) == 100
+
+
+def test_sanitize_postgres_string_none_input():
+    """Test that sanitize_postgres_string handles None input correctly"""
+    assert sanitize_postgres_string(None) is None
+
+
+def test_sanitize_postgres_string_normal_string():
+    """Test that sanitize_postgres_string handles normal strings correctly"""
+    assert sanitize_postgres_string("hello world") == "hello world"
+    assert sanitize_postgres_string("") == ""
+    assert sanitize_postgres_string("Special chars: @#$%^&*()") == "Special chars: @#$%^&*()"
+
+
+def test_sanitize_postgres_string_null_chars():
+    """Test that sanitize_postgres_string handles null characters correctly"""
+    assert sanitize_postgres_string("hello\x00world") == "helloworld"
+    assert sanitize_postgres_string("\x00\x00\x00") == ""
+    assert sanitize_postgres_string("start\x00middle\x00end") == "startmiddleend"
+
+
+def test_sanitize_postgres_string_other_illegal_chars():
+    """Test that sanitize_postgres_string handles other illegal characters correctly"""
+    # Control characters \x01-\x08
+    assert sanitize_postgres_string("hello\x01\x02\x03world") == "helloworld"
+    # \x0b (vertical tab) and \x0c (form feed)
+    assert sanitize_postgres_string("hello\x0b\x0cworld") == "helloworld"
+    # Control characters \x0e-\x1f
+    assert sanitize_postgres_string("hello\x0e\x1fworld") == "helloworld"
+    # Unicode replacement characters
+    assert sanitize_postgres_string("hello\ufffe\uffffworld") == "helloworld"

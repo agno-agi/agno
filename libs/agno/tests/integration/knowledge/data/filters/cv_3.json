@@ -1,0 +1,35 @@
+{
+  "name": "Morgan Lee",
+  "position": "Senior Software Engineer",
+  "summary": "Senior developer with over 8 years of experience specializing in backend systems, scalability, and cloud computing.",
+  "experience": [
+    {
+      "title": "Senior Software Engineer",
+      "company": "CloudNova Inc.",
+      "location": "Seattle, WA",
+      "period": "2020 – Present",
+      "responsibilities": [
+        "Architected scalable cloud infrastructure on AWS",
+        "Mentored 5 junior engineers and led weekly code reviews"
+      ]
+    },
+    {
+      "title": "Software Engineer",
+      "company": "CodePeak Systems",
+      "location": "Seattle, WA",
+      "period": "2015 – 2020",
+      "responsibilities": [
+        "Designed and developed internal analytics platform",
+        "Enhanced security protocols for user data handling"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "degree": "BSc in Computer Engineering",
+      "institution": "University of Washington",
+      "period": "2011 – 2015"
+    }
+  ],
+  "skills": ["Java", "AWS", "Terraform", "MySQL", "Python"]
+}

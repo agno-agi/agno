@@ -1,0 +1,98 @@
+name: Bug Report
+description: Report an issue to help us fix bugs and improve your experience.
+title: "[Bug] "
+labels: ["bug"]
+assignees:
+  - ""
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Briefly describe the issue you’re experiencing or the bug you’ve found.
+      placeholder: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: List the exact steps needed to encounter this bug or issue.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: agent-config
+    attributes:
+      label: Agent Configuration (if applicable)
+      description: If the bug relates to a specific agent setup, provide relevant configuration details.
+      placeholder: |
+        ```python
+        # Your agent configuration code here
+        ```
+    validations:
+      required: false
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: A clear description of what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened instead?
+      placeholder: A clear description of what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Screenshots or Logs (if applicable)
+      description: Include any relevant screenshots or error logs that demonstrate the issue. Use code blocks for logs.
+      placeholder: |
+        ```log
+        Paste your logs here
+        ```
+        (You can also drag and drop images)
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Please provide details about the environment where you encountered the bug.
+      placeholder: |
+        - OS: [e.g. macOS Sonoma, Windows 11]
+        - Browser (if relevant): [e.g. Chrome 120, Firefox 119]
+        - Agno Version: [e.g. v0.5.1]
+        - External Dependency Versions: [e.g., openai 1.3.5, langchain 0.0.350]
+        - Additional Environment Details: [e.g., Python 3.11.5]
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: possible-solutions
+    attributes:
+      label: Possible Solutions (optional)
+      description: Suggest any ideas you might have to fix or address the issue.
+    validations:
+      required: false
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context or details about the problem here.
+    validations:
+      required: false

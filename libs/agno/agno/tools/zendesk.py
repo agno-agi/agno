@@ -1,0 +1,83 @@
+import json
+import re
+from os import getenv
+from typing import Any, List, Optional
+from urllib.parse import quote_plus
+
+from agno.tools import Toolkit
+from agno.utils.log import log_debug, log_error
+
+try:
+    import requests
+except ImportError:
+    raise ImportError("`requests` not installed. Please install using `pip install requests`.")
+
+
+class ZendeskTools(Toolkit):
+    """
+    A toolkit class for interacting with the Zendesk API to search articles.
+    It requires authentication details and the company name to configure the API access.
+    """
+
+    def __init__(
+        self,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        company_name: Optional[str] = None,
+        enable_search_zendesk: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
+        """
+        Initializes the ZendeskTools class with necessary authentication details
+        and registers the search_zendesk method.
+
+        Parameters:
+        username (str): The username for Zendesk API authentication.
+        password (str): The password for Zendesk API authentication.
+        company_name (str): The company name to form the base URL for API requests.
+        enable_search_zendesk (bool): Whether to enable the search functionality.
+        all (bool): Enable all functions.
+        """
+        self.username = username or getenv("ZENDESK_USERNAME")
+        self.password = password or getenv("ZENDESK_PASSWORD")
+        self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
+
+        if not self.username or not self.password or not self.company_name:
+            log_error("Username, password, or company name not provided.")
+
+        tools: List[Any] = []
+        if all or enable_search_zendesk:
+            tools.append(self.search_zendesk)
+
+        super().__init__(name="zendesk_tools", tools=tools, **kwargs)
+
+    def search_zendesk(self, search_string: str) -> str:
+        """
+        Searches for articles in Zendesk Help Center that match the given search string.
+
+        Parameters:
+        search_string (str): The search query to look for in Zendesk articles.
+
+        Returns:
+        str: A JSON-formatted string containing the list of articles without HTML tags.
+
+        Raises:
+        ConnectionError: If the API request fails due to connection-related issues.
+        """
+
+        if not self.username or not self.password or not self.company_name:
+            return "Username, password, or company name not provided."
+
+        log_debug(f"Searching Zendesk for: {search_string}")
+
+        auth = (self.username, self.password)
+        url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={quote_plus(search_string)}"
+        try:
+            response = requests.get(url, auth=auth)
+            response.raise_for_status()
+            clean = re.compile("<.*?>")
+            articles = [re.sub(clean, "", article["body"]) for article in response.json()["results"]]
+            return json.dumps(articles)
+        except requests.RequestException as e:
+            raise ConnectionError(f"API request failed: {e}")

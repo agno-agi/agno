@@ -1,0 +1,14 @@
+# Test dependencies for system tests
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+httpx>=0.27.0
+httpx[http2]>=0.27.0
+python-dotenv>=1.0.0
+PyJWT>=2.8.0
+mcp>=1.0.0
+fastmcp>=2.0.0
+sqlalchemy
+psycopg-binary
+psycopg
+openai
+fastapi

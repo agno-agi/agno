@@ -1,0 +1,65 @@
+from unittest.mock import patch
+
+import pytest
+
+from agno.agent import Agent
+from agno.models.openai.chat import OpenAIChat
+
+
+@pytest.fixture(scope="session")
+def shared_model():
+    return OpenAIChat(id="gpt-4o-mini")
+
+
+@pytest.fixture
+def web_agent(shared_model):
+    """Create a web agent for testing."""
+    from agno.tools.websearch import WebSearchTools
+
+    return Agent(
+        name="Web Agent",
+        model=shared_model,
+        role="Search the web for information",
+        tools=[WebSearchTools(cache_results=True)],
+    )
+
+
+@pytest.fixture
+def finance_agent(shared_model):
+    """Create a finance agent for testing."""
+    from agno.tools.yfinance import YFinanceTools
+
+    return Agent(
+        name="Finance Agent",
+        model=shared_model,
+        role="Get financial data",
+        tools=[YFinanceTools(all=True)],
+    )
+
+
+def test_tools_available_to_agents(web_agent, finance_agent):
+    with patch.object(finance_agent.model, "invoke", wraps=finance_agent.model.invoke) as mock_invoke:
+        finance_agent.run("What is the current stock price of AAPL?")
+
+        # Get the tools passed to invoke
+        tools = mock_invoke.call_args[1].get("tools", [])
+        tool_names = [tool["function"]["name"] for tool in tools]
+        assert tool_names == [
+            "get_analyst_recommendations",
+            "get_company_info",
+            "get_company_news",
+            "get_current_stock_price",
+            "get_historical_stock_prices",
+            "get_income_statements",
+            "get_key_financial_ratios",
+            "get_stock_fundamentals",
+            "get_technical_indicators",
+        ]
+
+    with patch.object(web_agent.model, "invoke", wraps=web_agent.model.invoke) as mock_invoke:
+        web_agent.run("What is currently happening in the news?")
+
+        # Get the tools passed to invoke
+        tools = mock_invoke.call_args[1].get("tools", [])
+        tool_names = [tool["function"]["name"] for tool in tools]
+        assert tool_names == ["search_news", "web_search"]
